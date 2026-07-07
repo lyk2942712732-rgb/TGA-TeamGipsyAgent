@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 TaskMode = Literal["ctf", "web_audit", "code_audit", "binary_ctf"]
@@ -38,6 +38,12 @@ class TGATask(BaseModel):
     allow_active_scan: bool = False
     goal: str
     flag_format: str | None = None
+
+    @model_validator(mode="after")
+    def validate_authorized_scope(self) -> "TGATask":
+        if self.mode == "web_audit" and not [item for item in self.scope if item.strip()]:
+            raise ValueError("web_audit requires non-empty scope")
+        return self
 
 
 class Intent(BaseModel):
