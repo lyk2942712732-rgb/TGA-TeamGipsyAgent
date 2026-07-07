@@ -1,10 +1,12 @@
 {
-  "mcpServers": {
-    "tga-security-hub": {
-      "type": "stdio",
-      "command": "docker",
-      "args": ["exec", "-i", "mcp-security-hub", "mcp-security-hub"]
-    }
+  "mcpSecurityHub": {
+    "source": "https://github.com/FuzzingLabs/mcp-security-hub",
+    "localRoot": "D:/path/to/mcp-security-hub",
+    "mode": "full-catalog-policy-gated"
+  },
+  "policy": {
+    "default": "deny unless target is in scope and intensity allows the tool",
+    "destructiveTools": "registered but disabled until an explicit contract flag exists"
   }
 }
 
