@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "tga-security-hub": {
+      "type": "stdio",
+      "command": "docker",
+      "args": ["exec", "-i", "mcp-security-hub", "mcp-security-hub"]
+    }
+  }
+}
+

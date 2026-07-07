@@ -1,0 +1,12 @@
+{
+  "id": "task_code_audit_demo",
+  "name": "local-code-audit-demo",
+  "mode": "code_audit",
+  "target": "./examples/code_audit/sample_project",
+  "scope": ["./examples/code_audit/sample_project"],
+  "intensity": "passive",
+  "allow_active_scan": false,
+  "goal": "Find hardcoded secrets and simple injection risks in the local code.",
+  "flag_format": null
+}
+

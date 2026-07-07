@@ -1,0 +1,12 @@
+{
+  "id": "task_web_ctf_demo",
+  "name": "web-ctf-demo",
+  "mode": "ctf",
+  "target": "http://127.0.0.1:8081",
+  "scope": ["127.0.0.1:8081"],
+  "intensity": "normal",
+  "allow_active_scan": true,
+  "goal": "Solve the challenge and recover the flag.",
+  "flag_format": "flag\\{[^}]+\\}"
+}
+
