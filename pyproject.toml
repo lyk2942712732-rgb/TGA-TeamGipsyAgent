@@ -4,7 +4,9 @@ version = "0.1.0"
 description = "Team Gipsy Agent: authorized vulnerability review and CTF-solving MVP."
 requires-python = ">=3.11"
 dependencies = [
+    "fastapi>=0.111",
     "pydantic>=2.7",
+    "uvicorn>=0.30",
 ]
 
 [project.optional-dependencies]
@@ -18,4 +20,3 @@ tga = "tga.cli.main:main"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
-
