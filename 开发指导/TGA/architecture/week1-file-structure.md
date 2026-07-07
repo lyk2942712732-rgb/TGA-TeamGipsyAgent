@@ -50,7 +50,7 @@ TGA/                                      # 项目根目录.
 |   |   |-- __init__.py                   # workers 子包初始化.
 |   |   |-- base.py                       # Worker Protocol，统一 run(task, intent, workspace).
 |   |   |-- subprocess_worker.py          # 本地 subprocess worker，Week 1 默认可跑.
-|   |   |-- cli_agent_worker.py           # 可选 CLI agent worker，例如后续接 Claude/Codex.
+|   |   |-- cli_agent_worker.py           # 可选后端模型执行适配器；不是 UI，不影响自研界面.
 |   |   `-- output_parser.py              # 解析 stdout marker：FOUND_FLAG、UNVERIFIED_LEAD 等.
 |   |
 |   |-- tools/                            # 工具和 MCP 接入层，主要由开发者 B 负责.
@@ -73,6 +73,19 @@ TGA/                                      # 项目根目录.
 |       |-- report_model.py               # 报告辅助模型，例如 tools_used.
 |       |-- markdown_report.py            # 从 task_snapshot 生成 Markdown 报告.
 |       `-- evidence_renderer.py          # 证据片段渲染，例如截断 excerpt.
+|
+|-- apps/                                 # TGA 自己的产品界面层，主要由开发者 C 负责.
+|   |-- api/                              # Web UI 调用的后端 API，不直接写核心逻辑.
+|   |   |-- main.py                       # FastAPI/Flask 入口，暴露 task、run、report API.
+|   |   |-- schemas.py                    # API request/response schema，映射到 tga/contracts.py.
+|   |   `-- routes.py                     # 路由：创建任务、查看状态、下载报告.
+|   `-- web/                              # TGA 独立前端 UI，不依赖 Claude/Codex 的界面.
+|       |-- package.json                  # 前端依赖，可选 Next/Vite/React.
+|       |-- src/                          # 前端源码.
+|       |   |-- App.tsx                    # 主页面：任务创建、运行状态、报告查看.
+|       |   |-- api.ts                     # 调用 apps/api 的 HTTP/SSE 客户端.
+|       |   `-- pages/                    # 页面：New Task、Run Detail、Report.
+|       `-- README.md                     # 前端启动说明.
 |
 |-- examples/                             # 示例任务配置，C 负责维护.
 |   |-- web_ctf/                          # Web CTF demo.
@@ -130,6 +143,8 @@ tests/test_output_parser.py               # B 的 marker 解析测试.
 tga/contracts.py                          # 读取统一 TGATask，不另写字段名.
 tga/cli/                                  # CLI 入口和 config loader.
 tga/reporting/                            # Markdown 报告生成.
+apps/api/                                 # TGA 自己的后端 API，给 UI 调用.
+apps/web/                                 # TGA 自己的独立 Web UI.
 examples/                                 # 三个 demo task.json.
 scripts/tga_run_demo.py                   # demo 启动脚本.
 scripts/tga_generate_report.py            # 报告重生成脚本.
@@ -173,7 +188,11 @@ docs/TGA_RUNBOOK.md                       # 操作手册.
 P2：有余力再做.
 
 ```text
-tga/workers/cli_agent_worker.py           # 接 Claude/Codex 等 CLI agent.
+tga/workers/cli_agent_worker.py           # 可选：后端调用模型命令行工具；不是用户界面.
+apps/api/main.py                          # 自研 UI 的后端 API 入口.
+apps/api/routes.py                        # 创建任务、查询状态、获取报告的 API.
+apps/web/src/App.tsx                      # 自研 Web UI 主页面.
+apps/web/src/api.ts                       # 前端调用后端 API 的封装.
 tga/tools/rate_limit.py                   # 更细限速.
 tga/reporting/evidence_renderer.py        # 更好看的证据片段渲染.
 docs/TGA_SECURITY_MODEL.md                # 更完整安全模型.
@@ -193,7 +212,7 @@ docs/TGA_SECURITY_MODEL.md                # 更完整安全模型.
 | `tga/orchestrator/planner.py` | A | 把任务拆成 intent |
 | `tga/orchestrator/scheduler.py` | A | 分配 intent 给 worker |
 | `tga/workers/subprocess_worker.py` | B | 执行本地命令或脚本 |
-| `tga/workers/cli_agent_worker.py` | B | 可选：调用 Claude/Codex 等 CLI agent |
+| `tga/workers/cli_agent_worker.py` | B | 可选：后端模型命令行适配器，不是用户界面 |
 | `tga/workers/output_parser.py` | B | 解析 worker marker |
 | `tga/tools/mcp_catalog.py` | B | 管理 MVP MCP 工具清单 |
 | `tga/tools/tool_policy.py` | B | scope/intensity 工具准入 |
@@ -201,11 +220,15 @@ docs/TGA_SECURITY_MODEL.md                # 更完整安全模型.
 | `tga/cli/config_loader.py` | C | 读取 task.json |
 | `tga/cli/main.py` | C | CLI 入口 |
 | `tga/reporting/markdown_report.py` | C | 生成 Markdown 报告 |
+| `apps/api/main.py` | C | TGA 自研 UI 的后端 API 入口 |
+| `apps/api/routes.py` | C | 任务创建、状态查询、报告下载接口 |
+| `apps/web/src/App.tsx` | C | TGA 自研 Web UI 主页面 |
+| `apps/web/src/api.ts` | C | 前端 API 调用封装 |
 | `examples/*/task.json` | C | demo 任务配置 |
 
 ## 第一周不建议开发
 
-- 复杂 Web dashboard。
+- 复杂 Web dashboard。Week 1 可以做最小 UI：创建任务、查看状态、打开报告。
 - 分布式 worker。
 - 自动提交平台 flag。
 - 长期知识库和 RAG。
