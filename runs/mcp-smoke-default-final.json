@@ -1,0 +1,102 @@
+{
+  "hub_root": "C:\\Users\\zwz-o\\Documents\\Codex\\2026-07-07\\d-ctf-tga\\work\\mcp-security-hub",
+  "cases": [
+    {
+      "server": "searchsploit-mcp",
+      "tool": "searchsploit_search",
+      "status": "ok",
+      "returncode": 0,
+      "timed_out": false,
+      "command": [
+        "docker",
+        "compose",
+        "-f",
+        "C:\\Users\\zwz-o\\Documents\\Codex\\2026-07-07\\d-ctf-tga\\work\\mcp-security-hub\\docker-compose.yml",
+        "run",
+        "--rm",
+        "-T",
+        "searchsploit-mcp"
+      ],
+      "stdout_tail": " - Chunked-Encoding Memory Corruption (1)\\\",\\n      \\\"platform\\\": \\\"multiple\\\",\\n      \\\"type\\\": \\\"remote\\\",\\n      \\\"date\\\": null\\n    },\\n    {\\n      \\\"edb_id\\\": \\\"21560\\\",\\n      \\\"title\\\": \\\"Apache 1.x/2.0.x - Chunked-Encoding Memory Corruption (2)\\\",\\n      \\\"platform\\\": \\\"multiple\\\",\\n      \\\"type\\\": \\\"remote\\\",\\n      \\\"date\\\": null\\n    },\\n    {\\n      \\\"edb_id\\\": \\\"21697\\\",\\n      \\\"title\\\": \\\"Apache 2.0 - Encoded Backslash Directory Traversal\\\",\\n      \\\"platform\\\": \\\"windows\\\",\\n      \\\"type\\\": \\\"remote\\\",\\n      \\\"date\\\": null\\n    },\\n    {\\n      \\\"edb_id\\\": \\\"21719\\\",\\n      \\\"title\\\": \\\"Apache 2.0 - Full Path Disclosure\\\",\\n      \\\"platform\\\": \\\"windows\\\",\\n      \\\"type\\\": \\\"remote\\\",\\n      \\\"date\\\": null\\n    },\\n    {\\n      \\\"edb_id\\\": \\\"5330\\\",\\n      \\\"title\\\": \\\"Apache 2.0 mod_jk2 2.0.2 (Windows x86) - Remote Buffer Overflow\\\",\\n      \\\"platform\\\": \\\"windows_x86\\\",\\n      \\\"type\\\": \\\"remote\\\",\\n      \\\"date\\\": null\\n    },\\n    {\\n      \\\"edb_id\\\": \\\"21854\\\",\\n      \\\"title\\\": \\\"Apache 2.0.39/40 - Oversized STDERR Buffer Denial of Service\\\",\\n      \\\"platform\\\": \\\"linux\\\",\\n      \\\"type\\\": \\\"dos\\\",\\n      \\\"date\\\": null\\n    },\\n    {\\n      \\\"edb_id\\\": \\\"11\\\",\\n      \\\"title\\\": \\\"Apache 2.0.44 (Linux) - Remote Denial of Service\\\",\\n      \\\"platform\\\": \\\"linux\\\",\\n      \\\"type\\\": \\\"dos\\\",\\n      \\\"date\\\": null\\n    },\\n    {\\n      \\\"edb_id\\\": \\\"38\\\",\\n      \\\"title\\\": \\\"Apache 2.0.45 - 'APR' Crash\\\",\\n      \\\"platform\\\": \\\"linux\\\",\\n      \\\"type\\\": \\\"dos\\\",\\n      \\\"date\\\": null\\n    },\\n    {\\n      \\\"edb_id\\\": \\\"1056\\\",\\n      \\\"title\\\": \\\"Apache 2.0.49 - Arbitrary Long HTTP Headers Denial of Service\\\",\\n      \\\"platform\\\": \\\"multiple\\\",\\n      \\\"type\\\": \\\"dos\\\",\\n      \\\"date\\\": null\\n    },\\n    {\\n      \\\"edb_id\\\": \\\"23581\\\",\\n      \\\"title\\\": \\\"Apache 2.0.4x mod_perl - File Descriptor Leakage (3)\\\",\\n      \\\"platform\\\": \\\"linux\\\",\\n      \\\"type\\\": \\\"local\\\",\\n      \\\"date\\\": null\\n    },\\n    {\\n      \\\"edb_id\\\": \\\"23481\\\",\\n      \\\"title\\\": \\\"Apache 2.0.4x mod_php - File Descriptor Leakage (1)\\\",\\n      \\\"platform\\\": \\\"linux\\\",\\n      \\\"type\\\": \\\"local\\\",\\n      \\\"date\\\": null\\n    },\\n    {\\n      \\\"edb_id\\\": \\\"23482\\\",\\n      \\\"title\\\": \\\"Apache 2.0.4x mod_php - File Descriptor Leakage (2)\\\",\\n      \\\"platform\\\": \\\"linux\\\",\\n      \\\"type\\\": \\\"local\\\",\\n      \\\"date\\\": null\\n    },\\n    {\\n      \\\"edb_id\\\": \\\"855\\\",\\n      \\\"title\\\": \\\"Apache 2.0.52 - GET Denial of Service\\\",\\n      \\\"platform\\\": \\\"multiple\\\",\\n      \\\"type\\\": \\\"dos\\\",\\n      \\\"date\\\": null\\n    },\\n    {\\n      \\\"edb_id\\\": \\\"3996\\\",\\n      \\\"title\\\": \\\"Apache 2.0.58 mod_rewrite (Windows 2003) - Remote Overflow\\\",\\n      \\\"platform\\\": \\\"windows\\\",\\n      \\\"type\\\": \\\"remote\\\",\\n      \\\"date\\\": null\\n    },\\n    {\\n      \\\"edb_id\\\": \\\"15319\\\",\\n      \\\"title\\\": \\\"Apache 2.2 (Windows) - Local Denial of Service\\\",\\n      \\\"platform\\\": \\\"windows\\\",\\n      \\\"type\\\": \\\"dos\\\",\\n      \\\"date\\\": null\\n    }\\n  ],\\n  \\\"error\\\": null\\n}\"}],\"isError\":false}}\n",
+      "stderr_tail": "time=\"2026-07-07T21:41:19+08:00\" level=warning msg=\"C:\\\\Users\\\\zwz-o\\\\Documents\\\\Codex\\\\2026-07-07\\\\d-ctf-tga\\\\work\\\\mcp-security-hub\\\\docker-compose.yml: the attribute `version` is obsolete, it will be ignored, please remove it to avoid potential confusion\"\n Container mcp-security-hub-searchsploit-mcp-run-4c93b90b1c9d Creating \n Container mcp-security-hub-searchsploit-mcp-run-4c93b90b1c9d Created \n/app/server.py:37: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/\n  class Settings(BaseSettings):\n2026-07-07 13:41:20,195 - searchsploit-mcp - INFO - Starting SearchSploit MCP Server\n2026-07-07 13:41:20,203 - mcp.server.lowlevel.server - INFO - Processing request of type CallToolRequest\n2026-07-07 13:41:20,205 - searchsploit-mcp - INFO - Searching exploits for: apache\n"
+    },
+    {
+      "server": "solazy-mcp",
+      "tool": "list_runs",
+      "status": "ok",
+      "returncode": 0,
+      "timed_out": false,
+      "command": [
+        "docker",
+        "compose",
+        "-f",
+        "C:\\Users\\zwz-o\\Documents\\Codex\\2026-07-07\\d-ctf-tga\\work\\mcp-security-hub\\docker-compose.yml",
+        "--profile",
+        "on-demand",
+        "run",
+        "--rm",
+        "-T",
+        "solazy-mcp"
+      ],
+      "stdout_tail": "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"protocolVersion\":\"2024-11-05\",\"capabilities\":{\"experimental\":{},\"resources\":{\"subscribe\":false,\"listChanged\":false},\"tools\":{\"listChanged\":false}},\"serverInfo\":{\"name\":\"solazy-mcp\",\"version\":\"1.28.1\"}}}\n{\"jsonrpc\":\"2.0\",\"id\":2,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"{\\n  \\\"runs\\\": [],\\n  \\\"count\\\": 0\\n}\"}],\"isError\":false}}\n",
+      "stderr_tail": "time=\"2026-07-07T21:41:21+08:00\" level=warning msg=\"C:\\\\Users\\\\zwz-o\\\\Documents\\\\Codex\\\\2026-07-07\\\\d-ctf-tga\\\\work\\\\mcp-security-hub\\\\docker-compose.yml: the attribute `version` is obsolete, it will be ignored, please remove it to avoid potential confusion\"\n Container mcp-security-hub-solazy-mcp-run-981da49b4f80 Creating \n Container mcp-security-hub-solazy-mcp-run-981da49b4f80 Created \n"
+    },
+    {
+      "server": "yara-mcp",
+      "tool": "list_active_scans",
+      "status": "ok",
+      "returncode": 0,
+      "timed_out": false,
+      "command": [
+        "docker",
+        "compose",
+        "-f",
+        "C:\\Users\\zwz-o\\Documents\\Codex\\2026-07-07\\d-ctf-tga\\work\\mcp-security-hub\\docker-compose.yml",
+        "run",
+        "--rm",
+        "-T",
+        "yara-mcp"
+      ],
+      "stdout_tail": "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"protocolVersion\":\"2024-11-05\",\"capabilities\":{\"experimental\":{},\"resources\":{\"subscribe\":false,\"listChanged\":false},\"tools\":{\"listChanged\":false}},\"serverInfo\":{\"name\":\"yara-mcp\",\"version\":\"1.28.1\"}}}\n{\"jsonrpc\":\"2.0\",\"id\":2,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"{\\n  \\\"active_scans\\\": [],\\n  \\\"count\\\": 0,\\n  \\\"max_concurrent\\\": 2\\n}\"}],\"isError\":false}}\n",
+      "stderr_tail": "time=\"2026-07-07T21:41:22+08:00\" level=warning msg=\"C:\\\\Users\\\\zwz-o\\\\Documents\\\\Codex\\\\2026-07-07\\\\d-ctf-tga\\\\work\\\\mcp-security-hub\\\\docker-compose.yml: the attribute `version` is obsolete, it will be ignored, please remove it to avoid potential confusion\"\n Container mcp-security-hub-yara-mcp-run-9bf131baae53 Creating \n Container mcp-security-hub-yara-mcp-run-9bf131baae53 Created \n/app/server.py:43: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/\n  class Settings(BaseSettings):\n2026-07-07 13:41:23,344 - yara-mcp - INFO - Starting YARA MCP Server\n2026-07-07 13:41:23,344 - yara-mcp - INFO - Rules directory: /app/rules\n2026-07-07 13:41:23,344 - yara-mcp - INFO - Output directory: /app/output\n2026-07-07 13:41:23,352 - mcp.server.lowlevel.server - INFO - Processing request of type CallToolRequest\n"
+    },
+    {
+      "server": "nmap-mcp",
+      "tool": "list_active_scans",
+      "status": "ok",
+      "returncode": 0,
+      "timed_out": false,
+      "command": [
+        "docker",
+        "compose",
+        "-f",
+        "C:\\Users\\zwz-o\\Documents\\Codex\\2026-07-07\\d-ctf-tga\\work\\mcp-security-hub\\docker-compose.yml",
+        "run",
+        "--rm",
+        "-T",
+        "nmap-mcp"
+      ],
+      "stdout_tail": "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"protocolVersion\":\"2024-11-05\",\"capabilities\":{\"experimental\":{},\"resources\":{\"subscribe\":false,\"listChanged\":false},\"tools\":{\"listChanged\":false}},\"serverInfo\":{\"name\":\"nmap-mcp\",\"version\":\"1.28.1\"}}}\n{\"jsonrpc\":\"2.0\",\"id\":2,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"{\\n  \\\"active_scans\\\": [],\\n  \\\"count\\\": 0,\\n  \\\"max_concurrent\\\": 3\\n}\"}],\"isError\":false}}\n",
+      "stderr_tail": "time=\"2026-07-07T21:41:24+08:00\" level=warning msg=\"C:\\\\Users\\\\zwz-o\\\\Documents\\\\Codex\\\\2026-07-07\\\\d-ctf-tga\\\\work\\\\mcp-security-hub\\\\docker-compose.yml: the attribute `version` is obsolete, it will be ignored, please remove it to avoid potential confusion\"\n Container mcp-security-hub-nmap-mcp-run-ae98cc7692c9 Creating \n Container mcp-security-hub-nmap-mcp-run-ae98cc7692c9 Created \n/app/server.py:46: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/\n  class Settings(BaseSettings):\n2026-07-07 13:41:24,859 - nmap-mcp - INFO - Starting Nmap MCP Server\n2026-07-07 13:41:24,859 - nmap-mcp - INFO - Output directory: /app/output\n2026-07-07 13:41:24,868 - mcp.server.lowlevel.server - INFO - Processing request of type CallToolRequest\n"
+    },
+    {
+      "server": "boofuzz-mcp",
+      "tool": "boofuzz_list_scripts",
+      "status": "ok",
+      "returncode": 0,
+      "timed_out": false,
+      "command": [
+        "docker",
+        "compose",
+        "-f",
+        "C:\\Users\\zwz-o\\Documents\\Codex\\2026-07-07\\d-ctf-tga\\work\\mcp-security-hub\\docker-compose.yml",
+        "run",
+        "--rm",
+        "-T",
+        "boofuzz-mcp"
+      ],
+      "stdout_tail": "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"protocolVersion\":\"2024-11-05\",\"capabilities\":{\"experimental\":{},\"tools\":{\"listChanged\":false}},\"serverInfo\":{\"name\":\"boofuzz-mcp\",\"version\":\"1.28.1\"}}}\n{\"jsonrpc\":\"2.0\",\"id\":2,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"[]\"}],\"isError\":false}}\n",
+      "stderr_tail": "time=\"2026-07-07T21:41:25+08:00\" level=warning msg=\"C:\\\\Users\\\\zwz-o\\\\Documents\\\\Codex\\\\2026-07-07\\\\d-ctf-tga\\\\work\\\\mcp-security-hub\\\\docker-compose.yml: the attribute `version` is obsolete, it will be ignored, please remove it to avoid potential confusion\"\n Container mcp-security-hub-boofuzz-mcp-run-b87b311d4da7 Creating \n Container mcp-security-hub-boofuzz-mcp-run-b87b311d4da7 Created \n2026-07-07 13:41:26,221 - boofuzz-mcp - INFO - Starting Boofuzz MCP Server\n2026-07-07 13:41:26,228 - mcp.server.lowlevel.server - INFO - Processing request of type CallToolRequest\n"
+    }
+  ]
+}
