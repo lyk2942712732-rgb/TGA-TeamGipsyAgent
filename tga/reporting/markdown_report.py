@@ -22,8 +22,42 @@ def render_markdown_report(snapshot: dict[str, Any]) -> str:
         f"- Allow Active Scan: {task.get('allow_active_scan', False)}",
         f"- Tools Used: {format_list(tools_used(snapshot))}",
         "",
+        "## Decision Trace",
+    ]
+    plan_events = events_by_type(snapshot, "PLAN_CREATED")
+    decision_events = events_by_type(
+        snapshot,
+        "DECISION_TRACE",
+        "SAFETY_DECISION",
+        "INTENT_RESULT",
+        "ADAPTATION_DECISION",
+    )
+    if not plan_events and not decision_events:
+        lines.append("- none")
+    for event in plan_events:
+        payload = event.get("payload") or {}
+        lines.append(f"- Plan: {quote_excerpt(payload.get('rationale') or payload.get('summary') or '')}")
+        plan = payload.get("plan") or {}
+        for step in plan.get("steps") or []:
+            lines.append(
+                f"  - {step.get('order')}. {step.get('kind')} risk={step.get('risk')} "
+                f"tools={format_list(step.get('required_tools'))}: "
+                f"{quote_excerpt(step.get('rationale') or '')}"
+            )
+    for event in decision_events:
+        payload = event.get("payload") or {}
+        label = event.get("type")
+        summary = payload.get("summary") or payload.get("reason") or payload.get("status") or payload
+        intent_id = event.get("intent_id") or payload.get("intent_id") or "task"
+        lines.append(f"- {label} [{intent_id}]: {quote_excerpt(str(summary))}")
+        rationale = payload.get("rationale")
+        if rationale:
+            lines.append(f"  - Rationale: {quote_excerpt(str(rationale))}")
+    lines.extend([
+        "",
         "## Confirmed Findings",
     ]
+    )
     confirmed = findings_by_status(snapshot, "confirmed")
     if not confirmed:
         lines.append("- none")

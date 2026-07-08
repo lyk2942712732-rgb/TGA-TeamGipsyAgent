@@ -20,6 +20,7 @@ Severity = Literal["info", "low", "medium", "high", "critical"]
 ArtifactKind = Literal["stdout", "stderr", "tool_output", "http_response", "file", "report"]
 WorkerStatus = Literal["ok", "failed", "blocked"]
 RiskLevel = Literal["passive", "active", "destructive"]
+DecisionPhase = Literal["planning", "execution", "adaptation", "gate"]
 
 
 class TGAError(BaseModel):
@@ -93,4 +94,15 @@ class WorkerResult(BaseModel):
     findings: list[Finding] = Field(default_factory=list)
     flags: list[str] = Field(default_factory=list)
     errors: list[str] = Field(default_factory=list)
+
+
+class DecisionTrace(BaseModel):
+    task_id: str
+    phase: DecisionPhase
+    summary: str
+    rationale: str
+    intent_id: str | None = None
+    inputs: list[str] = Field(default_factory=list)
+    selected_tools: list[str] = Field(default_factory=list)
+    next_action: str | None = None
 

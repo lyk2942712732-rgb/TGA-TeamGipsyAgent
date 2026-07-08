@@ -17,6 +17,10 @@ dev = [
 [project.scripts]
 tga = "tga.cli.main:main"
 
+[tool.setuptools.packages.find]
+include = ["tga*", "apps*"]
+exclude = ["tests*", "docs*", "examples*", "scripts*", "runs*", "开发指导*"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]

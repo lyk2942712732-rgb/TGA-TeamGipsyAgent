@@ -10,8 +10,44 @@ export type TGATask = {
   flag_format?: string | null;
 };
 
-export async function createTask(task: TGATask): Promise<{ task_id: string; status: string }> {
-  const response = await fetch("http://127.0.0.1:8000/api/tasks", {
+export type CreateTaskResponse = {
+  task_id: string;
+  status: string;
+  report_path?: string | null;
+  run_root?: string | null;
+};
+
+export type SnapshotEvent = {
+  id?: number;
+  intent_id?: string | null;
+  type: string;
+  payload: Record<string, unknown>;
+  created_at?: string;
+};
+
+export type TaskSnapshot = {
+  task?: TGATask | null;
+  intents?: Array<Record<string, unknown>>;
+  artifacts?: Array<Record<string, unknown>>;
+  findings?: Array<Record<string, unknown>>;
+  flags?: Array<Record<string, unknown>>;
+  events?: SnapshotEvent[];
+};
+
+export type TaskSnapshotResponse = {
+  task_id: string;
+  snapshot: TaskSnapshot;
+};
+
+const configuredApiBase = import.meta.env.VITE_TGA_API_BASE as string | undefined;
+const API_BASE = (configuredApiBase ?? "http://127.0.0.1:8000").replace(/\/$/, "");
+
+function apiUrl(path: string): string {
+  return `${API_BASE}${path}`;
+}
+
+export async function createTask(task: TGATask): Promise<CreateTaskResponse> {
+  const response = await fetch(apiUrl("/api/tasks"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ task }),
@@ -22,3 +58,14 @@ export async function createTask(task: TGATask): Promise<{ task_id: string; stat
   return response.json();
 }
 
+export async function fetchTaskSnapshot(taskId: string): Promise<TaskSnapshotResponse> {
+  const response = await fetch(apiUrl(`/api/tasks/${encodeURIComponent(taskId)}`));
+  if (!response.ok) {
+    throw new Error(`Snapshot request failed: ${response.status}`);
+  }
+  return response.json();
+}
+
+export function reportUrl(taskId: string): string {
+  return apiUrl(`/api/tasks/${encodeURIComponent(taskId)}/report`);
+}

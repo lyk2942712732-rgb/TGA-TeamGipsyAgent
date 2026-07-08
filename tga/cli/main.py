@@ -10,6 +10,7 @@ from tga.evidence.artifacts import ArtifactStore
 from tga.evidence.store import EvidenceStore
 from tga.orchestrator.run_loop import run_task
 from tga.reporting.markdown_report import render_markdown_report
+from tga.tools.bootstrap import build_tool_runner_from_env
 from tga.workers.subprocess_worker import SubprocessWorker
 
 
@@ -18,7 +19,10 @@ def run_from_config(config: str, *, run_root: str, report_out: str | None = None
     task_root = Path(run_root) / task.id
     artifact_store = ArtifactStore(task_root / "artifacts")
     store = EvidenceStore(task_root / "evidence.db")
-    worker = SubprocessWorker(artifact_store=artifact_store)
+    worker = SubprocessWorker(
+        artifact_store=artifact_store,
+        tool_runner=build_tool_runner_from_env(artifact_store),
+    )
     run_task(task=task, store=store, worker=worker, run_root=run_root)
 
     report = render_markdown_report(store.task_snapshot(task.id))

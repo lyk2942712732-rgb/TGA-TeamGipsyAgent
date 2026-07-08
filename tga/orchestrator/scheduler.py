@@ -8,6 +8,7 @@ from tga.contracts import ArtifactRecord, Finding, Intent, TGATask, WorkerResult
 from tga.core.evidence_gate import finding_ok
 from tga.core.flag_gate import flag_ok
 from tga.evidence.store import EvidenceStore
+from tga.orchestrator.planner import explain_adaptation, explain_intent_execution
 from tga.workers.base import Worker
 
 
@@ -19,6 +20,29 @@ class Scheduler:
 
     def run_intent(self, *, task: TGATask, intent: Intent) -> WorkerResult:
         self.store.add_intent(intent)
+        self.store.add_event(
+            task.id,
+            "DECISION_TRACE",
+            explain_intent_execution(task, intent),
+            intent_id=intent.id,
+        )
+        safety = self._safety_decision(task=task, intent=intent)
+        self.store.add_event(task.id, "SAFETY_DECISION", safety, intent_id=intent.id)
+        if not safety["allowed"]:
+            self.store.update_intent_status(intent.id, "blocked")
+            result = WorkerResult(
+                task_id=task.id,
+                intent_id=intent.id,
+                status="blocked",
+                errors=[safety["reason"]],
+            )
+            self.store.add_event(
+                task.id,
+                "INTENT_RESULT",
+                _result_summary(result),
+                intent_id=intent.id,
+            )
+            return result
         self.store.update_intent_status(intent.id, "running")
         workspace = self.run_root / task.id / "work" / intent.id
         result = self.worker.run(task=task, intent=intent, workspace=str(workspace))
@@ -46,7 +70,39 @@ class Scheduler:
             )
         status = "done" if result.status == "ok" else result.status
         self.store.update_intent_status(intent.id, status)
+        self.store.add_event(
+            task.id,
+            "INTENT_RESULT",
+            _result_summary(result),
+            intent_id=intent.id,
+        )
+        self.store.add_event(
+            task.id,
+            "ADAPTATION_DECISION",
+            explain_adaptation(task, intent, status=status, errors=result.errors),
+            intent_id=intent.id,
+        )
         return result
+
+    @staticmethod
+    def _safety_decision(*, task: TGATask, intent: Intent) -> dict:
+        if intent.risk == "destructive":
+            return {
+                "allowed": False,
+                "reason": "destructive_intent_not_allowed",
+                "rationale": "Week 1 MVP never executes destructive actions.",
+            }
+        if intent.risk == "active" and task.intensity == "passive":
+            return {
+                "allowed": False,
+                "reason": "active_intent_blocked_by_passive_intensity",
+                "rationale": "Passive intensity allows collection and reporting but blocks active verification.",
+            }
+        return {
+            "allowed": True,
+            "reason": "within_task_policy",
+            "rationale": "Intent risk is compatible with task intensity and scope policy.",
+        }
 
     def _gate_flag(
         self,
@@ -149,4 +205,16 @@ class Scheduler:
             return path.read_text(encoding="utf-8", errors="replace")
         except (OSError, ValueError):
             return ""
+
+
+def _result_summary(result: WorkerResult) -> dict:
+    return {
+        "status": result.status,
+        "artifact_count": len(result.artifacts),
+        "finding_count": len(result.findings),
+        "flag_count": len(result.flags),
+        "fact_count": len(result.facts),
+        "lead_count": len(result.leads),
+        "errors": result.errors,
+    }
 
