@@ -12,6 +12,23 @@ Run tests:
 pytest -q
 ```
 
+Run the executable v2 evaluation suite (it starts only local targets and emits
+JSON metrics for success rate, actions, repeats, empty plans, scope refusals,
+and duration):
+
+```bash
+python evals/run_eval.py
+```
+
+Run the Runtime UI checks:
+
+```bash
+cd apps/web
+npm run build
+npm test
+npm run test:e2e
+```
+
 Run a demo:
 
 ```bash

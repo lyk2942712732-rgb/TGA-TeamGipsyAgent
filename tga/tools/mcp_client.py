@@ -19,6 +19,7 @@ class MCPCallResult:
     stderr: str
     returncode: int
     timed_out: bool = False
+    output_truncated: bool = False
 
     @property
     def ok(self) -> bool:
@@ -60,6 +61,7 @@ class MCPClient:
         arguments: dict[str, Any],
         volumes: list[str] | None = None,
         timeout_seconds: int = 120,
+        max_output_bytes: int = 262_144,
     ) -> MCPCallResult:
         command = self.build_command(server, volumes=volumes)
         initialize = {
@@ -104,13 +106,13 @@ class MCPClient:
         try:
             _send_json(process, initialize)
             if not _wait_for_response(stdout_queue, stdout_lines, expected_id=1, deadline=deadline):
-                return _finish_timeout(process, command, stdout_lines, stderr_lines, stderr_queue)
+                return _finish_timeout(process, command, stdout_lines, stderr_lines, stderr_queue, max_output_bytes)
             _drain_queue(stderr_queue, stderr_lines)
 
             _send_json(process, initialized)
             _send_json(process, call)
             if not _wait_for_response(stdout_queue, stdout_lines, expected_id=2, deadline=deadline):
-                return _finish_timeout(process, command, stdout_lines, stderr_lines, stderr_queue)
+                return _finish_timeout(process, command, stdout_lines, stderr_lines, stderr_queue, max_output_bytes)
 
             if process.stdin:
                 process.stdin.close()
@@ -121,12 +123,12 @@ class MCPClient:
                 returncode = process.wait(timeout=5)
             _drain_queue(stdout_queue, stdout_lines)
             _drain_queue(stderr_queue, stderr_lines)
-            return MCPCallResult(command, "".join(stdout_lines), "".join(stderr_lines), returncode)
+            return _bounded_result(command, stdout_lines, stderr_lines, returncode, max_output_bytes)
         except (BrokenPipeError, OSError) as exc:
             _drain_queue(stdout_queue, stdout_lines)
             _drain_queue(stderr_queue, stderr_lines)
             stderr_lines.append(str(exc))
-            return MCPCallResult(command, "".join(stdout_lines), "".join(stderr_lines), returncode=1)
+            return _bounded_result(command, stdout_lines, stderr_lines, returncode=1, max_output_bytes=max_output_bytes)
 
 
 def _start_reader(stream: Any, output: queue.Queue[str]) -> None:
@@ -182,6 +184,7 @@ def _finish_timeout(
     stdout_lines: list[str],
     stderr_lines: list[str],
     stderr_queue: queue.Queue[str],
+    max_output_bytes: int,
 ) -> MCPCallResult:
     _drain_queue(stderr_queue, stderr_lines)
     try:
@@ -192,4 +195,21 @@ def _finish_timeout(
         process.wait(timeout=5)
     except subprocess.TimeoutExpired:
         pass
-    return MCPCallResult(command, "".join(stdout_lines), "".join(stderr_lines), returncode=124, timed_out=True)
+    result = _bounded_result(command, stdout_lines, stderr_lines, returncode=124, max_output_bytes=max_output_bytes)
+    result.timed_out = True
+    return result
+
+
+def _bounded_result(
+    command: list[str], stdout_lines: list[str], stderr_lines: list[str], returncode: int, max_output_bytes: int
+) -> MCPCallResult:
+    stdout, stdout_truncated = _bounded_text("".join(stdout_lines), max_output_bytes)
+    stderr, stderr_truncated = _bounded_text("".join(stderr_lines), max_output_bytes)
+    return MCPCallResult(command, stdout, stderr, returncode, output_truncated=stdout_truncated or stderr_truncated)
+
+
+def _bounded_text(value: str, limit: int) -> tuple[str, bool]:
+    encoded = value.encode("utf-8", errors="replace")
+    if len(encoded) <= limit:
+        return value, False
+    return encoded[:limit].decode("utf-8", errors="replace"), True

@@ -16,35 +16,34 @@ This keeps full integration from becoming full permission.
 
 ## Bootstrap
 
-Clone the upstream hub outside the TGA package:
+The Hub is included inside the TGA project. Run these commands from the project root:
 
 ```powershell
-git clone https://github.com/FuzzingLabs/mcp-security-hub.git D:\CTF\mcp-security-hub
-$env:TGA_MCP_SECURITY_HUB_ROOT = 'D:\CTF\mcp-security-hub'
+$hub = '.\mcp-security-hub'
 ```
 
 Inspect the full catalog:
 
 ```powershell
-python scripts\tga_mcp_catalog.py --hub-root $env:TGA_MCP_SECURITY_HUB_ROOT --summary
+python scripts\tga_mcp_catalog.py --hub-root $hub --summary
 ```
 
 Build upstream images as needed:
 
 ```powershell
-docker compose -f "$env:TGA_MCP_SECURITY_HUB_ROOT\docker-compose.yml" build
+docker compose -f "$hub\docker-compose.yml" build
 ```
 
 Or let TGA build iteratively with retries and JSON reporting:
 
 ```powershell
-python scripts\tga_mcp_bootstrap.py --hub-root $env:TGA_MCP_SECURITY_HUB_ROOT --build --retries 3
+python scripts\tga_mcp_bootstrap.py --hub-root $hub --build --retries 3
 ```
 
 To start with a small validation set while keeping the full catalog registered:
 
 ```powershell
-python scripts\tga_mcp_bootstrap.py --hub-root $env:TGA_MCP_SECURITY_HUB_ROOT --build --only nmap nuclei gitleaks --retries 3
+python scripts\tga_mcp_bootstrap.py --hub-root $hub --build --only nmap nuclei gitleaks --retries 3
 ```
 
 For long-running autonomous iteration, keep a report artifact and avoid resetting the
@@ -52,7 +51,7 @@ checkout every time:
 
 ```powershell
 python scripts\tga_mcp_bootstrap.py `
-  --hub-root $env:TGA_MCP_SECURITY_HUB_ROOT `
+  --hub-root $hub `
   --no-fetch `
   --build `
   --network-profile cn `
@@ -68,14 +67,14 @@ that avoids direct `go.dev` tarball downloads. It does not modify the source che
 Check availability:
 
 ```powershell
-python scripts\tga_mcp_healthcheck.py --hub-root $env:TGA_MCP_SECURITY_HUB_ROOT
+python scripts\tga_mcp_healthcheck.py --hub-root $hub
 ```
 
 Run safe stdio smoke calls against a representative set of MCP servers:
 
 ```powershell
 python scripts\tga_mcp_smoke.py `
-  --hub-root $env:TGA_MCP_SECURITY_HUB_ROOT `
+  --hub-root $hub `
   --timeout-seconds 120 `
   --report-path runs\mcp-smoke-default-final.json
 ```

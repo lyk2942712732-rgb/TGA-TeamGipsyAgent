@@ -11,12 +11,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from tga.tools.mcp_catalog import discover_mcp_security_hub
 
 
+PROJECT_HUB = Path(__file__).resolve().parents[1] / "mcp-security-hub"
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Print TGA's full mcp-security-hub catalog.")
     parser.add_argument(
         "--hub-root",
-        default=os.environ.get("TGA_MCP_SECURITY_HUB_ROOT", "mcp-security-hub"),
-        help="Path to a cloned FuzzingLabs/mcp-security-hub checkout.",
+        default=os.environ.get("TGA_MCP_SECURITY_HUB_ROOT", str(PROJECT_HUB)),
+        help="MCP hub path (defaults to this project's mcp-security-hub directory).",
     )
     parser.add_argument("--summary", action="store_true", help="Print a compact text summary.")
     args = parser.parse_args()

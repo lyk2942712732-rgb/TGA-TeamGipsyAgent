@@ -19,6 +19,12 @@ _PLACEHOLDER_BODIES = {
     "tbd",
 }
 
+_DEFAULT_FLAG_FORMATS = {
+    r"flag\{[^}]+\}",
+    r"FLAG\{[^}]+\}",
+}
+_COMMON_CTF_FLAG_RE = re.compile(r"[A-Za-z0-9_]{2,32}\{[^{}\s]{4,200}\}")
+
 
 def is_placeholder_flag(flag: str) -> bool:
     value = flag.strip()
@@ -44,11 +50,12 @@ def flag_ok(
     raw_output: str = "",
     artifact_texts: list[str] | None = None,
 ) -> bool:
-    if not flag_format or not re.fullmatch(flag_format, flag):
+    format_matches = bool(flag_format and re.fullmatch(flag_format, flag))
+    common_default_match = flag_format in _DEFAULT_FLAG_FORMATS and bool(_COMMON_CTF_FLAG_RE.fullmatch(flag))
+    if not format_matches and not common_default_match:
         return False
     if is_placeholder_flag(flag):
         return False
     if flag in raw_output:
         return True
     return any(flag in text for text in artifact_texts or [])
-

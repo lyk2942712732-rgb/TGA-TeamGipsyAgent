@@ -3,6 +3,8 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 
+from tga.tools.bootstrap import mcp_security_hub_candidates
+
 
 def _load_bootstrap_module():
     script = Path(__file__).resolve().parents[1] / "scripts" / "tga_mcp_bootstrap.py"
@@ -58,3 +60,17 @@ def test_cn_profile_patches_go_proxy() -> None:
     text = "FROM python:3.12-slim\nRUN go install example.com/tool@latest\n"
     patched = module._patch_go_proxy(text)
     assert "GOPROXY=https://goproxy.cn,direct" in patched
+
+
+def test_mcp_candidates_prefer_override_then_project_relative_hub(monkeypatch) -> None:
+    import tga.tools.bootstrap as bootstrap
+
+    project_root = Path(bootstrap.__file__).resolve().parents[2]
+    monkeypatch.delenv("TGA_MCP_SECURITY_HUB_ROOT", raising=False)
+    candidates = mcp_security_hub_candidates()
+    assert candidates[0] == project_root / "mcp-security-hub"
+    assert Path.home() / "Desktop" / "tga" / "mcp-security-hub" not in candidates
+
+    override = project_root / "custom-hub"
+    monkeypatch.setenv("TGA_MCP_SECURITY_HUB_ROOT", str(override))
+    assert mcp_security_hub_candidates()[0] == override

@@ -5,7 +5,7 @@ from __future__ import annotations
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from apps.api.routes import router
+from apps.api.routes_v2 import router as runtime_v2_router
 
 app = FastAPI(title="TGA API", version="0.1.0")
 
@@ -17,5 +17,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(router, prefix="/api")
+app.include_router(runtime_v2_router, prefix="/api")
 
+
+@app.get("/api/health")
+def health() -> dict[str, str]:
+    """Process health used by the desktop and browser launchers."""
+    return {"status": "ok", "service": "tga-runtime"}

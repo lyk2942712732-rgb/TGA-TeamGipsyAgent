@@ -1,0 +1,7 @@
+import type { TaskListItem } from "../api/tasks";
+import { EmptyState, statusLabel } from "../components/ui/EmptyState";
+
+export function DashboardPage({ tasks, onNew, onOpen }: { tasks: TaskListItem[]; onNew: () => void; onOpen: (id: string) => void }) {
+  const counts = ["running", "paused", "blocked", "completed"].map((status) => ({ status, count: tasks.filter((item) => item.status === status).length }));
+  return <section className="page-stack"><header className="page-title"><div><span className="eyebrow">TGA / Runtime Console</span><h1>任务总览</h1><p>查看可验证的会话状态、最近动作和已确认结论。</p></div><button onClick={onNew}>新建 Session</button></header><div className="metric-grid">{counts.map((item) => <article className={`metric-card status-${item.status}`} key={item.status}><span>{statusLabel(item.status)}</span><strong>{item.count}</strong></article>)}</div><section className="surface"><div className="surface-head"><div><h2>最近 Session</h2><p>数据来自 TGA 会话快照，不以聊天文本推断运行状态。</p></div></div>{tasks.length ? <div className="task-table">{tasks.slice(0, 8).map((task) => <button key={task.task_id} onClick={() => onOpen(task.task_id)}><span className={`status-badge ${task.status}`}>{statusLabel(task.status)}</span><strong>{task.name || task.task_id}</strong><small title={task.target}>{task.target}</small><small>Flag {task.flags} · Finding {task.findings} · Evidence {task.artifacts}</small></button>)}</div> : <EmptyState label="尚无 Session。创建后会在这里显示可信状态与证据数量。" />}</section></section>;
+}

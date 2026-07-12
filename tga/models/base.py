@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Iterable, Protocol
 
 
 @dataclass(frozen=True)
@@ -24,3 +24,6 @@ class ModelClient(Protocol):
 
     def chat(self, messages: list[ModelMessage], *, temperature: float = 0.2) -> ModelResponse:
         """Send chat messages and return a normalized model response."""
+
+    def chat_stream(self, messages: list[ModelMessage], *, temperature: float = 0.2) -> Iterable[str]:
+        """Send chat messages and yield incremental text chunks when supported."""

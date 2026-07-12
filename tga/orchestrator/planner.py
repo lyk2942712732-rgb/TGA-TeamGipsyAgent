@@ -3,26 +3,31 @@
 from __future__ import annotations
 
 from tga.contracts import Intent, TGATask
+from tga.agent.llm_planner import reorder_with_llm
 from tga.core.intents import make_intent
+from tga.models.bootstrap import model_config_status
 
 
 def plan_initial_intents(task: TGATask) -> list[Intent]:
     if task.mode == "ctf":
-        return [
+        intents = [
             make_intent(task=task, kind="recon", goal="Identify reachable services and challenge surface", required_tools=["whatweb"]),
             make_intent(task=task, kind="exploit_ctf", goal="Recover a flag from real target output", risk="active"),
             make_intent(task=task, kind="report", goal="Generate CTF report"),
         ]
+        return reorder_with_llm(task, intents)[0]
     if task.mode == "code_audit":
-        return [
+        intents = [
             make_intent(task=task, kind="code_scan", goal="Run static analysis and secret scanning", required_tools=["semgrep", "gitleaks"]),
             make_intent(task=task, kind="report", goal="Generate code audit report"),
         ]
-    return [
+        return reorder_with_llm(task, intents)[0]
+    intents = [
         make_intent(task=task, kind="recon", goal="Perform in-scope reconnaissance", required_tools=["whatweb", "nmap"]),
         make_intent(task=task, kind="verify", goal="Verify likely vulnerabilities with evidence", risk="active"),
         make_intent(task=task, kind="report", goal="Generate audit report"),
     ]
+    return reorder_with_llm(task, intents)[0]
 
 
 def explain_plan(task: TGATask, intents: list[Intent]) -> dict:
@@ -36,6 +41,7 @@ def explain_plan(task: TGATask, intents: list[Intent]) -> dict:
         "goal": task.goal,
         "target": task.target,
         "strategy": _strategy_for(task),
+        "llm": model_config_status(),
         "steps": [
             {
                 "order": index,

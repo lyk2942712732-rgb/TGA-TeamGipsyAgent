@@ -13,6 +13,12 @@ Snapshot keys:
 - `flags`
 - `events`
 
+When a task has been initialized by the v2 Manager, the same read-only
+snapshot additionally carries `session`, `solvers`, `board`, `actions`, and
+`agent_events`. `agent_events` is canonical for the runtime report: it is
+ordered only by its per-task `seq`, never by browser time or a database row id.
+id.
+
 ## Task
 
 The `task` object is a serialized `TGATask` from `tga.contracts`.
@@ -79,3 +85,11 @@ Expected fields:
 Events explain leads, dead ends, tool failures, and other execution details.
 The report currently recognizes `unverified_lead`, `lead`, `deadend`, and
 `dead_end` event types.
+
+## Runtime report layer (v2)
+
+The user-facing report adds `Session Outcome`, validated/inconclusive
+hypotheses, capability/policy refusals, and artifact provenance. The developer
+report adds a solver lifecycle, ActionSpec/ActionResult summaries, gate/budget
+events, and a `seq`-ordered timeline. Raw artifact bodies and credentials are
+not copied into either report; previews are bounded and redacted by the API.

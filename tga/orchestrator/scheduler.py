@@ -52,6 +52,12 @@ class Scheduler:
             artifact.id: self._read_artifact_text(task=task, artifact=artifact)
             for artifact in result.artifacts
         }
+        self.store.add_event(
+            task.id,
+            "WORKER_OBSERVATION",
+            _observation_summary(result, artifact_texts),
+            intent_id=intent.id,
+        )
         for flag in result.flags:
             self._gate_flag(
                 task=task,
@@ -216,5 +222,23 @@ def _result_summary(result: WorkerResult) -> dict:
         "fact_count": len(result.facts),
         "lead_count": len(result.leads),
         "errors": result.errors,
+    }
+
+
+def _observation_summary(result: WorkerResult, artifact_texts: dict[str, str]) -> dict:
+    return {
+        "status": result.status,
+        "facts": result.facts[:20],
+        "leads": result.leads[:20],
+        "errors": result.errors[:20],
+        "artifact_ids": [artifact.id for artifact in result.artifacts],
+        "artifact_excerpts": [
+            {
+                "artifact_id": artifact_id,
+                "text": " ".join(text.split())[:1000],
+            }
+            for artifact_id, text in artifact_texts.items()
+            if text
+        ],
     }
 

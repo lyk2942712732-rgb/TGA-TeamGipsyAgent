@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from typing import Iterable
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
@@ -48,3 +49,44 @@ class OpenAICompatibleClient:
             raise RuntimeError(f"model request failed: {exc.code} {text}") from exc
         content = raw.get("choices", [{}])[0].get("message", {}).get("content", "")
         return ModelResponse(content=content, model=self.model, raw=raw)
+
+    def chat_stream(self, messages: list[ModelMessage], *, temperature: float = 0.2) -> Iterable[str]:
+        url = self.base_url.rstrip("/") + "/chat/completions"
+        body = json.dumps(
+            {
+                "model": self.model,
+                "messages": [{"role": message.role, "content": message.content} for message in messages],
+                "temperature": temperature,
+                "stream": True,
+            }
+        ).encode("utf-8")
+        request = Request(
+            url,
+            data=body,
+            method="POST",
+            headers={
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json",
+                "Accept": "text/event-stream",
+            },
+        )
+        try:
+            with urlopen(request, timeout=self.timeout_s) as response:
+                for raw_line in response:
+                    line = raw_line.decode("utf-8", errors="replace").strip()
+                    if not line:
+                        continue
+                    if line.startswith("data:"):
+                        line = line[5:].strip()
+                    if line == "[DONE]":
+                        break
+                    try:
+                        payload = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    delta = payload.get("choices", [{}])[0].get("delta", {}).get("content")
+                    if delta:
+                        yield str(delta)
+        except HTTPError as exc:
+            text = exc.read().decode("utf-8", errors="replace")
+            raise RuntimeError(f"model stream failed: {exc.code} {text}") from exc
