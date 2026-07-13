@@ -182,6 +182,7 @@ def _summarize_response(text: str) -> str:
 def _append_runtime_sections(lines: list[str], snapshot: dict[str, Any]) -> None:
     """Render the two v2 report layers from durable runtime state only."""
     session = snapshot.get("session") or {}
+    challenge = snapshot.get("challenge") or {}
     board = snapshot.get("board") or {}
     events = runtime_events(snapshot)
     actions = {item.get("id"): item for item in runtime_actions(snapshot)}
@@ -192,6 +193,8 @@ def _append_runtime_sections(lines: list[str], snapshot: dict[str, Any]) -> None
         f"- Turns: {session.get('turn_count', 0)}/{session.get('max_turns', 'unknown')}",
         f"- Stop Reason: {session.get('stop_reason') or 'none'}",
         f"- Active Solver: {session.get('active_solver_id') or 'none'}",
+        f"- Challenge Status: {challenge.get('status') or 'unknown'}",
+        f"- Completion Proof Artifact: {challenge.get('completion_proof_artifact_id') or 'none'}",
         "", "## Validated Hypotheses",
     ])
     verified = [item for item in board.get("hypotheses") or [] if item.get("status") == "verified"]
@@ -213,6 +216,16 @@ def _append_runtime_sections(lines: list[str], snapshot: dict[str, Any]) -> None
         lines.append("- none")
     for solver in solvers:
         lines.append(f"- {solver.get('id')} role={solver.get('role')} status={solver.get('status')} started={solver.get('started_at')} finished={solver.get('finished_at') or 'ongoing'}")
+    subagents = snapshot.get("subagents") or []
+    if subagents:
+        lines.extend(["", "### Structured Subagent Handoffs"])
+        for item in subagents:
+            request = item.get("request") or {}
+            output = item.get("output") or {}
+            lines.append(
+                f"- {item.get('solver_id')} role={request.get('role')} status={item.get('status')} "
+                f"request={request.get('id')} artifacts={format_list(output.get('artifact_ids') or [])}"
+            )
     lines.extend(["", "### Action Specs and Results"])
     if not actions:
         lines.append("- none")

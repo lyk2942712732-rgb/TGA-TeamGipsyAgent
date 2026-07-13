@@ -136,6 +136,8 @@ def _normalize_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
             "stop_reason": session.get("stop_reason"),
         },
         "solvers": snapshot.get("solvers") or [],
+        "challenge": snapshot.get("challenge") or {},
+        "subagents": snapshot.get("subagents") or [],
         "board": {
             "hypotheses": board.get("hypotheses") or snapshot.get("hypotheses") or [],
             "memory": board.get("memory") or snapshot.get("memory") or snapshot.get("memory_entries") or [],
