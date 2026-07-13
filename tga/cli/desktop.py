@@ -97,7 +97,11 @@ def _prepare_frontend(*, root: Path, host: str, port: int, build: bool) -> Path:
         raise DesktopLaunchError("Frontend bundle is missing; run `tga go` without --no-build first.")
 
     env = os.environ.copy()
-    env.setdefault("VITE_TGA_API_BASE", f"http://{host}:{port}")
+    # Keep an explicitly configured cross-origin API base, but otherwise let
+    # the frontend use the page origin.  In particular, embedding 0.0.0.0 in
+    # a Vite bundle makes a server reachable but is not a browser-reachable
+    # address.  Same-origin fallback works for localhost, public IPs, domains
+    # and reverse proxies alike.
     try:
         # On Windows CreateProcess does not reliably resolve the `npm` shim
         # without its extension.  Prefer the actual npm.cmd command resolved
