@@ -93,3 +93,16 @@ hypotheses, capability/policy refusals, and artifact provenance. The developer
 report adds a solver lifecycle, ActionSpec/ActionResult summaries, gate/budget
 events, and a `seq`-ordered timeline. Raw artifact bodies and credentials are
 not copied into either report; previews are bounded and redacted by the API.
+
+Evaluation replays may additionally provide `challenge_contract` and
+`evaluation`. These are public, database-free projections. The private oracle
+and expected flag are never part of either object. Reports then include:
+
+- Challenge Contract and declared solver roles
+- hypothesis evolution in authoritative event sequence
+- confirmed flag-to-artifact provenance
+- failure boundaries and component failure domain
+- coverage gaps, scope rejections, and semantic budgets
+
+The current v2 calibration has no challenge submission endpoint. Reports must
+render submission as `not required`, never synthesize an accepted submission.

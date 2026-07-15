@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from tga.contracts import Hypothesis, TGATask
 from tga.models.base import ModelResponse
-from tga.runtime.solver import LLMRuntimeSolver, build_runtime_solver
+from tga.runtime.solver import LLMRuntimeSolver, MainSolver, build_runtime_solver
 
 
 class FakeModel:
@@ -45,6 +45,23 @@ def test_llm_runtime_solver_reports_invalid_or_deferred_plans_without_execution(
 
     assert action is None
     assert "encrypted blob" in solver.last_plan_reason
+
+
+def test_llm_runtime_solver_treats_invalid_json_as_bounded_empty_plan() -> None:
+    solver = LLMRuntimeSolver(FakeModel("this is not JSON"))
+
+    action = solver.propose_action(task=_task(), solver_id="solver_1", hypothesis=_hypothesis(), snapshot={})
+
+    assert action is None
+    assert "no JSON object" in solver.last_plan_reason
+
+
+def test_runtime_solver_factory_uses_local_fallback_without_llm(monkeypatch) -> None:
+    import tga.runtime.solver as solver_module
+
+    monkeypatch.setattr(solver_module, "build_model_client_from_env", lambda: None)
+
+    assert isinstance(build_runtime_solver(), MainSolver)
 
 
 def test_runtime_solver_factory_prefers_configured_model(monkeypatch) -> None:

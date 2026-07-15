@@ -88,6 +88,25 @@ def test_v2_sse_stream_reads_agent_events(tmp_path, monkeypatch):
     assert '"type": "SOLVER_STARTED"' in first_chunk
 
 
+def test_v2_sse_disconnect_closes_transport_without_mutating_session(tmp_path, monkeypatch):
+    task_id = _seed_session(tmp_path, monkeypatch)
+
+    class DisconnectedRequest:
+        async def is_disconnected(self) -> bool:
+            return True
+
+    stream = routes_v2._event_stream(task_id, DisconnectedRequest(), cursor=0)
+    try:
+        asyncio.run(stream.__anext__())
+    except StopAsyncIteration:
+        pass
+    else:
+        raise AssertionError("disconnected SSE stream should close immediately")
+
+    status = TestClient(app).get(f"/api/v2/tasks/{task_id}/session").json()["session"]["status"]
+    assert status == "running"
+
+
 def test_v2_start_recovers_a_created_session(tmp_path, monkeypatch):
     monkeypatch.setenv("TGA_RUN_ROOT", str(tmp_path / "runs"))
     task = TGATask(id="recover", name="recover", mode="ctf", target="http://127.0.0.1:8080", scope=["127.0.0.1:8080"], goal="solve")
