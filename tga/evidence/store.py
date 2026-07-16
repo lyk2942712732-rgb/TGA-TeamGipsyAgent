@@ -7,6 +7,7 @@ import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from tga.contracts import (
     ActionResult,
@@ -306,7 +307,7 @@ class EvidenceStore:
         # a control event had no action_id.  Omit absent values at the write
         # boundary instead; concrete false/zero values remain intact.
         payload = _compact_event_payload(payload)
-        event_id = f"evt_{datetime.now(UTC).strftime('%Y%m%d%H%M%S%f')}"
+        event_id = f"evt_{datetime.now(UTC).strftime('%Y%m%d%H%M%S%f')}_{uuid4().hex[:8]}"
         now = utc_now()
         with self.conn:
             seq = int(self.conn.execute(

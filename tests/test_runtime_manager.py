@@ -87,6 +87,21 @@ def test_manager_control_and_hint_write_through_runtime_only(tmp_path: Path):
     assert store.task_snapshot(task.id)["board"]["memory"][0]["source"] == "user"
 
 
+def test_manager_pause_resume_cancel_states_are_durable(tmp_path: Path):
+    task = _task()
+    run_root = tmp_path / "runs"
+    store = EvidenceStore(run_root / task.id / "evidence.db")
+    store.create_task(task)
+    manager = Manager(store=store, run_root=run_root)
+    from tga.runtime.session import AgentSession
+
+    AgentSession(store=store, run_root=run_root, task_id=task.id).ensure(max_turns=4)
+    assert manager.control_session(task_id=task.id, action="pause")["status"] == "paused"
+    assert manager.control_session(task_id=task.id, action="resume")["status"] == "running"
+    assert manager.control_session(task_id=task.id, action="cancel")["status"] == "cancelled"
+    assert store.get_session(task.id).finished_at is not None
+
+
 def test_manager_start_creates_v2_session_and_persists_initial_hint(tmp_path: Path):
     task = _task()
     run_root = tmp_path / "runs"
@@ -329,3 +344,27 @@ def test_manager_rejects_invalid_initial_hypothesis_count(tmp_path: Path):
     snapshot = Manager(store=store, run_root=root, executor=FailedExecutor(ArtifactStore(root / task.id / "artifacts")), solver=InvalidSolver()).run_session(task.id)
     assert snapshot["session"]["status"] == "failed"
     assert snapshot["session"]["stop_reason"] == "invalid_initial_hypothesis_count"
+
+
+def test_solver_crash_is_persisted_as_failed_instead_of_leaving_running(tmp_path: Path):
+    class CrashingSolver(MainSolver):
+        model_name = "invalid-json-solver"
+
+        def initial_hypotheses(self, *, task, solver_id):
+            raise ValueError("model response was not valid JSON")
+
+    task = _task()
+    root = tmp_path / "runs"
+    store = EvidenceStore(root / task.id / "evidence.db")
+    store.create_task(task)
+
+    snapshot = Manager(
+        store=store,
+        run_root=root,
+        executor=FailedExecutor(ArtifactStore(root / task.id / "artifacts")),
+        solver=CrashingSolver(),
+    ).run_session(task.id)
+
+    assert snapshot["session"]["status"] == "failed"
+    assert snapshot["session"]["stop_reason"] == "solver_initialization_failed"
+    assert any(event["type"] == "SOLVER_FAILED" for event in snapshot["agent_events"])
