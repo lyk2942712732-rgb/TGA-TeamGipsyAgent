@@ -187,6 +187,23 @@ def _append_runtime_sections(lines: list[str], snapshot: dict[str, Any]) -> None
     events = runtime_events(snapshot)
     actions = {item.get("id"): item for item in runtime_actions(snapshot)}
     solvers = snapshot.get("solvers") or []
+    contract = snapshot.get("challenge_contract") or {}
+    evaluation = snapshot.get("evaluation") or {}
+    if contract:
+        lines.extend([
+            "", "## Challenge Contract",
+            f"- Case: {contract.get('case_id')} — {contract.get('title')}",
+            f"- Theme: {contract.get('theme')}",
+            f"- Goal: {quote_excerpt(str(contract.get('goal') or ''))}",
+            f"- Required Capabilities: {format_list(contract.get('required_capabilities') or [])}",
+            f"- Action Budget: {contract.get('max_actions')}",
+            f"- Semantic Attempt Budgets: manager={contract.get('manager_semantic_attempt_budget')} executor={contract.get('executor_semantic_attempt_budget')}",
+            "- Submission Oracle: not required (removed by current v2 calibration)",
+            "", "## Solver Roles",
+            f"- Contract Roles: {format_list(contract.get('solver_roles') or [])}",
+        ])
+        for solver in solvers:
+            lines.append(f"- Runtime Solver: {solver.get('id')} role={solver.get('role')} model={solver.get('model_name') or 'unknown'}")
     lines.extend([
         "", "## Session Outcome",
         f"- Status: {session.get('status', 'unknown')}",
@@ -202,6 +219,13 @@ def _append_runtime_sections(lines: list[str], snapshot: dict[str, Any]) -> None
     lines.extend(["", "## Inconclusive / Rejected Hypotheses"])
     unresolved = [item for item in board.get("hypotheses") or [] if item.get("status") in {"inconclusive", "rejected", "superseded"}]
     _append_hypotheses(lines, unresolved)
+    lines.extend(["", "## Hypothesis Evolution"])
+    hypothesis_events = [event for event in events if event.get("type") in {"HYPOTHESIS_CREATED", "HYPOTHESIS_UPDATED", "HYPOTHESIS_STALLED"}]
+    if not hypothesis_events:
+        lines.append("- none")
+    for event in hypothesis_events:
+        payload = event.get("payload") or {}
+        lines.append(f"- seq {event.get('seq')}: {event.get('type')} hypothesis={payload.get('hypothesis_id') or 'unknown'} status={payload.get('status') or 'created'} — {_safe_summary(payload)}")
     lines.extend(["", "## Tools, Capabilities and Policy Refusals"])
     capabilities = sorted({str(item.get("capability")) for item in actions.values() if item.get("capability")})
     lines.append(f"- Capabilities Used: {format_list(capabilities)}")
@@ -211,6 +235,31 @@ def _append_runtime_sections(lines: list[str], snapshot: dict[str, Any]) -> None
     for event in refusals:
         payload = event.get("payload") or {}
         lines.append(f"- seq {event.get('seq')}: {event.get('type')} — {_safe_summary(payload)}")
+    lines.extend(["", "## Confirmed Flag Provenance"])
+    artifact_ids = {item.get("id") for item in snapshot.get("artifacts") or []}
+    confirmed_events = [event for event in events if event.get("type") == "FLAG_CONFIRMED"]
+    if not confirmed_events:
+        lines.append("- none; candidate flags are not treated as solved")
+    for event in confirmed_events:
+        payload = event.get("payload") or {}
+        evidence_id = payload.get("evidence_artifact_id")
+        lines.append(f"- seq {event.get('seq')}: {payload.get('value')} artifact={evidence_id} persisted={evidence_id in artifact_ids}")
+    boundaries = [item for item in board.get("memory") or [] if item.get("kind") == "failure_boundary"]
+    lines.extend(["", "## Failure Boundaries"])
+    if not boundaries:
+        lines.append("- none")
+    for item in boundaries:
+        lines.append(f"- {_redact(str(item.get('content') or ''))} artifacts={format_list(item.get('artifact_ids') or [])}")
+    if evaluation:
+        lines.extend([
+            "", "## Evaluation Closure",
+            f"- Outcome: {evaluation.get('outcome')}",
+            f"- Failure Domain: {evaluation.get('failure_domain')}",
+            f"- Artifact Provenance OK: {evaluation.get('artifact_provenance_ok')}",
+            f"- Scope Rejections: {evaluation.get('scope_rejection_count', 0)}",
+            f"- Semantic Repeats: {evaluation.get('semantic_repeat_count', 0)}",
+            f"- Coverage Gaps: {format_list(evaluation.get('coverage_gaps') or [])}",
+        ])
     lines.extend(["", "## Runtime Report (seq ordered)", "### Solver Lifecycle"])
     if not solvers:
         lines.append("- none")

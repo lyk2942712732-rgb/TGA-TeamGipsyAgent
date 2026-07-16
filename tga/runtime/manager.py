@@ -346,7 +346,12 @@ class Manager:
             return store.task_snapshot(task.id)
         solver = next(item for item in store.list_solvers(task.id) if item.id == store.get_session(task.id).active_solver_id)
         if not store.list_hypotheses(task.id):
-            drafts = self.solver.initial_hypotheses(task=task, solver_id=solver.id)
+            try:
+                drafts = self.solver.initial_hypotheses(task=task, solver_id=solver.id)
+            except Exception as exc:
+                events.append(task.id, "SOLVER_FAILED", {"phase": "initial_hypotheses", "reason": str(exc)[:500]}, solver_id=solver.id)
+                self._stop(store, task.id, solver.id, "failed", "solver_initialization_failed")
+                return store.task_snapshot(task.id)
             if not 1 <= len(drafts) <= 5:
                 self._stop(store, task.id, solver.id, "failed", "invalid_initial_hypothesis_count")
                 return store.task_snapshot(task.id)
@@ -397,7 +402,12 @@ class Manager:
                 task=task, snapshot=store.task_snapshot(task.id), skills=loaded_skills,
                 role=solver.role, solver_id=solver.id,
             )
-            proposed = self.solver.propose_action(task=task, solver_id=solver.id, hypothesis=hypothesis, snapshot=solver_context)
+            try:
+                proposed = self.solver.propose_action(task=task, solver_id=solver.id, hypothesis=hypothesis, snapshot=solver_context)
+            except Exception as exc:
+                events.append(task.id, "SOLVER_FAILED", {"phase": "propose_action", "reason": str(exc)[:500]}, solver_id=solver.id)
+                self._stop(store, task.id, solver.id, "failed", "solver_planning_failed")
+                break
             if proposed is None:
                 empty_plans += 1
                 events.append(
@@ -417,7 +427,12 @@ class Manager:
                     break
                 continue
             empty_plans = 0
-            self._validate_action(task, solver.id, hypothesis.id, proposed)
+            try:
+                self._validate_action(task, solver.id, hypothesis.id, proposed)
+            except (TypeError, ValueError) as exc:
+                events.append(task.id, "SOLVER_FAILED", {"phase": "action_contract", "reason": str(exc)[:500]}, solver_id=solver.id)
+                self._stop(store, task.id, solver.id, "failed", "invalid_solver_action")
+                break
             if self._semantic_retry_count(store, task.id, hypothesis.id, proposed) >= self.limits.max_semantic_retries:
                 board.transition_hypothesis(hypothesis.id, status="inconclusive", last_result="semantic action retry budget exhausted")
                 events.append(task.id, "HYPOTHESIS_STALLED", {"hypothesis_id": hypothesis.id, "reason": "semantic_retry_budget_exhausted"}, solver_id=solver.id)
@@ -450,7 +465,19 @@ class Manager:
                 events.append(task.id, "ACTION_FINISHED", {"action_id": proposed.id, "status": "failed", "summary": result.summary, "artifact_ids": []}, solver_id=solver.id)
                 self._stop(store, task.id, solver.id, "failed", "executor_failed")
                 break
-            self._validate_result(proposed, result)
+            try:
+                self._validate_result(proposed, result)
+            except (TypeError, ValueError) as exc:
+                normalized = ActionResult(
+                    action_id=proposed.id, task_id=task.id, solver_id=solver.id, status="failed",
+                    summary="controlled executor returned an invalid result contract",
+                    error=TGAError(code="INVALID_EXECUTOR_RESULT", message=str(exc)[:500]),
+                )
+                store.add_action_result(normalized)
+                store.update_action_status(proposed.id, "failed")
+                events.append(task.id, "ACTION_FINISHED", {"action_id": proposed.id, "status": "failed", "summary": normalized.summary, "artifact_ids": []}, solver_id=solver.id)
+                self._stop(store, task.id, solver.id, "failed", "invalid_executor_result")
+                break
             store.add_action_result(result)
             store.update_action_status(proposed.id, result.status)
             store.update_solver(solver.id, status="running")

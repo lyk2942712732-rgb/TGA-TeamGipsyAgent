@@ -1,7 +1,27 @@
 import { FormEvent, useState } from "react";
 import { createTask, type TGATask } from "../api/tasks";
 
-const defaultTask = (): TGATask => ({ id: `task_${crypto.randomUUID().replace(/-/g, "").slice(0, 12)}`, name: "新建安全任务", mode: "ctf", target: "http://127.0.0.1:8080", scope: ["127.0.0.1:8080"], target_theme: "", target_description: "", intensity: "normal", allow_active_scan: false, goal: "在授权范围内收集证据、验证假设并产出可追溯结论。", flag_format: "(?:flag|NSSCTF)\\{[^}]+\\}" });
+/**
+ * `crypto.randomUUID` is intentionally unavailable on an HTTP page served
+ * from a public IP.  Task ids only need a short local uniqueness suffix, so
+ * fall back safely instead of making the entire creation page fail to render.
+ */
+export function newTaskId(): string {
+  const uuid = globalThis.crypto?.randomUUID;
+  if (typeof uuid === "function") {
+    return `task_${uuid.call(globalThis.crypto).replace(/-/g, "").slice(0, 12)}`;
+  }
+
+  const values = new Uint32Array(2);
+  if (globalThis.crypto?.getRandomValues) {
+    globalThis.crypto.getRandomValues(values);
+    return `task_${Array.from(values, (value) => value.toString(16).padStart(8, "0")).join("").slice(0, 12)}`;
+  }
+
+  return `task_${`${Date.now().toString(16)}${Math.random().toString(16).slice(2)}`.slice(0, 12).padEnd(12, "0")}`;
+}
+
+const defaultTask = (): TGATask => ({ id: newTaskId(), name: "新建安全任务", mode: "ctf", target: "http://127.0.0.1:8080", scope: ["127.0.0.1:8080"], target_theme: "", target_description: "", intensity: "normal", allow_active_scan: false, goal: "在授权范围内收集证据、验证假设并产出可追溯结论。", flag_format: "(?:flag|NSSCTF)\\{[^}]+\\}" });
 
 export function NewTaskPage({ onCreated }: { onCreated: (id: string) => void }) {
   const [task, setTask] = useState(defaultTask); const [hint, setHint] = useState(""); const [error, setError] = useState<string | null>(null); const [busy, setBusy] = useState(false);

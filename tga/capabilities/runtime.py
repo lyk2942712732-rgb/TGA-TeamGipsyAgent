@@ -293,7 +293,7 @@ class ControlledActionExecutor:
         except OSError as exc:
             return self._reject(action, "WORKSPACE_READ_FAILED", redact_text(str(exc), 500))
         artifact = self.artifact_store.save_text(task_id=task.id, intent_id=action.hypothesis_id, kind="file", text=json.dumps({"relative_path": arguments.relative_path, "offset": arguments.offset, "size": size, "excerpt": redact_text(excerpt, self.budget.max_output_bytes), "truncated": arguments.offset + len(raw) < size}, ensure_ascii=False), tool="workspace.read", target=str(path), suffix=".json")
-        return ActionResult(action_id=action.id, task_id=task.id, solver_id=action.solver_id, status="succeeded", summary=f"read {arguments.relative_path} ({size} bytes)", artifact_ids=[artifact.id], facts=[f"workspace file observed: {arguments.relative_path}"])
+        return ActionResult(action_id=action.id, task_id=task.id, solver_id=action.solver_id, status="succeeded", summary=f"read {arguments.relative_path} ({size} bytes)", artifact_ids=[artifact.id], facts=[f"workspace file observed: {arguments.relative_path}"], candidate_flags=_candidate_flags(excerpt, task.flag_format))
 
     def _workspace_write(self, *, task: TGATask, action: ActionSpec, arguments: WorkspaceWriteArguments, workspace: Path) -> ActionResult:
         try:
@@ -343,7 +343,7 @@ class ControlledActionExecutor:
             location = excerpt.lower().find(arguments.query.lower())
             excerpt = excerpt[max(0, location - 500) : location + len(arguments.query) + 1500] if location >= 0 else ""
         artifact = self.artifact_store.save_text(task_id=task.id, intent_id=action.hypothesis_id, kind="file", text=json.dumps({"source_artifact_id": arguments.artifact_id, "offset": arguments.offset, "excerpt": redact_text(excerpt, arguments.limit)}, ensure_ascii=False), tool="artifact.inspect", suffix=".json")
-        return ActionResult(action_id=action.id, task_id=task.id, solver_id=action.solver_id, status="succeeded", summary=f"inspected {arguments.artifact_id}", artifact_ids=[artifact.id], facts=["artifact excerpt loaded"])
+        return ActionResult(action_id=action.id, task_id=task.id, solver_id=action.solver_id, status="succeeded", summary=f"inspected {arguments.artifact_id}", artifact_ids=[artifact.id], facts=["artifact excerpt loaded"], candidate_flags=_candidate_flags(excerpt, task.flag_format))
 
     def _reject(self, action: ActionSpec, code: str, message: str, *, retryable: bool = False) -> ActionResult:
         error = TGAError(code=code, message=message, retryable=retryable)

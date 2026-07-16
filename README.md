@@ -19,9 +19,23 @@ tga go
 
 若 `tga` 不是内部或外部命令，请重新打开终端、激活安装时使用的虚拟环境，或将该 Python 的 `Scripts` 目录加入 PATH。只想在浏览器中打开时使用 `tga web`，默认地址为 `http://127.0.0.1:5173`。
 
+公网直接运行时可使用（前端默认自动使用访问页面的公网地址）：
+
+```powershell
+tga web --host 0.0.0.0
+```
+
+若前端和 API 分别部署，才需要在**构建前**指定 API 地址。PowerShell 写法为：
+
+```powershell
+$env:VITE_TGA_API_BASE = "https://api.example.com"
+tga web --host 0.0.0.0
+```
+
 项目内的 `mcp-security-hub/` 会被自动发现，但 Docker 镜像**不会**由 `tga go` 自动构建。只有需要实际调用 MCP 工具时，才安装 Docker Desktop 并执行：
 
 ```powershell
+git clone https://github.com/FuzzingLabs/mcp-security-hub.git
 docker compose -f .\mcp-security-hub\docker-compose.yml build
 ```
 
