@@ -1,0 +1,171 @@
+{"kind":"deck","id":"pr/btpmju","name":"Deck"}
+{"kind":"layout","layoutId":"6a1ec51e-5d14-4169-a658-31f8dca680c3","name":"Master","type":"master"}
+{"kind":"layout","layoutId":"1bd157fa-9319-41ed-800e-43e7229f3cd0","name":"Title Slide","type":"title"}
+{"kind":"slide","id":"sl/c6jfkv","slide":1,"title":"短学期项目汇报","textShapes":7}
+{"kind":"shape","id":"sh/1gvy90je","slide":1,"bbox":[0,0,510,720]}
+{"kind":"shape","id":"sh/8z25kb6x","slide":1,"bbox":[42,58,86,5]}
+{"kind":"textbox","id":"sh/fmlkjm1c","slide":1,"text":"短学期项目汇报","textPreview":"短学期项目汇报","textChars":7,"textLines":1,"bbox":[42,92,320,28]}
+{"kind":"textbox","id":"sh/q1orytsv","slide":1,"text":"TGA","textPreview":"TGA","textChars":3,"textLines":1,"bbox":[42,155,360,78]}
+{"kind":"textbox","id":"sh/xs72x4na","slide":1,"text":"证据优先的\n授权安全智能体","textPreview":"证据优先的 | 授权安全智能体","textChars":13,"textLines":2,"bbox":[42,248,430,110]}
+{"kind":"textbox","id":"sh/87ed8bat","slide":1,"text":"面向 CTF 解题与授权漏洞审查，\n把任务规划、工具执行、证据留存和报告生成串成闭环。","textPreview":"面向 CTF 解题与授权漏洞审查， | 把任务规划、工具执行、证据留存和报告生成串成闭环。","textChars":43,"textLines":2,"bbox":[42,385,398,110]}
+{"kind":"textbox","id":"sh/fyxobm58","slide":1,"text":"Team Gipsy Agent","textPreview":"Team Gipsy Agent","textChars":16,"textLines":1,"bbox":[42,604,280,26]}
+{"kind":"textbox","id":"sh/qd4vmtwr","slide":1,"text":"5 分钟展示：目标、方案、开发成果","textPreview":"5 分钟展示：目标、方案、开发成果","textChars":17,"textLines":1,"bbox":[42,636,400,24]}
+{"kind":"textbox","id":"sh/sfil0rqd","slide":1,"text":"01","textPreview":"01","textChars":2,"textLines":1,"bbox":[1190,660,48,28]}
+{"kind":"image","id":"im/36hcrmhk","slide":1,"name":"","alt":"Abstract cybersecurity agent workflow visual","bbox":[420,0,860,720]}
+{"kind":"notes","id":"nt/c6jfkv","slide":1,"text":""}
+{"kind":"slide","id":"sl/51fh7r","slide":2,"title":"整体目标","textShapes":20}
+{"kind":"textbox","id":"sh/hoza1gvy","slide":2,"text":"整体目标","textPreview":"整体目标","textChars":4,"textLines":1,"bbox":[42,38,240,26]}
+{"kind":"textbox","id":"sh/a1gvy90j","slide":2,"text":"目标不是“跑工具”，而是让结论有证据","textPreview":"目标不是“跑工具”，而是让结论有证据","textChars":18,"textLines":1,"bbox":[42,74,1040,74]}
+{"kind":"textbox","id":"sh/zidonyd0","slide":2,"text":"Team Gipsy Agent / 短学期项目汇报","textPreview":"Team Gipsy Agent / 短学期项目汇报","textChars":26,"textLines":1,"bbox":[42,664,360,24]}
+{"kind":"textbox","id":"sh/svu9knih","slide":2,"text":"02","textPreview":"02","textChars":2,"textLines":1,"bbox":[1190,660,48,28]}
+{"kind":"textbox","id":"sh/hgn29gr2","slide":2,"text":"安全自动化容易给出“看似合理”的结论；短学期 MVP 要证明的是：每个确认结果都能回到真实输出和 artifact。","textPreview":"安全自动化容易给出“看似合理”的结论；短学期 MVP 要证明的是：每个确认结果都能回到真实输出和 artifact。","textChars":58,"textLines":1,"bbox":[42,180,520,150]}
+{"kind":"shape","id":"sh/ap4r65wj","slide":2,"bbox":[42,360,300,4]}
+{"kind":"textbox","id":"sh/za1gvy90","slide":2,"text":"Week 1 规则","textPreview":"Week 1 规则","textChars":9,"textLines":1,"bbox":[42,388,240,30]}
+{"kind":"textbox","id":"sh/sji5snel","slide":2,"text":"No evidence, no confirmed result.","textPreview":"No evidence, no confirmed result.","textChars":33,"textLines":1,"bbox":[42,428,440,30]}
+{"kind":"textbox","id":"sh/h4byhgn2","slide":2,"text":"flag 必须匹配格式并出现在真实输出中；finding 必须引用 artifact 并通过 evidence gate。","textPreview":"flag 必须匹配格式并出现在真实输出中；finding 必须引用 artifact 并通过 evidence gate。","textChars":61,"textLines":1,"bbox":[42,476,465,70]}
+{"kind":"shape","id":"sh/p4r65wju","slide":2,"bbox":[650,178,72,72]}
+{"kind":"textbox","id":"sh/wjudg7ad","slide":2,"text":"1","textPreview":"1","textChars":1,"textLines":1,"bbox":[660,194,52,34]}
+{"kind":"textbox","id":"sh/7y1kre1w","slide":2,"text":"授权边界","textPreview":"授权边界","textChars":4,"textLines":1,"bbox":[748,180,350,30]}
+{"kind":"textbox","id":"sh/ed8v6psf","slide":2,"text":"scope、intensity 和 active scan 开关先行判断","textPreview":"scope、intensity 和 active scan 开关先行判断","textChars":36,"textLines":1,"bbox":[748,218,390,34]}
+{"kind":"shape","id":"sh/pwb2hwfy","slide":2,"bbox":[650,272,520,1]}
+{"kind":"shape","id":"sh/0bi9s36h","slide":2,"bbox":[650,290,72,72]}
+{"kind":"textbox","id":"sh/7qpg3ex0","slide":2,"text":"2","textPreview":"2","textChars":1,"textLines":1,"bbox":[660,306,52,34]}
+{"kind":"textbox","id":"sh/i5sneloj","slide":2,"text":"任务闭环","textPreview":"任务闭环","textChars":4,"textLines":1,"bbox":[748,292,350,30]}
+{"kind":"textbox","id":"sh/pkzupwb2","slide":2,"text":"从 task config 到 intent、worker、artifact 和 report","textPreview":"从 task config 到 intent、worker、artifact 和 report","textChars":47,"textLines":1,"bbox":[748,330,390,34]}
+{"kind":"shape","id":"sh/0z61032l","slide":2,"bbox":[650,384,520,1]}
+{"kind":"shape","id":"sh/w7mp0bi9","slide":2,"bbox":[650,402,72,72]}
+{"kind":"textbox","id":"sh/psfil0rq","slide":2,"text":"3","textPreview":"3","textChars":1,"textLines":1,"bbox":[660,418,52,34]}
+{"kind":"textbox","id":"sh/e1w7mp0b","slide":2,"text":"工具集成","textPreview":"工具集成","textChars":4,"textLines":1,"bbox":[748,404,350,30]}
+{"kind":"textbox","id":"sh/7mp0bi9s","slide":2,"text":"通过 MCP catalog 接入安全工具，但不等于直接放权","textPreview":"通过 MCP catalog 接入安全工具，但不等于直接放权","textChars":30,"textLines":1,"bbox":[748,442,390,34]}
+{"kind":"shape","id":"sh/wval87ed","slide":2,"bbox":[650,496,520,1]}
+{"kind":"shape","id":"sh/pg3ex0nu","slide":2,"bbox":[650,514,72,72]}
+{"kind":"textbox","id":"sh/epkzupwb","slide":2,"text":"4","textPreview":"4","textChars":1,"textLines":1,"bbox":[660,530,52,34]}
+{"kind":"textbox","id":"sh/7adsji5s","slide":2,"text":"可复核报告","textPreview":"可复核报告","textChars":5,"textLines":1,"bbox":[748,516,350,30]}
+{"kind":"textbox","id":"sh/wra5gbq1","slide":2,"text":"报告展示 flag、finding、限制和证据来源","textPreview":"报告展示 flag、finding、限制和证据来源","textChars":25,"textLines":1,"bbox":[748,554,390,34]}
+{"kind":"shape","id":"sh/lc7u54zi","slide":2,"bbox":[650,608,520,1]}
+{"kind":"notes","id":"nt/51fh7r","slide":2,"text":""}
+{"kind":"slide","id":"sl/h8hrok","slide":3,"title":"设计方案","textShapes":34}
+{"kind":"textbox","id":"sh/q5o7qpg3","slide":3,"text":"设计方案","textPreview":"设计方案","textChars":4,"textLines":1,"bbox":[42,38,240,26]}
+{"kind":"textbox","id":"sh/1w7mp0bi","slide":3,"text":"系统按“任务 - 意图 - 工具 - 证据 - 报告”闭环运转","textPreview":"系统按“任务 - 意图 - 工具 - 证据 - 报告”闭环运转","textChars":31,"textLines":1,"bbox":[42,74,1040,74]}
+{"kind":"textbox","id":"sh/8bat47y1","slide":3,"text":"Team Gipsy Agent / 短学期项目汇报","textPreview":"Team Gipsy Agent / 短学期项目汇报","textChars":26,"textLines":1,"bbox":[42,664,360,24]}
+{"kind":"textbox","id":"sh/j2t83itg","slide":3,"text":"03","textPreview":"03","textChars":2,"textLines":1,"bbox":[1190,660,48,28]}
+{"kind":"shape","id":"sh/qh0fepkz","slide":3,"bbox":[48,178,182,138]}
+{"kind":"textbox","id":"sh/18jqh0fe","slide":3,"text":"Task","textPreview":"Task","textChars":4,"textLines":1,"bbox":[66,198,146,30]}
+{"kind":"textbox","id":"sh/8nqxs72x","slide":3,"text":"配置目标与范围","textPreview":"配置目标与范围","textChars":7,"textLines":1,"bbox":[66,242,146,36]}
+{"kind":"textbox","id":"sh/j6tovaho","slide":3,"text":"task.json","textPreview":"task.json","textChars":9,"textLines":1,"bbox":[66,286,146,24]}
+{"kind":"textbox","id":"sh/ulwval87","slide":3,"text":">","textPreview":">","textChars":1,"textLines":1,"bbox":[232,228,18,28]}
+{"kind":"shape","id":"sh/4vmtwra5","slide":3,"bbox":[248,178,182,138]}
+{"kind":"textbox","id":"sh/tgfmlkjm","slide":3,"text":"Planner","textPreview":"Planner","textChars":7,"textLines":1,"bbox":[266,198,146,30]}
+{"kind":"textbox","id":"sh/mp0bi9s3","slide":3,"text":"生成执行意图","textPreview":"生成执行意图","textChars":6,"textLines":1,"bbox":[266,242,146,36]}
+{"kind":"textbox","id":"sh/bat47y1k","slide":3,"text":"orchestrator","textPreview":"orchestrator","textChars":12,"textLines":1,"bbox":[266,286,146,24]}
+{"kind":"textbox","id":"sh/47y1kre1","slide":3,"text":">","textPreview":">","textChars":1,"textLines":1,"bbox":[432,228,18,28]}
+{"kind":"shape","id":"sh/tsvu9kni","slide":3,"bbox":[448,178,182,138]}
+{"kind":"textbox","id":"sh/m1cfa9w3","slide":3,"text":"Worker","textPreview":"Worker","textChars":6,"textLines":1,"bbox":[466,198,146,30]}
+{"kind":"textbox","id":"sh/bm58z25k","slide":3,"text":"调用工具执行","textPreview":"调用工具执行","textChars":6,"textLines":1,"bbox":[466,242,146,36]}
+{"kind":"textbox","id":"sh/4byhgn29","slide":3,"text":"tga/workers","textPreview":"tga/workers","textChars":11,"textLines":1,"bbox":[466,286,146,24]}
+{"kind":"textbox","id":"sh/twra5gbq","slide":3,"text":">","textPreview":">","textChars":1,"textLines":1,"bbox":[632,228,18,28]}
+{"kind":"shape","id":"sh/1gvy90je","slide":3,"bbox":[648,178,182,138]}
+{"kind":"textbox","id":"sh/8z25kb6x","slide":3,"text":"Artifact","textPreview":"Artifact","textChars":8,"textLines":1,"bbox":[666,198,146,30]}
+{"kind":"textbox","id":"sh/je9cvixc","slide":3,"text":"保存原始输出","textPreview":"保存原始输出","textChars":6,"textLines":1,"bbox":[666,242,146,36]}
+{"kind":"textbox","id":"sh/qtcj6tov","slide":3,"text":"tga/evidence","textPreview":"tga/evidence","textChars":12,"textLines":1,"bbox":[666,286,146,24]}
+{"kind":"textbox","id":"sh/xs72x4na","slide":3,"text":">","textPreview":">","textChars":1,"textLines":1,"bbox":[832,228,18,28]}
+{"kind":"shape","id":"sh/87ed8bat","slide":3,"bbox":[848,178,182,138]}
+{"kind":"textbox","id":"sh/fmlkjm1c","slide":3,"text":"Gate","textPreview":"Gate","textChars":4,"textLines":1,"bbox":[866,198,146,30]}
+{"kind":"textbox","id":"sh/q1orytsv","slide":3,"text":"验证 flag/finding","textPreview":"验证 flag/finding","textChars":15,"textLines":1,"bbox":[866,242,146,36]}
+{"kind":"textbox","id":"sh/x4nap4r6","slide":3,"text":"tga/core","textPreview":"tga/core","textChars":8,"textLines":1,"bbox":[866,286,146,24]}
+{"kind":"textbox","id":"sh/8jqh0fep","slide":3,"text":">","textPreview":">","textChars":1,"textLines":1,"bbox":[1032,228,18,28]}
+{"kind":"shape","id":"sh/2t83itgf","slide":3,"bbox":[1048,178,182,138]}
+{"kind":"textbox","id":"sh/re1w7mp0","slide":3,"text":"Report","textPreview":"Report","textChars":6,"textLines":1,"bbox":[1066,198,146,30]}
+{"kind":"textbox","id":"sh/kzupwb2h","slide":3,"text":"汇总可复核结果","textPreview":"汇总可复核结果","textChars":7,"textLines":1,"bbox":[1066,242,146,36]}
+{"kind":"textbox","id":"sh/9knih4by","slide":3,"text":"tga/reporting","textPreview":"tga/reporting","textChars":13,"textLines":1,"bbox":[1066,286,146,24]}
+{"kind":"shape","id":"sh/25kb6xkf","slide":3,"bbox":[42,386,575,204]}
+{"kind":"textbox","id":"sh/rqd4vmtw","slide":3,"text":"证据门禁把“候选结果”变成“确认结果”","textPreview":"证据门禁把“候选结果”变成“确认结果”","textChars":19,"textLines":1,"bbox":[68,412,500,34]}
+{"kind":"shape","id":"sh/kb6xkf6d","slide":3,"bbox":[72,475,8,8]}
+{"kind":"textbox","id":"sh/9w3m94fu","slide":3,"text":"CTF flag：匹配 flag_format，且来自 stdout / stderr / artifact 文本","textPreview":"CTF flag：匹配 flag_format，且来自 stdout / stderr / artifact 文本","textChars":57,"textLines":1,"bbox":[94,466,478,44]}
+{"kind":"shape","id":"sh/2hwfyxob","slide":3,"bbox":[72,523,8,8]}
+{"kind":"textbox","id":"sh/r2p8nqxs","slide":3,"text":"漏洞 finding：必须有 evidence_artifact_id 和可复现片段","textPreview":"漏洞 finding：必须有 evidence_artifact_id 和可复现片段","textChars":42,"textLines":1,"bbox":[94,514,478,44]}
+{"kind":"shape","id":"sh/vu9knih4","slide":3,"bbox":[664,386,574,204]}
+{"kind":"textbox","id":"sh/29gr2p8n","slide":3,"text":"工具执行先经过策略层","textPreview":"工具执行先经过策略层","textChars":10,"textLines":1,"bbox":[690,412,500,34]}
+{"kind":"textbox","id":"sh/d0z61032","slide":3,"text":"不把集成等同于权限，每次执行都要先过策略。","textPreview":"不把集成等同于权限，每次执行都要先过策略。","textChars":21,"textLines":1,"bbox":[690,450,500,26]}
+{"kind":"shape","id":"sh/kf6dcbul","slide":3,"bbox":[694,501,8,8]}
+{"kind":"textbox","id":"sh/v6psfil0","slide":3,"text":"ToolRunner 先做 scope、active scan、rate limit 判断","textPreview":"ToolRunner 先做 scope、active scan、rate limit 判断","textChars":45,"textLines":1,"bbox":[716,492,478,44]}
+{"kind":"shape","id":"sh/2lszqtcj","slide":3,"bbox":[694,549,8,8]}
+{"kind":"textbox","id":"sh/d8bat47y","slide":3,"text":"MCP 输出、失败、时间和目标都会沉淀为 artifact","textPreview":"MCP 输出、失败、时间和目标都会沉淀为 artifact","textChars":29,"textLines":1,"bbox":[716,540,478,44]}
+{"kind":"notes","id":"nt/h8hrok","slide":3,"text":""}
+{"kind":"slide","id":"sl/bstprx","slide":4,"title":"开发展示","textShapes":25}
+{"kind":"textbox","id":"sh/d4vmtwra","slide":4,"text":"开发展示","textPreview":"开发展示","textChars":4,"textLines":1,"bbox":[42,38,240,26]}
+{"kind":"textbox","id":"sh/6dcbulwv","slide":4,"text":"开发展示聚焦三个可交付模块","textPreview":"开发展示聚焦三个可交付模块","textChars":13,"textLines":1,"bbox":[42,74,1040,74]}
+{"kind":"textbox","id":"sh/vy90je9c","slide":4,"text":"Team Gipsy Agent / 短学期项目汇报","textPreview":"Team Gipsy Agent / 短学期项目汇报","textChars":26,"textLines":1,"bbox":[42,664,360,24]}
+{"kind":"textbox","id":"sh/o7qpg3ex","slide":4,"text":"04","textPreview":"04","textChars":2,"textLines":1,"bbox":[1190,660,48,28]}
+{"kind":"shape","id":"sh/dsji5sne","slide":4,"bbox":[42,176,374,296]}
+{"kind":"shape","id":"sh/61032lsz","slide":4,"bbox":[42,176,374,10]}
+{"kind":"textbox","id":"sh/vmtwra5g","slide":4,"text":"A / 编排与证据","textPreview":"A / 编排与证据","textChars":9,"textLines":1,"bbox":[68,210,320,34]}
+{"kind":"shape","id":"sh/ovahoza1","slide":4,"bbox":[70,281,8,8]}
+{"kind":"textbox","id":"sh/dg7adsji","slide":4,"text":"统一 TGATask、Intent、Artifact、Finding 合约","textPreview":"统一 TGATask、Intent、Artifact、Finding 合约","textChars":37,"textLines":1,"bbox":[92,272,296,46]}
+{"kind":"shape","id":"sh/1032lszq","slide":4,"bbox":[70,347,8,8]}
+{"kind":"textbox","id":"sh/cfa9w3m9","slide":4,"text":"EvidenceStore 记录 task、intent、event、artifact","textPreview":"EvidenceStore 记录 task、intent、event、artifact","textChars":43,"textLines":1,"bbox":[92,338,296,46]}
+{"kind":"shape","id":"sh/judg7ads","slide":4,"bbox":[70,413,8,8]}
+{"kind":"textbox","id":"sh/u9knih4b","slide":4,"text":"flag_gate 与 finding_gate 控制确认结论","textPreview":"flag_gate 与 finding_gate 控制确认结论","textChars":31,"textLines":1,"bbox":[92,404,296,46]}
+{"kind":"shape","id":"sh/1orytsvu","slide":4,"bbox":[453,176,374,296]}
+{"kind":"shape","id":"sh/c7u54zid","slide":4,"bbox":[453,176,374,10]}
+{"kind":"textbox","id":"sh/jm1cfa9w","slide":4,"text":"B / 执行与 MCP","textPreview":"B / 执行与 MCP","textChars":11,"textLines":1,"bbox":[479,210,320,34]}
+{"kind":"shape","id":"sh/u18jqh0f","slide":4,"bbox":[481,281,8,8]}
+{"kind":"textbox","id":"sh/5gbq1ory","slide":4,"text":"SubprocessWorker 与 LLMHTTPWorker 承接执行层","textPreview":"SubprocessWorker 与 LLMHTTPWorker 承接执行层","textChars":38,"textLines":1,"bbox":[503,272,296,46]}
+{"kind":"shape","id":"sh/cvixczed","slide":4,"bbox":[481,347,8,8]}
+{"kind":"textbox","id":"sh/c3ylc7u5","slide":4,"text":"ToolRunner 调用前校验 scope 与强度策略","textPreview":"ToolRunner 调用前校验 scope 与强度策略","textChars":28,"textLines":1,"bbox":[503,338,296,46]}
+{"kind":"shape","id":"sh/1kre1w7m","slide":4,"bbox":[481,413,8,8]}
+{"kind":"textbox","id":"sh/uxc3ylc7","slide":4,"text":"mcp-security-hub 作为可扩展工具目录","textPreview":"mcp-security-hub 作为可扩展工具目录","textChars":26,"textLines":1,"bbox":[503,404,296,46]}
+{"kind":"shape","id":"sh/ji5snelo","slide":4,"bbox":[864,176,374,296]}
+{"kind":"shape","id":"sh/crmhk3q5","slide":4,"bbox":[864,176,374,10]}
+{"kind":"textbox","id":"sh/1cfa9w3m","slide":4,"text":"C / 产品与报告","textPreview":"C / 产品与报告","textChars":9,"textLines":1,"bbox":[890,210,320,34]}
+{"kind":"shape","id":"sh/ulwval87","slide":4,"bbox":[892,281,8,8]}
+{"kind":"textbox","id":"sh/j6tovaho","slide":4,"text":"FastAPI 提供 task、chat、report、MCP 状态接口","textPreview":"FastAPI 提供 task、chat、report、MCP 状态接口","textChars":36,"textLines":1,"bbox":[914,272,296,46]}
+{"kind":"shape","id":"sh/8nqxs72x","slide":4,"bbox":[892,347,8,8]}
+{"kind":"textbox","id":"sh/18jqh0fe","slide":4,"text":"React UI 管理 session、对话和运行证据","textPreview":"React UI 管理 session、对话和运行证据","textChars":27,"textLines":1,"bbox":[914,338,296,46]}
+{"kind":"shape","id":"sh/7qpg3ex0","slide":4,"bbox":[892,413,8,8]}
+{"kind":"textbox","id":"sh/i5sneloj","slide":4,"text":"Markdown report 输出可复核的结果摘要","textPreview":"Markdown report 输出可复核的结果摘要","textChars":26,"textLines":1,"bbox":[914,404,296,46]}
+{"kind":"textbox","id":"sh/pwb2hwfy","slide":4,"text":"演示入口","textPreview":"演示入口","textChars":4,"textLines":1,"bbox":[42,518,170,28]}
+{"kind":"textbox","id":"sh/0bi9s36h","slide":4,"text":"CLI","textPreview":"CLI","textChars":3,"textLines":1,"bbox":[42,554,78,22]}
+{"kind":"textbox","id":"sh/7y1kre1w","slide":4,"text":"tga run examples/web_ctf/task.json","textPreview":"tga run examples/web_ctf/task.json","textChars":34,"textLines":1,"bbox":[130,554,930,22]}
+{"kind":"textbox","id":"sh/ed8v6psf","slide":4,"text":"API","textPreview":"API","textChars":3,"textLines":1,"bbox":[42,582,78,22]}
+{"kind":"textbox","id":"sh/p4r65wju","slide":4,"text":"apps/api/main.py 统一提供 /api/tasks、/api/chat、/api/report","textPreview":"apps/api/main.py 统一提供 /api/tasks、/api/chat、/api/report","textChars":54,"textLines":1,"bbox":[130,582,930,22]}
+{"kind":"textbox","id":"sh/wjudg7ad","slide":4,"text":"Web","textPreview":"Web","textChars":3,"textLines":1,"bbox":[42,610,78,22]}
+{"kind":"textbox","id":"sh/72x4nap4","slide":4,"text":"apps/web/src/App.tsx 管理 session、LLM 接入、证据面板","textPreview":"apps/web/src/App.tsx 管理 session、LLM 接入、证据面板","textChars":43,"textLines":1,"bbox":[130,610,930,22]}
+{"kind":"textbox","id":"sh/ih4byhgn","slide":4,"text":"Report","textPreview":"Report","textChars":6,"textLines":1,"bbox":[42,638,78,22]}
+{"kind":"textbox","id":"sh/epkzupwb","slide":4,"text":"runs/<task>/reports/report.md 展示结论与 provenance","textPreview":"runs/<task>/reports/report.md 展示结论与 provenance","textChars":46,"textLines":1,"bbox":[130,638,930,22]}
+{"kind":"notes","id":"nt/bstprx","slide":4,"text":""}
+{"kind":"slide","id":"sl/bbv2cu","slide":5,"title":"成果与下一步","textShapes":23}
+{"kind":"textbox","id":"sh/ahoza1gv","slide":5,"text":"成果与下一步","textPreview":"成果与下一步","textChars":6,"textLines":1,"bbox":[42,38,240,26]}
+{"kind":"textbox","id":"sh/l87ed8ba","slide":5,"text":"当前成果已经形成可验收的 MVP","textPreview":"当前成果已经形成可验收的 MVP","textChars":16,"textLines":1,"bbox":[42,74,1040,74]}
+{"kind":"textbox","id":"sh/sneloj2t","slide":5,"text":"Team Gipsy Agent / 短学期项目汇报","textPreview":"Team Gipsy Agent / 短学期项目汇报","textChars":26,"textLines":1,"bbox":[42,664,360,24]}
+{"kind":"textbox","id":"sh/3ex0nuxc","slide":5,"text":"05","textPreview":"05","textChars":2,"textLines":1,"bbox":[1190,660,48,28]}
+{"kind":"shape","id":"sh/at47y1kr","slide":5,"bbox":[42,178,254,172]}
+{"kind":"textbox","id":"sh/lkjm1cfa","slide":5,"text":"50","textPreview":"50","textChars":2,"textLines":1,"bbox":[64,206,120,64]}
+{"kind":"textbox","id":"sh/szqtcj6t","slide":5,"text":"tests passed","textPreview":"tests passed","textChars":12,"textLines":1,"bbox":[66,282,190,24]}
+{"kind":"textbox","id":"sh/3itgfmlk","slide":5,"text":"项目测试套件通过","textPreview":"项目测试套件通过","textChars":8,"textLines":1,"bbox":[66,315,200,24]}
+{"kind":"shape","id":"sh/ex0nuxc3","slide":5,"bbox":[342,178,254,172]}
+{"kind":"textbox","id":"sh/wfyxobm5","slide":5,"text":"42","textPreview":"42","textChars":2,"textLines":1,"bbox":[364,206,120,64]}
+{"kind":"textbox","id":"sh/l0rqd4vm","slide":5,"text":"MCP servers","textPreview":"MCP servers","textChars":11,"textLines":1,"bbox":[366,282,190,24]}
+{"kind":"textbox","id":"sh/ed8bat47","slide":5,"text":"文档记录完整目录接入","textPreview":"文档记录完整目录接入","textChars":10,"textLines":1,"bbox":[366,315,200,24]}
+{"kind":"shape","id":"sh/7u54zido","slide":5,"bbox":[642,178,254,172]}
+{"kind":"textbox","id":"sh/wra5gbq1","slide":5,"text":"3","textPreview":"3","textChars":1,"textLines":1,"bbox":[664,206,120,64]}
+{"kind":"textbox","id":"sh/lc7u54zi","slide":5,"text":"demo modes","textPreview":"demo modes","textChars":10,"textLines":1,"bbox":[666,282,190,24]}
+{"kind":"textbox","id":"sh/eloj2t83","slide":5,"text":"三类演示任务","textPreview":"三类演示任务","textChars":6,"textLines":1,"bbox":[666,315,200,24]}
+{"kind":"shape","id":"sh/36hcrmhk","slide":5,"bbox":[942,178,254,172]}
+{"kind":"textbox","id":"sh/wval87ed","slide":5,"text":"1","textPreview":"1","textChars":1,"textLines":1,"bbox":[964,206,120,64]}
+{"kind":"textbox","id":"sh/pg3ex0nu","slide":5,"text":"evidence rule","textPreview":"evidence rule","textChars":13,"textLines":1,"bbox":[966,282,190,24]}
+{"kind":"textbox","id":"sh/9knih4by","slide":5,"text":"无证据不确认","textPreview":"无证据不确认","textChars":6,"textLines":1,"bbox":[966,315,200,24]}
+{"kind":"shape","id":"sh/kzupwb2h","slide":5,"bbox":[42,404,556,176]}
+{"kind":"textbox","id":"sh/re1w7mp0","slide":5,"text":"已经完成","textPreview":"已经完成","textChars":4,"textLines":1,"bbox":[68,430,180,30]}
+{"kind":"shape","id":"sh/2t83itgf","slide":5,"bbox":[72,487,8,8]}
+{"kind":"textbox","id":"sh/9w3m94fu","slide":5,"text":"独立 Python 包与 CLI 入口，可本地安装运行","textPreview":"独立 Python 包与 CLI 入口，可本地安装运行","textChars":27,"textLines":1,"bbox":[94,478,428,44]}
+{"kind":"shape","id":"sh/kb6xkf6d","slide":5,"bbox":[72,533,8,8]}
+{"kind":"textbox","id":"sh/rqd4vmtw","slide":5,"text":"证据库、artifact、门禁和 Markdown 报告闭环","textPreview":"证据库、artifact、门禁和 Markdown 报告闭环","textChars":30,"textLines":1,"bbox":[94,524,428,44]}
+{"kind":"shape","id":"sh/25kb6xkf","slide":5,"bbox":[682,404,556,176]}
+{"kind":"textbox","id":"sh/94fu18jq","slide":5,"text":"下一步","textPreview":"下一步","textChars":3,"textLines":1,"bbox":[708,430,180,30]}
+{"kind":"shape","id":"sh/kjm1cfa9","slide":5,"bbox":[712,487,8,8]}
+{"kind":"textbox","id":"sh/udg7adsj","slide":5,"text":"扩展真实工具适配和更多靶场样例","textPreview":"扩展真实工具适配和更多靶场样例","textChars":15,"textLines":1,"bbox":[734,478,408,44]}
+{"kind":"shape","id":"sh/nyd0z610","slide":5,"bbox":[712,533,8,8]}
+{"kind":"textbox","id":"sh/cj6tovah","slide":5,"text":"完善前端中文显示、演示数据与部署脚本","textPreview":"完善前端中文显示、演示数据与部署脚本","textChars":18,"textLines":1,"bbox":[734,524,408,44]}
+{"kind":"textbox","id":"sh/54zidony","slide":5,"text":"验证命令：pytest -q --basetemp .pytest_tmp；MCP 数据来自项目文档记录。","textPreview":"验证命令：pytest -q --basetemp .pytest_tmp；MCP 数据来自项目文档记录。","textChars":53,"textLines":1,"bbox":[42,612,990,24]}
+{"kind":"notes","id":"nt/bbv2cu","slide":5,"text":""}

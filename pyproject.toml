@@ -6,6 +6,7 @@ requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.111",
     "pydantic>=2.7",
+    "pywebview>=5.4",
     "uvicorn>=0.30",
 ]
 
@@ -16,6 +17,10 @@ dev = [
 
 [project.scripts]
 tga = "tga.cli.main:main"
+
+[tool.setuptools.packages.find]
+include = ["tga*", "apps*"]
+exclude = ["tests*", "docs*", "examples*", "scripts*", "runs*", "开发指导*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -1,7 +1,6 @@
-"""Capability execution layer for approved CTF actions."""
+"""Policy-gated execution capabilities used by the v2 runtime."""
 
-from tga.capabilities.executor import CapabilityExecutor
-from tga.capabilities.models import ActionResult, ActionSpec
-from tga.capabilities.registry import CapabilityRegistry
+from .registry import CapabilityRegistry, build_default_registry
+from .runtime import ControlledActionExecutor
 
-__all__ = ["ActionSpec", "ActionResult", "CapabilityExecutor", "CapabilityRegistry"]
+__all__ = ["CapabilityRegistry", "ControlledActionExecutor", "build_default_registry"]

@@ -1,0 +1,1 @@
+{"events":[{"type":"HYPOTHESIS_CREATED"},{"type":"ACTION_STARTED"},{"type":"ACTION_FINISHED"}],"flags":[],"artifacts":[{"id":"artifact-semgrep","tool":"semgrep","path":"tool/semgrep.json"}],"actions":[{"capability":"workspace.python","target":"runs/local-code-binary/solvers/main/decode.py","status":"succeeded","artifact_ids":["artifact-semgrep"]}]}

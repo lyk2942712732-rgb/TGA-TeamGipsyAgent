@@ -203,6 +203,13 @@ cython_debug/
 # Temporary file for partial code execution
 tempCodeRunnerFile.py
 
+# TGA runtime output
+runs/
+
+# TGA web UI dependencies/build output
+apps/web/node_modules/
+apps/web/dist/
+
 # Ruff stuff:
 .ruff_cache/
 
