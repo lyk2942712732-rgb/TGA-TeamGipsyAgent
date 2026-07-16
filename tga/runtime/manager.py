@@ -12,7 +12,9 @@ from uuid import uuid4
 from tga.contracts import ActionResult, ActionSpec, ArtifactRecord, Finding, SessionRecord, SolverRecord, SubagentOutput, SubagentRequest, TGAError, TGATask
 from tga.core.evidence_gate import finding_ok
 from tga.evidence.store import EvidenceStore, utc_now
+from tga.models.bootstrap import build_model_client_from_env
 from tga.runtime.board import BoardStore
+from tga.runtime.agent_session import AgentToolSession
 from tga.runtime.challenge_state import ChallengeStateMachine
 from tga.runtime.completion import CompletionGate
 from tga.runtime.events import EventStore
@@ -21,6 +23,7 @@ from tga.runtime.prompts import build_solver_context
 from tga.runtime.session import AgentSession
 from tga.runtime.solver import MainSolver, Solver, build_runtime_solver
 from tga.runtime.solver_pool import SolverPool
+from tga.runtime.solver_session import SolverSessionState
 from tga.runtime.subagents import validate_output_ownership
 from tga.skills.registry import SkillRegistry
 
@@ -44,18 +47,18 @@ class RuntimeLimits:
 
     @classmethod
     def from_environment(cls) -> "RuntimeLimits":
-        def bounded(name: str, default: int) -> int:
+        def bounded(name: str, default: int, hard_max: int) -> int:
             try:
-                return max(1, min(int(os.environ.get(name, str(default))), default))
+                return max(1, min(int(os.environ.get(name, str(default))), hard_max))
             except ValueError:
                 return default
         return cls(
-            max_turns=bounded("TGA_MAX_SESSION_TURNS", MAX_SESSION_TURNS),
-            max_actions_per_solver=bounded("TGA_MAX_ACTIONS_PER_SOLVER", MAX_ACTIONS_PER_SOLVER),
-            max_empty_plans=bounded("TGA_MAX_CONSECUTIVE_EMPTY_PLANS", MAX_CONSECUTIVE_EMPTY_PLANS),
-            max_semantic_retries=bounded("TGA_MAX_SEMANTIC_RETRIES_PER_HYPOTHESIS", MAX_SEMANTIC_RETRIES_PER_HYPOTHESIS),
-            max_active_solvers=bounded("TGA_MAX_ACTIVE_SOLVERS_PER_TASK", MAX_ACTIVE_SOLVERS_PER_TASK),
-            max_reentry_cycles=bounded("TGA_MAX_REENTRY_CYCLES", MAX_REENTRY_CYCLES),
+            max_turns=bounded("TGA_MAX_SESSION_TURNS", MAX_SESSION_TURNS, 512),
+            max_actions_per_solver=bounded("TGA_MAX_ACTIONS_PER_SOLVER", MAX_ACTIONS_PER_SOLVER, 256),
+            max_empty_plans=bounded("TGA_MAX_CONSECUTIVE_EMPTY_PLANS", MAX_CONSECUTIVE_EMPTY_PLANS, 12),
+            max_semantic_retries=bounded("TGA_MAX_SEMANTIC_RETRIES_PER_HYPOTHESIS", MAX_SEMANTIC_RETRIES_PER_HYPOTHESIS, 12),
+            max_active_solvers=bounded("TGA_MAX_ACTIVE_SOLVERS_PER_TASK", MAX_ACTIVE_SOLVERS_PER_TASK, 8),
+            max_reentry_cycles=bounded("TGA_MAX_REENTRY_CYCLES", MAX_REENTRY_CYCLES, 16),
         )
 
 
@@ -80,6 +83,20 @@ class Manager:
         # deterministic fallback forever.
         self._explicit_solver = solver is not None
         self.solver = solver or build_runtime_solver()
+        configured_multi_solver = os.environ.get(
+            "TGA_ENABLE_MULTI_SOLVER",
+            os.environ.get("TGA_ENABLE_EXPERIMENTAL_SUBAGENTS", ""),
+        ).strip().lower()
+        # Product runs use isolated role sessions by default. Explicit custom
+        # solvers (primarily tests and integrations) stay single-Solver unless
+        # they opt in, so one injected planner is never misrepresented as
+        # several independent execution subjects.
+        self._enable_experimental_subagents = (
+            configured_multi_solver in {"1", "true", "yes"}
+            if configured_multi_solver
+            else not self._explicit_solver
+        )
+        self._solver_instances: dict[str, Solver] = {}
         self.observer = observer or BoardObserver()
         self.skills = skills or SkillRegistry()
         self.limits = RuntimeLimits.from_environment()
@@ -92,14 +109,32 @@ class Manager:
                 raise KeyError(f"task not found: {task_id}")
             if not self._explicit_solver:
                 self.solver = build_runtime_solver()
+                self._solver_instances = {}
             task = TGATask.model_validate(snapshot["task"])
             # The application-level manager is shared by API requests.  A
             # default executor must therefore be constructed per task so its
             # ArtifactStore cannot accidentally write into a previous task's
             # workspace.
             executor = self.executor or self._default_executor(task)
+            if not self._explicit_solver:
+                # Product sessions follow BreachWeave's native AgentSession
+                # loop.  The legacy hypothesis/ActionSpec planner remains
+                # available only for explicitly injected integrations and
+                # deterministic compatibility tests.
+                client = build_model_client_from_env()
+                if client is not None:
+                    return AgentToolSession(
+                        task=task,
+                        store=store,
+                        run_root=self.run_root,
+                        client=client,
+                        executor=executor,
+                        max_turns=self.limits.max_turns,
+                    ).run()
             return self._run(task=task, store=store, executor=executor)
         finally:
+            if not self._explicit_solver:
+                self._close_solver_instances()
             if should_close:
                 store.close()
 
@@ -310,6 +345,11 @@ class Manager:
         events = EventStore(store)
         durable = AgentSession(store=store, run_root=self.run_root, task_id=task.id)
         session = durable.ensure(max_turns=self.limits.max_turns)
+        # A recovered task adopts an explicitly raised runtime allowance. This
+        # makes resume meaningful after operators tune the controlled limit;
+        # it never shrinks an already persisted session behind its turn count.
+        if self.limits.max_turns > session.max_turns:
+            session = store.update_session(task.id, max_turns=self.limits.max_turns)
         if session.status in {"completed", "cancelled", "failed", "paused"}:
             return store.task_snapshot(task.id)
         challenge_state = ChallengeStateMachine(store)
@@ -345,9 +385,10 @@ class Manager:
                 self._stop_without_solver(store, task.id, "blocked", "active_solver_budget_exhausted")
             return store.task_snapshot(task.id)
         solver = next(item for item in store.list_solvers(task.id) if item.id == store.get_session(task.id).active_solver_id)
+        SolverSessionState(run_root=self.run_root, task_id=task.id, solver_id=solver.id).ensure(solver)
         if not store.list_hypotheses(task.id):
             try:
-                drafts = self.solver.initial_hypotheses(task=task, solver_id=solver.id)
+                drafts = self._solver_for(solver.id).initial_hypotheses(task=task, solver_id=solver.id)
             except Exception as exc:
                 events.append(task.id, "SOLVER_FAILED", {"phase": "initial_hypotheses", "reason": str(exc)[:500]}, solver_id=solver.id)
                 self._stop(store, task.id, solver.id, "failed", "solver_initialization_failed")
@@ -360,7 +401,7 @@ class Manager:
                 events.append(task.id, "HYPOTHESIS_CREATED", {"hypothesis_id": hypothesis.id, "statement": hypothesis.statement, "attack_class": hypothesis.attack_class}, solver_id=solver.id)
             self._record_board_snapshot(store, task.id, solver_id=solver.id, cause="initial_hypotheses")
 
-        if not self._explicit_solver:
+        if self._enable_experimental_subagents:
             self._ensure_automatic_subagents(task=task, store=store, pool=pool, main_solver=solver)
 
         empty_plans = 0
@@ -374,7 +415,7 @@ class Manager:
             if session.turn_count >= session.max_turns:
                 self._stop(store, task.id, solver.id, "blocked", "session_turn_budget_exhausted")
                 break
-            if not self._explicit_solver:
+            if self._enable_experimental_subagents:
                 selected = self._next_role_assignment(store, task.id)
                 if selected is not None:
                     solver, hypothesis = selected
@@ -385,6 +426,9 @@ class Manager:
             if hypothesis is None:
                 self._stop(store, task.id, solver.id, "blocked", "no_active_hypothesis")
                 break
+            planner = self._solver_for(solver.id)
+            solver_session = SolverSessionState(run_root=self.run_root, task_id=task.id, solver_id=solver.id)
+            solver_session.ensure(solver)
             loaded_skills = self.skills.for_turn(mode=task.mode, attack_class=hypothesis.attack_class)
             events.append(
                 task.id,
@@ -399,31 +443,53 @@ class Manager:
                 solver_id=solver.id,
             )
             solver_context = build_solver_context(
-                task=task, snapshot=store.task_snapshot(task.id), skills=loaded_skills,
+                task=task, snapshot=self._solver_snapshot(store, task), skills=loaded_skills,
                 role=solver.role, solver_id=solver.id,
             )
+            solver_context["runtime_tools"] = self._runtime_tool_catalog(task=task, executor=executor)
+            events.append(
+                task.id,
+                "MANAGER_DECISION",
+                {
+                    "decision": "assign_hypothesis",
+                    "hypothesis_id": hypothesis.id,
+                    "role": solver.role,
+                    "reason": "highest-priority compatible active hypothesis",
+                },
+                solver_id=solver.id,
+            )
+            solver_session.checkpoint(
+                solver=solver,
+                latest_seq=store.latest_agent_event_seq(task.id),
+                action_count=self._actions_for_solver(store, task.id, solver.id),
+                context=store.task_snapshot(task.id),
+            )
             try:
-                proposed = self.solver.propose_action(task=task, solver_id=solver.id, hypothesis=hypothesis, snapshot=solver_context)
+                proposed = planner.propose_action(task=task, solver_id=solver.id, hypothesis=hypothesis, snapshot=solver_context)
             except Exception as exc:
                 events.append(task.id, "SOLVER_FAILED", {"phase": "propose_action", "reason": str(exc)[:500]}, solver_id=solver.id)
                 self._stop(store, task.id, solver.id, "failed", "solver_planning_failed")
                 break
             if proposed is None:
                 empty_plans += 1
+                model_protocol_failure = getattr(planner, "last_plan_failure_kind", "") == "model_protocol"
                 events.append(
                     task.id,
-                    "PLAN_EMPTY",
+                    "MODEL_PLAN_RETRY" if model_protocol_failure else "PLAN_EMPTY",
                     {
                         "hypothesis_id": hypothesis.id,
                         "count": empty_plans,
-                        "reason": str(getattr(self.solver, "last_plan_reason", "no executable action was proposed"))[:500],
+                        "reason": str(getattr(planner, "last_plan_reason", "no executable action was proposed"))[:500],
                     },
                     solver_id=solver.id,
                 )
                 if empty_plans >= self.limits.max_empty_plans:
                     sidecar.request(build_observer_context(store.task_snapshot(task.id)))
                     self._drain_observer(sidecar, task.id, store, board, solver.id, wait=True)
-                    self._stop(store, task.id, solver.id, "blocked", "consecutive_empty_plans")
+                    self._stop(
+                        store, task.id, solver.id, "blocked",
+                        "model_planning_failed" if model_protocol_failure else "consecutive_empty_plans",
+                    )
                     break
                 continue
             empty_plans = 0
@@ -433,24 +499,36 @@ class Manager:
                 events.append(task.id, "SOLVER_FAILED", {"phase": "action_contract", "reason": str(exc)[:500]}, solver_id=solver.id)
                 self._stop(store, task.id, solver.id, "failed", "invalid_solver_action")
                 break
-            if self._semantic_retry_count(store, task.id, hypothesis.id, proposed) >= self.limits.max_semantic_retries:
-                board.transition_hypothesis(hypothesis.id, status="inconclusive", last_result="semantic action retry budget exhausted")
-                events.append(task.id, "HYPOTHESIS_STALLED", {"hypothesis_id": hypothesis.id, "reason": "semantic_retry_budget_exhausted"}, solver_id=solver.id)
-                self._record_board_snapshot(store, task.id, solver_id=solver.id, cause="hypothesis_stalled")
+            repeat_count = self._semantic_retry_count(store, task.id, hypothesis.id, proposed)
+            if repeat_count >= self.limits.max_semantic_retries:
+                events.append(
+                    task.id,
+                    "ACTION_REPEATED",
+                    {"hypothesis_id": hypothesis.id, "repeat_count": repeat_count, "advisory": "observer_review_requested"},
+                    solver_id=solver.id,
+                )
                 sidecar.request(build_observer_context(store.task_snapshot(task.id)))
-                continue
-            if self._actions_for_solver(store, task.id, solver.id) >= self._solver_action_limit(store, task.id, solver.id):
-                self._stop(store, task.id, solver.id, "blocked", "solver_action_budget_exhausted")
-                break
             store.add_action(proposed)
-            events.append(task.id, "ACTION_PROPOSED", {"action_id": proposed.id, "capability": proposed.capability, "target": proposed.target, "hypothesis_id": hypothesis.id}, solver_id=solver.id)
+            events.append(
+                task.id,
+                "ACTION_PROPOSED",
+                {
+                    "action_id": proposed.id,
+                    "capability": proposed.capability,
+                    "target": proposed.target,
+                    "hypothesis_id": hypothesis.id,
+                    "rationale": proposed.rationale,
+                    "risk": proposed.risk,
+                },
+                solver_id=solver.id,
+            )
             board.transition_hypothesis(hypothesis.id, status="testing")
             store.update_action_status(proposed.id, "approved")
             events.append(task.id, "ACTION_APPROVED", {"action_id": proposed.id}, solver_id=solver.id)
             store.update_action_status(proposed.id, "running")
             store.update_solver(solver.id, status="waiting")
             events.append(task.id, "ACTION_STARTED", {"action_id": proposed.id}, solver_id=solver.id)
-            workspace = self.run_root / task.id / "solvers" / solver.id
+            workspace = solver_session.workspace
             workspace.mkdir(parents=True, exist_ok=True)
             try:
                 result = executor.execute(task=task, action=proposed, workspace=workspace)
@@ -485,7 +563,7 @@ class Manager:
             events.append(task.id, "ACTION_FINISHED", {"action_id": proposed.id, "status": result.status, "summary": result.summary, "artifact_ids": result.artifact_ids}, solver_id=solver.id)
             artifacts_ok = self._apply_result(task, store, board, solver.id, hypothesis.id, result)
             if artifacts_ok:
-                interpretation = self._interpret_result(hypothesis=hypothesis, result=result)
+                interpretation = self._interpret_result(planner=planner, hypothesis=hypothesis, result=result)
                 if interpretation.status:
                     updated = board.transition_hypothesis(
                         hypothesis.id, status=interpretation.status, last_result=interpretation.last_result,
@@ -496,8 +574,23 @@ class Manager:
             if store.task_snapshot(task.id)["flags"]:
                 self._stop(store, task.id, solver.id, "completed", "confirmed_flag")
                 break
+            if result.error and result.error.code == "CHALLENGE_UNAVAILABLE":
+                availability = "provisioning" if result.error.retryable else "expired"
+                ChallengeStateMachine(store).transition(
+                    task.id, "blocked" if availability == "provisioning" else "expired",
+                    reason=f"challenge_{availability}", solver_id=solver.id,
+                )
+                self._stop(store, task.id, solver.id, "blocked", f"challenge_{availability}")
+                break
             if session.turn_count and session.turn_count % 6 == 0:
                 sidecar.request(build_observer_context(store.task_snapshot(task.id)))
+            current_solver = next(item for item in store.list_solvers(task.id) if item.id == solver.id)
+            solver_session.checkpoint(
+                solver=current_solver,
+                latest_seq=store.latest_agent_event_seq(task.id),
+                action_count=self._actions_for_solver(store, task.id, solver.id),
+                context=store.task_snapshot(task.id),
+            )
             durable.checkpoint()
         finally:
             self._drain_observer(sidecar, task.id, store, board, solver.id, wait=True)
@@ -557,12 +650,30 @@ class Manager:
         except Exception as exc:  # observer never terminates a solver
             EventStore(store).append(task_id, "OBSERVER_FAILED", {"reason": str(exc)[:280]}, solver_id=solver_id)
 
-    def _interpret_result(self, *, hypothesis, result: ActionResult):
-        interpret = getattr(self.solver, "interpret_result", None)
+    def _interpret_result(self, *, planner: Solver, hypothesis, result: ActionResult):
+        interpret = getattr(planner, "interpret_result", None)
         if not callable(interpret):
             from tga.runtime.solver import SolverInterpretation
             return SolverInterpretation(last_result=result.summary)
         return interpret(hypothesis=hypothesis, result=result)
+
+    def _solver_for(self, solver_id: str) -> Solver:
+        if self._explicit_solver:
+            return self.solver
+        planner = self._solver_instances.get(solver_id)
+        if planner is None:
+            from tga.runtime.solver_process import build_solver_process
+
+            planner = build_solver_process(solver_id)
+            self._solver_instances[solver_id] = planner
+        return planner
+
+    def _close_solver_instances(self) -> None:
+        for planner in self._solver_instances.values():
+            close = getattr(planner, "close", None)
+            if callable(close):
+                close()
+        self._solver_instances = {}
 
     @staticmethod
     def _next_hypothesis(store: EvidenceStore, task_id: str):
@@ -612,16 +723,23 @@ class Manager:
                 hypothesis_ids=hypothesis_ids,
                 input_artifact_ids=[],
                 skill_names=[],
-                max_actions=min(8, self.limits.max_actions_per_solver),
+                # The request records the Solver's hard runtime allowance. A
+                # low UI-sized batch budget must never terminate the entire
+                # challenge while the session still has turns available.
+                max_actions=self.limits.max_actions_per_solver,
             )
-            pool.start(request, model_name=self.solver.model_name)
+            child = pool.start(request, model_name=self.solver.model_name)
+            # A child record is not considered a Solver until it owns a
+            # distinct planner/session object. Instantiate eagerly so the UI
+            # never displays role-only pseudo collaboration.
+            self._solver_for(child.id)
 
-    @staticmethod
-    def _next_role_assignment(store: EvidenceStore, task_id: str):
-        active = [item for item in store.list_solvers(task_id) if item.role != "main" and item.status in {"running", "waiting"}]
+    def _next_role_assignment(self, store: EvidenceStore, task_id: str):
+        all_active = [item for item in store.list_solvers(task_id) if item.status in {"running", "waiting"}]
+        active = [item for item in all_active if item.role != "main"]
         hypotheses = [item for item in store.list_hypotheses(task_id, active_only=True) if item.status in {"pending", "testing"}]
         actions = store.list_actions(task_id)
-        action_counts = {solver.id: sum(1 for item in actions if item.get("solver_id") == solver.id) for solver in active}
+        action_counts = {solver.id: sum(1 for item in actions if item.get("solver_id") == solver.id) for solver in all_active}
         for solver in sorted(active, key=lambda item: (action_counts[item.id], item.started_at or "", item.id)):
             if solver.role == "recon":
                 compatible = [item for item in hypotheses if item.attack_class.casefold() == "recon"]
@@ -629,13 +747,19 @@ class Manager:
                 compatible = [item for item in hypotheses if item.attack_class.casefold() != "recon"]
             if compatible:
                 return solver, sorted(compatible, key=lambda item: (item.status != "testing", -item.confidence, item.created_at))[0]
+        # A child reaching its allowance is local Solver state, not a
+        # challenge-level terminal condition. The main Solver is the durable
+        # fallback control subject and can continue an active hypothesis.
+        main = next((item for item in all_active if item.role == "main"), None)
+        if main and hypotheses:
+            return main, sorted(hypotheses, key=lambda item: (item.status != "testing", -item.confidence, item.created_at))[0]
         return None
 
     def _solver_action_limit(self, store: EvidenceStore, task_id: str, solver_id: str) -> int:
-        record = next((item for item in store.list_subagents(task_id) if item["solver_id"] == solver_id), None)
-        if record is None:
-            return self.limits.max_actions_per_solver
-        return min(self.limits.max_actions_per_solver, int(record["request"].get("max_actions") or self.limits.max_actions_per_solver))
+        # Kept as a compatibility/introspection helper only.  A Solver work
+        # packet must never become a challenge-level stop condition.
+        session = store.get_session(task_id)
+        return session.max_turns if session is not None else self.limits.max_turns
 
     @staticmethod
     def _validate_action(task: TGATask, solver_id: str, hypothesis_id: str, action: ActionSpec) -> None:
@@ -674,6 +798,95 @@ class Manager:
             return path.read_text(encoding="utf-8", errors="replace") if path.is_file() else ""
         except (OSError, ValueError):
             return ""
+
+    def _solver_snapshot(self, store: EvidenceStore, task: TGATask) -> dict:
+        """Build the durable state plus bounded, persisted tool feedback.
+
+        BreachWeave's effective loop feeds a tool result back into the same
+        agent session.  TGA keeps the data durable and bounded instead: only
+        artifacts already committed to the task store may become the next
+        planning turn's observations.
+        """
+        snapshot = store.task_snapshot(task.id)
+        observations: list[dict] = []
+        artifact_by_id = {item.get("id"): item for item in snapshot.get("artifacts") or []}
+        recent_ids: list[str] = []
+        for action in reversed(snapshot.get("actions") or []):
+            for artifact_id in reversed((action.get("result") or {}).get("artifact_ids") or []):
+                if artifact_id in artifact_by_id and artifact_id not in recent_ids:
+                    recent_ids.append(artifact_id)
+            if len(recent_ids) >= 8:
+                break
+        for artifact_id in reversed(recent_ids):
+            artifact = artifact_by_id[artifact_id]
+            text = self._artifact_text(task.id, type("Artifact", (), artifact)()) if isinstance(artifact, dict) else ""
+            if not text:
+                continue
+            observation: dict = {
+                "artifact_id": artifact.get("id"),
+                "tool": artifact.get("tool"),
+                "target": artifact.get("target"),
+            }
+            try:
+                payload = json.loads(text)
+            except json.JSONDecodeError:
+                payload = None
+            # The controlled executor is the persisted artifact owner; the
+            # capability is also recorded in the result payload.  Accept both
+            # so an HTTP observation survives the executor boundary.
+            if isinstance(payload, dict) and (
+                artifact.get("tool") == "http.request"
+                or payload.get("capability") == "http.request"
+            ):
+                observation["http"] = {
+                    key: payload.get(key)
+                    for key in ("requested_url", "final_url", "status", "content_type", "page", "tls", "error")
+                    if payload.get(key) is not None
+                }
+                observation["body_excerpt"] = str(payload.get("body_excerpt") or "")[:6000]
+            elif isinstance(payload, dict) and "excerpt" in payload:
+                observation["excerpt"] = str(payload.get("excerpt") or "")[:6000]
+            else:
+                observation["excerpt"] = text[:6000]
+            observations.append(observation)
+        snapshot["artifact_observations"] = observations
+        return snapshot
+
+    @staticmethod
+    def _runtime_tool_catalog(*, task: TGATask, executor: ActionExecutor) -> list[dict]:
+        """Expose only concrete, policy-eligible MCP methods to the planner.
+
+        BreachWeave resolves its MCP tool set before constructing an agent
+        session.  The v2 runtime keeps execution in the controlled executor,
+        but the planner still needs the same truthful method names and input
+        schemas; a generic ``tool.invoke`` schema alone is not actionable.
+        """
+        runner = getattr(executor, "tool_runner", None)
+        catalog = getattr(runner, "catalog", None)
+        servers = getattr(catalog, "servers", None)
+        if not servers:
+            return []
+        from tga.tools.tool_policy import is_allowed
+
+        values: list[dict] = []
+        for server in servers:
+            decision = is_allowed(
+                tool=server.id, target=task.target, scope=task.scope,
+                intensity=task.intensity, allow_active_scan=task.allow_active_scan,
+            )
+            if not decision.allowed:
+                continue
+            for method in server.tools:
+                values.append({
+                    "tool_id": server.id,
+                    "tool_method": method.name,
+                    "description": method.description or "",
+                    "arguments_schema": method.input_schema,
+                    "availability": "catalogued",
+                })
+                if len(values) >= 48:
+                    return values
+        return values
 
     def _resolve_artifact(self, store: EvidenceStore, task_id: str, artifact_id: str) -> ArtifactRecord | None:
         existing = store.get_artifact(artifact_id)
@@ -730,7 +943,7 @@ class Manager:
 
     def _default_executor(self, task: TGATask) -> ActionExecutor:
         """Wire B's controlled adapter without giving the manager tool access."""
-        from tga.capabilities.runtime import ControlledActionExecutor
+        from tga.capabilities.runtime import ControlledActionExecutor, ExecutionBudget
         from tga.evidence.artifacts import ArtifactStore
         from tga.tools.bootstrap import build_tool_runner_from_env
 
@@ -738,6 +951,9 @@ class Manager:
         return ControlledActionExecutor(
             artifact_store=artifact_store,
             tool_runner=build_tool_runner_from_env(artifact_store),
+            # Product AgentSessions use BreachWeave's direct tool loop. Legacy
+            # action/rate budgets are telemetry, not execution gates.
+            budget=ExecutionBudget(unrestricted=True),
         )
 
     def _checkpoint(self, store: EvidenceStore, task_id: str) -> None:

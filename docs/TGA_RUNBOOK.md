@@ -13,7 +13,7 @@ pytest -q
 ```
 
 Run the executable v2 evaluation suite (it starts only local targets and emits
-JSON metrics for success rate, actions, repeats, empty plans, scope refusals,
+JSON metrics for success rate, Agent turns, tool calls, retries,
 and duration):
 
 ```bash
@@ -33,6 +33,17 @@ Run a demo:
 
 ```bash
 tga run examples/web_ctf/task.json
+```
+
+Create, observe, control, and recover through the same v2 runtime:
+
+```bash
+tga create examples/web_ctf/task.json
+tga start task_web_ctf_demo
+tga status task_web_ctf_demo
+tga observe task_web_ctf_demo --follow
+tga cancel task_web_ctf_demo
+tga resume task_web_ctf_demo
 ```
 
 Equivalent script entrypoint:

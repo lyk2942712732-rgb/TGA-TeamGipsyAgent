@@ -67,6 +67,22 @@ def test_dynamic_timestamp_has_same_http_semantic_fingerprint() -> None:
     assert first == second
 
 
+def test_distinct_http_form_values_have_distinct_semantic_fingerprints() -> None:
+    action = _action(kind="http", capability="http.request", target="http://127.0.0.1:8080", arguments={}, risk="active")
+    first = semantic_fingerprint(
+        action=action,
+        args=HTTPRequestArguments(method="POST", path="/run", body={"code": "phpinfo();"}),
+        url="http://127.0.0.1:8080/run",
+    )
+    second = semantic_fingerprint(
+        action=action,
+        args=HTTPRequestArguments(method="POST", path="/run", body={"code": "getenv();"}),
+        url="http://127.0.0.1:8080/run",
+    )
+
+    assert first != second
+
+
 def test_tool_runner_unavailable_returns_structured_result(tmp_path: Path) -> None:
     executor = ControlledActionExecutor(artifact_store=ArtifactStore(tmp_path / "artifacts"))
     action = _action(

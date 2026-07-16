@@ -1,8 +1,8 @@
-from tga.capabilities.registry import CapabilityRegistry
+from tga.capabilities.registry import build_default_registry
 
 
-def test_registry_exposes_project_calibrated_capabilities(tmp_path):
-    registry = CapabilityRegistry(project_root=tmp_path)
+def test_registry_exposes_enabled_runtime_capabilities():
+    registry = build_default_registry()
     snapshot = registry.snapshot()
     names = {item["name"] for item in snapshot["capabilities"]}
 
@@ -10,7 +10,6 @@ def test_registry_exposes_project_calibrated_capabilities(tmp_path):
         "http.request",
         "tool.invoke",
         "workspace.python",
-        "workspace.binary",
         "artifact.inspect",
     } <= names
     assert "challenge.submit_flag" not in names
@@ -18,4 +17,3 @@ def test_registry_exposes_project_calibrated_capabilities(tmp_path):
     for item in snapshot["capabilities"]:
         assert item["input_schema"]
         assert item["budget_key"]
-        assert item["redacted_summary"]

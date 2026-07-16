@@ -1,12 +1,19 @@
-# TGA Security Model
+# TGA Agent Session safety model
 
-TGA is for authorized security work only.
+The product runtime uses the Session target as its execution contract. It does
+not ask the user to translate that target into scope entries, intensity levels,
+risk labels, active-scan permission, or evidence-gate settings.
 
-Week 1 controls:
+Operational boundaries are architectural:
 
-- no web audit without explicit scope
-- active tools require `allow_active_scan=true`
-- passive mode blocks active scanners
-- confirmed findings require artifact evidence
-- flags require format and provenance
+- each Solver owns a private workspace and persistent transcript;
+- the model can call only tools registered in the current Session;
+- tool processes retain timeouts and output-size bounds needed to keep the
+  host responsive;
+- browser clients can request lifecycle actions but cannot execute host tools;
+- secrets are not returned by configuration endpoints;
+- cancellation and process recovery are explicit Session states.
 
+Old scope/risk/budget/flag-gate fields may exist in saved v2 records for
+backward readability. They are not product authorization gates in the native
+AgentSession path.

@@ -16,14 +16,46 @@ def test_task_model_parses():
     assert task.mode == "ctf"
 
 
-def test_web_audit_requires_scope():
-    with pytest.raises(ValueError, match="web_audit requires non-empty scope"):
+def test_task_model_trims_target_and_scope() -> None:
+    task = TGATask(
+        id="task_trim", name="trim", mode="ctf",
+        target="  https://challenge.example/path  ",
+        scope=["  https://challenge.example  ", "https://challenge.example"],
+        goal="solve",
+    )
+
+    assert task.target == "https://challenge.example/path"
+    assert task.scope == ["https://challenge.example"]
+
+
+def test_web_audit_derives_compatibility_scope_from_target():
+    task = TGATask(
+        id="task_1",
+        name="audit",
+        mode="web_audit",
+        target="http://127.0.0.1:8080/path",
+        goal="audit",
+    )
+    assert task.scope == ["http://127.0.0.1:8080"]
+
+
+def test_ctf_derives_scope_and_tls_exception_is_exact_target_origin():
+    derived = TGATask(
+        id="task_1", name="ctf", mode="ctf", target="https://challenge.example",
+        goal="solve",
+    )
+    assert derived.scope == ["https://challenge.example"]
+    task = TGATask(
+        id="task_2", name="ctf", mode="ctf", target="https://challenge.example/",
+        scope=["challenge.example"], goal="solve",
+        insecure_tls_origins=["https://challenge.example"],
+    )
+    assert task.insecure_tls_origins == ["https://challenge.example"]
+
+    with pytest.raises(ValueError, match="exact HTTPS target origin"):
         TGATask(
-            id="task_1",
-            name="audit",
-            mode="web_audit",
-            target="http://127.0.0.1:8080",
-            scope=[],
-            goal="audit",
+            id="task_3", name="ctf", mode="ctf", target="https://challenge.example",
+            scope=["challenge.example"], goal="solve",
+            insecure_tls_origins=["https://other.example"],
         )
 

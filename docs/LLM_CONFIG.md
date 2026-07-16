@@ -1,6 +1,7 @@
-# TGA LLM 配置说明
+# TGA LLM 配置
 
-当前 Week1 MVP 已提供 OpenAI-compatible 模型适配层，方便接入国内大模型或比赛指定 AI 安全网关。
+TGA 使用 OpenAI-compatible 模型接口驱动持久化 Agent Session。普通 API 任务在
+模型未配置时不会退回旧的规则 planner。
 
 ## 环境变量
 
@@ -10,21 +11,21 @@ TGA_LLM_API_KEY=你的密钥
 TGA_LLM_MODEL=你的模型名
 ```
 
-例如比赛要求通过指定 AI 安全网关接入时，通常把 `TGA_LLM_BASE_URL` 配成网关给出的 OpenAI-compatible 地址。
-
-## 连通性检查
+也可以在 Web 设置页保存等价配置。运行连通性检查：
 
 ```bash
 python scripts/tga_llm_healthcheck.py
 ```
 
-未配置时会返回 `LLM_NOT_CONFIGURED`，这不是错误，只表示当前仍在使用规则型 MVP planner。
+`LLM_NOT_CONFIGURED` 表示当前没有可执行模型，需要先填写配置再启动或恢复任务。
 
-## 当前限制
+## Agent Session 行为
 
-LLM 适配层已经存在，但还没有完全接管任务规划。下一步建议把 `tga/orchestrator/planner.py` 从固定规则升级为：
+- 模型直接收到当前可用工具的 function schema。
+- assistant 的 `tool_calls` 与对应 tool result 保存在同一会话记录中。
+- 每次工具结果会回到模型上下文，模型可继续调用下一项工具。
+- `finish_session` 用于明确结束；发现 flag 时也可以直接完成。
+- `target` 是 Session 的目标契约。产品入口不再要求独立 scope、执行强度、
+  主动探测或 TLS 例外开关。
 
-1. 规则 planner 生成安全边界和最低限度步骤；
-2. LLM planner 根据题目描述、工具目录、历史证据生成候选计划；
-3. Scope Gate 和 Evidence Gate 审核后再执行；
-4. 所有模型建议只作为 lead，不能直接确认 flag 或漏洞。
+旧任务记录中的这些字段仅为兼容读取，不参与正常 Agent Session 的执行决策。

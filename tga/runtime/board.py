@@ -76,6 +76,10 @@ class BoardStore:
         self._validate_artifact_ids(task_id, artifact_ids)
         if source not in {"user", "system"} and not artifact_ids:
             raise ValueError("non-user memory requires an evidence artifact reference")
+        normalized = " ".join(content.casefold().split())
+        for current in self.store.list_memory(task_id):
+            if current.kind == kind and " ".join(current.content.casefold().split()) == normalized:
+                return current
         if len(self.store.list_memory(task_id)) >= ACTIVE_MEMORY_LIMIT:
             self._compact_memory(task_id)
         now = utc_now()

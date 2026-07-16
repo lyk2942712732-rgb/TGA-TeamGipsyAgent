@@ -19,6 +19,9 @@ class SkillRegistry:
         """
         requested = set(tags or [])
         matches = [skill for skill in self._skills.values() if mode in skill.modes]
+        direct = [skill for skill in matches if requested.intersection(skill.tags)]
+        if direct:
+            matches = direct
         return sorted(
             matches,
             key=lambda skill: (-len(requested.intersection(skill.tags)), skill.name),

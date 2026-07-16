@@ -132,6 +132,7 @@ CREATE TABLE IF NOT EXISTS action_results (
 
 CREATE TABLE IF NOT EXISTS agent_events (
     id TEXT PRIMARY KEY,
+    schema_version INTEGER NOT NULL DEFAULT 2,
     task_id TEXT NOT NULL,
     solver_id TEXT,
     seq INTEGER NOT NULL,

@@ -118,6 +118,37 @@ def test_manager_start_creates_v2_session_and_persists_initial_hint(tmp_path: Pa
     assert [event["type"] for event in snapshot["agent_events"]] == ["USER_HINT", "MEMORY_UPSERTED", "BOARD_SNAPSHOT"]
 
 
+def test_manager_exposes_policy_eligible_catalogued_mcp_methods_to_solver_context():
+    from tga.tools.mcp_catalog import MCPCatalog, MCPServerSpec, MCPToolSpec
+
+    task = _task()
+    runner = type("Runner", (), {
+        "catalog": MCPCatalog(
+            hub_root="/tmp/hub",
+            servers=[
+                MCPServerSpec(
+                    id="whatweb-mcp", category="web", path="web/whatweb-mcp", image="whatweb",
+                    implemented=True,
+                    tools=[MCPToolSpec(name="inspect", description="inspect an HTTP surface", input_schema={"type": "object"})],
+                ),
+                MCPServerSpec(
+                    id="nmap-mcp", category="network", path="network/nmap-mcp", image="nmap",
+                    implemented=True,
+                    tools=[MCPToolSpec(name="scan", description="active port scan", input_schema={"type": "object"})],
+                ),
+            ],
+        ),
+    })()
+    executor = type("Executor", (), {"tool_runner": runner})()
+
+    tools = Manager._runtime_tool_catalog(task=task, executor=executor)
+
+    assert tools == [{
+        "tool_id": "whatweb-mcp", "tool_method": "inspect", "description": "inspect an HTTP surface",
+        "arguments_schema": {"type": "object"}, "availability": "catalogued",
+    }]
+
+
 def test_default_manager_reloads_runtime_solver_after_model_configuration_changes(tmp_path: Path, monkeypatch):
     task = _task()
     root = tmp_path / "runs"
@@ -155,7 +186,8 @@ def test_agent_event_sequence_is_atomic_across_store_connections(tmp_path: Path)
     assert sorted(values) == list(range(1, 21))
 
 
-def test_manager_stalls_repeated_semantic_action_without_rejecting_hypothesis(tmp_path: Path):
+def test_legacy_semantic_retry_counter_is_advisory_not_a_terminal_gate(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("TGA_MAX_SESSION_TURNS", "4")
     task = _task()
     run_root = tmp_path / "runs"
     store = EvidenceStore(run_root / task.id / "evidence.db")
@@ -168,11 +200,9 @@ def test_manager_stalls_repeated_semantic_action_without_rejecting_hypothesis(tm
     snapshot = manager.run_session(task.id)
 
     stalled = [event for event in snapshot["agent_events"] if event["type"] == "HYPOTHESIS_STALLED"]
-    assert len(stalled) == 1
-    hypothesis_id = stalled[0]["payload"]["hypothesis_id"]
-    hypothesis = next(item for item in snapshot["board"]["hypotheses"] if item["id"] == hypothesis_id)
-    assert hypothesis["status"] == "inconclusive"
-    assert len([item for item in snapshot["actions"] if item["hypothesis_id"] == hypothesis_id]) == 3
+    assert stalled == []
+    assert len(snapshot["actions"]) == 4
+    assert snapshot["session"]["stop_reason"] == "session_turn_budget_exhausted"
 
 
 def test_restart_recovers_durable_board_event_sequence_and_next_turn(tmp_path: Path):
@@ -298,15 +328,26 @@ def test_observer_runs_after_six_turns_and_can_only_patch_board(tmp_path: Path):
     assert snapshot["flags"] == []
 
 
-def test_manager_enforces_configured_solver_action_budget(tmp_path: Path, monkeypatch):
+def test_legacy_solver_action_budget_is_not_an_execution_gate(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("TGA_MAX_ACTIONS_PER_SOLVER", "1")
+    monkeypatch.setenv("TGA_MAX_SESSION_TURNS", "3")
     task = _task()
     root = tmp_path / "runs"
     store = EvidenceStore(root / task.id / "evidence.db")
     store.create_task(task)
     snapshot = Manager(store=store, run_root=root, executor=FailedExecutor(ArtifactStore(root / task.id / "artifacts")), solver=MainSolver()).run_session(task.id)
-    assert len(snapshot["actions"]) == 1
-    assert snapshot["session"]["stop_reason"] == "solver_action_budget_exhausted"
+    assert len(snapshot["actions"]) == 3
+    assert snapshot["session"]["stop_reason"] == "session_turn_budget_exhausted"
+
+
+def test_runtime_limits_can_be_raised_for_long_lived_solver_sessions(monkeypatch):
+    from tga.runtime.manager import RuntimeLimits
+
+    monkeypatch.setenv("TGA_MAX_SESSION_TURNS", "128")
+    monkeypatch.setenv("TGA_MAX_ACTIONS_PER_SOLVER", "64")
+    limits = RuntimeLimits.from_environment()
+    assert limits.max_turns == 128
+    assert limits.max_actions_per_solver == 64
 
 
 def test_manager_enforces_active_solver_budget_before_selecting_a_solver(tmp_path: Path):
@@ -368,3 +409,29 @@ def test_solver_crash_is_persisted_as_failed_instead_of_leaving_running(tmp_path
     assert snapshot["session"]["status"] == "failed"
     assert snapshot["session"]["stop_reason"] == "solver_initialization_failed"
     assert any(event["type"] == "SOLVER_FAILED" for event in snapshot["agent_events"])
+
+
+def test_model_protocol_failure_is_not_reported_as_an_empty_plan(tmp_path: Path):
+    class ProtocolFailingSolver(MainSolver):
+        model_name = "protocol-failing-model"
+        last_plan_failure_kind = "model_protocol"
+        last_plan_reason = "model did not return required tool propose_tga_action"
+
+        def propose_action(self, **_kwargs):
+            return None
+
+    task = _task()
+    root = tmp_path / "runs"
+    store = EvidenceStore(root / task.id / "evidence.db")
+    store.create_task(task)
+
+    snapshot = Manager(
+        store=store, run_root=root,
+        executor=FailedExecutor(ArtifactStore(root / task.id / "artifacts")),
+        solver=ProtocolFailingSolver(),
+    ).run_session(task.id)
+
+    assert snapshot["session"]["status"] == "blocked"
+    assert snapshot["session"]["stop_reason"] == "model_planning_failed"
+    assert len([event for event in snapshot["agent_events"] if event["type"] == "MODEL_PLAN_RETRY"]) == 2
+    assert not any(event["type"] == "PLAN_EMPTY" for event in snapshot["agent_events"])

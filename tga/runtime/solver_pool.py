@@ -11,6 +11,7 @@ from tga.contracts import SolverRecord, SubagentOutput, SubagentRequest
 from tga.evidence.store import EvidenceStore, utc_now
 from tga.runtime.events import EventStore
 from tga.runtime.subagents import merge_output
+from tga.runtime.solver_session import SolverSessionState
 
 
 class SolverPool:
@@ -41,6 +42,11 @@ class SolverPool:
             started_at=utc_now(),
         )
         self.store.add_solver(solver)
+        SolverSessionState(
+            run_root=self.run_root,
+            task_id=request.task_id,
+            solver_id=solver.id,
+        ).ensure(solver)
         self.store.add_subagent_request(request, solver_id=solver.id, fingerprint=fingerprint)
         workspace = self.workspace(solver.id, request.task_id)
         workspace.mkdir(parents=True, exist_ok=True)

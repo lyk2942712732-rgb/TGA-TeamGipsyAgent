@@ -160,6 +160,8 @@ def normalize_tool_name(value: str) -> str:
 
 
 def _target_in_scope(target: str, scope: list[str], *, local_target: bool) -> bool:
+    if "*" in scope:
+        return True
     if local_target and _path_in_scope(target, scope):
         return True
     target_host = _host_or_path(target)

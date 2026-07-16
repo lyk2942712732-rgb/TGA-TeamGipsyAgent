@@ -8,6 +8,7 @@ confirmation and persistence orchestration to the caller.
 from __future__ import annotations
 
 import json
+import html
 import os
 import re
 import subprocess
@@ -28,29 +29,36 @@ from tga.tools.tool_runner import ToolRunner
 
 from .http import execute_http, extract_candidate_flags, semantic_fingerprint
 from .registry import CapabilityRegistry, build_default_registry
-from .schemas import ArtifactInspectArguments, HTTPRequestArguments, WorkspacePythonArguments, WorkspaceReadArguments, WorkspaceWriteArguments
+from .schemas import ArtifactInspectArguments, HTTPRequestArguments, WorkspacePythonArguments, WorkspaceReadArguments, WorkspaceShellArguments, WorkspaceWriteArguments
 from .serializers import redact_text
 from .workspace import resolve_solver_path
 
 
 class ExecutionBudget:
-    """A second enforcement layer beneath the Manager's session budget."""
+    """Runtime resource controls that do not decide challenge completion.
+
+    BreachWeave-style solver sessions are long lived.  Action and semantic
+    counters are therefore telemetry by default, not hidden terminal gates.
+    Callers may still opt into finite limits for a dedicated batch job.
+    """
 
     def __init__(
         self,
-        max_actions_per_solver: int = 32,
-        max_fingerprint_retries: int = 3,
+        max_actions_per_solver: int | None = None,
+        max_fingerprint_retries: int | None = None,
         *,
         http_requests_per_minute: int = 30,
         http_burst: int = 5,
         max_mcp_concurrency: int = 2,
         max_action_timeout_s: int = 120,
         max_output_bytes: int = 262_144,
+        unrestricted: bool = False,
     ) -> None:
         self.max_actions_per_solver = max_actions_per_solver
         self.max_fingerprint_retries = max_fingerprint_retries
         self.max_action_timeout_s = max_action_timeout_s
         self.max_output_bytes = max_output_bytes
+        self.unrestricted = unrestricted
         self.actions: defaultdict[tuple[str, str], int] = defaultdict(int)
         self.fingerprints: defaultdict[tuple[str, str], int] = defaultdict(int)
         self.http_limiter = RateLimiter(
@@ -67,9 +75,18 @@ class ExecutionBudget:
         """Atomically reserve every quota required before process/network I/O."""
         with self._lock:
             key = (action.task_id, action.solver_id)
-            if self.actions[key] >= self.max_actions_per_solver:
+            if self.unrestricted:
+                self.actions[key] += 1
+                if fingerprint:
+                    self.fingerprints[(action.task_id, fingerprint)] += 1
+                return None
+            if self.max_actions_per_solver is not None and self.actions[key] >= self.max_actions_per_solver:
                 return TGAError(code="ACTION_BUDGET_EXCEEDED", message="solver action budget exhausted")
-            if fingerprint and self.fingerprints[(action.task_id, fingerprint)] >= self.max_fingerprint_retries:
+            if (
+                fingerprint
+                and self.max_fingerprint_retries is not None
+                and self.fingerprints[(action.task_id, fingerprint)] >= self.max_fingerprint_retries
+            ):
                 return TGAError(code="ACTION_BUDGET_EXCEEDED", message="semantic action retry budget exhausted")
             if action.capability == "http.request":
                 # HTTP actions may use an in-scope absolute ``arguments.url``;
@@ -159,6 +176,8 @@ class ControlledActionExecutor:
                 return self._workspace_write(task=task, action=action, arguments=arguments, workspace=workspace)
             if isinstance(arguments, WorkspacePythonArguments):
                 return self._workspace_python(task=task, action=action, arguments=arguments, workspace=workspace)
+            if isinstance(arguments, WorkspaceShellArguments):
+                return self._workspace_shell(task=task, action=action, arguments=arguments, workspace=workspace)
             if isinstance(arguments, ArtifactInspectArguments):
                 return self._artifact_inspect(task=task, action=action, arguments=arguments)
             return self._reject(
@@ -200,8 +219,16 @@ class ControlledActionExecutor:
                 )
                 artifact_ids.append(blob.id)
             candidates = extract_candidate_flags(raw, task.flag_format)
-            status = "succeeded" if not payload.get("error") else "failed"
-            error = None if status == "succeeded" else TGAError(code="HTTP_REQUEST_FAILED", message=str(payload["error"]), retryable=True)
+            availability = payload.get("challenge_availability")
+            status = "succeeded" if not payload.get("error") and not availability else "failed"
+            if availability:
+                error = TGAError(
+                    code="CHALLENGE_UNAVAILABLE",
+                    message=f"challenge endpoint reports {availability}",
+                    retryable=availability == "provisioning",
+                )
+            else:
+                error = None if status == "succeeded" else TGAError(code="HTTP_REQUEST_FAILED", message=str(payload["error"]), retryable=True)
             return ActionResult(
                 action_id=action.id,
                 task_id=task.id,
@@ -334,16 +361,73 @@ class ControlledActionExecutor:
             return ActionResult(action_id=action.id, task_id=task.id, solver_id=action.solver_id, status="failed", summary="workspace Python timed out", artifact_ids=[artifact.id], error=TGAError(code="ACTION_TIMEOUT", message="workspace Python timed out"))
         return ActionResult(action_id=action.id, task_id=task.id, solver_id=action.solver_id, status="succeeded" if returncode == 0 else "failed", summary=f"workspace Python exited {returncode}", artifact_ids=[artifact.id], candidate_flags=_candidate_flags(stdout + "\n" + stderr, task.flag_format))
 
+    def _workspace_shell(self, *, task: TGATask, action: ActionSpec, arguments: WorkspaceShellArguments, workspace: Path) -> ActionResult:
+        root = workspace.resolve()
+        root.mkdir(parents=True, exist_ok=True)
+        timeout = min(arguments.timeout, self.budget.max_action_timeout_s)
+        command = (
+            ["powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", arguments.command]
+            if os.name == "nt"
+            else ["/bin/bash", "-lc", arguments.command]
+        )
+        try:
+            returncode, stdout, stderr, timed_out, output_truncated = _run_bounded_process(
+                command=command, cwd=root, timeout=timeout, output_limit=self.budget.max_output_bytes,
+            )
+        except OSError as exc:
+            return self._reject(action, "WORKSPACE_SHELL_FAILED", redact_text(str(exc), 500))
+        payload = {
+            "command": arguments.command,
+            "timeout": timeout,
+            "timed_out": timed_out,
+            "exit_code": None if timed_out else returncode,
+            "stdout": redact_text(stdout, self.budget.max_output_bytes),
+            "stderr": redact_text(stderr, self.budget.max_output_bytes),
+            "truncated": output_truncated,
+        }
+        artifact = self.artifact_store.save_text(
+            task_id=task.id, intent_id=action.hypothesis_id, kind="tool_output",
+            text=json.dumps(payload, ensure_ascii=False), tool="workspace.shell",
+            target=str(root), suffix=".json",
+        )
+        output = stdout + "\n" + stderr
+        if timed_out:
+            return ActionResult(
+                action_id=action.id, task_id=task.id, solver_id=action.solver_id,
+                status="failed", summary="workspace shell timed out", artifact_ids=[artifact.id],
+                candidate_flags=_candidate_flags(output, task.flag_format),
+                error=TGAError(code="ACTION_TIMEOUT", message="workspace shell timed out", retryable=True),
+            )
+        return ActionResult(
+            action_id=action.id, task_id=task.id, solver_id=action.solver_id,
+            status="succeeded" if returncode == 0 else "failed",
+            summary=f"workspace shell exited {returncode}", artifact_ids=[artifact.id],
+            leads=[redact_text(output, 12_000)] if output.strip() else [],
+            candidate_flags=_candidate_flags(output, task.flag_format),
+        )
+
     def _artifact_inspect(self, *, task: TGATask, action: ActionSpec, arguments: ArtifactInspectArguments) -> ActionResult:
         text = self.artifact_store.read_text(arguments.artifact_id)
         if not text:
             return self._reject(action, "ARTIFACT_NOT_FOUND", "artifact does not exist")
-        excerpt = text[arguments.offset : arguments.offset + min(arguments.limit, self.budget.max_output_bytes)]
-        if arguments.query:
-            location = excerpt.lower().find(arguments.query.lower())
-            excerpt = excerpt[max(0, location - 500) : location + len(arguments.query) + 1500] if location >= 0 else ""
-        artifact = self.artifact_store.save_text(task_id=task.id, intent_id=action.hypothesis_id, kind="file", text=json.dumps({"source_artifact_id": arguments.artifact_id, "offset": arguments.offset, "excerpt": redact_text(excerpt, arguments.limit)}, ensure_ascii=False), tool="artifact.inspect", suffix=".json")
-        return ActionResult(action_id=action.id, task_id=task.id, solver_id=action.solver_id, status="succeeded", summary=f"inspected {arguments.artifact_id}", artifact_ids=[artifact.id], facts=["artifact excerpt loaded"], candidate_flags=_candidate_flags(excerpt, task.flag_format))
+        searchable = _artifact_search_text(text)
+        window = searchable[arguments.offset : arguments.offset + min(arguments.limit, self.budget.max_output_bytes)]
+        excerpt = _query_excerpt(window, arguments.query)
+        matched = bool(excerpt) if arguments.query else True
+        # Inspection is a read view over an existing immutable artifact.  Do
+        # not create artifact-of-artifact chains: they drown useful HTTP/tool
+        # output, inflate the graph and make recovery context progressively
+        # worse.  Reusing the source id preserves provenance exactly.
+        return ActionResult(
+            action_id=action.id,
+            task_id=task.id,
+            solver_id=action.solver_id,
+            status="succeeded",
+            summary=f"inspected {arguments.artifact_id}" + (" (query matched)" if matched else " (query not found)"),
+            artifact_ids=[arguments.artifact_id],
+            leads=[redact_text(excerpt, min(arguments.limit, 12_000))] if excerpt else [],
+            candidate_flags=_candidate_flags(excerpt, task.flag_format),
+        )
 
     def _reject(self, action: ActionSpec, code: str, message: str, *, retryable: bool = False) -> ActionResult:
         error = TGAError(code=code, message=message, retryable=retryable)
@@ -408,6 +492,44 @@ def _candidate_flags(text: str, flag_format: str | None) -> list[str]:
     return list(dict.fromkeys(match.group(0) for match in pattern.finditer(text)))
 
 
+def _artifact_search_text(text: str) -> str:
+    """Flatten common executor envelopes into readable tool output."""
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        return html.unescape(text)
+    if not isinstance(payload, dict):
+        return html.unescape(text)
+    values: list[str] = []
+    for key in ("body_excerpt", "excerpt", "stdout", "stderr", "summary", "error"):
+        value = payload.get(key)
+        if isinstance(value, str) and value:
+            values.append(value)
+        elif isinstance(value, dict):
+            values.append(json.dumps(value, ensure_ascii=False))
+    page = payload.get("page")
+    if isinstance(page, dict):
+        values.append(json.dumps(page, ensure_ascii=False))
+    return html.unescape("\n".join(values) if values else text)
+
+
+def _query_excerpt(text: str, query: str | None) -> str:
+    if not query:
+        return text
+    # Model queries are often descriptive phrases, while tool output contains
+    # only a subset of those words.  Match useful tokens independently and
+    # merge bounded windows instead of requiring the whole phrase verbatim.
+    tokens = list(dict.fromkeys(re.findall(r"[A-Za-z0-9_./:-]{3,}", query.casefold())))
+    lowered = text.casefold()
+    locations = sorted({location for token in tokens if (location := lowered.find(token)) >= 0})
+    if not locations:
+        return ""
+    chunks: list[str] = []
+    for location in locations[:8]:
+        chunks.append(text[max(0, location - 700) : location + 2200])
+    return "\n...\n".join(chunks)
+
+
 def _risk_rank(value: str) -> int:
     return {"passive": 0, "active": 1, "destructive": 2}.get(value, -1)
 
@@ -423,12 +545,26 @@ def _run_bounded_python(
     *, script: Path, argv: list[str], cwd: Path, timeout: int, output_limit: int
 ) -> tuple[int, str, str, bool, bool]:
     """Drain both pipes while retaining at most ``output_limit`` bytes each."""
+    return _run_bounded_process(
+        command=[sys.executable, "-I", str(script), *argv],
+        cwd=cwd,
+        timeout=timeout,
+        output_limit=output_limit,
+        env={"PATH": os.environ.get("PATH", ""), "PYTHONIOENCODING": "utf-8", "PYTHONDONTWRITEBYTECODE": "1"},
+    )
+
+
+def _run_bounded_process(
+    *, command: list[str], cwd: Path, timeout: int, output_limit: int,
+    env: dict[str, str] | None = None,
+) -> tuple[int, str, str, bool, bool]:
+    """Run one Solver tool command while bounding retained stdout/stderr."""
     process = subprocess.Popen(
-        [sys.executable, "-I", str(script), *argv],
+        command,
         cwd=cwd,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        env={"PATH": os.environ.get("PATH", ""), "PYTHONIOENCODING": "utf-8", "PYTHONDONTWRITEBYTECODE": "1"},
+        env=env,
     )
     captured: dict[str, bytearray] = {"stdout": bytearray(), "stderr": bytearray()}
     truncated = {"stdout": False, "stderr": False}

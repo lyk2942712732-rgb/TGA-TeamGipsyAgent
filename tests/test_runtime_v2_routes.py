@@ -24,6 +24,9 @@ def _seed_session(tmp_path, monkeypatch) -> str:
 
 def test_v2_task_creation_initializes_a_runtime_session(tmp_path, monkeypatch):
     monkeypatch.setenv("TGA_RUN_ROOT", str(tmp_path / "runs"))
+    monkeypatch.setenv("TGA_LLM_BASE_URL", "https://model.test/v1")
+    monkeypatch.setenv("TGA_LLM_API_KEY", "test-key")
+    monkeypatch.setenv("TGA_LLM_MODEL", "test-model")
     monkeypatch.setattr(routes_v2, "_schedule_runtime_runner", lambda task_id: task_id == "task_api")
     import tga.runtime.manager as runtime_manager
 
@@ -56,6 +59,15 @@ def test_v2_session_uses_only_agent_event_cursor(tmp_path, monkeypatch):
     assert [item["seq"] for item in events.json()["events"]] == [2]
 
 
+def test_running_task_cannot_be_deleted(tmp_path, monkeypatch):
+    task_id = _seed_session(tmp_path, monkeypatch)
+
+    response = TestClient(app).delete(f"/api/v2/tasks/{task_id}")
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "running session cannot be deleted"
+
+
 def test_v2_event_projection_omits_null_optional_payload_fields(tmp_path, monkeypatch):
     task_id = _seed_session(tmp_path, monkeypatch)
     store = EvidenceStore(tmp_path / "runs" / task_id / "evidence.db")
@@ -69,6 +81,20 @@ def test_v2_event_projection_omits_null_optional_payload_fields(tmp_path, monkey
     payload = TestClient(app).get(f"/api/v2/tasks/{task_id}/session").json()["events"][-1]["payload"]
     assert payload["action"] == "resume"
     assert "action_id" not in payload
+
+
+def test_v2_action_projection_keeps_in_flight_summary_a_string():
+    action = routes_v2._normalize_action({
+        "id": "act_running",
+        "capability": "http.request",
+        "target": "https://target.test/",
+        "status": "running",
+        "summary": None,
+        "result": None,
+    })
+
+    assert action["summary"] == ""
+    assert action["artifact_ids"] == []
 
 
 def test_v2_sse_stream_reads_agent_events(tmp_path, monkeypatch):
@@ -109,6 +135,9 @@ def test_v2_sse_disconnect_closes_transport_without_mutating_session(tmp_path, m
 
 def test_v2_start_recovers_a_created_session(tmp_path, monkeypatch):
     monkeypatch.setenv("TGA_RUN_ROOT", str(tmp_path / "runs"))
+    monkeypatch.setenv("TGA_LLM_BASE_URL", "https://model.test/v1")
+    monkeypatch.setenv("TGA_LLM_API_KEY", "test-key")
+    monkeypatch.setenv("TGA_LLM_MODEL", "test-model")
     task = TGATask(id="recover", name="recover", mode="ctf", target="http://127.0.0.1:8080", scope=["127.0.0.1:8080"], goal="solve")
     store = EvidenceStore(tmp_path / "runs" / task.id / "evidence.db")
     try:
@@ -122,6 +151,22 @@ def test_v2_start_recovers_a_created_session(tmp_path, monkeypatch):
     runtime_manager._manager = None
     response = TestClient(app).post(f"/api/v2/tasks/{task.id}/start", json={"initial_hint": "Check the documented login form first."})
     assert response.json() == {"accepted": True, "status": "created", "scheduled": True}
+
+
+def test_v2_task_creation_requires_a_configured_model(tmp_path, monkeypatch):
+    monkeypatch.setenv("TGA_RUN_ROOT", str(tmp_path / "runs"))
+    monkeypatch.delenv("TGA_LLM_BASE_URL", raising=False)
+    monkeypatch.delenv("TGA_LLM_API_KEY", raising=False)
+    monkeypatch.delenv("TGA_LLM_MODEL", raising=False)
+
+    response = TestClient(app).post("/api/v2/tasks", json={"task": {
+        "id": "model_required", "name": "model required", "mode": "ctf",
+        "target": "http://127.0.0.1:8080", "scope": ["127.0.0.1:8080"], "goal": "solve",
+    }})
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "model_not_configured"
+    assert not (tmp_path / "runs" / "model_required").exists()
 
 
 def test_v2_settings_and_capabilities_routes(monkeypatch):
@@ -145,3 +190,26 @@ def test_v2_settings_and_capabilities_routes(monkeypatch):
     monkeypatch.setattr(routes_v2, "health_snapshot", lambda value: {"records": []} if value is runner else {})
     assert client.get("/api/v2/capabilities").json()["capabilities"][0]["name"] == "workspace.write"
     assert client.get("/api/v2/tools/health").json()["configured"] is True
+    skills = client.get("/api/v2/settings/skills").json()
+    prompts = client.get("/api/v2/settings/prompts").json()
+    assert skills["schema_version"] == 2 and skills["skills"]
+    assert {item["role"] for item in prompts["prompts"]} == {"main", "recon", "targeted", "research"}
+    assert all(item["editable"] is False for item in prompts["prompts"])
+
+
+def test_v2_llm_verify_reports_connectivity_without_exposing_response(monkeypatch):
+    class FakeClient:
+        model = "reachable-model"
+
+        def chat_action_tool(self, messages, **kwargs):
+            assert messages[-1].content == "Confirm the TGA action tool protocol."
+            assert kwargs["tool_name"] == "verify_tga_action_protocol"
+            assert kwargs["parameters"]["required"] == ["ok"]
+            assert kwargs["temperature"] == 0
+            return type("Response", (), {"content": '{"ok":true}'})()
+
+    monkeypatch.setattr(routes_v2, "build_model_client_from_env", lambda: FakeClient())
+
+    response = TestClient(app).post("/api/v2/settings/llm/verify")
+
+    assert response.json() == {"configured": True, "reachable": True, "action_tools": True, "model": "reachable-model"}

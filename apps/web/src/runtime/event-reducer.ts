@@ -18,8 +18,21 @@ export function applyRuntimeEvent(snapshot: RuntimeSnapshot, event: RuntimeEvent
   if (event.type === "ACTION_PROPOSED" && payload.action_id && !actionById(next.actions, payload.action_id)) {
     next = { ...next, actions: [...next.actions, { id: payload.action_id, capability: payload.capability ?? "unknown", target: payload.target ?? "", hypothesis_id: payload.hypothesis_id ?? null, status: "proposed", rationale: payload.rationale, artifact_ids: [] }] };
   }
+  if (event.type === "ACTION_APPROVED" && payload.action_id) next = updateAction(next, payload.action_id, { status: "approved" });
   if (event.type === "ACTION_STARTED" && payload.action_id) next = updateAction(next, payload.action_id, { status: "running" });
   if (event.type === "ACTION_FINISHED" && payload.action_id) next = updateAction(next, payload.action_id, { status: (payload.status as RuntimeAction["status"]) ?? "failed", summary: payload.summary, artifact_ids: payload.artifact_ids ?? [] });
+  if (event.type === "TOOL_EXECUTION_START" && payload.action_id && !actionById(next.actions, payload.action_id)) {
+    next = { ...next, actions: [...next.actions, { id: payload.action_id, capability: payload.tool_name ?? "tool", target: snapshot.task.target, status: "running", rationale: "Agent Session tool call", artifact_ids: [] }] };
+  }
+  if (event.type === "TOOL_EXECUTION_END" && payload.action_id) {
+    next = updateAction(next, payload.action_id, { status: (payload.status as RuntimeAction["status"]) ?? "failed", summary: payload.summary, artifact_ids: payload.artifacts?.map((item) => item.artifact_id) ?? [] });
+  }
+  if (event.type === "SOLVER_STARTED" && event.solver_id && !next.solvers.some((solver) => solver.id === event.solver_id)) {
+    next = { ...next, solvers: [...next.solvers, { id: event.solver_id, role: (payload.role ?? "main") as RuntimeSnapshot["solvers"][number]["role"], status: "running", model_name: payload.model_name }] };
+  }
+  if (event.type === "SOLVER_STOPPED" && event.solver_id) {
+    next = { ...next, solvers: next.solvers.map((solver) => solver.id === event.solver_id ? { ...solver, status: payload.status ?? solver.status } : solver) };
+  }
   return next;
 }
 

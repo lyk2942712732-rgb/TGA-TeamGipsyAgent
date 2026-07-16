@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 from concurrent.futures import Future, ThreadPoolExecutor
+import hashlib
+import json
+import re
+from time import monotonic
 from typing import Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -91,10 +95,13 @@ class ObserverSidecar:
     Database writes are always applied by the manager thread through BoardStore.
     """
 
-    def __init__(self, observer: Observer):
+    def __init__(self, observer: Observer, *, cooldown_seconds: float = 30.0):
         self.observer = observer
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="tga-observer")
         self._pending: Future[ObserverPatch] | None = None
+        self._cooldown_seconds = max(0.0, cooldown_seconds)
+        self._last_fingerprint = ""
+        self._last_emitted_at = 0.0
 
     def request(self, snapshot: dict) -> bool:
         if self._pending and not self._pending.done():
@@ -109,7 +116,16 @@ class ObserverSidecar:
             return None
         future, self._pending = self._pending, None
         patch = future.result()
-        return patch if isinstance(patch, ObserverPatch) else ObserverPatch.model_validate(patch)
+        parsed = patch if isinstance(patch, ObserverPatch) else ObserverPatch.model_validate(patch)
+        fingerprint = hashlib.sha256(
+            json.dumps(parsed.model_dump(mode="json"), sort_keys=True, ensure_ascii=False).encode("utf-8")
+        ).hexdigest()
+        now = monotonic()
+        if fingerprint == self._last_fingerprint and now - self._last_emitted_at < self._cooldown_seconds:
+            return None
+        self._last_fingerprint = fingerprint
+        self._last_emitted_at = now
+        return parsed
 
     def close(self) -> None:
         self._executor.shutdown(wait=True, cancel_futures=True)
@@ -120,17 +136,79 @@ def build_observer_context(snapshot: dict) -> dict:
     board = snapshot.get("board") or {}
     memory = board.get("memory") or []
     actions = snapshot.get("actions") or []
+    task = snapshot.get("task") or {}
+    session = snapshot.get("session") or {}
     return {
-        "task": snapshot.get("task") or {},
-        "session": snapshot.get("session") or {},
-        "recent_actions": actions[-6:],
-        "active_hypotheses": [item for item in board.get("hypotheses") or [] if item.get("status") in {"pending", "testing", "inconclusive"}],
-        "recent_memory": memory[-12:],
-        "user_hints": [item for item in memory[-12:] if item.get("kind") == "hint" and item.get("source") == "user"],
+        "schema_version": 2,
+        "task": {
+            "id": task.get("id"),
+            "name": _redact(task.get("name")),
+            "mode": task.get("mode"),
+            "goal": _redact(task.get("goal")),
+        },
+        "session": {
+            "status": session.get("status"),
+            "turn_count": session.get("turn_count"),
+            "max_turns": session.get("max_turns"),
+            "stop_reason": session.get("stop_reason"),
+        },
+        "recent_actions": [
+            {
+                "id": item.get("id"),
+                "solver_id": item.get("solver_id"),
+                "hypothesis_id": item.get("hypothesis_id"),
+                "capability": item.get("capability"),
+                "status": item.get("status"),
+                "result": {
+                    "summary": _redact((item.get("result") or {}).get("summary")),
+                    "artifact_ids": (item.get("result") or {}).get("artifact_ids") or [],
+                    "error": (item.get("result") or {}).get("error"),
+                },
+            }
+            for item in actions[-6:]
+        ],
+        "active_hypotheses": [
+            {
+                "id": item.get("id"),
+                "statement": _redact(item.get("statement")),
+                "attack_class": item.get("attack_class"),
+                "status": item.get("status"),
+                "confidence": item.get("confidence"),
+                "last_result": _redact(item.get("last_result")),
+                "evidence_artifact_ids": item.get("evidence_artifact_ids") or [],
+            }
+            for item in board.get("hypotheses") or []
+            if item.get("status") in {"pending", "testing", "inconclusive"}
+        ],
+        "recent_memory": [_redacted_memory(item) for item in memory[-12:]],
+        "user_hints": [_redacted_memory(item) for item in memory[-12:] if item.get("kind") == "hint" and item.get("source") == "user"],
         "coverage_gaps": [
             gap
             for item in (snapshot.get("subagents") or [])
             for gap in ((item.get("output") or {}).get("coverage_gaps") or [])
         ][-8:],
-        "challenge": snapshot.get("challenge") or {},
+        "challenge": {
+            "status": (snapshot.get("challenge") or {}).get("status"),
+            "status_reason": _redact((snapshot.get("challenge") or {}).get("status_reason")),
+            "completion_proof_artifact_id": (snapshot.get("challenge") or {}).get("completion_proof_artifact_id"),
+        },
     }
+
+
+def _redacted_memory(item: dict) -> dict:
+    return {
+        "id": item.get("id"),
+        "kind": item.get("kind"),
+        "content": _redact(item.get("content")),
+        "artifact_ids": item.get("artifact_ids") or [],
+        "source": item.get("source"),
+    }
+
+
+def _redact(value: object) -> str:
+    text = str(value or "")
+    return re.sub(
+        r"(?i)((?:authorization|cookie|set-cookie|token|secret|api[_-]?key|password)\s*[:=]\s*)([^\s;,]+)",
+        r"\1[REDACTED]",
+        text,
+    )[:800]

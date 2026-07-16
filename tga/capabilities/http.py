@@ -3,11 +3,12 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import ssl
 import time
 from http.cookiejar import CookieJar
 from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qsl, urlencode, urljoin, urlparse, urlunparse
-from urllib.request import HTTPCookieProcessor, HTTPRedirectHandler, Request, build_opener
+from urllib.request import HTTPCookieProcessor, HTTPSHandler, HTTPRedirectHandler, Request, build_opener
 
 from tga.contracts import ActionSpec, TGATask
 from tga.core.scope import is_in_scope
@@ -37,12 +38,16 @@ def execute_http(
 
     headers = _safe_headers(args.headers)
     data, request_headers = _encode_body(args.body, headers, args.method)
-    opener = build_opener(_NoRedirect(), HTTPCookieProcessor(CookieJar()))
+    cookies = CookieJar()
+    opener = build_opener(_NoRedirect(), HTTPCookieProcessor(cookies))
     redirects: list[dict] = []
     started = time.monotonic()
     current = url
     for _ in range(6):
-        response = _request(opener, current, args.method, request_headers, data, args.timeout, max_output_bytes)
+        response = _request(
+            opener, current, args.method, request_headers, data, args.timeout, max_output_bytes,
+            allow_insecure_tls=_allows_insecure_tls(task, current), cookies=cookies,
+        )
         status = response["status"]
         location = response["response_headers"].get("Location") or response["response_headers"].get("location")
         if status in {301, 302, 303, 307, 308} and location:
@@ -64,6 +69,7 @@ def execute_http(
     truncated = truncated or bool(response.get("output_limited"))
     content_type = response["content_type"]
     page = analyze_html(url=current, text=excerpt, content_type=content_type)
+    challenge_availability = _challenge_availability(status=response["status"], text=excerpt)
     payload = {
         "capability": "http.request",
         "semantic_fingerprint": semantic_fingerprint(action=action, args=args, url=url),
@@ -80,9 +86,13 @@ def execute_http(
         "truncated": truncated,
         "duration_ms": round((time.monotonic() - started) * 1000),
         "page": page,
+        "challenge_availability": challenge_availability,
+        "tls": response.get("tls") or {"mode": "verified"},
         "error": response.get("error"),
     }
     facts = [] if response.get("error") else [f"{args.method} {current} -> HTTP {response['status']}"]
+    if challenge_availability:
+        facts.append(f"challenge availability: {challenge_availability}")
     leads = _leads(page)
     return payload, raw, facts, leads
 
@@ -98,11 +108,25 @@ def semantic_fingerprint(*, action: ActionSpec, args: HTTPRequestArguments, url:
         body_schema = None
     else:
         body_schema = type(args.body).__name__
+    # A form endpoint is often deliberately exercised with several distinct,
+    # evidence-driven inputs.  Keeping only its field names made every POST
+    # to e.g. ``{"code": ...}`` share one retry budget, even when the values
+    # represented different hypotheses.  Retain no request content in the
+    # persisted fingerprint; a bounded digest is sufficient for de-duplication.
+    if args.body is None:
+        body_digest = None
+    else:
+        try:
+            canonical_body = json.dumps(args.body, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
+        except (TypeError, ValueError):
+            canonical_body = str(args.body)
+        body_digest = hashlib.sha256(canonical_body.encode("utf-8", errors="replace")).hexdigest()[:16]
     normalized = {
         "method": args.method,
         "path": parsed.path or "/",
         "query_names": sorted({key for key, _ in parse_qsl(parsed.query, keep_blank_values=True)} | set(args.query)),
         "body_schema": body_schema,
+        "body_digest": body_digest,
         "target": f"{parsed.scheme}://{parsed.netloc}",
         "hypothesis_id": action.hypothesis_id,
     }
@@ -150,18 +174,80 @@ def _encode_body(body: object, headers: dict[str, str], method: str) -> tuple[by
 
 
 def _request(
-    opener, url: str, method: str, headers: dict[str, str], data: bytes | None, timeout: int, max_output_bytes: int
+    opener, url: str, method: str, headers: dict[str, str], data: bytes | None, timeout: int, max_output_bytes: int,
+    *, allow_insecure_tls: bool = False, cookies: CookieJar | None = None,
 ) -> dict:  # type: ignore[no-untyped-def]
     request = Request(url, data=data, headers=headers, method=method)
     try:
-        with opener.open(request, timeout=timeout) as response:
-            raw = response.read(max_output_bytes + 1)
-            return {"status": int(response.status), "response_headers": dict(response.headers.items()), "content_type": response.headers.get("Content-Type", ""), "raw": raw[:max_output_bytes], "output_limited": len(raw) > max_output_bytes, "error": None}
+        return _read_response(opener, request, timeout, max_output_bytes)
     except HTTPError as exc:
         raw = exc.read(max_output_bytes + 1)
         return {"status": int(exc.code), "response_headers": dict(exc.headers.items()) if exc.headers else {}, "content_type": exc.headers.get("Content-Type", "") if exc.headers else "", "raw": raw[:max_output_bytes], "output_limited": len(raw) > max_output_bytes, "error": None}
     except (URLError, TimeoutError, OSError) as exc:
+        if allow_insecure_tls and _certificate_verification_failed(exc):
+            insecure_opener = build_opener(
+                _NoRedirect(), HTTPCookieProcessor(cookies or CookieJar()),
+                HTTPSHandler(context=ssl._create_unverified_context()),
+            )
+            try:
+                recovered = _read_response(insecure_opener, request, timeout, max_output_bytes)
+                recovered["tls"] = {
+                    "mode": "verification_disabled_for_exact_origin",
+                    "origin": _https_origin(url),
+                    "trigger": "certificate_verify_failed",
+                }
+                return recovered
+            except HTTPError as retry_error:
+                raw = retry_error.read(max_output_bytes + 1)
+                return {"status": int(retry_error.code), "response_headers": dict(retry_error.headers.items()) if retry_error.headers else {}, "content_type": retry_error.headers.get("Content-Type", "") if retry_error.headers else "", "raw": raw[:max_output_bytes], "output_limited": len(raw) > max_output_bytes, "error": None, "tls": {"mode": "verification_disabled_for_exact_origin", "origin": _https_origin(url), "trigger": "certificate_verify_failed"}}
+            except (URLError, TimeoutError, OSError) as retry_error:
+                return {"status": 0, "response_headers": {}, "content_type": "", "raw": b"", "output_limited": False, "error": str(retry_error), "tls": {"mode": "verification_disabled_for_exact_origin", "origin": _https_origin(url), "trigger": "certificate_verify_failed"}}
         return {"status": 0, "response_headers": {}, "content_type": "", "raw": b"", "output_limited": False, "error": str(exc)}
+
+
+def _read_response(opener, request: Request, timeout: int, max_output_bytes: int) -> dict:  # type: ignore[no-untyped-def]
+    with opener.open(request, timeout=timeout) as response:
+        raw = response.read(max_output_bytes + 1)
+        return {"status": int(response.status), "response_headers": dict(response.headers.items()), "content_type": response.headers.get("Content-Type", ""), "raw": raw[:max_output_bytes], "output_limited": len(raw) > max_output_bytes, "error": None}
+
+
+def _https_origin(url: str) -> str:
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").lower()
+    return f"https://{host}" if parsed.port in {None, 443} else f"https://{host}:{parsed.port}"
+
+
+def _allows_insecure_tls(task: TGATask, url: str) -> bool:
+    return urlparse(url).scheme == "https" and _https_origin(url) in task.insecure_tls_origins
+
+
+def _certificate_verification_failed(error: Exception) -> bool:
+    reason = error.reason if isinstance(error, URLError) else error
+    return isinstance(reason, ssl.SSLCertVerificationError) or "CERTIFICATE_VERIFY_FAILED" in str(reason).upper()
+
+
+def _challenge_availability(*, status: int, text: str) -> str | None:
+    """Recognize hosted CTF lifecycle pages instead of treating them as a solved route.
+
+    CTF platforms commonly return a branded HTML 404 after a per-team
+    container expires.  This is evidence about challenge availability, not an
+    application 404 that an agent should keep probing.
+    """
+    if status not in {404, 410, 502, 503, 504}:
+        return None
+    normalized = re.sub(r"\s+", " ", text).casefold()
+    expired_markers = (
+        "容器已过期", "container expired", "challenge expired", "instance expired",
+        "container is not running", "container not found",
+    )
+    provisioning_markers = (
+        "未创建完成", "creating container", "container is starting", "initializing challenge",
+    )
+    if any(marker in normalized for marker in expired_markers):
+        return "expired"
+    if any(marker in normalized for marker in provisioning_markers):
+        return "provisioning"
+    return None
 
 
 def _leads(page: dict) -> list[str]:

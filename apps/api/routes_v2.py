@@ -3,10 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-import importlib
 import json
 import os
-import shutil
 import threading
 from collections.abc import AsyncIterator
 from pathlib import Path
@@ -19,9 +17,11 @@ from pydantic import BaseModel, Field
 from tga.capabilities.mcp import health_snapshot, tool_catalog_snapshot
 from tga.capabilities.registry import build_default_registry
 from tga.contracts import TGATask
-from tga.evidence.store import EvidenceStore
-from tga.models.bootstrap import model_config_status
-from tga.reporting.markdown_report import render_markdown_report
+from tga.models.base import ModelMessage
+from tga.models.bootstrap import build_model_client_from_env, model_config_status
+from tga.runtime.service import TaskRuntimeService
+from tga.runtime.prompts import ROLE_INSTRUCTIONS
+from tga.skills.registry import SkillRegistry
 from tga.tools.bootstrap import discover_mcp_security_hub_root
 from tga.tools.mcp_catalog import discover_mcp_security_hub
 from tga.tools.tool_runner import ToolRunner
@@ -77,28 +77,17 @@ def _run_root() -> Path:
 
 
 def _task_root(task_id: str) -> Path:
-    root = _run_root().resolve()
-    candidate = (root / task_id).resolve()
     try:
-        candidate.relative_to(root)
+        return TaskRuntimeService(run_root=_run_root()).task_root(task_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="invalid task id") from exc
-    return candidate
 
 
 def _snapshot(task_id: str) -> dict[str, Any]:
-    db_path = _task_root(task_id) / "evidence.db"
-    if not db_path.exists():
-        raise HTTPException(status_code=404, detail="session not found")
-    store = EvidenceStore(db_path)
     try:
-        snapshot = store.get_session_snapshot(task_id)
-    finally:
-        store.close()
-    if not snapshot.get("task"):
-        raise HTTPException(status_code=404, detail="session not found")
-    if not snapshot.get("session"):
-        raise HTTPException(status_code=404, detail="v2 session not found")
+        snapshot = TaskRuntimeService(run_root=_run_root()).snapshot(task_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="session not found") from exc
     return _normalize_snapshot(snapshot)
 
 
@@ -126,6 +115,13 @@ def _normalize_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
     latest_seq = max((event["seq"] for event in events), default=0)
     session = snapshot["session"]
     board = snapshot.get("board") or {}
+    agent_runtime = any(
+        event.get("type") == "SESSION_STARTED" and (event.get("payload") or {}).get("runtime") == "agent_session"
+        for event in events
+    )
+    solvers = snapshot.get("solvers") or []
+    if agent_runtime:
+        solvers = [item for item in solvers if item.get("role") == "main"]
     result = {
         "task": snapshot.get("task") or {},
         "session": {
@@ -135,14 +131,14 @@ def _normalize_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
             "active_solver_id": session.get("active_solver_id"),
             "stop_reason": session.get("stop_reason"),
         },
-        "solvers": snapshot.get("solvers") or [],
+        "solvers": solvers,
         "challenge": snapshot.get("challenge") or {},
-        "subagents": snapshot.get("subagents") or [],
+        "subagents": [] if agent_runtime else snapshot.get("subagents") or [],
         "board": {
-            "hypotheses": board.get("hypotheses") or snapshot.get("hypotheses") or [],
+            "hypotheses": [] if agent_runtime else board.get("hypotheses") or snapshot.get("hypotheses") or [],
             "memory": board.get("memory") or snapshot.get("memory") or snapshot.get("memory_entries") or [],
         },
-        "actions": snapshot.get("actions") or [],
+        "actions": [_normalize_action(item) for item in (snapshot.get("actions") or [])],
         "flags": snapshot.get("flags") or [],
         "findings": snapshot.get("findings") or [],
         "artifacts": snapshot.get("artifacts") or [],
@@ -151,6 +147,22 @@ def _normalize_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
         "schema_version": 2,
     }
     return result
+
+
+def _normalize_action(item: dict[str, Any]) -> dict[str, Any]:
+    """Flatten the persisted tool result into the Web action projection."""
+    result = item.get("result") if isinstance(item.get("result"), dict) else {}
+    summary = result.get("summary") or item.get("summary") or ""
+    return {
+        **{key: value for key, value in item.items() if key not in {"arguments_json", "result"}},
+        "arguments": item.get("arguments") or {},
+        # A running action has no result yet. Keep the public contract stable
+        # instead of emitting null and making one in-flight tool invalidate the
+        # entire Runtime snapshot in strict clients.
+        "summary": str(summary),
+        "artifact_ids": result.get("artifact_ids") or [],
+        "error": result.get("error"),
+    }
 
 
 def _runtime_events(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
@@ -169,16 +181,13 @@ def get_session(task_id: str) -> dict[str, Any]:
 @router.post("/tasks")
 def create_task(payload: CreateTaskRequest) -> dict[str, Any]:
     """Create and initialize a session atomically from the UI's perspective."""
+    if not model_config_status()["configured"]:
+        raise HTTPException(status_code=409, detail="model_not_configured")
     task = payload.task
-    task_root = _task_root(task.id)
-    store = EvidenceStore(task_root / "evidence.db")
     try:
-        if store.task_snapshot(task.id).get("task"):
-            raise HTTPException(status_code=409, detail="task id already exists")
-        store.create_task(task)
-    finally:
-        store.close()
-    result = _runtime_command("start_session", task.id, {"initial_hint": payload.initial_hint})
+        result = TaskRuntimeService(run_root=_run_root()).create_task(task, initial_hint=payload.initial_hint)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     if not result.get("accepted"):
         raise HTTPException(status_code=409, detail=str(result.get("reason") or "session did not start"))
     return {"task_id": task.id, "status": result["status"], "scheduled": _schedule_runtime_runner(task.id)}
@@ -186,47 +195,26 @@ def create_task(payload: CreateTaskRequest) -> dict[str, Any]:
 
 @router.get("/tasks")
 def list_tasks() -> dict[str, list[dict[str, Any]]]:
-    tasks: list[dict[str, Any]] = []
-    run_root = _run_root()
-    if not run_root.exists():
-        return {"tasks": tasks}
-    for child in sorted(run_root.iterdir(), key=lambda path: path.stat().st_mtime, reverse=True):
-        db_path = child / "evidence.db"
-        if not child.is_dir() or child.name.startswith(".") or not db_path.is_file():
-            continue
-        try:
-            snapshot = _snapshot(child.name)
-        except HTTPException:
-            continue
-        task = snapshot["task"]
-        tasks.append({
-            "task_id": child.name,
-            "name": task.get("name") or child.name,
-            "mode": task.get("mode") or "ctf",
-            "target": task.get("target") or "",
-            "created_at": snapshot["events"][0]["created_at"] if snapshot["events"] else "",
-            "status": snapshot["session"]["status"],
-            "flags": len(snapshot["flags"]),
-            "findings": len(snapshot["findings"]),
-            "artifacts": len(snapshot["artifacts"]),
-        })
-    return {"tasks": tasks}
+    return {"tasks": TaskRuntimeService(run_root=_run_root()).list_tasks()}
 
 
 @router.delete("/tasks/{task_id}")
 def delete_task(task_id: str) -> dict[str, Any]:
-    task_root = _task_root(task_id)
-    if task_root.exists():
-        shutil.rmtree(task_root)
+    _task_root(task_id)
+    with _runner_lock:
+        if task_id in _running_tasks:
+            raise HTTPException(status_code=409, detail="running session cannot be deleted")
+    try:
+        TaskRuntimeService(run_root=_run_root()).delete_task(task_id)
+    except (KeyError, ValueError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     return {"task_id": task_id, "deleted": True}
 
 
 @router.get("/tasks/{task_id}/report")
 def task_report(task_id: str) -> FileResponse:
-    snapshot = _snapshot(task_id)
-    report_path = _task_root(task_id) / "reports" / "report.md"
-    report_path.parent.mkdir(parents=True, exist_ok=True)
-    report_path.write_text(render_markdown_report(snapshot), encoding="utf-8")
+    _snapshot(task_id)
+    report_path = TaskRuntimeService(run_root=_run_root()).write_report(task_id)
     return FileResponse(report_path, media_type="text/markdown")
 
 
@@ -241,6 +229,24 @@ def llm_settings() -> dict[str, Any]:
     }
 
 
+@router.get("/settings/skills")
+def skill_settings() -> dict[str, Any]:
+    """Expose bounded registry metadata, never raw filesystem mutation."""
+    return {"schema_version": 2, **SkillRegistry().snapshot()}
+
+
+@router.get("/settings/prompts")
+def prompt_settings() -> dict[str, Any]:
+    """Describe authoritative role prompts without exposing model secrets."""
+    return {
+        "schema_version": 2,
+        "prompts": [
+            {"id": f"solver.{role}", "role": role, "instruction": instruction, "source": "tga.runtime.prompts", "editable": False}
+            for role, instruction in ROLE_INSTRUCTIONS.items()
+        ],
+    }
+
+
 @router.post("/settings/llm")
 def update_llm_settings(payload: LLMSettingsRequest) -> dict[str, Any]:
     os.environ["TGA_LLM_BASE_URL"] = payload.base_url.strip()
@@ -249,9 +255,44 @@ def update_llm_settings(payload: LLMSettingsRequest) -> dict[str, Any]:
     return llm_settings()
 
 
+@router.post("/settings/llm/verify")
+def verify_llm_settings() -> dict[str, Any]:
+    """Make an explicit, low-cost action-tool check before a task starts.
+
+    Configuration presence alone cannot detect an invalid model identifier,
+    expired key, or an incompatible Function Calling dialect.  This endpoint
+    is never called automatically and never returns the key or response body.
+    """
+    client = build_model_client_from_env()
+    if client is None:
+        raise HTTPException(status_code=409, detail="model is not configured")
+    try:
+        response = client.chat_action_tool(
+            [
+                ModelMessage(role="system", content="You are a protocol connectivity check. Call the supplied tool once."),
+                ModelMessage(role="user", content="Confirm the TGA action tool protocol."),
+            ],
+            tool_name="verify_tga_action_protocol",
+            tool_description="Return a harmless protocol verification result.",
+            parameters={
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {"ok": {"type": "boolean"}},
+                "required": ["ok"],
+            },
+            thinking=False,
+            temperature=0,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"model verification failed: {str(exc)[:500]}") from exc
+    return {"configured": True, "reachable": bool(response.content.strip()), "action_tools": True, "model": getattr(client, "model", "")}
+
+
 @router.post("/tasks/{task_id}/start")
 def start_session(task_id: str, payload: StartRequest) -> dict[str, Any]:
     """Resume initialization for a v2 session after a process restart."""
+    if not model_config_status()["configured"]:
+        raise HTTPException(status_code=409, detail="model_not_configured")
     _snapshot(task_id)
     result = _runtime_command("start_session", task_id, payload.model_dump(exclude_none=True))
     if result.get("accepted"):
@@ -393,6 +434,8 @@ def _redact_artifact_text(value: str) -> tuple[str, int]:
 
 @router.post("/tasks/{task_id}/control")
 def control(task_id: str, payload: ControlRequest) -> dict[str, Any]:
+    if payload.action == "resume" and not model_config_status()["configured"]:
+        raise HTTPException(status_code=409, detail="model_not_configured")
     _snapshot(task_id)
     result = _runtime_command("control_session", task_id, payload.model_dump(exclude_none=True))
     if result.get("accepted") and payload.action == "resume":
@@ -409,13 +452,10 @@ def add_hint(task_id: str, payload: HintRequest) -> dict[str, Any]:
 def _runtime_command(method_name: str, task_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     """Delegate all lifecycle mutations to the Manager, never directly to SQLite."""
     try:
-        module = importlib.import_module("tga.runtime.manager")
-        manager = getattr(module, "get_manager")()
-        method = getattr(manager, method_name)
+        service = TaskRuntimeService(run_root=_run_root())
+        result = service.command(method_name, task_id, **payload)
     except (ImportError, AttributeError) as exc:
         raise HTTPException(status_code=503, detail="v2 runtime manager is not available yet") from exc
-    try:
-        result = method(task_id=task_id, **payload)
     except (KeyError, ValueError) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return result if isinstance(result, dict) else {"status": "accepted"}

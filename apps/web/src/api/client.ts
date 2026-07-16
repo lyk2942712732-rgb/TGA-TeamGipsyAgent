@@ -32,7 +32,11 @@ export async function requestJson<T>(path: string, init?: RequestInit): Promise<
   const response = await fetch(`${apiBase}${path}`, init);
   if (!response.ok) {
     const body = await response.json().catch(() => null) as { detail?: string; message?: string } | null;
-    throw new ApiError(response.status, body?.detail ?? body?.message ?? `请求失败：${response.status}`);
+    const detail = body?.detail ?? body?.message;
+    const message = detail === "model_not_configured"
+      ? "尚未配置模型，请先到模型设置页完成配置和工具协议验证。"
+      : detail ?? `请求失败：${response.status}`;
+    throw new ApiError(response.status, message);
   }
   return response.json() as Promise<T>;
 }

@@ -49,6 +49,9 @@ class EvidenceStore:
         columns = {row["name"] for row in self.conn.execute("PRAGMA table_info(sessions)").fetchall()}
         if "schema_version" not in columns:
             self.conn.execute("ALTER TABLE sessions ADD COLUMN schema_version INTEGER NOT NULL DEFAULT 2")
+        event_columns = {row["name"] for row in self.conn.execute("PRAGMA table_info(agent_events)").fetchall()}
+        if "schema_version" not in event_columns:
+            self.conn.execute("ALTER TABLE agent_events ADD COLUMN schema_version INTEGER NOT NULL DEFAULT 2")
 
     def create_task(self, task: TGATask) -> None:
         self.conn.execute(
@@ -377,10 +380,10 @@ class EvidenceStore:
                 (task_id,),
             ).fetchone()[0])
             self.conn.execute(
-                "INSERT INTO agent_events(id,task_id,solver_id,seq,type,payload_json,created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO agent_events(id,schema_version,task_id,solver_id,seq,type,payload_json,created_at) VALUES (?, 2, ?, ?, ?, ?, ?, ?)",
                 (event_id, task_id, solver_id, seq, type, json.dumps(payload, ensure_ascii=False), now),
             )
-        return AgentEvent(id=event_id, task_id=task_id, solver_id=solver_id, seq=seq, type=type, payload=payload, created_at=now)
+        return AgentEvent(schema_version=2, id=event_id, task_id=task_id, solver_id=solver_id, seq=seq, type=type, payload=payload, created_at=now)
 
     def list_agent_events(self, task_id: str, *, after_seq: int = 0, limit: int = 200) -> list[AgentEvent]:
         rows = self.conn.execute(
@@ -388,7 +391,7 @@ class EvidenceStore:
             (task_id, after_seq, max(1, min(limit, 1000))),
         ).fetchall()
         return [
-            AgentEvent(id=row["id"], task_id=row["task_id"], solver_id=row["solver_id"], seq=row["seq"], type=row["type"], payload=json.loads(row["payload_json"]), created_at=row["created_at"])
+            AgentEvent(schema_version=row["schema_version"], id=row["id"], task_id=row["task_id"], solver_id=row["solver_id"], seq=row["seq"], type=row["type"], payload=json.loads(row["payload_json"]), created_at=row["created_at"])
             for row in rows
         ]
 

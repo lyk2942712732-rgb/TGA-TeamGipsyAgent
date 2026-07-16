@@ -17,6 +17,27 @@ class FakeModel:
         return ModelResponse(content=self.content, model=self.model, raw={})
 
 
+class SequenceModel(FakeModel):
+    def __init__(self, contents: list[str]) -> None:
+        super().__init__(contents[0])
+        self.contents = contents
+        self.calls: list[list] = []
+
+    def chat(self, messages, *, temperature=0.2):
+        self.calls.append(messages)
+        return ModelResponse(content=self.contents[len(self.calls) - 1], model=self.model, raw={})
+
+
+class NativeActionModel(FakeModel):
+    def __init__(self, content: str) -> None:
+        super().__init__(content)
+        self.tool_requests = []
+
+    def chat_action_tool(self, messages, **kwargs):
+        self.tool_requests.append((messages, kwargs))
+        return ModelResponse(content=self.content, model=self.model, raw={})
+
+
 def _task() -> TGATask:
     return TGATask(id="runtime_llm", name="runtime", mode="ctf", target="http://127.0.0.1:8080", scope=["127.0.0.1:8080"], goal="solve")
 
@@ -74,3 +95,31 @@ def test_runtime_solver_factory_prefers_configured_model(monkeypatch) -> None:
 
     assert isinstance(solver, LLMRuntimeSolver)
     assert solver.model_name == "fake-runtime-model"
+
+
+def test_llm_runtime_solver_rebuilds_each_turn_from_the_durable_snapshot() -> None:
+    model = SequenceModel([
+        '{"action":{"capability":"http.request","arguments":{"method":"GET","path":"/"},"rationale":"observe root"}}',
+        '{"action":{"capability":"http.request","arguments":{"method":"GET","path":"/next"},"rationale":"follow observed evidence"}}',
+    ])
+    solver = LLMRuntimeSolver(model)
+
+    assert solver.propose_action(task=_task(), solver_id="solver_1", hypothesis=_hypothesis(), snapshot={}) is not None
+    assert solver.propose_action(task=_task(), solver_id="solver_1", hypothesis=_hypothesis(), snapshot={"artifact_observations": []}) is not None
+
+    assert [item.role for item in model.calls[0]] == ["system", "user"]
+    assert [item.role for item in model.calls[1]] == ["system", "user", "assistant", "user"]
+    assert "artifact_observations" in model.calls[1][-1].content
+
+
+def test_llm_runtime_solver_prefers_native_action_tool_when_supported() -> None:
+    model = NativeActionModel('{"action":{"capability":"http.request","arguments":{"method":"GET","path":"/"},"rationale":"observe root"}}')
+
+    action = LLMRuntimeSolver(model).propose_action(task=_task(), solver_id="solver_1", hypothesis=_hypothesis(), snapshot={})
+
+    assert action is not None
+    assert action.capability == "http.request"
+    assert model.tool_requests[0][1]["tool_name"] == "propose_tga_action"
+    assert model.tool_requests[0][1]["thinking"] is False
+    schema = model.tool_requests[0][1]["parameters"]
+    assert schema["properties"]["action"]["required"] == ["capability", "arguments", "rationale"]

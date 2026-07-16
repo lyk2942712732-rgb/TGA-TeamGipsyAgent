@@ -6,7 +6,9 @@ artifact, finding, or worker-result shapes locally.
 
 from __future__ import annotations
 
+import re
 from typing import Any, Literal
+from urllib.parse import urlparse
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -42,22 +44,67 @@ class TGATask(BaseModel):
     name: str
     mode: TaskMode
     target: str
-    scope: list[str]
+    # Kept only so existing task files remain readable. Product sessions use
+    # ``target`` as the challenge authorization contract and derive this
+    # compatibility value automatically.
+    scope: list[str] = Field(default_factory=list)
     target_theme: str = ""
     target_description: str = ""
     intensity: Intensity = "normal"
     allow_active_scan: bool = False
     goal: str
     flag_format: str | None = None
+    # A CTF platform can occasionally use an incomplete/self-signed chain.
+    # This is never a global TLS switch: every exception is an exact HTTPS
+    # origin that must already be inside this task's authorization scope.
+    insecure_tls_origins: list[str] = Field(default_factory=list, max_length=8)
     # Version 1 payloads omitted this field.  The default keeps them readable;
     # the runtime only creates a v2 session after an explicit start request.
     schema_version: int = 2
 
     @model_validator(mode="after")
     def validate_authorized_scope(self) -> "TGATask":
-        if self.mode == "web_audit" and not [item for item in self.scope if item.strip()]:
-            raise ValueError("web_audit requires non-empty scope")
+        self.target = self.target.strip()
+        self.scope = list(dict.fromkeys(item.strip() for item in self.scope if item.strip()))
+        if not self.scope and self.target:
+            parsed_target = urlparse(self.target)
+            self.scope = [
+                f"{parsed_target.scheme}://{parsed_target.netloc}"
+                if parsed_target.scheme and parsed_target.netloc
+                else self.target
+            ]
+        if self.flag_format:
+            if len(self.flag_format) > 256:
+                raise ValueError("flag_format exceeds 256 characters")
+            try:
+                re.compile(self.flag_format)
+            except re.error as exc:
+                raise ValueError(f"invalid flag_format: {exc}") from exc
+        target_origin = _https_origin(self.target)
+        from tga.core.scope import is_in_scope
+
+        canonical_origins: list[str] = []
+        for value in self.insecure_tls_origins:
+            origin = _https_origin(value)
+            if origin is None or origin != target_origin:
+                raise ValueError("insecure_tls_origins may contain only the exact HTTPS target origin")
+            if not is_in_scope(origin, self.scope):
+                raise ValueError("insecure_tls_origins must be inside task scope")
+            if origin not in canonical_origins:
+                canonical_origins.append(origin)
+        self.insecure_tls_origins = canonical_origins
         return self
+
+
+def _https_origin(value: str) -> str | None:
+    parsed = urlparse(value.strip())
+    if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password:
+        return None
+    if parsed.path not in {"", "/"} or parsed.params or parsed.query or parsed.fragment:
+        return None
+    host = parsed.hostname.lower()
+    port = parsed.port
+    return f"https://{host}" if port in {None, 443} else f"https://{host}:{port}"
 
 
 class Intent(BaseModel):
@@ -205,6 +252,7 @@ class ActionResult(BaseModel):
 
 
 class AgentEvent(BaseModel):
+    schema_version: int = 2
     id: str
     task_id: str
     solver_id: str | None = None
@@ -281,7 +329,7 @@ class SubagentRequest(BaseModel):
     hypothesis_ids: list[str] = Field(default_factory=list)
     input_artifact_ids: list[str] = Field(default_factory=list)
     skill_names: list[str] = Field(default_factory=list)
-    max_actions: int = Field(default=8, ge=1, le=32)
+    max_actions: int = Field(default=32, ge=1, le=256)
 
     @model_validator(mode="after")
     def child_role_only(self) -> "SubagentRequest":

@@ -29,9 +29,9 @@ from tga.capabilities.models import (
     WorkspaceBinaryInput,
     WorkspacePythonInput,
 )
-from tga.capabilities.registry import default_hub_root
 from tga.contracts import ArtifactRecord, Intent, TGATask
 from tga.evidence.artifacts import ArtifactStore
+from tga.tools.bootstrap import discover_mcp_security_hub_root
 from tga.tools.mcp_catalog import discover_mcp_security_hub
 from tga.tools.tool_runner import ToolRunner
 
@@ -64,7 +64,16 @@ class CapabilityExecutor:
         mcp_client: Any | None = None,
     ):
         self.run_root = Path(run_root).resolve()
-        self.hub_root = Path(hub_root).resolve() if hub_root else default_hub_root()
+        # Keep the executor aligned with the single project-relative/env-aware
+        # MCP discovery path used by the Runtime API.  A missing hub is kept as
+        # a non-existent sentinel so tool.invoke returns MCP_UNAVAILABLE rather
+        # than preventing every capability module from importing.
+        discovered_hub = discover_mcp_security_hub_root()
+        self.hub_root = (
+            Path(hub_root).resolve()
+            if hub_root
+            else (discovered_hub or (self.run_root / ".missing-mcp-security-hub")).resolve()
+        )
         self.mcp_client = mcp_client
 
     def execute(self, spec: ActionSpec) -> ActionResult:

@@ -44,10 +44,13 @@ def _matches_scope_entry(target: str, scope_entry: str) -> bool:
 
 
 def is_in_scope(target: str, scope: list[str]) -> bool:
-    return any(_matches_scope_entry(target, entry) for entry in scope)
+    # ``*`` is used only by the BreachWeave-style product AgentSession, where
+    # the Session target itself is the authorization contract and the legacy
+    # per-action scope gate is disabled. Explicit legacy task scopes retain
+    # their previous matching behavior.
+    return "*" in scope or any(_matches_scope_entry(target, entry) for entry in scope)
 
 
 def require_in_scope(target: str, scope: list[str]) -> None:
     if not is_in_scope(target, scope):
         raise ValueError("OUT_OF_SCOPE")
-

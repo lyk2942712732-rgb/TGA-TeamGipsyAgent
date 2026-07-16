@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from tga.contracts import SessionRecord
 from tga.evidence.store import EvidenceStore
@@ -50,7 +52,16 @@ class AgentSession:
             "challenge": self.store.get_challenge(self.task_id).model_dump(mode="json") if self.store.get_challenge(self.task_id) else None,
             "subagents": self.store.list_subagents(self.task_id),
         }
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(json.dumps(snapshot, ensure_ascii=False, indent=2), encoding="utf-8")
-        self.board_path.parent.mkdir(parents=True, exist_ok=True)
-        self.board_path.write_text(json.dumps(board, ensure_ascii=False, indent=2), encoding="utf-8")
+        _atomic_write_json(self.path, snapshot)
+        _atomic_write_json(self.board_path, board)
+
+
+def _atomic_write_json(path: Path, payload: Any) -> None:
+    """Replace a checkpoint atomically so recovery never sees half-written JSON."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.{uuid4().hex[:8]}.tmp")
+    try:
+        temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)

@@ -9,6 +9,7 @@ from tga.runtime.board import BoardStore, HypothesisDraft
 from tga.runtime.challenge_state import ChallengeStateMachine
 from tga.runtime.manager import Manager
 from tga.runtime.session import AgentSession
+from tga.runtime.solver import MainSolver
 from tga.runtime.solver_pool import SolverPool
 
 
@@ -48,21 +49,27 @@ class FlagExecutor:
         )
 
 
-def test_default_manager_starts_three_child_roles_and_stops_all_on_confirmed_flag(tmp_path: Path) -> None:
+def test_experimental_subagents_start_three_child_roles_and_stop_all_on_confirmed_flag(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("TGA_ENABLE_EXPERIMENTAL_SUBAGENTS", "1")
+    monkeypatch.setattr("tga.runtime.manager.build_runtime_solver", MainSolver)
     task = _task()
     root = tmp_path / "runs"
     store = EvidenceStore(root / task.id / "evidence.db")
     store.create_task(task)
 
-    snapshot = Manager(
+    manager = Manager(
         store=store,
         run_root=root,
         executor=FlagExecutor(ArtifactStore(root / task.id / "artifacts")),
-    ).run_session(task.id)
+    )
+    snapshot = manager.run_session(task.id)
 
     assert snapshot["challenge"]["status"] == "solved"
     assert snapshot["challenge"]["completion_proof_artifact_id"] == snapshot["flags"][0]["evidence_artifact_id"]
     assert {item["role"] for item in snapshot["solvers"]} == {"main", "recon", "targeted", "research"}
+    # Compatibility planners are closed after the run and never become the
+    # persistent product AgentSession registry.
+    assert manager._solver_instances == {}
     assert all(item["status"] == "completed" for item in snapshot["solvers"])
     assert {item["status"] for item in snapshot["subagents"]} == {"completed"}
     types = [item["type"] for item in snapshot["agent_events"]]
@@ -70,6 +77,10 @@ def test_default_manager_starts_three_child_roles_and_stops_all_on_confirmed_fla
     assert types.count("SUBAGENT_FINISHED") == 3
     assert types.index("FLAG_CONFIRMED") < types.index("SESSION_STOPPED")
     assert (root / task.id / "reports" / "report.md").is_file()
+    for solver in snapshot["solvers"]:
+        state_path = root / task.id / "solvers" / solver["id"] / "session" / "state.json"
+        assert state_path.is_file()
+        assert f'"solver"' in state_path.read_text(encoding="utf-8")
 
 
 def test_challenge_solved_transition_requires_task_owned_artifact(tmp_path: Path) -> None:
@@ -112,6 +123,8 @@ def test_solver_pool_rejects_duplicate_request_and_uses_private_workspaces(tmp_p
     assert pool.workspace(child.id, task.id).is_dir()
     assert (pool.workspace(child.id, task.id) / "request.json").is_file()
     assert pool.workspace(child.id, task.id) != pool.workspace(main.id, task.id)
+    # Legacy inspection follows the Session allowance, not the child request.
+    assert Manager(store=store, run_root=root)._solver_action_limit(store, task.id, child.id) == 8
     with pytest.raises(ValueError, match="equivalent subagent"):
         pool.start(request.model_copy(update={"id": "subreq_duplicate"}))
 
@@ -152,3 +165,45 @@ def test_subagent_output_cannot_reference_another_solver_artifact(tmp_path: Path
 
     with pytest.raises(ValueError, match="unowned artifacts"):
         Manager(store=store, run_root=root).accept_subagent_output(task_id=task.id, output=output)
+
+
+def test_legacy_child_action_budget_is_not_an_execution_gate(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("TGA_MAX_ACTIONS_PER_SOLVER", "1")
+    task = _task("solver_handoff")
+    root = tmp_path / "runs"
+    store = EvidenceStore(root / task.id / "evidence.db")
+    store.create_task(task)
+    AgentSession(store=store, run_root=root, task_id=task.id).ensure(max_turns=8)
+    store.update_session(task.id, status="running")
+    main = SolverRecord(id="solver_main", task_id=task.id, status="running", started_at=utc_now())
+    store.add_solver(main)
+    hypothesis = BoardStore(store).create_hypothesis(
+        task_id=task.id,
+        owner_solver_id=main.id,
+        draft=HypothesisDraft("input may execute", "web", task.target, "form observed", "test input", 0.8),
+    )
+    child = SolverPool(store=store, run_root=root).start(SubagentRequest(
+        id="subreq_targeted",
+        task_id=task.id,
+        parent_solver_id=main.id,
+        role="targeted",
+        objective="test one input",
+        hypothesis_ids=[hypothesis.id],
+        max_actions=1,
+    ))
+    store.add_action(ActionSpec(
+        id="action_child_budget",
+        task_id=task.id,
+        solver_id=child.id,
+        hypothesis_id=hypothesis.id,
+        kind="http",
+        capability="http.request",
+        target=task.target,
+        arguments={"method": "GET"},
+        rationale="consume the child allowance",
+        risk="passive",
+    ))
+
+    selected_solver, selected_hypothesis = Manager(store=store, run_root=root)._next_role_assignment(store, task.id)
+    assert selected_solver.id == child.id
+    assert selected_hypothesis.id == hypothesis.id

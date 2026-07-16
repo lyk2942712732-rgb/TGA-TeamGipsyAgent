@@ -58,6 +58,11 @@ class WorkspacePythonArguments(StrictArguments):
         return self
 
 
+class WorkspaceShellArguments(StrictArguments):
+    command: str = Field(min_length=1, max_length=65_536)
+    timeout: int = Field(default=60, ge=1, le=300)
+
+
 class ArtifactInspectArguments(StrictArguments):
     artifact_id: str = Field(pattern=r"^artifact_[a-f0-9]{12}$")
     query: str | None = Field(default=None, max_length=256)
