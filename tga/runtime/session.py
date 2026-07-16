@@ -47,6 +47,8 @@ class AgentSession:
             # Deliberately contains summaries and artifact IDs only: raw HTTP
             # and tool payloads remain immutable ArtifactStore records.
             "context": board,
+            "challenge": self.store.get_challenge(self.task_id).model_dump(mode="json") if self.store.get_challenge(self.task_id) else None,
+            "subagents": self.store.list_subagents(self.task_id),
         }
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.path.write_text(json.dumps(snapshot, ensure_ascii=False, indent=2), encoding="utf-8")

@@ -146,7 +146,26 @@ CREATE TABLE IF NOT EXISTS agent_event_sequences (
     next_seq INTEGER NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS challenge_contracts (
+    task_id TEXT PRIMARY KEY,
+    payload_json TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS subagent_requests (
+    id TEXT PRIMARY KEY,
+    task_id TEXT NOT NULL,
+    solver_id TEXT NOT NULL UNIQUE,
+    fingerprint TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    status TEXT NOT NULL,
+    output_json TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_agent_events_task_seq ON agent_events(task_id, seq);
 CREATE INDEX IF NOT EXISTS idx_hypotheses_task_status ON hypotheses(task_id, status);
 CREATE INDEX IF NOT EXISTS idx_memory_entries_task_created ON memory_entries(task_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_actions_task_created ON actions(task_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_subagent_requests_task_status ON subagent_requests(task_id, status);

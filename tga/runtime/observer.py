@@ -5,7 +5,7 @@ from __future__ import annotations
 from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Protocol
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from tga.contracts import HypothesisStatus, MemoryKind
 from tga.runtime.board import BoardStore, HypothesisDraft
@@ -43,7 +43,20 @@ class ObserverPatch(BaseModel):
     memory_upserts: list[MemoryUpsert] = Field(default_factory=list, max_length=4)
     hypothesis_updates: list[HypothesisUpdate] = Field(default_factory=list, max_length=4)
     new_hypotheses: list[NewHypothesis] = Field(default_factory=list, max_length=2)
-    reminder: str = Field(default="", max_length=280)
+    steer_message: str = Field(default="", max_length=280)
+
+    @model_validator(mode="before")
+    @classmethod
+    def accept_legacy_reminder(cls, value):
+        if isinstance(value, dict) and "reminder" in value and "steer_message" not in value:
+            value = dict(value)
+            value["steer_message"] = value.pop("reminder")
+        return value
+
+    @property
+    def reminder(self) -> str:
+        """Compatibility accessor for pre-advanced v2 observers."""
+        return self.steer_message
 
 
 class Observer(Protocol):
@@ -112,6 +125,12 @@ def build_observer_context(snapshot: dict) -> dict:
         "session": snapshot.get("session") or {},
         "recent_actions": actions[-6:],
         "active_hypotheses": [item for item in board.get("hypotheses") or [] if item.get("status") in {"pending", "testing", "inconclusive"}],
-        "recent_memory": memory[-20:],
-        "user_hints": [item for item in memory[-20:] if item.get("kind") == "hint" and item.get("source") == "user"],
+        "recent_memory": memory[-12:],
+        "user_hints": [item for item in memory[-12:] if item.get("kind") == "hint" and item.get("source") == "user"],
+        "coverage_gaps": [
+            gap
+            for item in (snapshot.get("subagents") or [])
+            for gap in ((item.get("output") or {}).get("coverage_gaps") or [])
+        ][-8:],
+        "challenge": snapshot.get("challenge") or {},
     }

@@ -14,6 +14,7 @@ from tga.contracts import (
     ActionSpec,
     AgentEvent,
     ArtifactRecord,
+    ChallengeContract,
     Finding,
     Hypothesis,
     Intent,
@@ -21,6 +22,8 @@ from tga.contracts import (
     MemoryEntry,
     SessionRecord,
     SolverRecord,
+    SubagentOutput,
+    SubagentRequest,
     TGATask,
 )
 
@@ -181,6 +184,63 @@ class EvidenceStore:
     def list_solvers(self, task_id: str) -> list[SolverRecord]:
         rows = self.conn.execute("SELECT * FROM solvers WHERE task_id=? ORDER BY started_at, id", (task_id,)).fetchall()
         return [SolverRecord.model_validate(dict(row)) for row in rows]
+
+    def upsert_challenge(self, challenge: ChallengeContract) -> ChallengeContract:
+        self.conn.execute(
+            "INSERT INTO challenge_contracts(task_id,payload_json,updated_at) VALUES (?, ?, ?) "
+            "ON CONFLICT(task_id) DO UPDATE SET payload_json=excluded.payload_json, updated_at=excluded.updated_at",
+            (challenge.task_id, challenge.model_dump_json(), utc_now()),
+        )
+        self.conn.commit()
+        return challenge
+
+    def get_challenge(self, task_id: str) -> ChallengeContract | None:
+        row = self.conn.execute(
+            "SELECT payload_json FROM challenge_contracts WHERE task_id=?", (task_id,)
+        ).fetchone()
+        return ChallengeContract.model_validate_json(row["payload_json"]) if row else None
+
+    def add_subagent_request(self, request: SubagentRequest, *, solver_id: str, fingerprint: str) -> None:
+        now = utc_now()
+        self.conn.execute(
+            "INSERT INTO subagent_requests(id,task_id,solver_id,fingerprint,payload_json,status,created_at,updated_at) "
+            "VALUES (?, ?, ?, ?, ?, 'running', ?, ?)",
+            (request.id, request.task_id, solver_id, fingerprint, request.model_dump_json(), now, now),
+        )
+        self.conn.commit()
+
+    def finish_subagent_request(self, output: SubagentOutput) -> None:
+        cursor = self.conn.execute(
+            "UPDATE subagent_requests SET status=?, output_json=?, updated_at=? WHERE id=? AND solver_id=?",
+            (output.status, output.model_dump_json(), utc_now(), output.request_id, output.solver_id),
+        )
+        if cursor.rowcount == 0:
+            raise KeyError(f"subagent request not found or ownership mismatch: {output.request_id}")
+        self.conn.commit()
+
+    def update_subagent_status(self, solver_id: str, status: str) -> None:
+        self.conn.execute(
+            "UPDATE subagent_requests SET status=?, updated_at=? WHERE solver_id=? AND output_json IS NULL",
+            (status, utc_now(), solver_id),
+        )
+        self.conn.commit()
+
+    def list_subagents(self, task_id: str) -> list[dict[str, Any]]:
+        rows = self.conn.execute(
+            "SELECT * FROM subagent_requests WHERE task_id=? ORDER BY created_at, id", (task_id,)
+        ).fetchall()
+        return [
+            {
+                "request": json.loads(row["payload_json"]),
+                "solver_id": row["solver_id"],
+                "fingerprint": row["fingerprint"],
+                "status": row["status"],
+                "output": json.loads(row["output_json"]) if row["output_json"] else None,
+                "created_at": row["created_at"],
+                "updated_at": row["updated_at"],
+            }
+            for row in rows
+        ]
 
     def add_hypothesis(self, hypothesis: Hypothesis) -> None:
         self.conn.execute(
@@ -375,6 +435,8 @@ class EvidenceStore:
                 {
                     "session": session.model_dump(mode="json"),
                     "solvers": [solver.model_dump(mode="json") for solver in self.list_solvers(task_id)],
+                    "challenge": self.get_challenge(task_id).model_dump(mode="json") if self.get_challenge(task_id) else None,
+                    "subagents": self.list_subagents(task_id),
                     "board": {
                         "hypotheses": [item.model_dump(mode="json") for item in self.list_hypotheses(task_id)],
                         "memory": [item.model_dump(mode="json") for item in self.list_memory(task_id)],

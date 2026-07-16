@@ -4,14 +4,25 @@ from __future__ import annotations
 
 from typing import Any
 
-from tga.contracts import TGATask
+from tga.contracts import SolverRole, TGATask
 
 
 MAX_MEMORY_ITEMS = 20
 MAX_ACTION_SUMMARIES = 6
 
 
-def build_solver_context(*, task: TGATask, snapshot: dict[str, Any], skills: list[Any] | None = None) -> dict[str, Any]:
+ROLE_INSTRUCTIONS: dict[SolverRole, str] = {
+    "recon": "Map assets, endpoints, forms and protocols; report coverage gaps and avoid speculative exploitation.",
+    "targeted": "Test exactly one active hypothesis with the smallest evidence-producing action.",
+    "research": "Turn observed versions, errors or protocols into one executable next test; do not announce vulnerabilities.",
+    "main": "Coordinate priorities and structured child tasks; do not bypass the evidence gate.",
+}
+
+
+def build_solver_context(
+    *, task: TGATask, snapshot: dict[str, Any], skills: list[Any] | None = None,
+    role: SolverRole = "main", solver_id: str | None = None,
+) -> dict[str, Any]:
     """Return compact, evidence-linked context for one solver turn.
 
     Raw artifacts, HTTP bodies, tool stdout, secrets, and chat transcripts are
@@ -31,6 +42,8 @@ def build_solver_context(*, task: TGATask, snapshot: dict[str, Any], skills: lis
             "goal": task.goal, "intensity": task.intensity, "flag_format": task.flag_format,
         },
         "session": snapshot.get("session") or {},
+        "challenge": snapshot.get("challenge") or {},
+        "solver": {"id": solver_id, "role": role},
         "hypotheses": hypotheses,
         "memory": [
             {"id": item.get("id"), "kind": item.get("kind"), "content": item.get("content"),
@@ -54,5 +67,5 @@ def build_solver_context(*, task: TGATask, snapshot: dict[str, Any], skills: lis
             }
             for skill in (skills or [])[:3]
         ],
-        "instruction": "Propose only one evidence-linked ActionSpec for an active hypothesis; do not claim a flag or finding without an artifact.",
+        "instruction": f"{ROLE_INSTRUCTIONS[role]} Propose only one evidence-linked ActionSpec for an active hypothesis; do not claim a flag or finding without an artifact.",
     }

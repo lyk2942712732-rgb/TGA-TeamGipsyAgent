@@ -23,6 +23,8 @@ RiskLevel = Literal["passive", "active", "destructive"]
 DecisionPhase = Literal["planning", "execution", "adaptation", "gate"]
 SessionStatus = Literal["created", "running", "paused", "blocked", "completed", "failed", "cancelled"]
 SolverStatus = Literal["starting", "running", "waiting", "completed", "failed", "cancelled"]
+SolverRole = Literal["recon", "targeted", "research", "main"]
+ChallengeStatus = Literal["unknown", "active", "solved", "blocked", "expired"]
 HypothesisStatus = Literal["pending", "testing", "verified", "rejected", "inconclusive", "superseded"]
 MemoryKind = Literal["fact", "evidence", "failure_boundary", "hint", "constraint", "decision"]
 ActionKind = Literal["http", "tool", "workspace", "browser"]
@@ -133,7 +135,7 @@ class SessionRecord(BaseModel):
 class SolverRecord(BaseModel):
     id: str
     task_id: str
-    role: str = "main"
+    role: SolverRole = "main"
     status: SolverStatus = "starting"
     model_name: str = ""
     parent_solver_id: str | None = None
@@ -210,4 +212,103 @@ class AgentEvent(BaseModel):
     type: str
     payload: dict[str, Any] = Field(default_factory=dict)
     created_at: str
+
+
+class ChallengeContract(BaseModel):
+    """Durable completion state for an authorized challenge.
+
+    TGA deliberately has no submission fields: a provenance-backed
+    ``FLAG_CONFIRMED`` event is the sole solved oracle.
+    """
+
+    task_id: str
+    entry_url: str
+    allowed_origins: list[str]
+    status: ChallengeStatus = "unknown"
+    flag_format: str | None = None
+    completion_proof_artifact_id: str | None = None
+    status_reason: str = ""
+    solved_at: str | None = None
+
+
+class HypothesisDraft(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    statement: str = Field(min_length=1)
+    attack_class: str = Field(min_length=1)
+    entry_point: str = Field(min_length=1)
+    rationale: str = Field(min_length=1)
+    next_test: str = Field(min_length=1)
+    confidence: float = Field(default=0.5, ge=0, le=1)
+
+
+class HypothesisUpdate(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    hypothesis_id: str
+    status: HypothesisStatus
+    last_result: str = Field(default="", max_length=800)
+    evidence_artifact_ids: list[str] = Field(default_factory=list)
+    decisive: bool = False
+
+
+class FactDraft(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    content: str = Field(min_length=1, max_length=800)
+    artifact_ids: list[str] = Field(default_factory=list)
+
+
+class FailureBoundaryDraft(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    attack_class: str = Field(min_length=1)
+    entry_point: str = Field(min_length=1)
+    summary: str = Field(min_length=1, max_length=800)
+    artifact_ids: list[str] = Field(default_factory=list)
+
+
+class SubagentRequest(BaseModel):
+    """The only context hand-off accepted when Manager starts a child Solver."""
+
+    model_config = {"extra": "forbid"}
+
+    id: str
+    task_id: str
+    parent_solver_id: str
+    role: SolverRole
+    objective: str = Field(min_length=1, max_length=800)
+    hypothesis_ids: list[str] = Field(default_factory=list)
+    input_artifact_ids: list[str] = Field(default_factory=list)
+    skill_names: list[str] = Field(default_factory=list)
+    max_actions: int = Field(default=8, ge=1, le=32)
+
+    @model_validator(mode="after")
+    def child_role_only(self) -> "SubagentRequest":
+        if self.role == "main":
+            raise ValueError("main is the manager-owned coordinator, not a subagent role")
+        return self
+
+
+class SubagentOutput(BaseModel):
+    """Bounded, schema-validated child Solver hand-off."""
+
+    model_config = {"extra": "forbid"}
+
+    request_id: str
+    solver_id: str
+    status: Literal["completed", "blocked", "failed"]
+    hypotheses: list[HypothesisDraft] = Field(default_factory=list, max_length=5)
+    result_updates: list[HypothesisUpdate] = Field(default_factory=list, max_length=8)
+    facts: list[FactDraft] = Field(default_factory=list, max_length=8)
+    failure_boundaries: list[FailureBoundaryDraft] = Field(default_factory=list, max_length=8)
+    candidate_flags: list[str] = Field(default_factory=list, max_length=8)
+    artifact_ids: list[str] = Field(default_factory=list, max_length=32)
+    coverage_gaps: list[str] = Field(default_factory=list, max_length=8)
+    next_recommendation: str = Field(default="", max_length=800)
+
+
+# Compatibility aliases for early consumers of the advanced contract draft.
+HypothesisDraftContract = HypothesisDraft
+HypothesisUpdateContract = HypothesisUpdate
 
