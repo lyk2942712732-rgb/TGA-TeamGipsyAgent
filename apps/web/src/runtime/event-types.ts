@@ -15,7 +15,7 @@ export type Hypothesis = {
 };
 export type MemoryEntry = { id: string; kind: MemoryKind; content: string; artifact_ids: string[]; source: string; supersedes_id?: string | null; created_at?: string; updated_at?: string };
 export type RuntimeArtifact = { id: string; task_id?: string; kind: string; path: string; tool?: string | null; target?: string | null; created_at?: string; excerpt?: string; status?: number; method?: string; truncated?: boolean };
-export type RuntimeAction = { id: string; solver_id?: string; capability: string; target: string; status: ActionStatus; hypothesis_id?: string | null; rationale?: string; summary?: string; artifact_ids: string[]; error?: { code?: string; message?: string } | null; created_at?: string; updated_at?: string; arguments?: Record<string, string | number | boolean | null> };
+export type RuntimeAction = { id: string; solver_id?: string; capability: string; target: string; status: ActionStatus; hypothesis_id?: string | null; rationale?: string; summary?: string; artifact_ids: string[]; error?: { code?: string; message?: string } | null; created_at?: string; updated_at?: string; arguments?: Record<string, unknown> };
 export type ConfirmedFlag = { value: string; evidence_artifact_id: string; created_at?: string };
 export type RuntimeFinding = { id: string; title: string; target: string; severity: string; status: "candidate" | "confirmed" | "rejected"; evidence_artifact_id?: string | null; evidence_excerpt?: string | null; remediation?: string | null };
 export type SkillRef = { name: string; version?: string; source?: string };

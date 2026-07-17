@@ -5,7 +5,7 @@ const snapshot = {
   task, latest_seq: 6,
   session: { status: "running", turn_count: 1, max_turns: 48 }, solvers: [{ id: "solver_1", role: "main", status: "running" }],
   board: { hypotheses: [], memory: [{ id: "mem_1", kind: "hint", content: "先检查首页", artifact_ids: [], source: "user" }] },
-  actions: [{ id: "act_1", capability: "http.request", target: "http://target.local", status: "succeeded", rationale: "Agent Session tool call", summary: "HTTP 200，发现 Flag", artifact_ids: ["artifact_1"] }],
+  actions: [{ id: "act_1", capability: "http.request", target: "http://target.local", status: "succeeded", rationale: "Agent Session tool call", summary: "HTTP 200，发现 Flag", artifact_ids: ["artifact_1"], arguments: { method: "GET" } }],
   artifacts: [{ id: "artifact_1", kind: "http_response", path: "landing.txt", tool: "http.request", target: "http://target.local", excerpt: "Authorization: Bearer should-not-leak" }], flags: [{ value: "flag{evidence_backed}", evidence_artifact_id: "artifact_1" }], findings: [],
   events: [
     { id: "evt_1", task_id: "task_1", seq: 1, type: "SESSION_STARTED", payload: { runtime: "agent_session" }, created_at: "2026-07-13T00:00:00Z" },
@@ -33,7 +33,8 @@ test("runtime renders the native Agent Session message and tool loop", async ({ 
   await expect(page.getByRole("heading", { name: "Execution timeline" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Target & context" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Session & tools" })).toBeVisible();
-  await expect(page.getByTestId("flow-action")).toContainText("http.request");
+  await expect(page.getByTestId("flow-action")).toContainText("1. GET /");
+  await expect(page.getByTestId("flow-action-flag")).toContainText("FLAG FOUND");
   await page.getByRole("button", { name: "Evidence 1" }).click();
   await expect(page.getByRole("dialog", { name: "证据与结果" }).getByText("http.request")).toBeVisible();
   await page.getByRole("button", { name: "关闭证据" }).click();

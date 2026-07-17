@@ -2,6 +2,23 @@ import { apiBase, ApiError, requestJson } from "../api/client";
 import { AgentEventSchema, RuntimeSnapshotSchema } from "../api/schemas";
 import type { CapabilityCatalog, MCPHealth, RuntimeEvent, RuntimeSnapshot } from "./event-types";
 
+export type ArtifactPreviewResponse = {
+  artifact: {
+    id: string;
+    kind?: string;
+    tool?: string;
+    target?: string;
+    created_at?: string;
+    sha256?: string;
+    [key: string]: unknown;
+  };
+  preview: string;
+  truncated?: boolean;
+  redactions?: number;
+  byte_limit?: number;
+  download_url?: string | null;
+};
+
 const url = (path: string) => `${apiBase}/api/v2${path}`;
 export class RuntimeApiError extends ApiError {}
 async function get<T>(path: string): Promise<T> {
@@ -13,6 +30,7 @@ export const runtimeApi = {
   events: async (taskId: string, afterSeq: number) => { const value = await get<{ events: unknown[]; latest_seq: number }>(`/tasks/${encodeURIComponent(taskId)}/events?after_seq=${afterSeq}`); return { events: value.events.map((event) => AgentEventSchema.parse(event) as RuntimeEvent), latest_seq: value.latest_seq }; },
   capabilities: () => get<CapabilityCatalog>("/capabilities"),
   toolHealth: () => get<MCPHealth>("/tools/health"),
+  artifact: (taskId: string, artifactId: string) => get<ArtifactPreviewResponse>(`/tasks/${encodeURIComponent(taskId)}/artifacts/${encodeURIComponent(artifactId)}`),
   artifactUrl: (taskId: string, artifactId: string) => url(`/tasks/${encodeURIComponent(taskId)}/artifacts/${encodeURIComponent(artifactId)}`),
   reportUrl: (taskId: string) => `${apiBase}/api/v2/tasks/${encodeURIComponent(taskId)}/report`,
   control: async (taskId: string, action: "pause" | "resume" | "cancel") => {
