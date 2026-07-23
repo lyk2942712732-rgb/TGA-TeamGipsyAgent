@@ -1,8 +1,11 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { ChangeEvent, DragEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { fetchCapabilities, fetchMCPHealth } from "../api/capabilities";
-import { fetchPromptSettings, fetchSkillSettings, getLLMSettings, updateLLMSettings, verifyLLMSettings, type LLMSettings, type PromptSetting, type SkillSetting } from "../api/tasks";
+import { getLLMSettings, updateLLMSettings, verifyLLMSettings, type LLMSettings } from "../api/tasks";
 import type { Capability, MCPCatalog, MCPHealth } from "../runtime/event-types";
+import type { MCPManagedServer } from "../runtime/event-types";
+import { runtimeApi } from "../runtime/api-v2";
 import { EmptyState } from "../components/ui/EmptyState";
+import { MCPWizard } from "../components/mcp/MCPWizard";
 
 export function ModelsPage() {
   const [settings, setSettings] = useState<LLMSettings | null>(null); const [verifying, setVerifying] = useState(false);
@@ -19,13 +22,214 @@ export function CapabilitiesPage() {
   const [catalog, setCatalog] = useState<MCPCatalog | null>(null);
   const [health, setHealth] = useState<MCPHealth | null>(null);
   const [error, setError] = useState("");
-  useEffect(() => { void Promise.all([fetchCapabilities(), fetchMCPHealth()]).then(([capabilities, snapshot]) => { setItems(capabilities.capabilities); setCatalog(capabilities.tools); setHealth(snapshot); }).catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "无法读取能力或 MCP 状态")); }, []);
-  const healthByTool = useMemo(() => new Map((health?.records ?? []).map((record) => [record.tool, record])), [health]);
-  return <section className="page-stack"><header className="page-title"><div><span className="eyebrow">Settings / Capabilities</span><h1>能力与 MCP</h1><p>仅展示服务端注册的能力、项目内 MCP catalog 和 Docker 镜像健康状态；此页面不能执行工具。</p></div></header><section className="surface">{error ? <div className="inline-error">{error}</div> : null}<h2>Runtime 能力</h2>{items.map((item) => <article className="capability-card" key={item.name}><div><h3>{item.name}</h3><p>支持模式：{item.modes.join(" · ") || "未声明"}</p></div><span className={`status-badge ${item.availability === "available" || item.availability === "healthy" ? "completed" : "blocked"}`}>{item.availability}</span><small>风险：{item.risk}</small></article>)}{!items.length && !error ? <EmptyState label="正在读取 Runtime 能力注册表…" /> : null}</section><section className="surface"><div className="surface-head"><div><h2>MCP 工具目录</h2><p>{catalog ? `已注册 ${catalog.tools.length} 个 MCP Server。镜像状态由本机 Docker 检查结果决定。` : "正在读取项目内 mcp-security-hub…"}</p></div><span className={`status-badge ${catalog?.availability === "healthy" ? "completed" : "blocked"}`}>{catalog?.availability ?? "loading"}</span></div>{catalog?.reason ? <div className="inline-error">{catalog.reason}</div> : null}{catalog?.tools.map((tool) => { const record = healthByTool.get(tool.tool_id); const status = record?.status ?? "unknown"; return <article className="capability-card" key={tool.tool_id}><div><h3>{tool.tool_id}</h3><p>{tool.methods.length ? `方法：${tool.methods.map((method) => method.name).join(" · ")}` : "该 Server 未公开可调用方法"}</p>{record?.detail ? <small>{record.detail}</small> : null}</div><span className={`status-badge ${status === "available" ? "completed" : status === "missing" ? "blocked" : "failed"}`}>{status}</span><small>风险：{tool.risk}</small></article>; })}{catalog && !catalog.tools.length ? <EmptyState label="未发现 MCP Server；请检查项目内 mcp-security-hub 目录。" /> : null}{health && !health.configured ? <EmptyState label="MCP Hub 未配置。可在项目根目录放置 mcp-security-hub，或设置 TGA_MCP_SECURITY_HUB_ROOT。" /> : null}</section></section>;
+  const [loading, setLoading] = useState(true);
+  const [loadErrors, setLoadErrors] = useState<Record<string, string>>({});
+  const [refreshing, setRefreshing] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [dragActive, setDragActive] = useState(false);
+  const [importMessage, setImportMessage] = useState("");
+  const [expandedServers, setExpandedServers] = useState<Set<string>>(() => new Set());
+  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [switchingServer, setSwitchingServer] = useState<string | null>(null);
+  const [managedServers, setManagedServers] = useState<MCPManagedServer[]>([]);
+  const [wizardOpen, setWizardOpen] = useState(false);
+  const [editingServer, setEditingServer] = useState<MCPManagedServer | null>(null);
+  const [testingMethod, setTestingMethod] = useState<string | null>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
+  const load = async () => {
+    setLoading(true);
+    const [capabilitiesResult, healthResult, serversResult] = await Promise.allSettled([
+      fetchCapabilities(), fetchMCPHealth(), runtimeApi.mcpServers(),
+    ]);
+    const nextErrors: Record<string, string> = {};
+    if (capabilitiesResult.status === "fulfilled") {
+      setItems(capabilitiesResult.value.capabilities);
+      setCatalog(capabilitiesResult.value.tools);
+    } else {
+      setItems([]);
+      setCatalog(null);
+      nextErrors.capabilities = capabilitiesResult.reason instanceof Error ? capabilitiesResult.reason.message : "Unable to read runtime capabilities";
+    }
+    if (healthResult.status === "fulfilled") {
+      setHealth(healthResult.value);
+    } else {
+      setHealth(null);
+      nextErrors.health = healthResult.reason instanceof Error ? healthResult.reason.message : "Unable to read MCP health";
+    }
+    if (serversResult.status === "fulfilled") {
+      setManagedServers(serversResult.value.servers);
+    } else {
+      setManagedServers([]);
+      nextErrors.servers = serversResult.reason instanceof Error ? serversResult.reason.message : "Unable to read configured MCP services";
+    }
+    setLoadErrors(nextErrors);
+    setLoading(false);
+  };
+  useEffect(() => { void load(); }, []);
+  const refresh = async () => { setRefreshing(true); setError(""); try { await runtimeApi.refreshMCP(); await load(); } catch (reason) { setError(reason instanceof Error ? reason.message : "MCP refresh failed"); } finally { setRefreshing(false); } };
+  const importFile = async (file: File) => {
+    setImporting(true);
+    setError("");
+    setImportMessage(`Uploading ${file.name}; Docker build/load and MCP discovery may take several minutes…`);
+    try {
+      const result = await runtimeApi.importMCP(file);
+      if (result.requires_selection) {
+        setImportMessage(`Archive loaded ${result.images?.length ?? 0} RepoTags. Use “Add MCP service” and choose one of these local images: ${result.images?.join(", ")}.`);
+        await load();
+        return;
+      }
+      const record = result.catalog?.records.find((item) => item.server === result.server_id || item.tool === result.server_id);
+      const discovery = record?.discovered ? `${record.tools ?? 0} tools discovered` : record?.error?.message ?? "configured; discovery is pending";
+      setImportMessage(`${result.image} was ${result.config_action} as ${result.server_id}; ${discovery}.`);
+      await load();
+    } catch (reason) {
+      setImportMessage("");
+      setError(reason instanceof Error ? reason.message : "MCP image import failed");
+    } finally {
+      setImporting(false);
+      if (fileInput.current) fileInput.current.value = "";
+    }
+  };
+  const chooseFile = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (file) void importFile(file);
+  };
+  const dropFile = (event: DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    setDragActive(false);
+    if (importing) return;
+    const file = event.dataTransfer.files?.[0];
+    if (file) void importFile(file);
+  };
+  const changeServerEnabled = async (serverId: string, enabled: boolean) => {
+    setSwitchingServer(serverId);
+    setError("");
+    setImportMessage(`${enabled ? "Enabling" : "Disabling"} ${serverId} and refreshing MCP discovery…`);
+    try {
+      const result = await runtimeApi.setMCPEnabled(serverId, enabled);
+      const record = result.catalog.records.find((item) => item.server === serverId || item.tool === serverId);
+      const detail = enabled
+        ? record?.discovered ? `${record.tools ?? 0} tools discovered` : record?.error?.message ?? "enabled, but no tools were discovered"
+        : "disabled; it will not be offered to new Agent turns";
+      setImportMessage(`${serverId}: ${detail}.`);
+      await load();
+    } catch (reason) {
+      setImportMessage("");
+      setError(reason instanceof Error ? reason.message : "Unable to change MCP service state");
+    } finally {
+      setSwitchingServer(null);
+    }
+  };
+  const removeServer = async () => {
+    if (!confirmDelete) return;
+    const serverId = confirmDelete;
+    setDeleting(true);
+    setError("");
+    try {
+      await runtimeApi.deleteMCP(serverId);
+      setConfirmDelete(null);
+      setExpandedServers((current) => { const next = new Set(current); next.delete(serverId); return next; });
+      setImportMessage(`${serverId} was removed from mcp.json. Its local Docker image was kept.`);
+      await load();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Unable to delete MCP service");
+    } finally {
+      setDeleting(false);
+    }
+  };
+  const toggleServer = (serverId: string) => setExpandedServers((current) => {
+    const next = new Set(current);
+    if (next.has(serverId)) next.delete(serverId); else next.add(serverId);
+    return next;
+  });
+  const testConnection = async (serverId: string) => {
+    setTestingMethod(`${serverId}:discovery`); setError("");
+    try { const result = await runtimeApi.testMCPServer(serverId); setImportMessage(`${serverId}: 测试连接/发现工具成功，发现 ${result.tools.length} 个方法。`); await load(); }
+    catch (reason) { setError(reason instanceof Error ? reason.message : "连接与发现测试失败"); }
+    finally { setTestingMethod(null); }
+  };
+  const testMethod = async (serverId: string, method: string, risk: string) => {
+    const raw = window.prompt(`执行 ${serverId}.${method} 的 JSON 参数`, "{}");
+    if (raw === null) return;
+    let argumentsValue: Record<string, unknown>;
+    try { argumentsValue = JSON.parse(raw) as Record<string, unknown>; } catch { setError("方法参数必须是 JSON 对象"); return; }
+    const confirmActive = risk === "active" ? window.confirm("这是 active 方法。确认执行一次真实 tools/call？") : false;
+    if (risk === "active" && !confirmActive) return;
+    setTestingMethod(`${serverId}:${method}`); setError("");
+    try { const result = await runtimeApi.testMCPMethod(serverId, method, argumentsValue, confirmActive); setImportMessage(`${serverId}.${method}: ${result.ok ? "执行成功" : `执行失败 ${result.error?.code ?? ""}`}；trace ${result.trace_id}；${result.timings.total_ms ?? 0} ms。${result.content_preview.slice(0, 500)}`); await load(); }
+    catch (reason) { setError(reason instanceof Error ? reason.message : "方法执行测试失败"); }
+    finally { setTestingMethod(null); }
+  };
+  const healthByTool = useMemo(() => new Map((health?.records ?? []).map((record) => [record.server ?? record.tool, record])), [health]);
+  const serverGroups = useMemo(() => {
+    const serverIds = new Set<string>();
+    for (const record of health?.records ?? []) { const id = record.server ?? record.tool; if (id) serverIds.add(id); }
+    for (const server of managedServers) serverIds.add(server.id);
+    for (const tool of catalog?.tools ?? []) serverIds.add(tool.tool_id);
+    return [...serverIds].sort().map((serverId) => ({
+      serverId,
+      record: healthByTool.get(serverId),
+      tools: (catalog?.tools ?? []).filter((tool) => tool.tool_id === serverId),
+    }));
+  }, [catalog, health, healthByTool, managedServers]);
+  const discoveredMethodCount = useMemo(() => serverGroups.reduce((count, group) => count + group.tools.reduce((toolCount, tool) => toolCount + tool.methods.length, 0), 0), [serverGroups]);
+  const catalogState = catalog?.availability ?? (loading ? "loading" : "unavailable");
+  const catalogSummary = catalog
+    ? `${serverGroups.length} configured services · ${discoveredMethodCount} discovered tools. Expand a service to inspect its tools.`
+    : loading ? "Loading configured MCP catalog…" : "MCP catalog could not be loaded; other capability data remains available.";
+  return <section className="page-stack">
+    <header className="page-title"><div><span className="eyebrow">Settings / Capabilities</span><h1>Capabilities and MCP</h1><p>MCP servers come only from the explicit host mcp.json allowlist. Discovery uses initialize and tools/list.</p></div><div className="button-row"><button className="secondary-button" disabled={refreshing || importing || switchingServer !== null} onClick={() => void refresh()}>{refreshing ? "Refreshing…" : "Refresh catalog"}</button><button onClick={() => { setEditingServer(null); setWizardOpen(true); }}>Add MCP service</button></div></header>
+    {error ? <div className="inline-error" role="alert">{error}</div> : null}
+    {Object.entries(loadErrors).map(([source, message]) => <div className="inline-error" role="alert" key={source}><strong>{source}:</strong> {message}</div>)}
+    <section className="surface">
+      <div className="surface-head"><div><h2>Import MCP image</h2><p>Drop a Docker image archive created with docker save. TGA loads it, writes the host allowlist, and refreshes discovery.</p></div><span className="schema-chip">local Docker</span></div>
+      <input ref={fileInput} hidden type="file" accept=".tar,.tgz,.gz,application/x-tar" onChange={chooseFile} />
+      <div
+        className={`mcp-drop-zone ${dragActive ? "active" : ""} ${importing ? "busy" : ""}`}
+        role="button"
+        tabIndex={importing ? -1 : 0}
+        aria-disabled={importing}
+        onClick={() => { if (!importing) fileInput.current?.click(); }}
+        onKeyDown={(event) => { if (!importing && (event.key === "Enter" || event.key === " ")) { event.preventDefault(); fileInput.current?.click(); } }}
+        onDragEnter={(event) => { event.preventDefault(); if (!importing) setDragActive(true); }}
+        onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = "copy"; }}
+        onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDragActive(false); }}
+        onDrop={dropFile}
+      >
+        <strong>{importing ? "Building and configuring MCP image…" : "Drop an MCP image file here"}</strong>
+        <span>{importing ? "Keep this page open until discovery finishes." : "or click to choose .tar / .tar.gz / .tgz"}</span>
+        <small>Source ZIPs and Dockerfiles are rejected. Docker arguments, mounts and resource limits are generated by TGA.</small>
+      </div>
+      {importMessage ? <div className="mcp-import-result" role="status">{importMessage}</div> : null}
+    </section>
+    <section className="surface"><h2>Runtime capabilities</h2>{items.map((item) => <article className="capability-card" key={item.name}><div><h3>{item.name}</h3><p>Modes: {item.modes.join(" · ") || "not declared"}</p></div><span className={`status-badge ${item.availability === "available" || item.availability === "healthy" ? "completed" : "blocked"}`}>{item.availability}</span><small>Risk: {item.risk}</small></article>)}</section>
+    <section className="surface">
+      <div className="surface-head"><div><h2>MCP tool catalog</h2><p>{catalogSummary}</p></div><span className={`status-badge ${catalogState === "healthy" ? "completed" : "blocked"}`}>{catalogState}</span></div>
+      {catalog?.reason ? <div className="inline-error">{catalog.reason}</div> : null}
+      <div className="mcp-service-list">{serverGroups.map(({ serverId, record, tools }) => {
+        const state = record?.enabled === false ? "disabled" : record?.runnable === true ? "runnable" : record?.runnable === false ? "last call failed" : record?.discovered ? "discovered · never called" : record?.reachable ? "reachable · discovery failed" : record?.configured ? "configured" : "unknown";
+        const methods = tools.flatMap((tool) => tool.methods.map((method) => ({ ...method, providerName: tool.provider_name, risk: tool.risk })));
+        const expanded = expandedServers.has(serverId);
+        const enabled = record?.enabled !== false;
+        const switching = switchingServer === serverId;
+        const workspaceMode = record?.workspace_access?.mode ?? (record?.image ? "automatic" : record?.transport === "streamable_http" ? "remote" : "host_process");
+        return <article className="mcp-service-card" key={serverId}>
+          <header>
+            <button className="mcp-service-toggle" aria-expanded={expanded} onClick={() => toggleServer(serverId)}><span className="mcp-chevron" aria-hidden="true">{expanded ? "▾" : "▸"}</span><span><strong>{serverId}</strong><small>{methods.length} tool{methods.length === 1 ? "" : "s"}</small></span></button>
+            <div className="mcp-service-actions"><span className="schema-chip">{record?.transport ?? managedServers.find((item) => item.id === serverId)?.config.transport ?? "stdio"}</span><span className={`status-badge ${record?.runnable === true || (record?.discovered && record?.runnable == null) ? "completed" : "blocked"}`}>{state}</span><button className="secondary-button" disabled={!enabled || testingMethod !== null} onClick={() => void testConnection(serverId)}>测试连接/发现工具</button><button className="secondary-button" disabled={deleting || importing || refreshing || switchingServer !== null} onClick={() => { setEditingServer(managedServers.find((item) => item.id === serverId) ?? null); setWizardOpen(true); }}>Edit</button><button className="secondary-button mcp-toggle-button" disabled={deleting || importing || refreshing || switchingServer !== null} onClick={() => void changeServerEnabled(serverId, !enabled)}>{switching ? (enabled ? "Disabling…" : "Enabling…") : (enabled ? "Disable" : "Enable")}</button><button className="danger-button mcp-delete-button" disabled={deleting || importing || refreshing || switchingServer !== null} onClick={() => setConfirmDelete(serverId)}>Delete</button></div>
+          </header>
+          {record?.error?.message ? <div className="mcp-service-error">{record.error.message}</div> : null}
+          <div className="mcp-service-detail">任务文件：{workspaceMode === "automatic" ? "真实任务调用时自动挂载 /workspace（输入只读，artifacts 可写）" : workspaceMode === "remote" ? "远程 MCP，通过协议传递文件，不挂载本地目录" : "本地主机进程，文件访问由受控参数决定"}</div>
+          {record?.last_call_at ? <div className="mcp-service-error">最后真实调用：{record.last_call_method ?? "unknown"} · {record.last_call_duration_ms ?? 0} ms · {record.last_call_at}{record.last_call_error?.message ? ` · ${record.last_call_error.message}` : ""}</div> : null}
+          {expanded ? <div className="mcp-method-list">{methods.length ? methods.map((method) => <article key={method.providerName ?? method.name}><div><strong>{method.name}</strong><span className={`risk-chip ${method.risk}`}>{method.risk}</span></div>{method.description ? <p>{method.description}</p> : null}{method.providerName ? <code>{method.providerName}</code> : null}<button className="secondary-button" disabled={!enabled || method.risk === "destructive" || testingMethod !== null} onClick={() => void testMethod(serverId, method.name, method.risk)}>{testingMethod === `${serverId}:${method.name}` ? "执行中…" : "执行方法测试"}</button></article>) : <EmptyState label={record?.enabled === false ? "This MCP service is disabled in mcp.json." : "No tools were discovered for this service."} />}</div> : null}
+        </article>;
+      })}</div>
+      {catalog && !serverGroups.length ? <EmptyState label="No MCP services configured. Import an image above or add a server to mcp.json." /> : null}
+    </section>
+    {confirmDelete ? <div className="dialog-backdrop" role="presentation"><section className="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="delete-mcp-title"><h2 id="delete-mcp-title">Delete MCP service?</h2><p><strong>{confirmDelete}</strong> will be removed from mcp.json and disappear from future Agent turns. The local Docker image will not be deleted.</p><div><button className="secondary-button" disabled={deleting} onClick={() => setConfirmDelete(null)}>Cancel</button><button className="danger-button" disabled={deleting} onClick={() => void removeServer()}>{deleting ? "Deleting…" : "Delete from config"}</button></div></section></div> : null}
+    {wizardOpen ? <MCPWizard initial={editingServer} onClose={() => setWizardOpen(false)} onSaved={load} /> : null}
+  </section>;
 }
 
-export function SkillsPage() {
-  const [skills, setSkills] = useState<SkillSetting[]>([]); const [prompts, setPrompts] = useState<PromptSetting[]>([]); const [error, setError] = useState("");
-  useEffect(() => { void Promise.all([fetchSkillSettings(), fetchPromptSettings()]).then(([skillData, promptData]) => { setSkills(skillData.skills); setPrompts(promptData.prompts); }).catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "无法读取 Skills/Prompts")); }, []);
-  return <section className="page-stack"><header className="page-title"><div><span className="eyebrow">Settings / Agent Resources</span><h1>Skills 与 Prompts</h1><p>展示 Agent Session 可加载的工具知识与提示资源。</p></div></header>{error ? <div className="inline-error">{error}</div> : null}<section className="surface"><div className="surface-head"><div><h2>Skill Registry</h2><p>Skills 作为 Solver 的可选上下文资源。</p></div><span className="schema-chip">{skills.length} registered</span></div><div className="settings-card-grid">{skills.map((skill) => <article className="settings-card" key={skill.name}><div><h3>{skill.name}</h3><span>v{skill.version}</span></div><p>{skill.summary}</p><small>模式：{skill.modes.join(" · ")}</small><small>能力：{skill.capabilities.join(" · ") || "无直接能力"}</small><div>{skill.tags.map((tag) => <span className="schema-chip" key={tag}>{tag}</span>)}</div></article>)}</div>{!skills.length && !error ? <EmptyState label="正在读取 Skill registry…" /> : null}</section><section className="surface"><div className="surface-head"><div><h2>Agent Prompts</h2><p>产品运行时由持久 Agent Session 直接装配系统提示和工具。</p></div><span className="schema-chip">read only</span></div><div className="settings-card-grid">{prompts.map((prompt) => <article className="settings-card" key={prompt.id}><div><h3>{prompt.role}</h3><span>{prompt.id}</span></div><p>{prompt.instruction}</p><small>{prompt.source}</small></article>)}</div></section></section>;
-}
+export { SkillsPage } from "./SkillsPage";

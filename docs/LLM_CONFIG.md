@@ -9,6 +9,7 @@ TGA 使用 OpenAI-compatible 模型接口驱动持久化 Agent Session。普通 
 TGA_LLM_BASE_URL=https://你的模型网关/v1
 TGA_LLM_API_KEY=你的密钥
 TGA_LLM_MODEL=你的模型名
+TGA_LLM_SUPPORTS_VISION=true  # text-only 模型设为 false；留空表示由 provider 决定
 ```
 
 也可以在 Web 设置页保存等价配置。运行连通性检查：
@@ -24,8 +25,8 @@ python scripts/tga_llm_healthcheck.py
 - 模型直接收到当前可用工具的 function schema。
 - assistant 的 `tool_calls` 与对应 tool result 保存在同一会话记录中。
 - 每次工具结果会回到模型上下文，模型可继续调用下一项工具。
-- `finish_session` 用于明确结束；发现 flag 时也可以直接完成。
-- `target` 是 Session 的目标契约。产品入口不再要求独立 scope、执行强度、
-  主动探测或 TLS 例外开关。
+- `finish_session` 用于明确结束；CTF flag 仍需通过任务格式、占位符、Artifact 内容和任务归属门禁。
+- 产品入口可从 `target` 派生精确 scope，但不会扩大为通配范围，也不会隐式开启主动探测或 TLS 例外。
+- Hint 先进入 StrategyCard；Agent 动作由 Manager 绑定策略步骤、预期结果、重试理由和副作用分析。
 
-旧任务记录中的这些字段仅为兼容读取，不参与正常 Agent Session 的执行决策。
+旧任务记录仍可兼容读取；原有明确 scope 和安全字段继续参与 Agent Session 的执行决策。

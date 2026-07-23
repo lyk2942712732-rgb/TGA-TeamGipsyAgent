@@ -7,6 +7,7 @@ import json
 from tga.contracts import Intent, TGATask
 from tga.models.base import ModelMessage
 from tga.models.bootstrap import build_model_client_from_env
+from tga.modes import mode_profile
 
 
 def refine_intent_with_evidence(task: TGATask, intent: Intent, snapshot: dict) -> tuple[Intent, dict]:
@@ -25,10 +26,11 @@ def refine_intent_with_evidence(task: TGATask, intent: Intent, snapshot: dict) -
         return intent, {"enabled": False, "reason": "LLM_NOT_CONFIGURED", "observations": observations}
 
     prompt = (
-        "你是 TGA 的授权 CTF/安全审查策略模块。你会读取已经产生的真实证据，"
-        "只允许改写下一步 intent 的 goal，不允许扩大授权范围，不允许声称已经拿到 flag。"
+        "你是 TGA 的五模式授权安全策略模块。你会读取已经产生的真实证据，"
+        "只允许改写下一步 intent 的 goal，不允许扩大授权范围，不允许伪造已完成的结果。"
         "只输出 JSON，格式为 {\"goal\":\"...\",\"rationale\":\"...\"}。\n"
         f"任务模式: {task.mode}\n"
+        f"模式方法与完成关注点: {mode_profile(task.mode).prompt()}\n"
         f"目标: {task.target}\n"
         f"授权范围: {task.scope}\n"
         f"原始 goal: {intent.goal}\n"

@@ -31,8 +31,8 @@ class ChallengeStateMachine:
             return current
         challenge = ChallengeContract(
             task_id=task.id,
-            entry_url=task.target,
-            allowed_origins=list(task.scope),
+            entry_url=(task.primary_target(kind="url").url if task.primary_target(kind="url") else None),
+            allowed_origins=list(task.execution_policy.network.allowed_scopes if task.execution_policy else task.scope),
             status="unknown",
             flag_format=task.flag_format,
         )

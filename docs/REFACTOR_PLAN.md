@@ -1,5 +1,9 @@
 # TGA AgentSession architecture migration
 
+> Historical design note. Its proposal to remove scope and evidence authority is
+> superseded by `ARCHITECTURE_IMPROVEMENT_PLAN.md` and the governed AgentSession
+> implementation. The native tool loop remains, but current safety gates apply.
+
 Status: product runtime migrated and locally validated  
 Reference: `C:\Users\lyk\Desktop\黑客松冠军作品\BreachWeave`
 
@@ -14,7 +18,7 @@ could stop a task before its first useful tool call.
 The product runtime now follows BreachWeave's execution shape:
 
 ```text
-Task target + goal + hint
+Task files + optional Hint + execution boundaries
   -> Manager creates/resumes one Solver AgentSession
   -> model receives real tool definitions
   -> assistant emits native tool_calls
@@ -23,10 +27,12 @@ Task target + goal + hint
   -> repeat until finish_session, a result, cancellation, or turn limit
 ```
 
-`target` is the Session's target contract. New Session no longer asks for execution
-intensity, active-scan permission, a separate scope list, or a TLS-policy switch.
-Old fields remain readable only so existing task JSON and SQLite runs can open; they
-do not decide normal product execution.
+New schema-v4 Sessions do not accept a target URL/reference/MCP data source. Any
+address, repository, account detail, or challenge text belongs in Hint or an
+uploaded file. New Session retains explicit network, filesystem, process, rate,
+concurrency, state-change, fuzzing, and containment boundaries. Old target and MCP
+ACL fields remain readable only so existing task JSON and SQLite runs can open;
+they do not decide schema-v4 product execution.
 
 ## Module mapping
 
@@ -61,10 +67,11 @@ an unpaired UTF-16 surrogate cannot reproduce the failure from
 
 ## Frontend migration
 
-New Session contains only the session name/mode, target URL or path, goal, theme,
-description, optional flag format, and initial hint. Dashboard and Runtime describe
-Agent turns, tools, artifacts, and results; they no longer expose risk budgets,
-active-scan state, or scope counts.
+New Session contains only mode/task configuration, task files, optional Hint text
+and attachments, and general execution boundaries. It has no URL/reference/MCP
+Resource/Tool input or task-level MCP authorization. The summary shows globally
+enabled/reachable or discovered MCP services read-only. Dashboard and Runtime
+describe Agent turns, tools, artifacts, and results.
 
 ## Compatibility removal boundary
 
@@ -81,7 +88,8 @@ authority.
 - Execution starts without a prebuilt hypothesis or role fan-out.
 - Pause/resume/cancel and reload use the same Session state.
 - Runtime renders model messages and tool start/end events in order.
-- Task creation works without scope, intensity, or active-scan fields.
+- Task creation uses staged asset IDs and no target/reference/MCP grant fields.
+- Every schema-v4 Session uses one persistent workspace shared with local Docker MCPs.
+- Globally enabled MCPs are automatic for new Sessions; live disable blocks old Sessions.
 - Malformed Unicode input is repaired before provider serialization.
 - Python tests, frontend tests/build, and local API/UI fixtures pass.
-

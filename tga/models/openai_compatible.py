@@ -22,6 +22,7 @@ class OpenAICompatibleClient:
     api_key: str
     model: str
     timeout_s: int = 60
+    supports_vision: bool | None = None
 
     def chat_tools(
         self,

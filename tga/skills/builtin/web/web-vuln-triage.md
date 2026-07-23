@@ -1,7 +1,7 @@
 ---
 name: web-vuln-triage
 version: "1"
-modes: [ctf, web_audit]
+modes: [ctf, penetration_test, vulnerability_research]
 capabilities: [http.request, tool.invoke, artifact.inspect]
 tags: [sqli, idor, upload, auth]
 ---

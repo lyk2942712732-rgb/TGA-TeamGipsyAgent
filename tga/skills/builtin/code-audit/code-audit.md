@@ -1,7 +1,7 @@
 ---
 name: code-audit
 version: "1"
-modes: [code_audit, ctf]
+modes: [vulnerability_research, ctf]
 capabilities: [workspace.read, workspace.python, tool.invoke]
 tags: [source, secrets, taint]
 ---

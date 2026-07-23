@@ -58,7 +58,9 @@ CREATE TABLE IF NOT EXISTS sessions (
     max_turns INTEGER NOT NULL,
     started_at TEXT,
     finished_at TEXT,
-    stop_reason TEXT NOT NULL DEFAULT ''
+    stop_reason TEXT NOT NULL DEFAULT '',
+    workspace_path TEXT NOT NULL DEFAULT '',
+    mcp_catalog_version TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS solvers (
@@ -113,9 +115,45 @@ CREATE TABLE IF NOT EXISTS actions (
     arguments_json TEXT NOT NULL,
     rationale TEXT NOT NULL,
     risk TEXT NOT NULL,
+    strategy_card_id TEXT,
+    strategy_step_id TEXT,
+    expected_outcome TEXT NOT NULL DEFAULT '',
+    retry_reason TEXT NOT NULL DEFAULT '',
+    alternative_analysis TEXT NOT NULL DEFAULT '',
+    expected_side_effects TEXT NOT NULL DEFAULT '',
+    input_id TEXT,
+    target_ref TEXT,
+    actual_target TEXT,
+    authorization_json TEXT NOT NULL DEFAULT '{}',
+    provenance_json TEXT NOT NULL DEFAULT '{}',
     status TEXT NOT NULL,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS strategy_cards (
+    id TEXT PRIMARY KEY,
+    task_id TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    status TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS artifact_indexes (
+    artifact_id TEXT PRIMARY KEY,
+    task_id TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS context_metrics (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id TEXT NOT NULL,
+    solver_id TEXT NOT NULL,
+    turn INTEGER NOT NULL,
+    payload_json TEXT NOT NULL,
+    created_at TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS action_results (
@@ -170,3 +208,6 @@ CREATE INDEX IF NOT EXISTS idx_hypotheses_task_status ON hypotheses(task_id, sta
 CREATE INDEX IF NOT EXISTS idx_memory_entries_task_created ON memory_entries(task_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_actions_task_created ON actions(task_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_subagent_requests_task_status ON subagent_requests(task_id, status);
+CREATE INDEX IF NOT EXISTS idx_strategy_cards_task_updated ON strategy_cards(task_id, updated_at);
+CREATE INDEX IF NOT EXISTS idx_artifact_indexes_task_created ON artifact_indexes(task_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_context_metrics_task_turn ON context_metrics(task_id, solver_id, turn);

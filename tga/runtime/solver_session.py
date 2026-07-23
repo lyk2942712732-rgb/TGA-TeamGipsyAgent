@@ -21,7 +21,10 @@ class SolverSessionState:
     def __init__(self, *, run_root: str | Path, task_id: str, solver_id: str):
         root = Path(run_root) / task_id / "solvers" / solver_id
         self.root = root
-        self.workspace = root / "workspace"
+        # Schema-v4 Sessions use one durable workspace across every execution
+        # subject and local MCP container. Per-Solver state remains isolated.
+        shared = Path(run_root) / task_id / "workspace"
+        self.workspace = shared if shared.exists() else root / "workspace"
         self.path = root / "session" / "state.json"
 
     def ensure(self, solver: SolverRecord) -> None:
@@ -51,4 +54,3 @@ class SolverSessionState:
             },
         }
         _atomic_write_json(self.path, payload)
-

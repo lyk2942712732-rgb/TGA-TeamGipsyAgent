@@ -13,7 +13,12 @@ def build_model_client_from_env() -> OpenAICompatibleClient | None:
     model = os.environ.get("TGA_LLM_MODEL")
     if not base_url or not api_key or not model:
         return None
-    return OpenAICompatibleClient(base_url=base_url, api_key=api_key, model=model)
+    vision_value = os.environ.get("TGA_LLM_SUPPORTS_VISION", "").strip().casefold()
+    supports_vision = None if not vision_value else vision_value in {"1", "true", "yes", "on"}
+    return OpenAICompatibleClient(
+        base_url=base_url, api_key=api_key, model=model,
+        supports_vision=supports_vision,
+    )
 
 
 def model_config_status() -> dict:
@@ -21,4 +26,6 @@ def model_config_status() -> dict:
         "configured": build_model_client_from_env() is not None,
         "base_url": os.environ.get("TGA_LLM_BASE_URL", ""),
         "model": os.environ.get("TGA_LLM_MODEL", ""),
+        "supports_vision": os.environ.get("TGA_LLM_SUPPORTS_VISION", "").strip().casefold() in {"1", "true", "yes", "on"}
+        if os.environ.get("TGA_LLM_SUPPORTS_VISION", "").strip() else None,
     }

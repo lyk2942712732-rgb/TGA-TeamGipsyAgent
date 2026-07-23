@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import subprocess
 import sys
@@ -68,7 +69,8 @@ class CapabilityExecutor:
         # MCP discovery path used by the Runtime API.  A missing hub is kept as
         # a non-existent sentinel so tool.invoke returns MCP_UNAVAILABLE rather
         # than preventing every capability module from importing.
-        discovered_hub = discover_mcp_security_hub_root()
+        legacy_enabled = os.environ.get("TGA_ENABLE_LEGACY_MCP_HUB", "").strip().lower() in {"1", "true", "yes"}
+        discovered_hub = discover_mcp_security_hub_root() if legacy_enabled else None
         self.hub_root = (
             Path(hub_root).resolve()
             if hub_root

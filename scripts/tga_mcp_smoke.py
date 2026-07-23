@@ -2,107 +2,73 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
-from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from tga.tools.mcp_catalog import discover_mcp_security_hub
-from tga.tools.mcp_client import MCPClient
-
-
-DEFAULT_CASES = [
-    ("searchsploit-mcp", "searchsploit_search", {"query": "apache"}),
-    ("solazy-mcp", "list_runs", {}),
-    ("yara-mcp", "list_active_scans", {}),
-    ("nmap-mcp", "list_active_scans", {}),
-    ("boofuzz-mcp", "boofuzz_list_scripts", {}),
-]
-
-
-if hasattr(sys.stdout, "reconfigure"):
-    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-if hasattr(sys.stderr, "reconfigure"):
-    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+from tga.contracts import TGATask
+from tga.tools.mcp_config import configured_mcp_path
+from tga.tools.mcp_manager import MCPManager
+from tga.tools.mcp_policy import redact_sensitive
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Run safe stdio smoke calls against selected mcp-security-hub servers.")
-    parser.add_argument("--hub-root", required=True, help="Local checkout path for mcp-security-hub.")
-    parser.add_argument("--report-path", help="Optional path to write the JSON smoke report.")
-    parser.add_argument("--timeout-seconds", type=int, default=120)
-    parser.add_argument(
-        "--case",
-        action="append",
-        default=[],
-        help='Optional case as server:tool:json_args, for example searchsploit-mcp:searchsploit_search:{"query":"apache"}.',
-    )
+    parser = argparse.ArgumentParser(description="Run one configured MCP method through the production manager.")
+    parser.add_argument("--config", default=str(configured_mcp_path()), help="Path to mcp.json.")
+    parser.add_argument("--server", required=True)
+    parser.add_argument("--tool", required=True)
+    parser.add_argument("--arguments", default="{}", help="JSON object passed to the MCP method.")
+    parser.add_argument("--target", default="http://127.0.0.1")
+    parser.add_argument("--workspace")
+    parser.add_argument("--report-path")
     args = parser.parse_args()
-
-    catalog = discover_mcp_security_hub(args.hub_root)
-    client = MCPClient(hub_root=catalog.hub_root)
-    cases = parse_cases(args.case) if args.case else DEFAULT_CASES
-
-    results = []
-    for server_id, tool_name, tool_args in cases:
-        server = catalog.get(server_id)
-        if server is None:
-            results.append({"server": server_id, "tool": tool_name, "status": "missing_server"})
-            continue
-        result = client.call_tool(
-            server=server,
-            tool_name=tool_name,
-            arguments=tool_args,
-            timeout_seconds=args.timeout_seconds,
-        )
-        results.append(
-            {
-                "server": server.id,
-                "tool": tool_name,
-                "status": "ok" if result.ok and not mcp_response_is_error(result.stdout) else "failed",
-                "returncode": result.returncode,
-                "timed_out": result.timed_out,
-                "command": result.command,
-                "stdout_tail": result.stdout[-3000:],
-                "stderr_tail": result.stderr[-3000:],
-            }
-        )
-
-    report = {"hub_root": str(Path(args.hub_root).resolve()), "cases": results}
+    arguments = json.loads(args.arguments)
+    if not isinstance(arguments, dict):
+        parser.error("--arguments must decode to a JSON object")
+    workspace = Path(args.workspace).resolve() if args.workspace else None
+    manager = MCPManager(config_path=args.config)
+    snapshot = manager.refresh(workspace=workspace)
+    route = next((item for item in snapshot.routes if item.server_id == args.server and item.method == args.tool), None)
+    if route is None:
+        print(json.dumps({"ok": False, "error": "configured method was not discovered"}, ensure_ascii=False))
+        return 1
+    task = TGATask(
+        id="mcp_smoke",
+        name="MCP smoke",
+        mode="ctf",
+        target=args.target,
+        goal="verify configured MCP tool",
+        allow_active_scan=True,
+        intensity="active",
+    )
+    outcome = manager.call_tool(
+        task=task,
+        route=route,
+        arguments=arguments,
+        catalog_version=snapshot.version,
+        workspace=workspace,
+    )
+    report = redact_sensitive(outcome.model_dump(mode="json"))
+    for key in ("raw_result_json", "stdout", "stderr"):
+        report[key] = _redact_text(str(report.get(key) or ""))
+    # Host command/args are intentionally absent from the report and model result.
     output = json.dumps(report, ensure_ascii=False, indent=2)
     if args.report_path:
         report_path = Path(args.report_path)
         report_path.parent.mkdir(parents=True, exist_ok=True)
         report_path.write_text(output, encoding="utf-8")
     print(output)
-    return 1 if any(item.get("status") != "ok" for item in results) else 0
+    return 0 if outcome.ok else 1
 
 
-def parse_cases(items: list[str]) -> list[tuple[str, str, dict[str, Any]]]:
-    cases = []
-    for item in items:
-        server_id, tool_name, raw_args = item.split(":", 2)
-        args = json.loads(raw_args) if raw_args else {}
-        if not isinstance(args, dict):
-            raise ValueError(f"case args must be a JSON object: {item}")
-        cases.append((server_id, tool_name, args))
-    return cases
-
-
-def mcp_response_is_error(stdout: str) -> bool:
-    for line in stdout.splitlines():
-        try:
-            message = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if message.get("id") != 2:
-            continue
-        result = message.get("result")
-        if isinstance(result, dict):
-            return bool(result.get("isError"))
-        return False
-    return True
+def _redact_text(value: str) -> str:
+    return re.sub(
+        r'(?i)(["\']?(?:authorization|cookie|token|secret|password|api[_-]?key)["\']?\s*[:=]\s*)["\']?[^"\'\s,}]+',
+        r'\1"[REDACTED]"',
+        value,
+    )
 
 
 if __name__ == "__main__":

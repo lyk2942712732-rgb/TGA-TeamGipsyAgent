@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { RuntimeSnapshot } from "../../runtime/event-types";
-import { AttackFlow } from "./AttackFlow";
+import { AttackFlow, buildTopologyGraph } from "./AttackFlow";
 
 const snapshot: RuntimeSnapshot = {
   schema_version: 2,
@@ -20,6 +20,19 @@ const snapshot: RuntimeSnapshot = {
 };
 
 describe("AttackFlow", () => {
+  it("lays Session tools out as a left-to-right pulse chain", () => {
+    const graph = buildTopologyGraph(snapshot, []);
+    const manager = graph.nodes.find((item) => item.id === "manager")!;
+    const solver = graph.nodes.find((item) => item.id === "solver:solver")!;
+    const actions = graph.nodes.filter((item) => item.id.startsWith("action:"));
+
+    expect(manager.position.x).toBeLessThan(solver.position.x);
+    expect(solver.position.x).toBeLessThan(actions[0]!.position.x);
+    expect(actions[0]!.position.x).toBeLessThan(actions[1]!.position.x);
+    expect(actions[0]!.position.y).not.toBe(actions[1]!.position.y);
+    expect(graph.edges.filter((item) => item.className?.includes("process")).every((item) => item.type === "step")).toBe(true);
+  });
+
   it("projects challenge, strategy and action without demo nodes", () => {
     render(<AttackFlow snapshot={snapshot} />);
     expect(screen.getByTestId("flow-challenge")).toHaveTextContent("Authorized challenge");
@@ -114,5 +127,21 @@ describe("AttackFlow", () => {
     fireEvent.change(slider, { target: { value: "6" } });
     await waitFor(() => expect(screen.getByTestId("flow-action-flag")).toHaveTextContent("FLAG FOUND"));
     expect(screen.getByRole("button", { name: "Evidence 2" })).toBeInTheDocument();
+  });
+
+  it("shows native MCP server, method, duration and Artifact provenance", () => {
+    const mcpSnapshot: RuntimeSnapshot = {
+      ...snapshot,
+      actions: [{ id: "mcp-action", solver_id: "solver", capability: "mcp__fixture__echo", target: "http://target.local", status: "succeeded", artifact_ids: ["mcp-artifact"], arguments: { text: "safe" }, summary: "MCP fixture.echo returned 1 content block" }],
+      artifacts: [{ id: "mcp-artifact", kind: "tool_output", path: "result.mcp.json", tool: "mcp__fixture__echo" }],
+      flags: [],
+      events: [{ id: "mcp-end", task_id: "task", solver_id: "solver", seq: 1, type: "TOOL_EXECUTION_END", payload: { action_id: "mcp-action", tool_kind: "mcp", mcp_server: "fixture", mcp_method: "echo", status: "succeeded", duration_ms: 42, artifact_ids: ["mcp-artifact"], trace_id: "trace_test" }, created_at: "2026-07-21T00:00:00Z" }],
+      latest_seq: 1,
+    };
+    render(<AttackFlow snapshot={mcpSnapshot} />);
+    expect(screen.getByTestId("flow-action")).toHaveTextContent("fixture:echo");
+    expect(screen.getByText(/1 solver.*0 native.*1 MCP/)).toBeInTheDocument();
+    expect(screen.getByText(/fixture\.echo.*42 ms/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Evidence 1" })).toBeInTheDocument();
   });
 });

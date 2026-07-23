@@ -20,7 +20,7 @@ def test_markdown_report_renders_sections():
 def test_markdown_report_keeps_candidates_out_of_confirmed():
     report = render_markdown_report(
         {
-            "task": {"name": "demo", "mode": "web_audit", "target": "x", "scope": ["x"], "intensity": "normal"},
+            "task": {"name": "demo", "mode": "penetration_test", "target": "x", "scope": ["x"], "intensity": "normal"},
             "artifacts": [{"id": "a1", "kind": "stdout", "tool": "nuclei", "target": "x", "path": "a1.txt"}],
             "findings": [
                 {
@@ -36,17 +36,19 @@ def test_markdown_report_keeps_candidates_out_of_confirmed():
         }
     )
 
-    confirmed_section = report.split("## Confirmed Findings", 1)[1].split("## CTF Flags", 1)[0]
+    confirmed_section = report.split("## Confirmed Findings", 1)[1].split("## Unverified Leads", 1)[0]
     assert "Candidate only" not in confirmed_section
     assert "Candidate only [candidate]" in report
     assert "nuclei" in report
     assert "no login form found" in report
+    assert "## CTF Flags" not in report
+    assert "渗透测试 (penetration_test)" in report
 
 
 def test_markdown_report_renders_plan_and_decision_trace():
     report = render_markdown_report(
         {
-            "task": {"name": "demo", "mode": "web_audit", "target": "x", "scope": ["x"], "intensity": "normal"},
+            "task": {"name": "demo", "mode": "penetration_test", "target": "x", "scope": ["x"], "intensity": "normal"},
             "artifacts": [],
             "findings": [],
             "flags": [],

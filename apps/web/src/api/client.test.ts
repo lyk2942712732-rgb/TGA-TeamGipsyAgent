@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { resolveApiBase } from "./client";
+import { formatApiErrorDetail, resolveApiBase } from "./client";
 
 describe("resolveApiBase", () => {
   it("prefers the explicit VITE API base", () => {
@@ -14,5 +14,12 @@ describe("resolveApiBase", () => {
 
   it("keeps a local fallback for non-browser callers", () => {
     expect(resolveApiBase(undefined, undefined)).toBe("http://127.0.0.1:5173");
+  });
+
+  it("renders FastAPI validation issues with their field path", () => {
+    expect(formatApiErrorDetail([
+      { loc: ["body", "task"], msg: "Field required" },
+      { loc: ["body", "input", "hintText"], msg: "String should have at most 16384 characters" },
+    ], 422)).toBe("task: Field required；input.hintText: String should have at most 16384 characters");
   });
 });

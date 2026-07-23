@@ -9,7 +9,7 @@ def test_worker_blocks_required_tools_without_tool_runner(tmp_path: Path):
     task = TGATask(
         id="task_tools",
         name="tools-demo",
-        mode="code_audit",
+        mode="vulnerability_research",
         target=".",
         scope=["."],
         intensity="passive",

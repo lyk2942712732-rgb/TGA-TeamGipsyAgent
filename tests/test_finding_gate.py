@@ -6,7 +6,7 @@ def _task():
     return TGATask(
         id="task_1",
         name="audit",
-        mode="web_audit",
+        mode="penetration_test",
         target="http://127.0.0.1:8080",
         scope=["127.0.0.1:8080"],
         allow_active_scan=True,

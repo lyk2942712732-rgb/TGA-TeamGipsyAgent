@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections import Counter
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -77,6 +78,29 @@ def evaluate_run(case_run: Any, duration_ms: int, *, replay_path: str | None = N
     passed = all(checks.values())
     status = (snapshot.get("session") or {}).get("status")
     outcome = "solved" if passed else "blocked" if status == "blocked" else "failed"
+    strategy_cards = (snapshot.get("board") or {}).get("strategy_cards") or []
+    hint_events = [item for item in events if item.get("type") == "USER_HINT"]
+    strategy_events = [item for item in events if item.get("type") == "STRATEGY_CARD_CREATED"]
+    confirmed_events = [item for item in events if item.get("type") == "FLAG_CONFIRMED"]
+    hint_sources = [source for card in strategy_cards for source in card.get("sources") or [] if source.get("hint_id")]
+    used_sources = [source for source in hint_sources if source.get("artifact_id") or source.get("extraction_status") == "extracted"]
+    context_metrics = snapshot.get("context_metrics") or []
+    directives = [item for item in events if item.get("type") == "OBSERVER_DIRECTIVE"]
+    observer_applied = [item for item in events if item.get("type") == "OBSERVER_PATCH_APPLIED"]
+    observer_triggered = [item for item in events if item.get("type") == "OBSERVER_TRIGGERED"]
+    invalid_interruptions = sum(1 for item in directives if not (item.get("payload") or {}).get("steer_message"))
+    manager_action_ids = {
+        (item.get("payload") or {}).get("action_id") for item in events if item.get("type") == "MANAGER_DECISION"
+    }
+    persistent_actions = [item for item in actions if item.get("expected_side_effects")]
+    first_strategy_turn = next(
+        (
+            int((item.get("payload") or {}).get("turn") or 0)
+            for item in events
+            if item.get("type") == "CONTEXT_BUILT" and strategy_events
+        ),
+        None,
+    )
     return EvalResult(
         case_id=contract.case_id,
         outcome=outcome,
@@ -90,9 +114,45 @@ def evaluate_run(case_run: Any, duration_ms: int, *, replay_path: str | None = N
         failure_domain=classify_failure(snapshot, checks),
         checks=checks,
         duration_ms=duration_ms,
+        hint_utilization=(len(used_sources) / len(hint_sources)) if hint_sources else 0,
+        hint_to_first_strategy_turns=first_strategy_turn,
+        hint_to_flag_actions=len(actions) if hint_events and confirmed_events else None,
+        hint_to_flag_turns=int((snapshot.get("session") or {}).get("turn_count") or 0) if hint_events and confirmed_events else None,
+        hint_to_flag_wall_ms=_event_wall_ms(hint_events[0], confirmed_events[-1]) if hint_events and confirmed_events else None,
+        duplicate_action_rate=(semantic_repeat_count / len(actions)) if actions else 0,
+        consecutive_failures_without_new_hypothesis=_failure_streak_without_hypothesis(actions, events),
+        latest_context_chars=int((context_metrics[-1] if context_metrics else {}).get("working_chars") or 0),
+        artifact_retrieval_hits=sum(1 for item in events if item.get("type") == "ARTIFACT_RETRIEVED"),
+        observer_correction_adoption_rate=(len(observer_applied) / len(directives)) if directives else 0,
+        observer_invalid_interruption_rate=(invalid_interruptions / len(observer_triggered)) if observer_triggered else 0,
+        flag_artifact_provenance_completeness=1.0 if provenance_ok else 0.0,
+        unaudited_persistent_state_changes=sum(1 for item in persistent_actions if item.get("id") not in manager_action_ids),
         replay_path=replay_path,
         passed=passed,
     )
+
+
+def _event_wall_ms(start: dict[str, Any], end: dict[str, Any]) -> int | None:
+    try:
+        first = datetime.fromisoformat(str(start.get("created_at") or "").replace("Z", "+00:00"))
+        last = datetime.fromisoformat(str(end.get("created_at") or "").replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return max(0, round((last - first).total_seconds() * 1000))
+
+
+def _failure_streak_without_hypothesis(actions: list[dict[str, Any]], events: list[dict[str, Any]]) -> int:
+    hypothesis_seqs = [int(item.get("seq") or 0) for item in events if item.get("type") in {"HYPOTHESIS_CREATED", "STRATEGY_STEP_UPDATED", "OBSERVER_PATCH_APPLIED"}]
+    consecutive = 0
+    violations = 0
+    for item in actions:
+        if item.get("status") in {"failed", "blocked"}:
+            consecutive += 1
+            if consecutive > 1 and not hypothesis_seqs:
+                violations += 1
+        else:
+            consecutive = 0
+    return violations
 
 
 def classify_failure(snapshot: dict[str, Any], checks: dict[str, bool] | None = None) -> str:

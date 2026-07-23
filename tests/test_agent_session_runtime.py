@@ -17,6 +17,29 @@ class ToolLoopModel:
 
     def chat_tools(self, messages, *, tools, temperature=0.2):
         self.calls.append({"messages": messages, "tools": tools})
+        if len(self.calls) > 1:
+            tool_result = json.loads(next(item["content"] for item in reversed(messages) if item["role"] == "tool"))
+            artifact_id = tool_result["artifacts"][-1]["artifact_id"]
+            flag = tool_result["candidate_flags"][0]
+            return {
+                "message": {
+                    "role": "assistant",
+                    "content": "The whole task is now complete.",
+                    "tool_calls": [{
+                        "id": "finish_1",
+                        "type": "function",
+                        "function": {
+                            "name": "finish_session",
+                            "arguments": json.dumps({
+                                "summary": "Recovered and verified the challenge flag.",
+                                "evidence_artifact_ids": [artifact_id],
+                                "flag": flag,
+                            }),
+                        },
+                    }],
+                },
+                "finish_reason": "tool_calls",
+            }
         return {
             "message": {
                 "role": "assistant",
@@ -102,17 +125,18 @@ def test_product_runtime_uses_one_native_agent_tool_session(tmp_path, monkeypatc
         "TOOL_EXECUTION_START",
         "TOOL_EXECUTION_END",
     ]
-    assert executor.tasks[0].allow_active_scan is True
-    assert executor.tasks[0].insecure_tls_origins == ["https://challenge.example"]
+    assert executor.tasks[0].allow_active_scan is False
+    assert executor.tasks[0].scope == ["https://challenge.example"]
+    assert executor.tasks[0].insecure_tls_origins == []
     transcript = json.loads(
         (run_root / task.id / "solvers" / snapshot["solvers"][0]["id"] / "session" / "messages.json").read_text(encoding="utf-8")
     )
-    assert [message["role"] for message in transcript] == ["system", "user", "assistant", "tool"]
+    assert [message["role"] for message in transcript] == ["system", "user", "assistant", "tool", "assistant", "tool"]
     store.close()
 
 
 def test_task_target_derives_legacy_scope_automatically():
-    task = TGATask(id="derived", name="derived", mode="web_audit", target="https://example.test/path", goal="audit")
+    task = TGATask(id="derived", name="derived", mode="penetration_test", target="https://example.test/path", goal="audit")
     assert task.scope == ["https://example.test"]
 
 

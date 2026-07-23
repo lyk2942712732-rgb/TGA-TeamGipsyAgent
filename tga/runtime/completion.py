@@ -34,10 +34,11 @@ class CompletionGate:
         artifacts: list[ArtifactRecord],
         solver_id: str,
     ) -> CompletionDecision:
+        ordered_artifacts = sorted(artifacts, key=lambda item: (item.kind != "http_body", item.created_at, item.id))
         evidence = next(
             (
                 artifact
-                for artifact in artifacts
+                for artifact in ordered_artifacts
                 if flag_ok(
                     candidate,
                     flag_format=task.flag_format or "",
@@ -55,18 +56,31 @@ class CompletionGate:
                 solver_id=solver_id,
             )
             return CompletionDecision(solved=False, value=candidate, reason="flag_format_or_provenance_failed")
+        return self.confirm(
+            task=task, candidate=candidate, evidence=evidence,
+            solver_id=solver_id, reason="confirmed_flag",
+        )
+
+    def confirm(
+        self, *, task: TGATask, candidate: str, evidence: ArtifactRecord,
+        solver_id: str, reason: str,
+    ) -> CompletionDecision:
+        """Persist a flag after a local or configured remote verifier accepts it."""
+        if evidence.task_id != task.id or self.store.get_artifact(evidence.id) is None:
+            return CompletionDecision(solved=False, value=candidate, reason="artifact_provenance_failed")
+        events = EventStore(self.store)
         self.store.add_flag(task.id, candidate, evidence.id)
         events.append(
             task.id,
             "FLAG_CONFIRMED",
-            {"value": candidate, "evidence_artifact_id": evidence.id},
+            {"value": candidate, "evidence_artifact_id": evidence.id, "verification": reason},
             solver_id=solver_id,
         )
         ChallengeStateMachine(self.store).transition(
             task.id,
             "solved",
-            reason="confirmed_flag",
+            reason=reason,
             proof_artifact_id=evidence.id,
             solver_id=solver_id,
         )
-        return CompletionDecision(solved=True, value=candidate, evidence_artifact_id=evidence.id, reason="confirmed_flag")
+        return CompletionDecision(solved=True, value=candidate, evidence_artifact_id=evidence.id, reason=reason)

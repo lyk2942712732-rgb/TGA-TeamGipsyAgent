@@ -113,7 +113,7 @@ def test_scheduler_confirms_finding_with_artifact(tmp_path: Path):
     task = TGATask(
         id="task_audit",
         name="audit-demo",
-        mode="web_audit",
+        mode="penetration_test",
         target="http://127.0.0.1:8080",
         scope=["127.0.0.1:8080"],
         intensity="normal",
@@ -170,7 +170,7 @@ def test_scheduler_rejects_out_of_scope_finding(tmp_path: Path):
     task = TGATask(
         id="task_audit",
         name="audit-demo",
-        mode="web_audit",
+        mode="penetration_test",
         target="http://127.0.0.1:8080",
         scope=["127.0.0.1:8080"],
         intensity="normal",

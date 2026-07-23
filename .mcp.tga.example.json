@@ -1,12 +1,6 @@
 {
-  "mcpSecurityHub": {
-    "source": "https://github.com/FuzzingLabs/mcp-security-hub",
-    "localRoot": "D:/path/to/mcp-security-hub",
-    "mode": "full-catalog-policy-gated"
-  },
-  "policy": {
-    "default": "deny unless target is in scope and intensity allows the tool",
-    "destructiveTools": "registered but disabled until an explicit contract flag exists"
-  }
+  "deprecated": true,
+  "replacement": "config/mcp.example.json",
+  "message": "Set TGA_MCP_CONFIG_PATH to an explicit mcp.json allowlist. Source-directory discovery is legacy-only."
 }
 

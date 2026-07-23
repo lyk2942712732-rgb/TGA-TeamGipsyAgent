@@ -6,27 +6,38 @@ from tga.contracts import Intent, TGATask
 from tga.agent.llm_planner import reorder_with_llm
 from tga.core.intents import make_intent
 from tga.models.bootstrap import model_config_status
+from tga.modes import mode_profile
 
 
 def plan_initial_intents(task: TGATask) -> list[Intent]:
-    if task.mode == "ctf":
-        intents = [
-            make_intent(task=task, kind="recon", goal="Identify reachable services and challenge surface", required_tools=["whatweb"]),
-            make_intent(task=task, kind="exploit_ctf", goal="Recover a flag from real target output", risk="active"),
-            make_intent(task=task, kind="report", goal="Generate CTF report"),
-        ]
-        return reorder_with_llm(task, intents)[0]
-    if task.mode == "code_audit":
-        intents = [
-            make_intent(task=task, kind="code_scan", goal="Run static analysis and secret scanning", required_tools=["semgrep", "gitleaks"]),
-            make_intent(task=task, kind="report", goal="Generate code audit report"),
-        ]
-        return reorder_with_llm(task, intents)[0]
-    intents = [
-        make_intent(task=task, kind="recon", goal="Perform in-scope reconnaissance", required_tools=["whatweb", "nmap"]),
-        make_intent(task=task, kind="verify", goal="Verify likely vulnerabilities with evidence", risk="active"),
-        make_intent(task=task, kind="report", goal="Generate audit report"),
-    ]
+    factories = {
+        "ctf": lambda: [
+            make_intent(task=task, kind="recon", goal="Classify the challenge and identify its evidence-producing attack surface"),
+            make_intent(task=task, kind="exploit_ctf", goal="Recover a flag from real target or Artifact output", risk="active"),
+            make_intent(task=task, kind="report", goal="Record the verified flag path and evidence"),
+        ],
+        "penetration_test": lambda: [
+            make_intent(task=task, kind="recon", goal="Confirm scope and map the authorized attack surface", required_tools=["whatweb", "nmap"]),
+            make_intent(task=task, kind="verify", goal="Validate vulnerability hypotheses and real impact with evidence", risk="active"),
+            make_intent(task=task, kind="report", goal="Report coverage, confirmed findings, leads, and limitations"),
+        ],
+        "incident_response": lambda: [
+            make_intent(task=task, kind="recon", goal="Preserve and inventory available evidence"),
+            make_intent(task=task, kind="verify", goal="Build an evidence-backed timeline, IOC set, root cause, and impact assessment"),
+            make_intent(task=task, kind="report", goal="Report conclusions, coverage, containment, and recovery guidance"),
+        ],
+        "vulnerability_research": lambda: [
+            make_intent(task=task, kind="code_scan", goal="Map structure and candidate vulnerability surface", required_tools=["semgrep", "gitleaks"]),
+            make_intent(task=task, kind="verify", goal="Reproduce and minimize supported vulnerability hypotheses", risk="active"),
+            make_intent(task=task, kind="report", goal="Report root cause, impact, prerequisites, coverage, and limitations"),
+        ],
+        "reverse_engineering": lambda: [
+            make_intent(task=task, kind="recon", goal="Identify format, architecture, and analysis surface"),
+            make_intent(task=task, kind="verify", goal="Recover requested logic, behavior, configuration, or data with analysis Artifacts"),
+            make_intent(task=task, kind="report", goal="Preserve scripts, key outputs, conclusions, and limitations"),
+        ],
+    }
+    intents = factories[task.mode]()
     return reorder_with_llm(task, intents)[0]
 
 
@@ -78,7 +89,7 @@ def explain_adaptation(task: TGATask, intent: Intent, *, status: str, errors: li
             "next_action": "review_tool_setup_or_adjust_plan",
             "errors": errors,
         }
-    if intent.kind == "recon" and task.mode in {"web_audit", "ctf"}:
+    if intent.kind == "recon" and task.mode in {"penetration_test", "ctf"}:
         return {
             "intent_id": intent.id,
             "summary": "Use reconnaissance output to guide verification",
@@ -96,13 +107,7 @@ def explain_adaptation(task: TGATask, intent: Intent, *, status: str, errors: li
 
 
 def _strategy_for(task: TGATask) -> str:
-    if task.mode == "ctf":
-        return "Recon the target, attempt flag recovery, then accept only flags backed by real artifact output."
-    if task.mode == "code_audit":
-        return "Run static analysis and secret scanning, then report only evidence-backed findings."
-    if task.mode == "binary_ctf":
-        return "Classify the binary challenge surface before exploitation; Week 1 records the gap for follow-up."
-    return "Recon in scope, verify likely issues with evidence, and produce a reproducible audit report."
+    return mode_profile(task.mode).prompt()
 
 
 def _intent_rationale(task: TGATask, intent: Intent) -> str:

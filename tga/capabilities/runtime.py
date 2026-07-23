@@ -24,10 +24,13 @@ from pydantic import ValidationError
 
 from tga.contracts import ActionResult, ActionSpec, Intent, TGAError, TGATask
 from tga.evidence.artifacts import ArtifactStore
+from tga.evidence.indexing import build_artifact_index, retrieve_segments
 from tga.tools.rate_limit import RateLimiter
 from tga.tools.tool_runner import ToolRunner
+from tga.tools.tool_policy import is_allowed
 
 from .http import execute_http, extract_candidate_flags, semantic_fingerprint
+from .http_session import HTTPSessionRegistry
 from .registry import CapabilityRegistry, build_default_registry
 from .schemas import ArtifactInspectArguments, HTTPRequestArguments, WorkspacePythonArguments, WorkspaceReadArguments, WorkspaceShellArguments, WorkspaceWriteArguments
 from .serializers import redact_text
@@ -121,11 +124,19 @@ class ControlledActionExecutor:
         registry: CapabilityRegistry | None = None,
         tool_runner: ToolRunner | None = None,
         budget: ExecutionBudget | None = None,
+        http_sessions: HTTPSessionRegistry | None = None,
     ) -> None:
         self.artifact_store = artifact_store
         self.registry = registry or build_default_registry()
         self.tool_runner = tool_runner
         self.budget = budget or ExecutionBudget()
+        self.http_sessions = http_sessions or HTTPSessionRegistry()
+
+    def close_http_sessions(self, *, task_id: str, solver_id: str | None = None) -> int:
+        return self.http_sessions.destroy(task_id=task_id, solver_id=solver_id)
+
+    def http_session_snapshot(self, *, task_id: str, solver_id: str) -> dict:
+        return self.http_sessions.snapshot(task_id=task_id, solver_id=solver_id)
 
     def execute(self, *, task: TGATask, action: ActionSpec, workspace: Path) -> ActionResult:
         """Return a structured outcome; never update a board or confirm a flag."""
@@ -152,6 +163,8 @@ class ControlledActionExecutor:
             return self._reject(action, "RISK_UNDERSPECIFIED", "action risk is lower than capability risk")
         if action.hypothesis_id is None and not (action.capability in {"http.request", "workspace.read", "artifact.inspect"} and action.risk == "passive"):
             return self._reject(action, "HYPOTHESIS_REQUIRED", "active execution requires a hypothesis_id")
+        if action.capability == "tool.invoke" and self.tool_runner is None:
+            return self._reject(action, "TOOL_RUNNER_UNAVAILABLE", "MCP tool execution is not configured", retryable=True)
         fingerprint = None
         http_target = None
         if isinstance(arguments, HTTPRequestArguments):
@@ -161,6 +174,16 @@ class ControlledActionExecutor:
                 fingerprint = semantic_fingerprint(action=action, args=arguments, url=http_target)
             except ValueError:
                 pass
+        decision = is_allowed(
+            tool=action.capability,
+            target=http_target or action.actual_target or action.target,
+            task=task,
+            risk=action.risk,
+            action=arguments.method if isinstance(arguments, HTTPRequestArguments) else action.capability,
+            sandboxed=False,
+        )
+        if not decision.allowed:
+            return self._reject(action, decision.code or "POLICY_DENIED", decision.reason)
         budget_error = self.budget.reserve(action, fingerprint, http_target=http_target)
         if budget_error:
             return self._reject(action, budget_error.code, budget_error.message)
@@ -195,8 +218,38 @@ class ControlledActionExecutor:
             execution_task = task.model_copy(update={"target": action.target})
             bounded_args = arguments.model_copy(update={"timeout": min(arguments.timeout, self.budget.max_action_timeout_s)})
             payload, raw, facts, leads = execute_http(
-                task=execution_task, action=action, args=bounded_args, max_output_bytes=self.budget.max_output_bytes
+                task=execution_task, action=action, args=bounded_args,
+                max_output_bytes=self.budget.max_output_bytes, sessions=self.http_sessions,
             )
+            body_artifact = None
+            if raw:
+                content_type = str(payload.get("content_type") or "")
+                suffix = ".html" if "html" in content_type.casefold() else ".body"
+                body_artifact = self.artifact_store.save_bytes(
+                    task_id=task.id,
+                    intent_id=action.hypothesis_id,
+                    kind="http_body",
+                    data=raw,
+                    tool="http.request.body",
+                    target=payload["final_url"],
+                    suffix=suffix,
+                )
+                index = build_artifact_index(
+                    task_id=task.id,
+                    artifact_id=body_artifact.id,
+                    raw=raw,
+                    content_type=content_type,
+                )
+                payload["body_artifact_id"] = body_artifact.id
+                payload["document"] = {
+                    "extraction_status": index.extraction_status,
+                    "document_type": index.document_type,
+                    "summary": index.summary,
+                    "segment_refs": [item.ref for item in index.segments[:12]],
+                }
+                # The complete body is immutable in body_artifact. Keep only a
+                # readable, high-signal projection in the JSON response record.
+                payload["body_excerpt"] = index.summary[: min(6000, self.budget.max_output_bytes)]
             artifact = self.artifact_store.save_text(
                 task_id=task.id,
                 intent_id=action.hypothesis_id,
@@ -207,20 +260,14 @@ class ControlledActionExecutor:
                 suffix=".json",
             )
             artifact_ids = [artifact.id]
-            if payload["truncated"]:
-                blob = self.artifact_store.save_bytes(
-                    task_id=task.id,
-                    intent_id=action.hypothesis_id,
-                    kind="file",
-                    data=raw,
-                    tool="http.request",
-                    target=payload["final_url"],
-                    suffix=".body",
-                )
-                artifact_ids.append(blob.id)
+            if body_artifact is not None:
+                artifact_ids.append(body_artifact.id)
             candidates = extract_candidate_flags(raw, task.flag_format)
             availability = payload.get("challenge_availability")
             status = "succeeded" if not payload.get("error") and not availability else "failed"
+            marker = payload.get("expected_marker") or {}
+            if marker and not marker.get("found"):
+                leads.append(f"expected marker not observed: {marker.get('value')}")
             if availability:
                 error = TGAError(
                     code="CHALLENGE_UNAVAILABLE",
@@ -410,10 +457,22 @@ class ControlledActionExecutor:
         text = self.artifact_store.read_text(arguments.artifact_id)
         if not text:
             return self._reject(action, "ARTIFACT_NOT_FOUND", "artifact does not exist")
-        searchable = _artifact_search_text(text)
-        window = searchable[arguments.offset : arguments.offset + min(arguments.limit, self.budget.max_output_bytes)]
-        excerpt = _query_excerpt(window, arguments.query)
-        matched = bool(excerpt) if arguments.query else True
+        index = build_artifact_index(
+            task_id=task.id,
+            artifact_id=arguments.artifact_id,
+            raw=text.encode("utf-8", errors="replace"),
+        )
+        retrieval = retrieve_segments(
+            index,
+            query=arguments.query,
+            section=arguments.section,
+            offset=arguments.offset,
+            limit=min(arguments.limit, self.budget.max_output_bytes, 12_000),
+        )
+        excerpt = "\n\n".join(
+            f"[{item['ref']}] {item['heading']}\n{item['text']}" for item in retrieval["matches"]
+        )
+        matched = bool(retrieval["matches"]) if arguments.query or arguments.section else True
         # Inspection is a read view over an existing immutable artifact.  Do
         # not create artifact-of-artifact chains: they drown useful HTTP/tool
         # output, inflate the graph and make recovery context progressively
@@ -423,7 +482,7 @@ class ControlledActionExecutor:
             task_id=task.id,
             solver_id=action.solver_id,
             status="succeeded",
-            summary=f"inspected {arguments.artifact_id}" + (" (query matched)" if matched else " (query not found)"),
+            summary=f"retrieved {arguments.artifact_id}" + (" (query matched)" if matched else " (query not found)"),
             artifact_ids=[arguments.artifact_id],
             leads=[redact_text(excerpt, min(arguments.limit, 12_000))] if excerpt else [],
             candidate_flags=_candidate_flags(excerpt, task.flag_format),

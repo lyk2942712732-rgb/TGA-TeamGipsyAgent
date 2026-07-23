@@ -7,6 +7,7 @@ import json
 from tga.contracts import Intent, TGATask
 from tga.models.base import ModelMessage
 from tga.models.bootstrap import build_model_client_from_env
+from tga.modes import mode_profile
 
 
 def reorder_with_llm(task: TGATask, intents: list[Intent]) -> tuple[list[Intent], dict]:
@@ -24,10 +25,11 @@ def reorder_with_llm(task: TGATask, intents: list[Intent]) -> tuple[list[Intent]
         for intent in intents
     ]
     prompt = (
-        "你是 TGA 的授权 CTF/安全审查任务规划器。"
+        "你是 TGA 的五模式授权安全任务规划器。"
         "只能在给定 intent 中重排顺序，不能新增越权动作，不能删除 report。"
         "只输出 JSON，格式为 {\"order\":[\"intent_id\"],\"notes\":\"...\"}。\n"
         f"任务模式: {task.mode}\n"
+        f"模式方法与完成关注点: {mode_profile(task.mode).prompt()}\n"
         f"目标: {task.target}\n"
         f"授权范围: {task.scope}\n"
         f"目标说明: {task.goal}\n"

@@ -11,7 +11,7 @@ def browser_stub() -> CapabilitySpec:
         description="Reserved browser capability; no browser sandbox is configured.",
         kind="browser",
         risk="active",
-        modes=["ctf", "web_audit"],
+        modes=["ctf", "penetration_test", "incident_response", "vulnerability_research"],
         parameter_schema=BaseModel.model_json_schema(),
         availability="unavailable",
         budget_key="browser",

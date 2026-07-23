@@ -88,6 +88,64 @@ class BoardObserver:
             board.create_hypothesis(task_id=task_id, draft=HypothesisDraft(**raw.model_dump()))
 
 
+class DeterministicObserver:
+    """High-signal rules for the native path; it never owns tool execution."""
+
+    def review(self, snapshot: dict) -> ObserverPatch:
+        actions = snapshot.get("recent_actions") or []
+        triggers = snapshot.get("triggers") or []
+        artifact_ids = [
+            artifact_id
+            for item in actions[-3:]
+            for artifact_id in ((item.get("result") or {}).get("artifact_ids") or [])
+        ]
+        memories: list[MemoryUpsert] = []
+        steer = ""
+        if "consecutive_failures" in triggers:
+            summary = " | ".join(
+                str((item.get("result") or {}).get("summary") or "")[:180]
+                for item in actions[-3:]
+                if item.get("status") in {"failed", "blocked"}
+            )
+            if artifact_ids and summary:
+                memories.append(MemoryUpsert(
+                    kind="failure_boundary",
+                    content=("Consecutive failures require a new diagnosis before retry: " + summary)[:800],
+                    source="observer",
+                    artifact_ids=list(dict.fromkeys(artifact_ids))[:8],
+                ))
+            steer = "Pause the current repetition. State a new failure hypothesis and change evidence, parameters, or validation purpose before retrying."
+        if "semantic_repeat" in triggers:
+            steer = "This semantic action repeats an existing result. Supply a retry reason tied to new evidence, changed parameters, or an explicit verification purpose."
+        if "marker_missing" in triggers:
+            steer = "The declared success marker was not observed. Check request encoding, parameter assertions, and session prerequisites before changing the exploit path."
+        if "http_session_anomaly" in triggers:
+            steer = "The HTTP session profile was rebuilt or changed. Diagnose Cookie continuity before switching to a higher-side-effect path."
+        if "context_budget" in triggers:
+            steer = "Working context exceeded its budget. Use Artifact keyword/section retrieval and keep only source refs and durable conclusions."
+        if "high_side_effect" in triggers:
+            steer = "Before this persistent-state action, record expected side effects and compare a lower-impact evidence path."
+        return ObserverPatch(memory_upserts=memories[:4], steer_message=steer[:280])
+
+
+def native_observer_triggers(*, actions: list[dict], current: dict | None = None, context_chars: int = 0) -> list[str]:
+    """Compute event triggers from safe action summaries, never raw secrets."""
+    triggers: list[str] = []
+    recent = [*actions[-5:], *([current] if current else [])]
+    failures = [item for item in recent[-3:] if item.get("status") in {"failed", "blocked"}]
+    if len(failures) >= 2:
+        triggers.append("consecutive_failures")
+    if current:
+        result = current.get("result") or {}
+        if any("expected marker not observed" in str(item).casefold() for item in result.get("leads") or []):
+            triggers.append("marker_missing")
+        if current.get("risk") == "destructive" or current.get("expected_side_effects"):
+            triggers.append("high_side_effect")
+    if context_chars > 80_000:
+        triggers.append("context_budget")
+    return list(dict.fromkeys(triggers))
+
+
 class ObserverSidecar:
     """Run limited observer review off the Solver's execution path.
 

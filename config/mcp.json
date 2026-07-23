@@ -1,0 +1,2237 @@
+{
+  "version": 1,
+  "maxConcurrency": 4,
+  "servers": {
+    "bloodhound": {
+      "enabled": false,
+      "transport": "stdio",
+      "stdio": {
+        "source": "docker_image",
+        "image": "bloodhound-mcp:latest",
+        "args": [],
+        "environment": {},
+        "secretRefs": {},
+        "workspaceMount": {
+          "enabled": false,
+          "containerPath": "/workspace",
+          "readOnly": true
+        },
+        "docker": {
+          "memory": "1g",
+          "cpus": 1.0,
+          "pidsLimit": 256,
+          "network": "bridge",
+          "readOnly": true,
+          "capDropAll": true,
+          "capAdd": [],
+          "noNewPrivileges": true,
+          "tmpfs": {
+            "/tmp": "rw,noexec,nosuid,size=64m,mode=1777",
+            "/app/output": "rw,noexec,nosuid,size=128m,mode=1777"
+          }
+        }
+      },
+      "enabledTools": [],
+      "timeoutSeconds": 60,
+      "toolTimeoutSeconds": 600,
+      "maxOutputBytes": 262144,
+      "maxInlineChars": 32000,
+      "maxArtifactBytes": 8388608,
+      "storeSensitiveArtifactValues": false,
+      "visibility": {
+        "modes": [
+          "ctf",
+          "penetration_test",
+          "incident_response",
+          "vulnerability_research",
+          "reverse_engineering"
+        ],
+        "risk": "active",
+        "allowMethods": [],
+        "denyMethods": []
+      },
+      "methods": {},
+      "maxConcurrency": 1,
+      "callsPerMinute": 60.0,
+      "burst": 5
+    },
+    "binwalk": {
+      "enabled": true,
+      "transport": "stdio",
+      "stdio": {
+        "source": "docker_image",
+        "image": "binwalk-mcp:latest",
+        "args": [],
+        "environment": {},
+        "secretRefs": {},
+        "workspaceMount": {
+          "enabled": false,
+          "containerPath": "/workspace",
+          "readOnly": true
+        },
+        "docker": {
+          "memory": "1g",
+          "cpus": 1.0,
+          "pidsLimit": 256,
+          "network": "bridge",
+          "readOnly": true,
+          "capDropAll": true,
+          "capAdd": [],
+          "noNewPrivileges": true,
+          "tmpfs": {
+            "/tmp": "rw,noexec,nosuid,size=64m,mode=1777",
+            "/app/output": "rw,noexec,nosuid,size=128m,mode=1777"
+          }
+        }
+      },
+      "enabledTools": [],
+      "timeoutSeconds": 60,
+      "toolTimeoutSeconds": 600,
+      "maxOutputBytes": 262144,
+      "maxInlineChars": 32000,
+      "maxArtifactBytes": 8388608,
+      "storeSensitiveArtifactValues": false,
+      "visibility": {
+        "modes": [
+          "ctf",
+          "penetration_test",
+          "incident_response",
+          "vulnerability_research",
+          "reverse_engineering"
+        ],
+        "risk": "active",
+        "allowMethods": [],
+        "denyMethods": []
+      },
+      "methods": {
+        "list_active_scans": {
+          "enabled": true,
+          "risk": "passive"
+        }
+      },
+      "maxConcurrency": 1,
+      "callsPerMinute": 60.0,
+      "burst": 5
+    },
+    "capa": {
+      "enabled": true,
+      "transport": "stdio",
+      "stdio": {
+        "source": "docker_image",
+        "image": "capa-mcp:latest",
+        "args": [],
+        "environment": {},
+        "secretRefs": {},
+        "workspaceMount": {
+          "enabled": false,
+          "containerPath": "/workspace",
+          "readOnly": true
+        },
+        "docker": {
+          "memory": "1g",
+          "cpus": 1.0,
+          "pidsLimit": 256,
+          "network": "bridge",
+          "readOnly": true,
+          "capDropAll": true,
+          "capAdd": [],
+          "noNewPrivileges": true,
+          "tmpfs": {
+            "/tmp": "rw,noexec,nosuid,size=64m,mode=1777",
+            "/app/output": "rw,noexec,nosuid,size=128m,mode=1777"
+          }
+        }
+      },
+      "enabledTools": [],
+      "timeoutSeconds": 60,
+      "toolTimeoutSeconds": 600,
+      "maxOutputBytes": 262144,
+      "maxInlineChars": 32000,
+      "maxArtifactBytes": 8388608,
+      "storeSensitiveArtifactValues": false,
+      "visibility": {
+        "modes": [
+          "ctf",
+          "penetration_test",
+          "incident_response",
+          "vulnerability_research",
+          "reverse_engineering"
+        ],
+        "risk": "active",
+        "allowMethods": [],
+        "denyMethods": []
+      },
+      "methods": {},
+      "maxConcurrency": 1,
+      "callsPerMinute": 60.0,
+      "burst": 5
+    },
+    "ghidra": {
+      "enabled": false,
+      "transport": "stdio",
+      "stdio": {
+        "source": "docker_image",
+        "image": "ghidra-mcp:latest",
+        "args": [],
+        "environment": {},
+        "secretRefs": {},
+        "workspaceMount": {
+          "enabled": false,
+          "containerPath": "/workspace",
+          "readOnly": true
+        },
+        "docker": {
+          "memory": "1g",
+          "cpus": 1.0,
+          "pidsLimit": 256,
+          "network": "bridge",
+          "readOnly": true,
+          "capDropAll": true,
+          "capAdd": [],
+          "noNewPrivileges": true,
+          "tmpfs": {
+            "/tmp": "rw,noexec,nosuid,size=64m,mode=1777",
+            "/app/output": "rw,noexec,nosuid,size=128m,mode=1777"
+          }
+        }
+      },
+      "enabledTools": [],
+      "timeoutSeconds": 60,
+      "toolTimeoutSeconds": 600,
+      "maxOutputBytes": 262144,
+      "maxInlineChars": 32000,
+      "maxArtifactBytes": 8388608,
+      "storeSensitiveArtifactValues": false,
+      "visibility": {
+        "modes": [
+          "ctf",
+          "penetration_test",
+          "incident_response",
+          "vulnerability_research",
+          "reverse_engineering"
+        ],
+        "risk": "active",
+        "allowMethods": [],
+        "denyMethods": []
+      },
+      "methods": {},
+      "maxConcurrency": 1,
+      "callsPerMinute": 60.0,
+      "burst": 5
+    },
+    "ida": {
+      "enabled": false,
+      "transport": "stdio",
+      "stdio": {
+        "source": "docker_image",
+        "image": "ida-mcp:latest",
+        "args": [],
+        "environment": {},
+        "secretRefs": {},
+        "workspaceMount": {
+          "enabled": false,
+          "containerPath": "/workspace",
+          "readOnly": true
+        },
+        "docker": {
+          "memory": "1g",
+          "cpus": 1.0,
+          "pidsLimit": 256,
+          "network": "bridge",
+          "readOnly": true,
+          "capDropAll": true,
+          "capAdd": [],
+          "noNewPrivileges": true,
+          "tmpfs": {
+            "/tmp": "rw,noexec,nosuid,size=64m,mode=1777",
+            "/app/output": "rw,noexec,nosuid,size=128m,mode=1777"
+          }
+        }
+      },
+      "enabledTools": [],
+      "timeoutSeconds": 60,
+      "toolTimeoutSeconds": 600,
+      "maxOutputBytes": 262144,
+      "maxInlineChars": 32000,
+      "maxArtifactBytes": 8388608,
+      "storeSensitiveArtifactValues": false,
+      "visibility": {
+        "modes": [
+          "ctf",
+          "penetration_test",
+          "incident_response",
+          "vulnerability_research",
+          "reverse_engineering"
+        ],
+        "risk": "active",
+        "allowMethods": [],
+        "denyMethods": []
+      },
+      "methods": {},
+      "maxConcurrency": 1,
+      "callsPerMinute": 60.0,
+      "burst": 5
+    },
+    "radare2": {
+      "enabled": true,
+      "transport": "stdio",
+      "stdio": {
+        "source": "docker_image",
+        "image": "radare2-mcp:latest",
+        "args": [],
+        "environment": {},
+        "secretRefs": {},
+        "workspaceMount": {
+          "enabled": false,
+          "containerPath": "/workspace",
+          "readOnly": true
+        },
+        "docker": {
+          "memory": "1g",
+          "cpus": 1.0,
+          "pidsLimit": 256,
+          "network": "bridge",
+          "readOnly": true,
+          "capDropAll": true,
+          "capAdd": [],
+          "noNewPrivileges": true,
+          "tmpfs": {
+            "/tmp": "rw,noexec,nosuid,size=64m,mode=1777",
+            "/app/output": "rw,noexec,nosuid,size=128m,mode=1777"
+          }
+        }
+      },
+      "enabledTools": [],
+      "timeoutSeconds": 60,
+      "toolTimeoutSeconds": 600,
+      "maxOutputBytes": 262144,
+      "maxInlineChars": 32000,
+      "maxArtifactBytes": 8388608,
+      "storeSensitiveArtifactValues": false,
+      "visibility": {
+        "modes": [
+          "ctf",
+          "penetration_test",
+          "incident_response",
+          "vulnerability_research",
+          "reverse_engineering"
+        ],
+        "risk": "active",
+        "allowMethods": [],
+        "denyMethods": []
+      },
+      "methods": {},
+      "maxConcurrency": 1,
+      "callsPerMinute": 60.0,
+      "burst": 5
+    },
+    "yara": {
+      "enabled": true,
+      "transport": "stdio",
+      "stdio": {
+        "source": "docker_image",
+        "image": "yara-mcp:latest",
+        "args": [],
+        "environment": {},
+        "secretRefs": {},
+        "workspaceMount": {
+          "enabled": false,
+          "containerPath": "/workspace",
+          "readOnly": true
+        },
+        "docker": {
+          "memory": "1g",
+          "cpus": 1.0,
+          "pidsLimit": 256,
+          "network": "bridge",
+          "readOnly": true,
+          "capDropAll": true,
+          "capAdd": [],
+          "noNewPrivileges": true,
+          "tmpfs": {
+            "/tmp": "rw,noexec,nosuid,size=64m,mode=1777",
+            "/app/output": "rw,noexec,nosuid,size=128m,mode=1777"
+          }
+        }
+      },
+      "enabledTools": [],
+      "timeoutSeconds": 60,
+      "toolTimeoutSeconds": 600,
+      "maxOutputBytes": 262144,
+      "maxInlineChars": 32000,
+      "maxArtifactBytes": 8388608,
+      "storeSensitiveArtifactValues": false,
+      "visibility": {
+        "modes": [
+          "ctf",
+          "penetration_test",
+          "incident_response",
+          "vulnerability_research",
+          "reverse_engineering"
+        ],
+        "risk": "active",
+        "allowMethods": [],
+        "denyMethods": []
+      },
+      "methods": {},
+      "maxConcurrency": 1,
+      "callsPerMinute": 60.0,
+      "burst": 5
+    },
+    "daml-viewer": {
+      "enabled": true,
+      "transport": "stdio",
+      "stdio": {
+        "source": "docker_image",
+        "image": "daml-viewer-mcp:latest",
+        "args": [],
+        "environment": {},
+        "secretRefs": {},
+        "workspaceMount": {
+          "enabled": false,
+          "containerPath": "/workspace",
+          "readOnly": true
+        },
+        "docker": {
+          "memory": "1g",
+          "cpus": 1.0,
+          "pidsLimit": 256,
+          "network": "bridge",
+          "readOnly": true,
+          "capDropAll": true,
+          "capAdd": [],
+          "noNewPrivileges": true,
+          "tmpfs": {
+            "/tmp": "rw,noexec,nosuid,size=64m,mode=1777",
+            "/app/output": "rw,noexec,nosuid,size=128m,mode=1777"
+          }
+        }
+      },
+      "enabledTools": [],
+      "timeoutSeconds": 60,
+      "toolTimeoutSeconds": 600,
+      "maxOutputBytes": 262144,
+      "maxInlineChars": 32000,
+      "maxArtifactBytes": 8388608,
+      "storeSensitiveArtifactValues": false,
+      "visibility": {
+        "modes": [
+          "ctf",
+          "penetration_test",
+          "incident_response",
+          "vulnerability_research",
+          "reverse_engineering"
+        ],
+        "risk": "active",
+        "allowMethods": [],
+        "denyMethods": []
+      },
+      "methods": {},
+      "maxConcurrency": 1,
+      "callsPerMinute": 60.0,
+      "burst": 5
+    },
+    "medusa": {
+      "enabled": true,
+      "transport": "stdio",
+      "stdio": {
+        "source": "docker_image",
+        "image": "medusa-mcp:latest",
+        "args": [],
+        "environment": {},
+        "secretRefs": {},
+        "workspaceMount": {
+          "enabled": false,
+          "containerPath": "/workspace",
+          "readOnly": true
+        },
+        "docker": {
+          "memory": "1g",
+          "cpus": 1.0,
+          "pidsLimit": 256,
+          "network": "bridge",
+          "readOnly": true,
+          "capDropAll": true,
+          "capAdd": [],
+          "noNewPrivileges": true,
+          "tmpfs": {
+            "/tmp": "rw,noexec,nosuid,size=64m,mode=1777",
+            "/app/output": "rw,noexec,nosuid,size=128m,mode=1777"
+          }
+        }
+      },
+      "enabledTools": [],
+      "timeoutSeconds": 60,
+      "toolTimeoutSeconds": 600,
+      "maxOutputBytes": 262144,
+      "maxInlineChars": 32000,
+      "maxArtifactBytes": 8388608,
+      "storeSensitiveArtifactValues": false,
+      "visibility": {
+        "modes": [
+          "ctf",
+          "penetration_test",
+          "incident_response",
+          "vulnerability_research",
+          "reverse_engineering"
+        ],
+        "risk": "active",
+        "allowMethods": [],
+        "denyMethods": []
+      },
+      "methods": {},
+      "maxConcurrency": 1,
+      "callsPerMinute": 60.0,
+      "burst": 5
+    },
+    "solazy": {
+      "enabled": true,
+      "transport": "stdio",
+      "stdio": {
+        "source": "docker_image",
+        "image": "solazy-mcp:latest",
+        "args": [],
+        "environment": {},
+        "secretRefs": {},
+        "workspaceMount": {
+          "enabled": false,
+          "containerPath": "/workspace",
+          "readOnly": true
+        },
+        "docker": {
+          "memory": "1g",
+          "cpus": 1.0,
+          "pidsLimit": 256,
+          "network": "bridge",
+          "readOnly": true,
+          "capDropAll": true,
+          "capAdd": [],
+          "noNewPrivileges": true,
+          "tmpfs": {
+            "/tmp": "rw,noexec,nosuid,size=64m,mode=1777",
+            "/app/output": "rw,noexec,nosuid,size=128m,mode=1777"
+          }
+        }
+      },
+      "enabledTools": [],
+      "timeoutSeconds": 60,
+      "toolTimeoutSeconds": 600,
+      "maxOutputBytes": 262144,
+      "maxInlineChars": 32000,
+      "maxArtifactBytes": 8388608,
+      "storeSensitiveArtifactValues": false,
+      "visibility": {
+        "modes": [
+          "ctf",
+          "penetration_test",
+          "incident_response",
+          "vulnerability_research",
+          "reverse_engineering"
+        ],
+        "risk": "active",
+        "allowMethods": [],
+        "denyMethods": []
+      },
+      "methods": {},
+      "maxConcurrency": 1,
+      "callsPerMinute": 60.0,
+      "burst": 5
+    },
+    "prowler": {
+      "enabled": true,
+      "transport": "stdio",
+      "stdio": {
+        "source": "docker_image",
+        "image": "prowler-mcp:latest",
+        "args": [],
+        "environment": {},
+        "secretRefs": {},
+        "workspaceMount": {
+          "enabled": false,
+          "containerPath": "/workspace",
+          "readOnly": true
+        },
+        "docker": {
+          "memory": "1g",
+          "cpus": 1.0,
+          "pidsLimit": 256,
+          "network": "bridge",
+          "readOnly": true,
+          "capDropAll": true,
+          "capAdd": [],
+          "noNewPrivileges": true,
+          "tmpfs": {
+            "/tmp": "rw,noexec,nosuid,size=64m,mode=1777",
+            "/app/output": "rw,noexec,nosuid,size=128m,mode=1777"
+          }
+        }
+      },
+      "enabledTools": [],
+      "timeoutSeconds": 60,
+      "toolTimeoutSeconds": 600,
+      "maxOutputBytes": 262144,
+      "maxInlineChars": 32000,
+      "maxArtifactBytes": 8388608,
+      "storeSensitiveArtifactValues": false,
+      "visibility": {
+        "modes": [
+          "ctf",
+          "penetration_test",
+          "incident_response",
+          "vulnerability_research",
+          "reverse_engineering"
+        ],
+        "risk": "active",
+        "allowMethods": [],
+        "denyMethods": []
+      },
+      "methods": {},
+      "maxConcurrency": 1,
+      "callsPerMinute": 60.0,
+      "burst": 5
+    },
+    "roadrecon": {
+      "enabled": true,
+      "transport": "stdio",
+      "stdio": {
+        "source": "docker_image",
+        "image": "roadrecon-mcp:latest",
+        "args": [],
+        "environment": {},
+        "secretRefs": {},
+        "workspaceMount": {
+          "enabled": false,
+          "containerPath": "/workspace",
+          "readOnly": true
+        },
+        "docker": {
+          "memory": "1g",
+          "cpus": 1.0,
+          "pidsLimit": 256,
+          "network": "bridge",
+          "readOnly": true,
+          "capDropAll": true,
+          "capAdd": [],
+          "noNewPrivileges": true,
+          "tmpfs": {
+            "/tmp": "rw,noexec,nosuid,size=64m,mode=1777",
+            "/app/output": "rw,noexec,nosuid,size=128m,mode=1777"
+          }
+        }
+      },
+      "enabledTools": [],
+      "timeoutSeconds": 60,
+      "toolTimeoutSeconds": 600,
+      "maxOutputBytes": 262144,
+      "maxInlineChars": 32000,
+      "maxArtifactBytes": 8388608,
+      "storeSensitiveArtifactValues": false,
+      "visibility": {
+        "modes": [
+          "ctf",
+          "penetration_test",
+          "incident_response",
+          "vulnerability_research",
+          "reverse_engineering"
+        ],
+        "risk": "active",
+        "allowMethods": [],
+        "denyMethods": []
+      },
+      "methods": {},
+      "maxConcurrency": 1,
+      "callsPerMinute": 60.0,
+      "burst": 5
+    },
+    "trivy": {
+      "enabled": true,
+      "transport": "stdio",
+      "stdio": {
+        "source": "docker_image",
+        "image": "trivy-mcp:latest",
+        "args": [],
+        "environment": {},
+        "secretRefs": {},
+        "workspaceMount": {
+          "enabled": false,
+          "containerPath": "/workspace",
+          "readOnly": true
+        },
+        "docker": {
+          "memory": "1g",
+          "cpus": 1.0,
+          "pidsLimit": 256,
+          "network": "bridge",
+          "readOnly": true,
+          "capDropAll": true,
+          "capAdd": [],
+          "noNewPrivileges": true,
+          "tmpfs": {
+            "/tmp": "rw,noexec,nosuid,size=64m,mode=1777",
+            "/app/output": "rw,noexec,nosuid,size=128m,mode=1777"
+          }
+        }
+      },
+      "enabledTools": [],
+      "timeoutSeconds": 60,
+      "toolTimeoutSeconds": 600,
+      "maxOutputBytes": 262144,
+      "maxInlineChars": 32000,
+      "maxArtifactBytes": 8388608,
+      "storeSensitiveArtifactValues": false,
+      "visibility": {
+        "modes": [
+          "ctf",
+          "penetration_test",
+          "incident_response",
+          "vulnerability_research",
+          "reverse_engineering"
+        ],
+        "risk": "active",
+        "allowMethods": [],
+        "denyMethods": []
+      },
+      "methods": {},
+      "maxConcurrency": 1,
+      "callsPerMinute": 60.0,
+      "burst": 5
+    },
+    "go-analyzer": {
+      "enabled": true,
+      "transport": "stdio",
+      "stdio": {
+        "source": "docker_image",
+        "image": "go-analyzer-mcp:latest",
+        "args": [],
+        "environment": {},
+        "secretRefs": {},
+        "workspaceMount": {
+          "enabled": false,
+          "containerPath": "/workspace",
+          "readOnly": true
+        },
+        "docker": {
+          "memory": "1g",
+          "cpus": 1.0,
+          "pidsLimit": 256,
+          "network": "bridge",
+          "readOnly": true,
+          "capDropAll": true,
+          "capAdd": [],
+          "noNewPrivileges": true,
+          "tmpfs": {
+            "/tmp": "rw,noexec,nosuid,size=64m,mode=1777",
+            "/app/output": "rw,noexec,nosuid,size=128m,mode=1777"
+          }
+        }
+      },
+      "enabledTools": [],
+      "timeoutSeconds": 60,
+      "toolTimeoutSeconds": 600,
+      "maxOutputBytes": 262144,
+      "maxInlineChars": 32000,
+      "maxArtifactBytes": 8388608,
+      "storeSensitiveArtifactValues": false,
+      "visibility": {
+        "modes": [
+          "ctf",
+          "penetration_test",
+          "incident_response",
+          "vulnerability_research",
+          "reverse_engineering"
+        ],
+        "risk": "active",
+        "allowMethods": [],
+        "denyMethods": []
+      },
+      "methods": {},
+      "maxConcurrency": 1,
+      "callsPerMinute": 60.0,
+      "burst": 5
+    },
+    "go-crash-analyzer": {
+      "enabled": true,
+      "transport": "stdio",
+      "stdio": {
+        "source": "docker_image",
+        "image": "go-crash-analyzer-mcp:latest",
+        "args": [],
+        "environment": {},
+        "secretRefs": {},
+        "workspaceMount": {
+          "enabled": false,
+          "containerPath": "/workspace",
+          "readOnly": true
+        },
+        "docker": {
+          "memory": "1g",
+          "cpus": 1.0,
+          "pidsLimit": 256,
+          "network": "bridge",
+          "readOnly": true,
+          "capDropAll": true,
+          "capAdd": [],
+          "noNewPrivileges": true,
+          "tmpfs": {
+            "/tmp": "rw,noexec,nosuid,size=64m,mode=1777",
+            "/app/output": "rw,noexec,nosuid,size=128m,mode=1777"
+          }
+        }
+      },
+      "enabledTools": [],
+      "timeoutSeconds": 60,
+      "toolTimeoutSeconds": 600,
+      "maxOutputBytes": 262144,
+      "maxInlineChars": 32000,
+      "maxArtifactBytes": 8388608,
+      "storeSensitiveArtifactValues": false,
+      "visibility": {
+        "modes": [
+          "ctf",
+          "penetration_test",
+          "incident_response",
+          "vulnerability_research",
+          "reverse_engineering"
+        ],
+        "risk": "active",
+        "allowMethods": [],
+        "denyMethods": []
+      },
+      "methods": {},
+      "maxConcurrency": 1,
+      "callsPerMinute": 60.0,
+      "burst": 5
+    },
+    "go-fuzzer": {
+      "enabled": true,
+      "transport": "stdio",
+      "stdio": {
+        "source": "docker_image",
+        "image": "go-fuzzer-mcp:latest",
+        "args": [],
+        "environment": {},
+        "secretRefs": {},
+        "workspaceMount": {
+          "enabled": false,
+          "containerPath": "/workspace",
+          "readOnly": true
+        },
+        "docker": {
+          "memory": "1g",
+          "cpus": 1.0,
+          "pidsLimit": 256,
+          "network": "bridge",
+          "readOnly": true,
+          "capDropAll": true,
+          "capAdd": [],
+          "noNewPrivileges": true,
+          "tmpfs": {
+            "/tmp": "rw,noexec,nosuid,size=64m,mode=1777",
+            "/app/output": "rw,noexec,nosuid,size=128m,mode=1777"
+          }
+        }
+      },
+      "enabledTools": [],
+      "timeoutSeconds": 60,
+      "toolTimeoutSeconds": 600,
+      "maxOutputBytes": 262144,
+      "maxInlineChars": 32000,
+      "maxArtifactBytes": 8388608,
+      "storeSensitiveArtifactValues": false,
+      "visibility": {
+        "modes": [
+          "ctf",
+          "penetration_test",
+          "incident_response",
+          "vulnerability_research",
+          "reverse_engineering"
+        ],
+        "risk": "active",
+        "allowMethods": [],
+        "denyMethods": []
+      },
+      "methods": {},
+      "maxConcurrency": 1,
+      "callsPerMinute": 60.0,
+      "burst": 5
+    },
+    "go-harness-tester": {
+      "enabled": true,
+      "transport": "stdio",
+      "stdio": {
+        "source": "docker_image",
+        "image": "go-harness-tester-mcp:latest",
+        "args": [],
+        "environment": {},
+        "secretRefs": {},
+        "workspaceMount": {
+          "enabled": false,
+          "containerPath": "/workspace",
+          "readOnly": true
+        },
+        "docker": {
+          "memory": "1g",
+          "cpus": 1.0,
+          "pidsLimit": 256,
+          "network": "bridge",
+          "readOnly": true,
+          "capDropAll": true,
+          "capAdd": [],
+          "noNewPrivileges": true,
+          "tmpfs": {
+            "/tmp": "rw,noexec,nosuid,size=64m,mode=1777",
+            "/app/output": "rw,noexec,nosuid,size=128m,mode=1777"
+          }
+        }
+      },
+      "enabledTools": [],
+      "timeoutSeconds": 60,
+      "toolTimeoutSeconds": 600,
+      "maxOutputBytes": 262144,
+      "maxInlineChars": 32000,
+      "maxArtifactBytes": 8388608,
+      "storeSensitiveArtifactValues": false,
+      "visibility": {
+        "modes": [
+          "ctf",
+          "penetration_test",
+          "incident_response",
+          "vulnerability_research",
+          "reverse_engineering"
+        ],
+        "risk": "active",
+        "allowMethods": [],
+        "denyMethods": []
+      },
+      "methods": {},
+      "maxConcurrency": 1,
+      "callsPerMinute": 60.0,
+      "burst": 5
+    },
+    "semgrep": {
+      "enabled": false,
+      "transport": "stdio",
+      "stdio": {
+        "source": "docker_image",
+        "image": "semgrep-mcp:latest",
+        "args": [],
+        "environment": {},
+        "secretRefs": {},
+        "workspaceMount": {
+          "enabled": false,
+          "containerPath": "/workspace",
+          "readOnly": true
+        },
+        "docker": {
+          "memory": "1g",
+          "cpus": 1.0,
+          "pidsLimit": 256,
+          "network": "bridge",
+          "readOnly": true,
+          "capDropAll": true,
+          "capAdd": [],
+          "noNewPrivileges": true,
+          "tmpfs": {
+            "/tmp": "rw,noexec,nosuid,size=64m,mode=1777",
+            "/app/output": "rw,noexec,nosuid,size=128m,mode=1777"
+          }
+        }
+      },
+      "enabledTools": [],
+      "timeoutSeconds": 60,
+      "toolTimeoutSeconds": 600,
+      "maxOutputBytes": 262144,
+      "maxInlineChars": 32000,
+      "maxArtifactBytes": 8388608,
+      "storeSensitiveArtifactValues": false,
+      "visibility": {
+        "modes": [
+          "ctf",
+          "penetration_test",
+          "incident_response",
+          "vulnerability_research",
+          "reverse_engineering"
+        ],
+        "risk": "active",
+        "allowMethods": [],
+        "denyMethods": []
+      },
+      "methods": {},
+      "maxConcurrency": 1,
+      "callsPerMinute": 60.0,
+      "burst": 5
+    },
+    "searchsploit": {
+      "enabled": true,
+      "transport": "stdio",
+      "stdio": {
+        "source": "docker_image",
+        "image": "searchsploit-mcp:latest",
+        "args": [],
+        "environment": {},
+        "secretRefs": {},
+        "workspaceMount": {
+          "enabled": false,
+          "containerPath": "/workspace",
+          "readOnly": true
+        },
+        "docker": {
+          "memory": "1g",
+          "cpus": 1.0,
+          "pidsLimit": 256,
+          "network": "bridge",
+          "readOnly": true,
+          "capDropAll": true,
+          "capAdd": [],
+          "noNewPrivileges": true,
+          "tmpfs": {
+            "/tmp": "rw,noexec,nosuid,size=64m,mode=1777",
+            "/app/output": "rw,noexec,nosuid,size=128m,mode=1777"
+          }
+        }
+      },
+      "enabledTools": [],
+      "timeoutSeconds": 60,
+      "toolTimeoutSeconds": 600,
+      "maxOutputBytes": 262144,
+      "maxInlineChars": 32000,
+      "maxArtifactBytes": 8388608,
+      "storeSensitiveArtifactValues": false,
+      "visibility": {
+        "modes": [
+          "ctf",
+          "penetration_test",
+          "incident_response",
+          "vulnerability_research",
+          "reverse_engineering"
+        ],
+        "risk": "active",
+        "allowMethods": [],
+        "denyMethods": []
+      },
+      "methods": {},
+      "maxConcurrency": 1,
+      "callsPerMinute": 60.0,
+      "burst": 5
+    },
+    "boofuzz": {
+      "enabled": true,
+      "transport": "stdio",
+      "stdio": {
+        "source": "docker_image",
+        "image": "boofuzz-mcp:latest",
+        "args": [],
+        "environment": {},
+        "secretRefs": {},
+        "workspaceMount": {
+          "enabled": false,
+          "containerPath": "/workspace",
+          "readOnly": true
+        },
+        "docker": {
+          "memory": "1g",
+          "cpus": 1.0,
+          "pidsLimit": 256,
+          "network": "bridge",
+          "readOnly": true,
+          "capDropAll": true,
+          "capAdd": [],
+          "noNewPrivileges": true,
+          "tmpfs": {
+            "/tmp": "rw,noexec,nosuid,size=64m,mode=1777",
+            "/app/output": "rw,noexec,nosuid,size=128m,mode=1777"
+          }
+        }
+      },
+      "enabledTools": [],
+      "timeoutSeconds": 60,
+      "toolTimeoutSeconds": 600,
+      "maxOutputBytes": 262144,
+      "maxInlineChars": 32000,
+      "maxArtifactBytes": 8388608,
+      "storeSensitiveArtifactValues": false,
+      "visibility": {
+        "modes": [
+          "ctf",
+          "penetration_test",
+          "incident_response",
+          "vulnerability_research",
+          "reverse_engineering"
+        ],
+        "risk": "active",
+        "allowMethods": [],
+        "denyMethods": []
+      },
+      "methods": {},
+      "maxConcurrency": 1,
+      "callsPerMinute": 60.0,
+      "burst": 5
+    },
+    "dharma": {
+      "enabled": true,
+      "transport": "stdio",
+      "stdio": {
+        "source": "docker_image",
+        "image": "dharma-mcp:latest",
+        "args": [],
+        "environment": {},
+        "secretRefs": {},
+        "workspaceMount": {
+          "enabled": false,
+          "containerPath": "/workspace",
+          "readOnly": true
+        },
+        "docker": {
+          "memory": "1g",
+          "cpus": 1.0,
+          "pidsLimit": 256,
+          "network": "bridge",
+          "readOnly": true,
+          "capDropAll": true,
+          "capAdd": [],
+          "noNewPrivileges": true,
+          "tmpfs": {
+            "/tmp": "rw,noexec,nosuid,size=64m,mode=1777",
+            "/app/output": "rw,noexec,nosuid,size=128m,mode=1777"
+          }
+        }
+      },
+      "enabledTools": [],
+      "timeoutSeconds": 60,
+      "toolTimeoutSeconds": 600,
+      "maxOutputBytes": 262144,
+      "maxInlineChars": 32000,
+      "maxArtifactBytes": 8388608,
+      "storeSensitiveArtifactValues": false,
+      "visibility": {
+        "modes": [
+          "ctf",
+          "penetration_test",
+          "incident_response",
+          "vulnerability_research",
+          "reverse_engineering"
+        ],
+        "risk": "active",
+        "allowMethods": [],
+        "denyMethods": []
+      },
+      "methods": {},
+      "maxConcurrency": 1,
+      "callsPerMinute": 60.0,
+      "burst": 5
+    },
+    "mcp-scan": {
+      "enabled": false,
+      "transport": "stdio",
+      "stdio": {
+        "source": "docker_image",
+        "image": "mcp-scan:latest",
+        "args": [],
+        "environment": {},
+        "secretRefs": {},
+        "workspaceMount": {
+          "enabled": false,
+          "containerPath": "/workspace",
+          "readOnly": true
+        },
+        "docker": {
+          "memory": "1g",
+          "cpus": 1.0,
+          "pidsLimit": 256,
+          "network": "bridge",
+          "readOnly": true,
+          "capDropAll": true,
+          "capAdd": [],
+          "noNewPrivileges": true,
+          "tmpfs": {
+            "/tmp": "rw,noexec,nosuid,size=64m,mode=1777",
+            "/app/output": "rw,noexec,nosuid,size=128m,mode=1777"
+          }
+        }
+      },
+      "enabledTools": [],
+      "timeoutSeconds": 60,
+      "toolTimeoutSeconds": 600,
+      "maxOutputBytes": 262144,
+      "maxInlineChars": 32000,
+      "maxArtifactBytes": 8388608,
+      "storeSensitiveArtifactValues": false,
+      "visibility": {
+        "modes": [
+          "ctf",
+          "penetration_test",
+          "incident_response",
+          "vulnerability_research",
+          "reverse_engineering"
+        ],
+        "risk": "active",
+        "allowMethods": [],
+        "denyMethods": []
+      },
+      "methods": {},
+      "maxConcurrency": 1,
+      "callsPerMinute": 60.0,
+      "burst": 5
+    },
+    "dnstwist": {
+      "enabled": true,
+      "transport": "stdio",
+      "stdio": {
+        "source": "docker_image",
+        "image": "dnstwist-mcp:latest",
+        "args": [],
+        "environment": {},
+        "secretRefs": {},
+        "workspaceMount": {
+          "enabled": false,
+          "containerPath": "/workspace",
+          "readOnly": true
+        },
+        "docker": {
+          "memory": "1g",
+          "cpus": 1.0,
+          "pidsLimit": 256,
+          "network": "bridge",
+          "readOnly": true,
+          "capDropAll": true,
+          "capAdd": [],
+          "noNewPrivileges": true,
+          "tmpfs": {
+            "/tmp": "rw,noexec,nosuid,size=64m,mode=1777",
+            "/app/output": "rw,noexec,nosuid,size=128m,mode=1777"
+          }
+        }
+      },
+      "enabledTools": [],
+      "timeoutSeconds": 60,
+      "toolTimeoutSeconds": 600,
+      "maxOutputBytes": 262144,
+      "maxInlineChars": 32000,
+      "maxArtifactBytes": 8388608,
+      "storeSensitiveArtifactValues": false,
+      "visibility": {
+        "modes": [
+          "ctf",
+          "penetration_test",
+          "incident_response",
+          "vulnerability_research",
+          "reverse_engineering"
+        ],
+        "risk": "active",
+        "allowMethods": [],
+        "denyMethods": []
+      },
+      "methods": {},
+      "maxConcurrency": 1,
+      "callsPerMinute": 60.0,
+      "burst": 5
+    },
+    "maigret": {
+      "enabled": true,
+      "transport": "stdio",
+      "stdio": {
+        "source": "docker_image",
+        "image": "maigret-mcp:latest",
+        "args": [],
+        "environment": {},
+        "secretRefs": {},
+        "workspaceMount": {
+          "enabled": false,
+          "containerPath": "/workspace",
+          "readOnly": true
+        },
+        "docker": {
+          "memory": "1g",
+          "cpus": 1.0,
+          "pidsLimit": 256,
+          "network": "bridge",
+          "readOnly": true,
+          "capDropAll": true,
+          "capAdd": [],
+          "noNewPrivileges": true,
+          "tmpfs": {
+            "/tmp": "rw,noexec,nosuid,size=64m,mode=1777",
+            "/app/output": "rw,noexec,nosuid,size=128m,mode=1777"
+          }
+        }
+      },
+      "enabledTools": [],
+      "timeoutSeconds": 60,
+      "toolTimeoutSeconds": 600,
+      "maxOutputBytes": 262144,
+      "maxInlineChars": 32000,
+      "maxArtifactBytes": 8388608,
+      "storeSensitiveArtifactValues": false,
+      "visibility": {
+        "modes": [
+          "ctf",
+          "penetration_test",
+          "incident_response",
+          "vulnerability_research",
+          "reverse_engineering"
+        ],
+        "risk": "active",
+        "allowMethods": [],
+        "denyMethods": []
+      },
+      "methods": {},
+      "maxConcurrency": 1,
+      "callsPerMinute": 60.0,
+      "burst": 5
+    },
+    "hashcat": {
+      "enabled": false,
+      "transport": "stdio",
+      "stdio": {
+        "source": "docker_image",
+        "image": "hashcat-mcp:latest",
+        "args": [],
+        "environment": {},
+        "secretRefs": {},
+        "workspaceMount": {
+          "enabled": false,
+          "containerPath": "/workspace",
+          "readOnly": true
+        },
+        "docker": {
+          "memory": "1g",
+          "cpus": 1.0,
+          "pidsLimit": 256,
+          "network": "bridge",
+          "readOnly": true,
+          "capDropAll": true,
+          "capAdd": [],
+          "noNewPrivileges": true,
+          "tmpfs": {
+            "/tmp": "rw,noexec,nosuid,size=64m,mode=1777",
+            "/app/output": "rw,noexec,nosuid,size=128m,mode=1777"
+          }
+        }
+      },
+      "enabledTools": [],
+      "timeoutSeconds": 60,
+      "toolTimeoutSeconds": 600,
+      "maxOutputBytes": 262144,
+      "maxInlineChars": 32000,
+      "maxArtifactBytes": 8388608,
+      "storeSensitiveArtifactValues": false,
+      "visibility": {
+        "modes": [
+          "ctf",
+          "penetration_test",
+          "incident_response",
+          "vulnerability_research",
+          "reverse_engineering"
+        ],
+        "risk": "active",
+        "allowMethods": [],
+        "denyMethods": []
+      },
+      "methods": {},
+      "maxConcurrency": 1,
+      "callsPerMinute": 60.0,
+      "burst": 5
+    },
+    "externalattacker": {
+      "enabled": false,
+      "transport": "stdio",
+      "stdio": {
+        "source": "docker_image",
+        "image": "externalattacker-mcp:latest",
+        "args": [],
+        "environment": {},
+        "secretRefs": {},
+        "workspaceMount": {
+          "enabled": false,
+          "containerPath": "/workspace",
+          "readOnly": true
+        },
+        "docker": {
+          "memory": "1g",
+          "cpus": 1.0,
+          "pidsLimit": 256,
+          "network": "bridge",
+          "readOnly": true,
+          "capDropAll": true,
+          "capAdd": [],
+          "noNewPrivileges": true,
+          "tmpfs": {
+            "/tmp": "rw,noexec,nosuid,size=64m,mode=1777",
+            "/app/output": "rw,noexec,nosuid,size=128m,mode=1777"
+          }
+        }
+      },
+      "enabledTools": [],
+      "timeoutSeconds": 60,
+      "toolTimeoutSeconds": 600,
+      "maxOutputBytes": 262144,
+      "maxInlineChars": 32000,
+      "maxArtifactBytes": 8388608,
+      "storeSensitiveArtifactValues": false,
+      "visibility": {
+        "modes": [
+          "ctf",
+          "penetration_test",
+          "incident_response",
+          "vulnerability_research",
+          "reverse_engineering"
+        ],
+        "risk": "active",
+        "allowMethods": [],
+        "denyMethods": []
+      },
+      "methods": {},
+      "maxConcurrency": 1,
+      "callsPerMinute": 60.0,
+      "burst": 5
+    },
+    "masscan": {
+      "enabled": true,
+      "transport": "stdio",
+      "stdio": {
+        "source": "docker_image",
+        "image": "masscan-mcp:latest",
+        "args": [],
+        "environment": {},
+        "secretRefs": {},
+        "workspaceMount": {
+          "enabled": false,
+          "containerPath": "/workspace",
+          "readOnly": true
+        },
+        "docker": {
+          "memory": "1g",
+          "cpus": 1.0,
+          "pidsLimit": 256,
+          "network": "bridge",
+          "readOnly": true,
+          "capDropAll": true,
+          "capAdd": [],
+          "noNewPrivileges": true,
+          "tmpfs": {
+            "/tmp": "rw,noexec,nosuid,size=64m,mode=1777",
+            "/app/output": "rw,noexec,nosuid,size=128m,mode=1777"
+          }
+        }
+      },
+      "enabledTools": [],
+      "timeoutSeconds": 60,
+      "toolTimeoutSeconds": 600,
+      "maxOutputBytes": 262144,
+      "maxInlineChars": 32000,
+      "maxArtifactBytes": 8388608,
+      "storeSensitiveArtifactValues": false,
+      "visibility": {
+        "modes": [
+          "ctf",
+          "penetration_test",
+          "incident_response",
+          "vulnerability_research",
+          "reverse_engineering"
+        ],
+        "risk": "active",
+        "allowMethods": [],
+        "denyMethods": []
+      },
+      "methods": {},
+      "maxConcurrency": 1,
+      "callsPerMinute": 60.0,
+      "burst": 5
+    },
+    "networksdb": {
+      "enabled": false,
+      "transport": "stdio",
+      "stdio": {
+        "source": "docker_image",
+        "image": "networksdb-mcp:latest",
+        "args": [],
+        "environment": {},
+        "secretRefs": {},
+        "workspaceMount": {
+          "enabled": false,
+          "containerPath": "/workspace",
+          "readOnly": true
+        },
+        "docker": {
+          "memory": "1g",
+          "cpus": 1.0,
+          "pidsLimit": 256,
+          "network": "bridge",
+          "readOnly": true,
+          "capDropAll": true,
+          "capAdd": [],
+          "noNewPrivileges": true,
+          "tmpfs": {
+            "/tmp": "rw,noexec,nosuid,size=64m,mode=1777",
+            "/app/output": "rw,noexec,nosuid,size=128m,mode=1777"
+          }
+        }
+      },
+      "enabledTools": [],
+      "timeoutSeconds": 60,
+      "toolTimeoutSeconds": 600,
+      "maxOutputBytes": 262144,
+      "maxInlineChars": 32000,
+      "maxArtifactBytes": 8388608,
+      "storeSensitiveArtifactValues": false,
+      "visibility": {
+        "modes": [
+          "ctf",
+          "penetration_test",
+          "incident_response",
+          "vulnerability_research",
+          "reverse_engineering"
+        ],
+        "risk": "active",
+        "allowMethods": [],
+        "denyMethods": []
+      },
+      "methods": {},
+      "maxConcurrency": 1,
+      "callsPerMinute": 60.0,
+      "burst": 5
+    },
+    "nmap": {
+      "enabled": true,
+      "transport": "stdio",
+      "stdio": {
+        "source": "docker_image",
+        "image": "nmap-mcp:latest",
+        "args": [],
+        "environment": {},
+        "secretRefs": {},
+        "workspaceMount": {
+          "enabled": false,
+          "containerPath": "/workspace",
+          "readOnly": true
+        },
+        "docker": {
+          "memory": "1g",
+          "cpus": 1.0,
+          "pidsLimit": 256,
+          "network": "bridge",
+          "readOnly": true,
+          "capDropAll": true,
+          "capAdd": [],
+          "noNewPrivileges": true,
+          "tmpfs": {
+            "/tmp": "rw,noexec,nosuid,size=64m,mode=1777",
+            "/app/output": "rw,noexec,nosuid,size=128m,mode=1777"
+          }
+        }
+      },
+      "enabledTools": [],
+      "timeoutSeconds": 60,
+      "toolTimeoutSeconds": 600,
+      "maxOutputBytes": 262144,
+      "maxInlineChars": 32000,
+      "maxArtifactBytes": 8388608,
+      "storeSensitiveArtifactValues": false,
+      "visibility": {
+        "modes": [
+          "ctf",
+          "penetration_test",
+          "incident_response",
+          "vulnerability_research",
+          "reverse_engineering"
+        ],
+        "risk": "active",
+        "allowMethods": [],
+        "denyMethods": []
+      },
+      "methods": {},
+      "maxConcurrency": 1,
+      "callsPerMinute": 60.0,
+      "burst": 5
+    },
+    "pd-tools": {
+      "enabled": true,
+      "transport": "stdio",
+      "stdio": {
+        "source": "docker_image",
+        "image": "pd-tools-mcp:latest",
+        "args": [],
+        "environment": {},
+        "secretRefs": {},
+        "workspaceMount": {
+          "enabled": false,
+          "containerPath": "/workspace",
+          "readOnly": true
+        },
+        "docker": {
+          "memory": "1g",
+          "cpus": 1.0,
+          "pidsLimit": 256,
+          "network": "bridge",
+          "readOnly": true,
+          "capDropAll": true,
+          "capAdd": [],
+          "noNewPrivileges": true,
+          "tmpfs": {
+            "/tmp": "rw,noexec,nosuid,size=64m,mode=1777",
+            "/app/output": "rw,noexec,nosuid,size=128m,mode=1777"
+          }
+        }
+      },
+      "enabledTools": [],
+      "timeoutSeconds": 60,
+      "toolTimeoutSeconds": 600,
+      "maxOutputBytes": 262144,
+      "maxInlineChars": 32000,
+      "maxArtifactBytes": 8388608,
+      "storeSensitiveArtifactValues": false,
+      "visibility": {
+        "modes": [
+          "ctf",
+          "penetration_test",
+          "incident_response",
+          "vulnerability_research",
+          "reverse_engineering"
+        ],
+        "risk": "active",
+        "allowMethods": [],
+        "denyMethods": []
+      },
+      "methods": {},
+      "maxConcurrency": 1,
+      "callsPerMinute": 60.0,
+      "burst": 5
+    },
+    "shodan": {
+      "enabled": false,
+      "transport": "stdio",
+      "stdio": {
+        "source": "docker_image",
+        "image": "shodan-mcp:latest",
+        "args": [],
+        "environment": {},
+        "secretRefs": {},
+        "workspaceMount": {
+          "enabled": false,
+          "containerPath": "/workspace",
+          "readOnly": true
+        },
+        "docker": {
+          "memory": "1g",
+          "cpus": 1.0,
+          "pidsLimit": 256,
+          "network": "bridge",
+          "readOnly": true,
+          "capDropAll": true,
+          "capAdd": [],
+          "noNewPrivileges": true,
+          "tmpfs": {
+            "/tmp": "rw,noexec,nosuid,size=64m,mode=1777",
+            "/app/output": "rw,noexec,nosuid,size=128m,mode=1777"
+          }
+        }
+      },
+      "enabledTools": [],
+      "timeoutSeconds": 60,
+      "toolTimeoutSeconds": 600,
+      "maxOutputBytes": 262144,
+      "maxInlineChars": 32000,
+      "maxArtifactBytes": 8388608,
+      "storeSensitiveArtifactValues": false,
+      "visibility": {
+        "modes": [
+          "ctf",
+          "penetration_test",
+          "incident_response",
+          "vulnerability_research",
+          "reverse_engineering"
+        ],
+        "risk": "active",
+        "allowMethods": [],
+        "denyMethods": []
+      },
+      "methods": {},
+      "maxConcurrency": 1,
+      "callsPerMinute": 60.0,
+      "burst": 5
+    },
+    "whatweb": {
+      "enabled": true,
+      "transport": "stdio",
+      "stdio": {
+        "source": "docker_image",
+        "image": "whatweb-mcp:latest",
+        "args": [],
+        "environment": {},
+        "secretRefs": {},
+        "workspaceMount": {
+          "enabled": false,
+          "containerPath": "/workspace",
+          "readOnly": true
+        },
+        "docker": {
+          "memory": "1g",
+          "cpus": 1.0,
+          "pidsLimit": 256,
+          "network": "bridge",
+          "readOnly": true,
+          "capDropAll": true,
+          "capAdd": [],
+          "noNewPrivileges": true,
+          "tmpfs": {
+            "/tmp": "rw,noexec,nosuid,size=64m,mode=1777",
+            "/app/output": "rw,noexec,nosuid,size=128m,mode=1777"
+          }
+        }
+      },
+      "enabledTools": [],
+      "timeoutSeconds": 60,
+      "toolTimeoutSeconds": 600,
+      "maxOutputBytes": 262144,
+      "maxInlineChars": 32000,
+      "maxArtifactBytes": 8388608,
+      "storeSensitiveArtifactValues": false,
+      "visibility": {
+        "modes": [
+          "ctf",
+          "penetration_test",
+          "incident_response",
+          "vulnerability_research",
+          "reverse_engineering"
+        ],
+        "risk": "active",
+        "allowMethods": [],
+        "denyMethods": []
+      },
+      "methods": {},
+      "maxConcurrency": 1,
+      "callsPerMinute": 60.0,
+      "burst": 5
+    },
+    "zoomeye": {
+      "enabled": true,
+      "transport": "stdio",
+      "stdio": {
+        "source": "docker_image",
+        "image": "zoomeye-mcp:latest",
+        "args": [],
+        "environment": {},
+        "secretRefs": {},
+        "workspaceMount": {
+          "enabled": false,
+          "containerPath": "/workspace",
+          "readOnly": true
+        },
+        "docker": {
+          "memory": "1g",
+          "cpus": 1.0,
+          "pidsLimit": 256,
+          "network": "bridge",
+          "readOnly": true,
+          "capDropAll": true,
+          "capAdd": [],
+          "noNewPrivileges": true,
+          "tmpfs": {
+            "/tmp": "rw,noexec,nosuid,size=64m,mode=1777",
+            "/app/output": "rw,noexec,nosuid,size=128m,mode=1777"
+          }
+        }
+      },
+      "enabledTools": [],
+      "timeoutSeconds": 60,
+      "toolTimeoutSeconds": 600,
+      "maxOutputBytes": 262144,
+      "maxInlineChars": 32000,
+      "maxArtifactBytes": 8388608,
+      "storeSensitiveArtifactValues": false,
+      "visibility": {
+        "modes": [
+          "ctf",
+          "penetration_test",
+          "incident_response",
+          "vulnerability_research",
+          "reverse_engineering"
+        ],
+        "risk": "active",
+        "allowMethods": [],
+        "denyMethods": []
+      },
+      "methods": {},
+      "maxConcurrency": 1,
+      "callsPerMinute": 60.0,
+      "burst": 5
+    },
+    "gitleaks": {
+      "enabled": true,
+      "transport": "stdio",
+      "stdio": {
+        "source": "docker_image",
+        "image": "gitleaks-mcp:latest",
+        "args": [],
+        "environment": {},
+        "secretRefs": {},
+        "workspaceMount": {
+          "enabled": false,
+          "containerPath": "/workspace",
+          "readOnly": true
+        },
+        "docker": {
+          "memory": "1g",
+          "cpus": 1.0,
+          "pidsLimit": 256,
+          "network": "bridge",
+          "readOnly": true,
+          "capDropAll": true,
+          "capAdd": [],
+          "noNewPrivileges": true,
+          "tmpfs": {
+            "/tmp": "rw,noexec,nosuid,size=64m,mode=1777",
+            "/app/output": "rw,noexec,nosuid,size=128m,mode=1777"
+          }
+        }
+      },
+      "enabledTools": [],
+      "timeoutSeconds": 60,
+      "toolTimeoutSeconds": 600,
+      "maxOutputBytes": 262144,
+      "maxInlineChars": 32000,
+      "maxArtifactBytes": 8388608,
+      "storeSensitiveArtifactValues": false,
+      "visibility": {
+        "modes": [
+          "ctf",
+          "penetration_test",
+          "incident_response",
+          "vulnerability_research",
+          "reverse_engineering"
+        ],
+        "risk": "active",
+        "allowMethods": [],
+        "denyMethods": []
+      },
+      "methods": {},
+      "maxConcurrency": 1,
+      "callsPerMinute": 60.0,
+      "burst": 5
+    },
+    "otx": {
+      "enabled": true,
+      "transport": "stdio",
+      "stdio": {
+        "source": "docker_image",
+        "image": "otx-mcp:latest",
+        "args": [],
+        "environment": {},
+        "secretRefs": {},
+        "workspaceMount": {
+          "enabled": false,
+          "containerPath": "/workspace",
+          "readOnly": true
+        },
+        "docker": {
+          "memory": "1g",
+          "cpus": 1.0,
+          "pidsLimit": 256,
+          "network": "bridge",
+          "readOnly": true,
+          "capDropAll": true,
+          "capAdd": [],
+          "noNewPrivileges": true,
+          "tmpfs": {
+            "/tmp": "rw,noexec,nosuid,size=64m,mode=1777",
+            "/app/output": "rw,noexec,nosuid,size=128m,mode=1777"
+          }
+        }
+      },
+      "enabledTools": [],
+      "timeoutSeconds": 60,
+      "toolTimeoutSeconds": 600,
+      "maxOutputBytes": 262144,
+      "maxInlineChars": 32000,
+      "maxArtifactBytes": 8388608,
+      "storeSensitiveArtifactValues": false,
+      "visibility": {
+        "modes": [
+          "ctf",
+          "penetration_test",
+          "incident_response",
+          "vulnerability_research",
+          "reverse_engineering"
+        ],
+        "risk": "active",
+        "allowMethods": [],
+        "denyMethods": []
+      },
+      "methods": {},
+      "maxConcurrency": 1,
+      "callsPerMinute": 60.0,
+      "burst": 5
+    },
+    "virustotal": {
+      "enabled": false,
+      "transport": "stdio",
+      "stdio": {
+        "source": "docker_image",
+        "image": "virustotal-mcp:latest",
+        "args": [],
+        "environment": {},
+        "secretRefs": {},
+        "workspaceMount": {
+          "enabled": false,
+          "containerPath": "/workspace",
+          "readOnly": true
+        },
+        "docker": {
+          "memory": "1g",
+          "cpus": 1.0,
+          "pidsLimit": 256,
+          "network": "bridge",
+          "readOnly": true,
+          "capDropAll": true,
+          "capAdd": [],
+          "noNewPrivileges": true,
+          "tmpfs": {
+            "/tmp": "rw,noexec,nosuid,size=64m,mode=1777",
+            "/app/output": "rw,noexec,nosuid,size=128m,mode=1777"
+          }
+        }
+      },
+      "enabledTools": [],
+      "timeoutSeconds": 60,
+      "toolTimeoutSeconds": 600,
+      "maxOutputBytes": 262144,
+      "maxInlineChars": 32000,
+      "maxArtifactBytes": 8388608,
+      "storeSensitiveArtifactValues": false,
+      "visibility": {
+        "modes": [
+          "ctf",
+          "penetration_test",
+          "incident_response",
+          "vulnerability_research",
+          "reverse_engineering"
+        ],
+        "risk": "active",
+        "allowMethods": [],
+        "denyMethods": []
+      },
+      "methods": {},
+      "maxConcurrency": 1,
+      "callsPerMinute": 60.0,
+      "burst": 5
+    },
+    "burp": {
+      "enabled": true,
+      "transport": "stdio",
+      "stdio": {
+        "source": "docker_image",
+        "image": "burp-mcp:latest",
+        "args": [],
+        "environment": {},
+        "secretRefs": {},
+        "workspaceMount": {
+          "enabled": false,
+          "containerPath": "/workspace",
+          "readOnly": true
+        },
+        "docker": {
+          "memory": "1g",
+          "cpus": 1.0,
+          "pidsLimit": 256,
+          "network": "bridge",
+          "readOnly": true,
+          "capDropAll": true,
+          "capAdd": [],
+          "noNewPrivileges": true,
+          "tmpfs": {
+            "/tmp": "rw,noexec,nosuid,size=64m,mode=1777",
+            "/app/output": "rw,noexec,nosuid,size=128m,mode=1777"
+          }
+        }
+      },
+      "enabledTools": [],
+      "timeoutSeconds": 60,
+      "toolTimeoutSeconds": 600,
+      "maxOutputBytes": 262144,
+      "maxInlineChars": 32000,
+      "maxArtifactBytes": 8388608,
+      "storeSensitiveArtifactValues": false,
+      "visibility": {
+        "modes": [
+          "ctf",
+          "penetration_test",
+          "incident_response",
+          "vulnerability_research",
+          "reverse_engineering"
+        ],
+        "risk": "active",
+        "allowMethods": [],
+        "denyMethods": []
+      },
+      "methods": {},
+      "maxConcurrency": 1,
+      "callsPerMinute": 60.0,
+      "burst": 5
+    },
+    "ffuf": {
+      "enabled": true,
+      "transport": "stdio",
+      "stdio": {
+        "source": "docker_image",
+        "image": "ffuf-mcp:latest",
+        "args": [],
+        "environment": {},
+        "secretRefs": {},
+        "workspaceMount": {
+          "enabled": false,
+          "containerPath": "/workspace",
+          "readOnly": true
+        },
+        "docker": {
+          "memory": "1g",
+          "cpus": 1.0,
+          "pidsLimit": 256,
+          "network": "bridge",
+          "readOnly": true,
+          "capDropAll": true,
+          "capAdd": [],
+          "noNewPrivileges": true,
+          "tmpfs": {
+            "/tmp": "rw,noexec,nosuid,size=64m,mode=1777",
+            "/app/output": "rw,noexec,nosuid,size=128m,mode=1777"
+          }
+        }
+      },
+      "enabledTools": [],
+      "timeoutSeconds": 60,
+      "toolTimeoutSeconds": 600,
+      "maxOutputBytes": 262144,
+      "maxInlineChars": 32000,
+      "maxArtifactBytes": 8388608,
+      "storeSensitiveArtifactValues": false,
+      "visibility": {
+        "modes": [
+          "ctf",
+          "penetration_test",
+          "incident_response",
+          "vulnerability_research",
+          "reverse_engineering"
+        ],
+        "risk": "active",
+        "allowMethods": [],
+        "denyMethods": []
+      },
+      "methods": {},
+      "maxConcurrency": 1,
+      "callsPerMinute": 60.0,
+      "burst": 5
+    },
+    "nikto": {
+      "enabled": true,
+      "transport": "stdio",
+      "stdio": {
+        "source": "docker_image",
+        "image": "nikto-mcp:latest",
+        "args": [],
+        "environment": {},
+        "secretRefs": {},
+        "workspaceMount": {
+          "enabled": false,
+          "containerPath": "/workspace",
+          "readOnly": true
+        },
+        "docker": {
+          "memory": "1g",
+          "cpus": 1.0,
+          "pidsLimit": 256,
+          "network": "bridge",
+          "readOnly": true,
+          "capDropAll": true,
+          "capAdd": [],
+          "noNewPrivileges": true,
+          "tmpfs": {
+            "/tmp": "rw,noexec,nosuid,size=64m,mode=1777",
+            "/app/output": "rw,noexec,nosuid,size=128m,mode=1777"
+          }
+        }
+      },
+      "enabledTools": [],
+      "timeoutSeconds": 60,
+      "toolTimeoutSeconds": 600,
+      "maxOutputBytes": 262144,
+      "maxInlineChars": 32000,
+      "maxArtifactBytes": 8388608,
+      "storeSensitiveArtifactValues": false,
+      "visibility": {
+        "modes": [
+          "ctf",
+          "penetration_test",
+          "incident_response",
+          "vulnerability_research",
+          "reverse_engineering"
+        ],
+        "risk": "active",
+        "allowMethods": [],
+        "denyMethods": []
+      },
+      "methods": {},
+      "maxConcurrency": 1,
+      "callsPerMinute": 60.0,
+      "burst": 5
+    },
+    "nuclei": {
+      "enabled": true,
+      "transport": "stdio",
+      "stdio": {
+        "source": "docker_image",
+        "image": "nuclei-mcp:latest",
+        "args": [],
+        "environment": {},
+        "secretRefs": {},
+        "workspaceMount": {
+          "enabled": false,
+          "containerPath": "/workspace",
+          "readOnly": true
+        },
+        "docker": {
+          "memory": "1g",
+          "cpus": 1.0,
+          "pidsLimit": 256,
+          "network": "bridge",
+          "readOnly": true,
+          "capDropAll": true,
+          "capAdd": [],
+          "noNewPrivileges": true,
+          "tmpfs": {
+            "/tmp": "rw,noexec,nosuid,size=64m,mode=1777",
+            "/app/output": "rw,noexec,nosuid,size=128m,mode=1777"
+          }
+        }
+      },
+      "enabledTools": [],
+      "timeoutSeconds": 60,
+      "toolTimeoutSeconds": 600,
+      "maxOutputBytes": 262144,
+      "maxInlineChars": 32000,
+      "maxArtifactBytes": 8388608,
+      "storeSensitiveArtifactValues": false,
+      "visibility": {
+        "modes": [
+          "ctf",
+          "penetration_test",
+          "incident_response",
+          "vulnerability_research",
+          "reverse_engineering"
+        ],
+        "risk": "active",
+        "allowMethods": [],
+        "denyMethods": []
+      },
+      "methods": {},
+      "maxConcurrency": 1,
+      "callsPerMinute": 60.0,
+      "burst": 5
+    },
+    "sqlmap": {
+      "enabled": true,
+      "transport": "stdio",
+      "stdio": {
+        "source": "docker_image",
+        "image": "sqlmap-mcp:latest",
+        "args": [],
+        "environment": {},
+        "secretRefs": {},
+        "workspaceMount": {
+          "enabled": false,
+          "containerPath": "/workspace",
+          "readOnly": true
+        },
+        "docker": {
+          "memory": "1g",
+          "cpus": 1.0,
+          "pidsLimit": 256,
+          "network": "bridge",
+          "readOnly": true,
+          "capDropAll": true,
+          "capAdd": [],
+          "noNewPrivileges": true,
+          "tmpfs": {
+            "/tmp": "rw,noexec,nosuid,size=64m,mode=1777",
+            "/app/output": "rw,noexec,nosuid,size=128m,mode=1777"
+          }
+        }
+      },
+      "enabledTools": [],
+      "timeoutSeconds": 60,
+      "toolTimeoutSeconds": 600,
+      "maxOutputBytes": 262144,
+      "maxInlineChars": 32000,
+      "maxArtifactBytes": 8388608,
+      "storeSensitiveArtifactValues": false,
+      "visibility": {
+        "modes": [
+          "ctf",
+          "penetration_test",
+          "incident_response",
+          "vulnerability_research",
+          "reverse_engineering"
+        ],
+        "risk": "active",
+        "allowMethods": [],
+        "denyMethods": []
+      },
+      "methods": {},
+      "maxConcurrency": 1,
+      "callsPerMinute": 60.0,
+      "burst": 5
+    },
+    "waybackurls": {
+      "enabled": true,
+      "transport": "stdio",
+      "stdio": {
+        "source": "docker_image",
+        "image": "waybackurls-mcp:latest",
+        "args": [],
+        "environment": {},
+        "secretRefs": {},
+        "workspaceMount": {
+          "enabled": false,
+          "containerPath": "/workspace",
+          "readOnly": true
+        },
+        "docker": {
+          "memory": "1g",
+          "cpus": 1.0,
+          "pidsLimit": 256,
+          "network": "bridge",
+          "readOnly": true,
+          "capDropAll": true,
+          "capAdd": [],
+          "noNewPrivileges": true,
+          "tmpfs": {
+            "/tmp": "rw,noexec,nosuid,size=64m,mode=1777",
+            "/app/output": "rw,noexec,nosuid,size=128m,mode=1777"
+          }
+        }
+      },
+      "enabledTools": [],
+      "timeoutSeconds": 60,
+      "toolTimeoutSeconds": 600,
+      "maxOutputBytes": 262144,
+      "maxInlineChars": 32000,
+      "maxArtifactBytes": 8388608,
+      "storeSensitiveArtifactValues": false,
+      "visibility": {
+        "modes": [
+          "ctf",
+          "penetration_test",
+          "incident_response",
+          "vulnerability_research",
+          "reverse_engineering"
+        ],
+        "risk": "active",
+        "allowMethods": [],
+        "denyMethods": []
+      },
+      "methods": {},
+      "maxConcurrency": 1,
+      "callsPerMinute": 60.0,
+      "burst": 5
+    }
+  }
+}

@@ -1,7 +1,7 @@
 ---
 name: crypto-and-encoding
 version: "1"
-modes: [ctf, binary_ctf]
+modes: [ctf, reverse_engineering]
 capabilities: [workspace.read, workspace.write, workspace.python, artifact.inspect]
 tags: [crypto, encoding, decoding]
 ---

@@ -1,7 +1,7 @@
 from fastapi.testclient import TestClient
 
 from apps.api.main import app
-from tga.contracts import SessionRecord, TGATask
+from tga.contracts import ExecutionPolicy, SessionFile, SessionInput, SessionRecord, TGATask
 from tga.evidence.artifacts import ArtifactStore
 from tga.evidence.store import EvidenceStore
 
@@ -45,3 +45,32 @@ def test_artifact_endpoint_is_scoped_to_a_v2_session(tmp_path, monkeypatch):
     client = TestClient(app)
     assert client.get(f"/api/v2/tasks/one/artifacts/{artifact_id}").status_code == 200
     assert client.get(f"/api/v2/tasks/two/artifacts/{artifact_id}").status_code == 200
+
+
+def test_schema_v4_artifact_endpoint_reads_workspace_artifacts(tmp_path, monkeypatch):
+    monkeypatch.setenv("TGA_RUN_ROOT", str(tmp_path / "runs"))
+    task_file = SessionFile(
+        id=f"asset_{'a' * 32}", originalName="task.txt", storedName=f"{'a' * 32}.txt",
+        relativePath=f"inputs/task/{'a' * 32}.txt", mimeType="text/plain", size=4,
+        sha256="b" * 64, kind="task", mediaKind="text",
+    )
+    task = TGATask(
+        id="preview_v4", name="preview v4", mode="reverse_engineering", goal="inspect",
+        mode_config={"mode": "reverse_engineering"}, execution_policy=ExecutionPolicy(),
+        session_input=SessionInput(taskFiles=[task_file]), schema_version=4,
+    )
+    root = tmp_path / "runs" / task.id
+    store = EvidenceStore(root / "evidence.db")
+    artifact = ArtifactStore(root / "workspace" / "artifacts").save_text(
+        task_id=task.id, intent_id=None, kind="file", text="schema v4 artifact", tool="test",
+    )
+    try:
+        store.create_task(task)
+        store.create_session(SessionRecord(task_id=task.id, schema_version=4, workspace_path="workspace"))
+        store.add_artifact(artifact)
+    finally:
+        store.close()
+
+    response = TestClient(app).get(f"/api/v2/tasks/{task.id}/artifacts/{artifact.id}")
+    assert response.status_code == 200
+    assert response.json()["preview"] == "schema v4 artifact"

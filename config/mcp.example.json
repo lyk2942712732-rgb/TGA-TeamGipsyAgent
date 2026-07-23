@@ -1,0 +1,63 @@
+{
+  "version": 1,
+  "maxConcurrency": 4,
+  "servers": {
+    "nmap": {
+      "enabled": true,
+      "transport": "stdio",
+      "stdio": {
+        "source": "docker_image",
+        "image": "nmap-mcp:latest",
+        "environment": {},
+        "secretRefs": {},
+        "docker": {
+          "memory": "512m",
+          "cpus": 1.0,
+          "pidsLimit": 256,
+          "network": "none",
+          "readOnly": true,
+          "capDropAll": true,
+          "capAdd": [],
+          "noNewPrivileges": true,
+          "tmpfs": {
+            "/tmp": "rw,noexec,nosuid,size=64m,mode=1777",
+            "/app/output": "rw,noexec,nosuid,size=128m,mode=1777"
+          }
+        }
+      },
+      "enabledTools": [
+        "quick_scan"
+      ],
+      "timeoutSeconds": 120,
+      "toolTimeoutSeconds": 300,
+      "visibility": {
+        "modes": [
+          "ctf",
+          "penetration_test",
+          "incident_response",
+          "vulnerability_research",
+          "reverse_engineering"
+        ],
+        "risk": "active"
+      }
+    },
+    "remote-scanner": {
+      "enabled": false,
+      "transport": "streamable_http",
+      "http": {
+        "url": "https://mcp.example.com/mcp",
+        "verifyTls": true,
+        "headers": {
+          "X-Client": "tga"
+        },
+        "secretRefs": {
+          "Authorization": "env:MCP_SCANNER_TOKEN"
+        },
+        "proxyUrl": null,
+        "allowSameOriginRedirects": false,
+        "maxRetries": 1
+      },
+      "enabledTools": []
+    }
+  }
+}

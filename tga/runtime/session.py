@@ -20,12 +20,18 @@ class AgentSession:
         self.path = self.root / "session" / "checkpoint.json"
         self.board_path = self.root / "board" / "snapshot.json"
 
-    def ensure(self, *, max_turns: int) -> SessionRecord:
-        for directory in ("session", "board", "solvers", "artifacts", "reports"):
+    def ensure(self, *, max_turns: int, schema_version: int = 2, workspace_path: str = "", mcp_catalog_version: str = "") -> SessionRecord:
+        directories = ["session", "board", "solvers", "reports"]
+        if schema_version < 4:
+            directories.append("artifacts")
+        for directory in directories:
             (self.root / directory).mkdir(parents=True, exist_ok=True)
         session = self.store.get_session(self.task_id)
         if session is None:
-            session = self.store.create_session(SessionRecord(task_id=self.task_id, max_turns=max_turns))
+            session = self.store.create_session(SessionRecord(
+                task_id=self.task_id, max_turns=max_turns, schema_version=schema_version,
+                workspace_path=workspace_path, mcp_catalog_version=mcp_catalog_version,
+            ))
         elif session.max_turns > max_turns:
             # Environment limits are an upper bound; a resumed session must
             # never retain a higher frontend-era value.
@@ -40,6 +46,7 @@ class AgentSession:
         board = {
             "hypotheses": [item.model_dump(mode="json") for item in self.store.list_hypotheses(self.task_id)],
             "memory": [item.model_dump(mode="json") for item in self.store.list_memory(self.task_id)],
+            "strategy_cards": [item.model_dump(mode="json") for item in self.store.list_strategy_cards(self.task_id)],
         }
         snapshot: dict[str, Any] = {
             "task_id": self.task_id,

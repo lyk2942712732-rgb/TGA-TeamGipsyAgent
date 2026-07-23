@@ -1,7 +1,7 @@
 ---
 name: web-recon
 version: "1"
-modes: [ctf, web_audit]
+modes: [ctf, penetration_test]
 capabilities: [http.request, tool.invoke]
 tags: [recon, links, forms, js]
 ---

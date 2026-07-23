@@ -23,7 +23,7 @@ def _task() -> TGATask:
     return TGATask(
         id="task_12345678",
         name="demo",
-        mode="web_audit",
+        mode="penetration_test",
         target="http://127.0.0.1:8080",
         scope=["127.0.0.1:8080"],
         intensity="normal",

@@ -11,7 +11,7 @@ from tga.cli.main import main
 def test_cli_run_writes_report(tmp_path: Path):
     config = tmp_path / "task.json"
     config.write_text(
-        '{"id":"task_cli","name":"demo","mode":"code_audit","target":".","scope":["."],"intensity":"passive","allow_active_scan":false,"goal":"scan","flag_format":null}',
+        '{"id":"task_cli","name":"demo","mode":"vulnerability_research","target":".","scope":["."],"intensity":"passive","allow_active_scan":false,"goal":"scan","flag_format":null}',
         encoding="utf-8",
     )
     run_root = tmp_path / "runs"

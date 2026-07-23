@@ -1,12 +1,13 @@
 {
   "id": "task_web_audit_demo",
   "name": "local-web-audit-demo",
-  "mode": "web_audit",
+  "mode": "penetration_test",
   "target": "http://127.0.0.1:8080",
-  "scope": ["127.0.0.1:8080"],
+  "scope": [
+    "127.0.0.1:8080"
+  ],
   "intensity": "normal",
   "allow_active_scan": true,
   "goal": "Find and prove common web vulnerabilities in scope.",
   "flag_format": null
 }
-

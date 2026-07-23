@@ -13,8 +13,10 @@ from tga.contracts import (
     ActionResult,
     ActionSpec,
     AgentEvent,
+    ArtifactIndex,
     ArtifactRecord,
     ChallengeContract,
+    ContextMetric,
     Finding,
     Hypothesis,
     Intent,
@@ -22,6 +24,7 @@ from tga.contracts import (
     MemoryEntry,
     SessionRecord,
     SolverRecord,
+    StrategyCard,
     SubagentOutput,
     SubagentRequest,
     TGATask,
@@ -49,15 +52,45 @@ class EvidenceStore:
         columns = {row["name"] for row in self.conn.execute("PRAGMA table_info(sessions)").fetchall()}
         if "schema_version" not in columns:
             self.conn.execute("ALTER TABLE sessions ADD COLUMN schema_version INTEGER NOT NULL DEFAULT 2")
+        if "workspace_path" not in columns:
+            self.conn.execute("ALTER TABLE sessions ADD COLUMN workspace_path TEXT NOT NULL DEFAULT ''")
+        if "mcp_catalog_version" not in columns:
+            self.conn.execute("ALTER TABLE sessions ADD COLUMN mcp_catalog_version TEXT NOT NULL DEFAULT ''")
         event_columns = {row["name"] for row in self.conn.execute("PRAGMA table_info(agent_events)").fetchall()}
         if "schema_version" not in event_columns:
             self.conn.execute("ALTER TABLE agent_events ADD COLUMN schema_version INTEGER NOT NULL DEFAULT 2")
+        action_columns = {row["name"] for row in self.conn.execute("PRAGMA table_info(actions)").fetchall()}
+        additions = {
+            "strategy_card_id": "TEXT",
+            "strategy_step_id": "TEXT",
+            "expected_outcome": "TEXT NOT NULL DEFAULT ''",
+            "retry_reason": "TEXT NOT NULL DEFAULT ''",
+            "alternative_analysis": "TEXT NOT NULL DEFAULT ''",
+            "expected_side_effects": "TEXT NOT NULL DEFAULT ''",
+            "input_id": "TEXT",
+            "target_ref": "TEXT",
+            "actual_target": "TEXT",
+            "authorization_json": "TEXT NOT NULL DEFAULT '{}'",
+            "provenance_json": "TEXT NOT NULL DEFAULT '{}'",
+        }
+        for name, declaration in additions.items():
+            if name not in action_columns:
+                self.conn.execute(f"ALTER TABLE actions ADD COLUMN {name} {declaration}")
 
     def create_task(self, task: TGATask) -> None:
         self.conn.execute(
             "INSERT OR REPLACE INTO tasks(id, payload_json, created_at) VALUES (?, ?, ?)",
             (task.id, task.model_dump_json(), utc_now()),
         )
+        self.conn.commit()
+
+    def update_task(self, task: TGATask) -> None:
+        cursor = self.conn.execute(
+            "UPDATE tasks SET payload_json=? WHERE id=?",
+            (task.model_dump_json(), task.id),
+        )
+        if cursor.rowcount == 0:
+            raise KeyError(f"task not found: {task.id}")
         self.conn.commit()
 
     def add_intent(self, intent: Intent) -> None:
@@ -128,11 +161,12 @@ class EvidenceStore:
 
     def create_session(self, session: SessionRecord) -> SessionRecord:
         self.conn.execute(
-            "INSERT OR IGNORE INTO sessions(task_id,schema_version,status,active_solver_id,turn_count,max_turns,started_at,finished_at,stop_reason) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT OR IGNORE INTO sessions(task_id,schema_version,status,active_solver_id,turn_count,max_turns,started_at,finished_at,stop_reason,workspace_path,mcp_catalog_version) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 session.task_id, session.schema_version, session.status, session.active_solver_id, session.turn_count,
                 session.max_turns, session.started_at, session.finished_at, session.stop_reason,
+                session.workspace_path, session.mcp_catalog_version,
             ),
         )
         self.conn.commit()
@@ -143,7 +177,7 @@ class EvidenceStore:
         return SessionRecord.model_validate(dict(row)) if row else None
 
     def update_session(self, task_id: str, **changes: Any) -> SessionRecord:
-        allowed = {"schema_version", "status", "active_solver_id", "turn_count", "max_turns", "started_at", "finished_at", "stop_reason"}
+        allowed = {"schema_version", "status", "active_solver_id", "turn_count", "max_turns", "started_at", "finished_at", "stop_reason", "workspace_path", "mcp_catalog_version"}
         values = {key: value for key, value in changes.items() if key in allowed}
         if not values:
             session = self.get_session(task_id)
@@ -185,7 +219,11 @@ class EvidenceStore:
         return SolverRecord.model_validate(dict(row))
 
     def list_solvers(self, task_id: str) -> list[SolverRecord]:
-        rows = self.conn.execute("SELECT * FROM solvers WHERE task_id=? ORDER BY started_at, id", (task_id,)).fetchall()
+        rows = self.conn.execute(
+            "SELECT * FROM solvers WHERE task_id=? "
+            "ORDER BY CASE WHEN role='main' THEN 0 ELSE 1 END, started_at, id",
+            (task_id,),
+        ).fetchall()
         return [SolverRecord.model_validate(dict(row)) for row in rows]
 
     def upsert_challenge(self, challenge: ChallengeContract) -> ChallengeContract:
@@ -314,15 +352,70 @@ class EvidenceStore:
     def add_action(self, action: ActionSpec, *, status: str = "proposed") -> None:
         now = utc_now()
         self.conn.execute(
-            "INSERT INTO actions(id,task_id,solver_id,hypothesis_id,kind,capability,target,arguments_json,rationale,risk,status,created_at,updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO actions(id,task_id,solver_id,hypothesis_id,kind,capability,target,arguments_json,rationale,risk,strategy_card_id,strategy_step_id,expected_outcome,retry_reason,alternative_analysis,expected_side_effects,input_id,target_ref,actual_target,authorization_json,provenance_json,status,created_at,updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 action.id, action.task_id, action.solver_id, action.hypothesis_id, action.kind,
                 action.capability, action.target, json.dumps(action.arguments), action.rationale,
-                action.risk, status, now, now,
+                action.risk, action.strategy_card_id, action.strategy_step_id,
+                action.expected_outcome, action.retry_reason, action.alternative_analysis,
+                action.expected_side_effects, action.input_id, action.target_ref,
+                action.actual_target or action.target, json.dumps(action.authorization, ensure_ascii=False),
+                json.dumps(action.provenance, ensure_ascii=False), status, now, now,
             ),
         )
         self.conn.commit()
+
+    def upsert_strategy_card(self, card: StrategyCard) -> StrategyCard:
+        self.conn.execute(
+            "INSERT INTO strategy_cards(id,task_id,payload_json,status,created_at,updated_at) VALUES (?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(id) DO UPDATE SET payload_json=excluded.payload_json,status=excluded.status,updated_at=excluded.updated_at",
+            (card.id, card.task_id, card.model_dump_json(), card.status, card.created_at, card.updated_at),
+        )
+        self.conn.commit()
+        return card
+
+    def get_strategy_card(self, card_id: str) -> StrategyCard | None:
+        row = self.conn.execute("SELECT payload_json FROM strategy_cards WHERE id=?", (card_id,)).fetchone()
+        return StrategyCard.model_validate_json(row["payload_json"]) if row else None
+
+    def list_strategy_cards(self, task_id: str) -> list[StrategyCard]:
+        rows = self.conn.execute(
+            "SELECT payload_json FROM strategy_cards WHERE task_id=? ORDER BY created_at,id", (task_id,)
+        ).fetchall()
+        return [StrategyCard.model_validate_json(row["payload_json"]) for row in rows]
+
+    def upsert_artifact_index(self, index: ArtifactIndex) -> ArtifactIndex:
+        self.conn.execute(
+            "INSERT INTO artifact_indexes(artifact_id,task_id,payload_json,created_at) VALUES (?, ?, ?, ?) "
+            "ON CONFLICT(artifact_id) DO UPDATE SET payload_json=excluded.payload_json",
+            (index.artifact_id, index.task_id, index.model_dump_json(), index.created_at),
+        )
+        self.conn.commit()
+        return index
+
+    def get_artifact_index(self, artifact_id: str) -> ArtifactIndex | None:
+        row = self.conn.execute("SELECT payload_json FROM artifact_indexes WHERE artifact_id=?", (artifact_id,)).fetchone()
+        return ArtifactIndex.model_validate_json(row["payload_json"]) if row else None
+
+    def list_artifact_indexes(self, task_id: str) -> list[ArtifactIndex]:
+        rows = self.conn.execute(
+            "SELECT payload_json FROM artifact_indexes WHERE task_id=? ORDER BY created_at,artifact_id", (task_id,)
+        ).fetchall()
+        return [ArtifactIndex.model_validate_json(row["payload_json"]) for row in rows]
+
+    def add_context_metric(self, metric: ContextMetric) -> None:
+        self.conn.execute(
+            "INSERT INTO context_metrics(task_id,solver_id,turn,payload_json,created_at) VALUES (?, ?, ?, ?, ?)",
+            (metric.task_id, metric.solver_id, metric.turn, metric.model_dump_json(), metric.created_at),
+        )
+        self.conn.commit()
+
+    def list_context_metrics(self, task_id: str) -> list[ContextMetric]:
+        rows = self.conn.execute(
+            "SELECT payload_json FROM context_metrics WHERE task_id=? ORDER BY id", (task_id,)
+        ).fetchall()
+        return [ContextMetric.model_validate_json(row["payload_json"]) for row in rows]
 
     def update_action_status(self, action_id: str, status: str) -> None:
         self.conn.execute("UPDATE actions SET status=?, updated_at=? WHERE id=?", (status, utc_now(), action_id))
@@ -333,6 +426,8 @@ class EvidenceStore:
             {
                 **dict(row),
                 "arguments": json.loads(row["arguments_json"]),
+                "authorization": json.loads(row["authorization_json"] or "{}"),
+                "provenance": json.loads(row["provenance_json"] or "{}"),
                 "result": self.get_action_result(row["id"]),
             }
             for row in self.conn.execute("SELECT * FROM actions WHERE task_id=? ORDER BY created_at, id", (task_id,)).fetchall()
@@ -407,8 +502,9 @@ class EvidenceStore:
 
     def task_snapshot(self, task_id: str) -> dict[str, Any]:
         task = self.conn.execute("SELECT payload_json FROM tasks WHERE id=?", (task_id,)).fetchone()
+        task_payload = TGATask.model_validate_json(task["payload_json"]).model_dump(mode="json") if task else None
         snapshot = {
-            "task": json.loads(task["payload_json"]) if task else None,
+            "task": task_payload,
             "intents": self._json_rows("SELECT payload_json FROM intents WHERE task_id=? ORDER BY created_at", task_id),
             "artifacts": self._json_rows("SELECT payload_json FROM artifacts WHERE task_id=? ORDER BY created_at", task_id),
             "findings": self._json_rows("SELECT payload_json FROM findings WHERE task_id=? ORDER BY created_at", task_id),
@@ -443,7 +539,10 @@ class EvidenceStore:
                     "board": {
                         "hypotheses": [item.model_dump(mode="json") for item in self.list_hypotheses(task_id)],
                         "memory": [item.model_dump(mode="json") for item in self.list_memory(task_id)],
+                        "strategy_cards": [item.model_dump(mode="json") for item in self.list_strategy_cards(task_id)],
                     },
+                    "artifact_indexes": [item.model_dump(mode="json") for item in self.list_artifact_indexes(task_id)],
+                    "context_metrics": [item.model_dump(mode="json") for item in self.list_context_metrics(task_id)],
                     "actions": self.list_actions(task_id),
                     "agent_events": [item.model_dump(mode="json") for item in self.list_agent_events(task_id)],
                 }

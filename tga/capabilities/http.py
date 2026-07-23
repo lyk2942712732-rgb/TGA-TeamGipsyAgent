@@ -16,10 +16,12 @@ from tga.ctf.web_observer import analyze_html
 
 from .schemas import HTTPRequestArguments
 from .serializers import output_excerpt, redact_headers
+from .http_session import HTTPSessionRegistry
 
 
 BLOCKED_HEADERS = {"host", "content-length", "transfer-encoding", "connection", "proxy-authorization"}
 FLAG_RE = re.compile(r"[A-Za-z0-9_]{2,32}\{[^{}\s]{4,200}\}")
+MAX_RAW_ARTIFACT_BYTES = 4 * 1024 * 1024
 
 
 class _NoRedirect(HTTPRedirectHandler):
@@ -28,24 +30,44 @@ class _NoRedirect(HTTPRedirectHandler):
 
 
 def execute_http(
-    *, task: TGATask, action: ActionSpec, args: HTTPRequestArguments, max_output_bytes: int = 262_144
+    *, task: TGATask, action: ActionSpec, args: HTTPRequestArguments, max_output_bytes: int = 262_144,
+    sessions: HTTPSessionRegistry | None = None,
 ) -> tuple[dict, bytes, list[str], list[str]]:
     url = _resolve_url(task.target, args)
-    if not is_in_scope(url, task.scope):
+    authorized_scope = task.execution_policy.network.allowed_scopes if task.schema_version >= 3 and task.execution_policy else task.scope
+    if not is_in_scope(url, authorized_scope):
         raise PermissionError("OUT_OF_SCOPE")
-    if args.method not in {"GET", "POST"} and (action.risk != "active" or not task.allow_active_scan):
+    if task.schema_version >= 3 and task.execution_policy:
+        if args.method != "GET" and task.execution_policy.network.mode != "interact":
+            raise PermissionError("NETWORK_INTERACTION_NOT_AUTHORIZED")
+        if args.method in {"PUT", "PATCH", "DELETE"}:
+            state = task.execution_policy.state_change
+            if state.mode != "authorized" or args.method.casefold() not in {item.casefold() for item in state.allowed_actions}:
+                raise PermissionError("STATE_CHANGE_NOT_AUTHORIZED")
+    elif args.method not in {"GET", "POST"} and (action.risk != "active" or not task.allow_active_scan):
         raise PermissionError("ACTIVE_HTTP_METHOD_NOT_ALLOWED")
 
     headers = _safe_headers(args.headers)
-    data, request_headers = _encode_body(args.body, headers, args.method)
-    cookies = CookieJar()
-    opener = build_opener(_NoRedirect(), HTTPCookieProcessor(cookies))
+    data, request_headers, preflight = _encode_body(args)
+    _validate_preflight(args, data, request_headers, preflight)
+    sessions = sessions or HTTPSessionRegistry()
     redirects: list[dict] = []
+    session_metadata: dict = {}
     started = time.monotonic()
     current = url
     for _ in range(6):
+        cookies, current_session = sessions.acquire(
+            task_id=task.id,
+            solver_id=action.solver_id,
+            url=current,
+            persistent=args.session_mode == "persistent",
+        )
+        if not session_metadata:
+            session_metadata = current_session
+        opener = build_opener(_NoRedirect(), HTTPCookieProcessor(cookies))
         response = _request(
-            opener, current, args.method, request_headers, data, args.timeout, max_output_bytes,
+            opener, current, args.method, request_headers, data, args.timeout,
+            max(max_output_bytes, MAX_RAW_ARTIFACT_BYTES),
             allow_insecure_tls=_allows_insecure_tls(task, current), cookies=cookies,
         )
         status = response["status"]
@@ -53,7 +75,7 @@ def execute_http(
         if status in {301, 302, 303, 307, 308} and location:
             next_url = urljoin(current, location)
             redirects.append({"status": status, "from": current, "to": next_url})
-            if not is_in_scope(next_url, task.scope):
+            if not is_in_scope(next_url, authorized_scope):
                 raise PermissionError("REDIRECT_OUT_OF_SCOPE")
             current = next_url
             if status == 303:
@@ -78,6 +100,8 @@ def execute_http(
         "final_url": current,
         "redirect_chain": redirects,
         "request_headers": redact_headers(request_headers),
+        "preflight": preflight,
+        "http_session": session_metadata,
         "status": response["status"],
         "response_headers": redact_headers(response["response_headers"]),
         "content_type": content_type,
@@ -90,6 +114,12 @@ def execute_http(
         "tls": response.get("tls") or {"mode": "verified"},
         "error": response.get("error"),
     }
+    expected_marker = args.assertions.expected_marker
+    if expected_marker:
+        payload["expected_marker"] = {
+            "value": expected_marker,
+            "found": expected_marker in excerpt,
+        }
     facts = [] if response.get("error") else [f"{args.method} {current} -> HTTP {response['status']}"]
     if challenge_availability:
         facts.append(f"challenge availability: {challenge_availability}")
@@ -157,20 +187,76 @@ def _safe_headers(headers: dict[str, str]) -> dict[str, str]:
     return result
 
 
-def _encode_body(body: object, headers: dict[str, str], method: str) -> tuple[bytes | None, dict[str, str]]:
-    result = dict(headers)
-    if body is None or method == "GET":
-        return None, result
-    if isinstance(body, (dict, list)):
-        if result.get("Content-Type", "").lower().startswith("application/x-www-form-urlencoded") and isinstance(body, dict):
-            text = urlencode({key: str(value) for key, value in body.items()})
+def _encode_body(args: HTTPRequestArguments) -> tuple[bytes | None, dict[str, str], dict]:
+    result = _safe_headers(args.headers)
+    body = args.body
+    if body is None or args.method == "GET":
+        return None, result, {"body_format": None, "parameter_count": 0, "encoded_length": 0}
+
+    body_format = args.body_format
+    if body_format is None:
+        declared_content_type = result.get("Content-Type", "").casefold()
+        if declared_content_type.startswith("application/x-www-form-urlencoded"):
+            body_format = "form"
+        elif declared_content_type.startswith("application/json"):
+            body_format = "json"
         else:
-            result.setdefault("Content-Type", "application/json")
-            text = json.dumps(body, ensure_ascii=False)
+            body_format = "json" if isinstance(body, (dict, list)) else "text"
+    parameter_count = 0
+    if body_format == "form":
+        result.setdefault("Content-Type", "application/x-www-form-urlencoded")
+        if isinstance(body, dict):
+            pairs = [(str(key), str(value)) for key, value in body.items()]
+            text = urlencode(pairs)
+            parameter_count = len(pairs)
+        elif isinstance(body, list):
+            try:
+                pairs = [(str(item[0]), str(item[1])) for item in body if isinstance(item, (list, tuple)) and len(item) == 2]
+            except (TypeError, IndexError) as exc:
+                raise ValueError("form pair list must contain [name, value] pairs") from exc
+            if len(pairs) != len(body):
+                raise ValueError("form pair list must contain only [name, value] pairs")
+            text = urlencode(pairs)
+            parameter_count = len(pairs)
+        else:
+            text = str(body)
+            parameter_count = len(parse_qsl(text, keep_blank_values=True))
+    elif body_format == "json":
+        result.setdefault("Content-Type", "application/json")
+        text = body if isinstance(body, str) else json.dumps(body, ensure_ascii=False)
+        parameter_count = len(body) if isinstance(body, dict) else 0
     else:
-        text = str(body)
         result.setdefault("Content-Type", "text/plain; charset=utf-8")
-    return text.encode("utf-8"), result
+        text = str(body)
+    encoded = str(text).encode("utf-8")
+    return encoded, result, {
+        "body_format": body_format,
+        "parameter_count": parameter_count,
+        "encoded_length": len(encoded),
+        "content_type": result.get("Content-Type", ""),
+        "validated": True,
+    }
+
+
+def _validate_preflight(args: HTTPRequestArguments, data: bytes | None, headers: dict[str, str], actual: dict) -> None:
+    expected = args.assertions
+    content_type = headers.get("Content-Type", "").casefold()
+    if args.body_format == "form" and not content_type.startswith("application/x-www-form-urlencoded"):
+        raise ValueError("CONTENT_TYPE_MISMATCH: body_format='form' requires application/x-www-form-urlencoded")
+    if args.body_format == "json" and not content_type.startswith("application/json"):
+        raise ValueError("CONTENT_TYPE_MISMATCH: body_format='json' requires application/json")
+    if expected.parameter_count is not None and expected.parameter_count != actual["parameter_count"]:
+        raise ValueError(
+            f"PARAMETER_COUNT_MISMATCH: expected {expected.parameter_count}, encoded {actual['parameter_count']}"
+        )
+    if expected.encoded_length is not None and expected.encoded_length != len(data or b""):
+        raise ValueError(
+            f"ENCODED_LENGTH_MISMATCH: expected {expected.encoded_length}, encoded {len(data or b'')}"
+        )
+    if expected.content_type and not content_type.startswith(expected.content_type.casefold()):
+        raise ValueError(
+            f"CONTENT_TYPE_MISMATCH: expected {expected.content_type}, encoded {headers.get('Content-Type', '')}"
+        )
 
 
 def _request(

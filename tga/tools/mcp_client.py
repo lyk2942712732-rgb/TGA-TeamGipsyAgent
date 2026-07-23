@@ -10,6 +10,8 @@ from pathlib import Path
 from typing import Any
 
 from tga.tools.mcp_catalog import MCPServerSpec
+from tga.tools.mcp_config import MCPServerConfig
+from tga.tools.mcp_transport import build_stdio_command, build_subprocess_environment
 
 
 @dataclass
@@ -27,14 +29,25 @@ class MCPCallResult:
 
 
 class MCPClient:
-    """Minimal stdio MCP client for dockerized mcp-security-hub servers."""
+    """Compatibility stdio client for legacy specs and explicit commands.
+
+    Product discovery/lifecycle is owned by :class:`MCPManager`; this facade
+    keeps older ToolRunner integrations working while accepting the same
+    host-controlled ``MCPServerConfig`` command/args model.
+    """
 
     def __init__(self, *, hub_root: str | Path | None = None, prefer_compose: bool = True):
         self.hub_root = Path(hub_root).resolve() if hub_root else None
         self.prefer_compose = prefer_compose
 
-    def build_command(self, server: MCPServerSpec, *, volumes: list[str] | None = None) -> list[str]:
+    def build_command(
+        self, server: MCPServerSpec | MCPServerConfig, *, volumes: list[str] | None = None, workspace: Path | None = None
+    ) -> list[str]:
         volumes = volumes or []
+        if isinstance(server, MCPServerConfig):
+            if volumes:
+                raise ValueError("configured MCP volumes must come from workspaceMount, not call arguments")
+            return build_stdio_command(server, workspace=workspace)
         if self.prefer_compose and self.hub_root and server.compose_service:
             compose_file = self.hub_root / "docker-compose.yml"
             if compose_file.exists():
@@ -56,14 +69,22 @@ class MCPClient:
     def call_tool(
         self,
         *,
-        server: MCPServerSpec,
+        server: MCPServerSpec | MCPServerConfig,
         tool_name: str,
         arguments: dict[str, Any],
         volumes: list[str] | None = None,
-        timeout_seconds: int = 120,
-        max_output_bytes: int = 262_144,
+        timeout_seconds: int | None = None,
+        max_output_bytes: int | None = None,
+        workspace: Path | None = None,
     ) -> MCPCallResult:
-        command = self.build_command(server, volumes=volumes)
+        timeout_seconds = timeout_seconds or (server.tool_timeout_seconds if isinstance(server, MCPServerConfig) else 120)
+        max_output_bytes = max_output_bytes or (server.max_output_bytes if isinstance(server, MCPServerConfig) else 262_144)
+        try:
+            command = self.build_command(server, volumes=volumes, workspace=workspace)
+        except TypeError:
+            # Preserve third-party subclasses written before the generic
+            # workspace-aware signature.
+            command = self.build_command(server, volumes=volumes)
         initialize = {
             "jsonrpc": "2.0",
             "id": 1,
@@ -91,6 +112,7 @@ class MCPClient:
                 encoding="utf-8",
                 errors="replace",
                 bufsize=1,
+                env=build_subprocess_environment(server.environment) if isinstance(server, MCPServerConfig) else None,
             )
         except OSError as exc:
             return MCPCallResult(command, "", str(exc), returncode=127)

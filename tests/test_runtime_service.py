@@ -1,4 +1,5 @@
 import json
+import sqlite3
 from pathlib import Path
 
 from tga.contracts import TGATask
@@ -47,6 +48,41 @@ def test_agent_event_schema_migrates_existing_database(tmp_path: Path) -> None:
     reopened = EvidenceStore(tmp_path / "evidence.db")
     assert reopened.list_agent_events("task_event_version")[0].schema_version == 2
     reopened.close()
+
+
+def test_governance_schema_additively_migrates_existing_action_table(tmp_path: Path) -> None:
+    db_path = tmp_path / "legacy.db"
+    connection = sqlite3.connect(db_path)
+    connection.executescript(
+        """
+        CREATE TABLE sessions (task_id TEXT PRIMARY KEY, status TEXT NOT NULL);
+        CREATE TABLE agent_events (
+          id TEXT PRIMARY KEY, task_id TEXT NOT NULL, solver_id TEXT, seq INTEGER NOT NULL,
+          type TEXT NOT NULL, payload_json TEXT NOT NULL, created_at TEXT NOT NULL
+        );
+        CREATE TABLE actions (
+          id TEXT PRIMARY KEY, task_id TEXT NOT NULL, solver_id TEXT NOT NULL,
+          hypothesis_id TEXT, kind TEXT NOT NULL, capability TEXT NOT NULL,
+          target TEXT NOT NULL, arguments_json TEXT NOT NULL, rationale TEXT NOT NULL,
+          risk TEXT NOT NULL, status TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+        );
+        """
+    )
+    connection.close()
+
+    store = EvidenceStore(db_path)
+    action_columns = {row["name"] for row in store.conn.execute("PRAGMA table_info(actions)")}
+    assert {
+        "strategy_card_id", "strategy_step_id", "expected_outcome", "retry_reason",
+        "alternative_analysis", "expected_side_effects",
+    } <= action_columns
+    assert store.conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='strategy_cards'"
+    ).fetchone()
+    assert store.conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='artifact_indexes'"
+    ).fetchone()
+    store.close()
 
 
 def test_observer_context_is_bounded_redacted_and_duplicate_patch_is_cooled_down() -> None:

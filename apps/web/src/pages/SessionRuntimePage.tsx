@@ -2,8 +2,10 @@ import { useState, type FormEvent } from "react";
 import { runtimeApi } from "../api/runtime";
 import { RuntimeLoading } from "../components/runtime/RuntimePanels";
 import { AttackFlow } from "../components/runtime/AttackFlow";
+import { GovernanceOverview } from "../components/runtime/GovernanceOverview";
 import { boardAtSeq } from "../runtime/event-reducer";
 import { useSessionRuntime } from "../runtime/session-store";
+import { MODE_PROFILES } from "../modes";
 
 type Props = { taskId: string; mode: "runtime" | "replay"; onReplay: () => void };
 
@@ -21,8 +23,9 @@ export function SessionRuntimePage({ taskId, mode, onReplay }: Props) {
 
   const replayBoard = mode === "replay" ? boardAtSeq(snapshot, snapshot.latest_seq) : { board: snapshot.board, available: true };
   const projected = { ...snapshot, board: replayBoard.board };
+  const profile = MODE_PROFILES[snapshot.task.mode];
   const activeSolvers = snapshot.solvers.filter((solver) => ["starting", "running", "waiting"].includes(solver.status)).length;
-  const provenFlags = snapshot.flags.filter((flag) => Boolean(flag.evidence_artifact_id));
+  const provenFlags = snapshot.task.mode === "ctf" ? snapshot.flags.filter((flag) => Boolean(flag.evidence_artifact_id)) : [];
 
   const control = async (action: "pause" | "resume" | "cancel") => {
     setBusy(action); setNotice(null);
@@ -51,13 +54,13 @@ export function SessionRuntimePage({ taskId, mode, onReplay }: Props) {
   return <section className={`runtime-workspace breach-runtime-page ${mode === "replay" ? "is-replay" : ""}`}>
     <header className="runtime-command-header">
       <div className="runtime-identity">
-        <div className="runtime-kicker"><span>Challenge runtime</span><i>/</i><code>{snapshot.task.id}</code></div>
+        <div className="runtime-kicker"><span>{profile.label} runtime</span><i>/</i><code>{snapshot.task.id}</code></div>
         <div className="runtime-title-row"><h1>{snapshot.task.name}</h1><span className={`session-state ${snapshot.session.status}`} data-testid="session-status"><i />{mode === "replay" ? "Replay" : statusLabels[snapshot.session.status] || snapshot.session.status}</span></div>
         <button className="runtime-target" title={snapshot.task.target} onClick={() => void navigator.clipboard?.writeText(snapshot.task.target)}><span>{snapshot.task.target}</span><small>Copy</small></button>
       </div>
       <div className="runtime-command-side">
         <div className="runtime-facts">
-          <span data-testid="challenge-status"><b>{snapshot.challenge.status}</b><small>Challenge</small></span><span><b>{activeSolvers}</b><small>Solvers</small></span><span><b>{snapshot.session.turn_count}/{snapshot.session.max_turns}</b><small>Turns</small></span><span><b>{snapshot.artifacts.length}</b><small>Artifacts</small></span><span><b>{snapshot.latest_seq}</b><small>Events</small></span>
+          {snapshot.task.mode === "ctf" ? <span data-testid="challenge-status"><b>{snapshot.challenge.status}</b><small>Challenge</small></span> : <span><b>{profile.label}</b><small>Mode</small></span>}<span><b>{activeSolvers}</b><small>Solvers</small></span><span><b>{snapshot.session.turn_count}/{snapshot.session.max_turns}</b><small>Turns</small></span><span><b>{snapshot.artifacts.length}</b><small>Artifacts</small></span><span><b>{snapshot.latest_seq}</b><small>Events</small></span>
           <em className={`connection-state ${connection}`}><i />{connection}</em>
         </div>
         <div className="runtime-actions">
@@ -76,6 +79,7 @@ export function SessionRuntimePage({ taskId, mode, onReplay }: Props) {
     {notice ? <div className="runtime-toast" role="status">{notice}<button aria-label="关闭通知" onClick={() => setNotice(null)}>×</button></div> : null}
     {mode === "replay" ? <div className="replay-readonly">回放模式：只读取已存 AgentEvent，不会发出控制、提示或目标请求。</div> : null}
 
+    <GovernanceOverview snapshot={projected} />
     <AttackFlow snapshot={projected} mode={mode} />
 
     {hintOpen ? <div className="drawer-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setHintOpen(false); }}>

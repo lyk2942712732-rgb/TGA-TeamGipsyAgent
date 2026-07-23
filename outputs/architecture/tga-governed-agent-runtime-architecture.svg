@@ -1,0 +1,354 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="3840" height="2160" viewBox="0 0 3840 2160" role="img" aria-labelledby="title desc">
+  <title id="title">TGA - Governed Agent Runtime Architecture</title>
+  <desc id="desc">Execution path, trust boundaries, persistence, and developer observability for TGA-TeamGipsyAgent.</desc>
+  <defs>
+    <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+      <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#8ea1a2" stroke-opacity="0.055" stroke-width="1"/>
+    </pattern>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#141918"/>
+      <stop offset="0.52" stop-color="#1b2220"/>
+      <stop offset="1" stop-color="#111615"/>
+    </linearGradient>
+    <linearGradient id="headerGlow" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#55d7d1" stop-opacity="0.25"/>
+      <stop offset="0.55" stop-color="#55d7d1" stop-opacity="0.03"/>
+      <stop offset="1" stop-color="#55d7d1" stop-opacity="0"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-30%" width="140%" height="160%">
+      <feDropShadow dx="0" dy="9" stdDeviation="10" flood-color="#000" flood-opacity="0.28"/>
+    </filter>
+    <marker id="arrowCyan" markerWidth="12" markerHeight="12" refX="9" refY="6" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L12,6 L0,12 Z" fill="#55d7d1"/>
+    </marker>
+    <marker id="arrowAmber" markerWidth="12" markerHeight="12" refX="9" refY="6" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L12,6 L0,12 Z" fill="#e8b85b"/>
+    </marker>
+    <marker id="arrowCoral" markerWidth="12" markerHeight="12" refX="9" refY="6" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L12,6 L0,12 Z" fill="#ef836f"/>
+    </marker>
+    <marker id="arrowSage" markerWidth="12" markerHeight="12" refX="9" refY="6" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L12,6 L0,12 Z" fill="#91b79d"/>
+    </marker>
+    <style>
+      .title { font: 700 72px 'Aptos Display', 'Segoe UI', sans-serif; letter-spacing: -1px; fill: #f3eee1; }
+      .subtitle { font: 400 27px 'Segoe UI', sans-serif; letter-spacing: 1.8px; fill: #aebbb6; }
+      .layer { font: 700 18px 'Segoe UI', sans-serif; letter-spacing: 4px; fill: #55d7d1; }
+      .boundary-label { font: 700 16px 'Segoe UI', sans-serif; letter-spacing: 2.7px; fill: #899894; }
+      .box-title { font: 700 25px 'Segoe UI', sans-serif; fill: #f2eddf; }
+      .box-title-sm { font: 700 21px 'Segoe UI', sans-serif; fill: #f2eddf; }
+      .body { font: 400 17px 'Segoe UI', sans-serif; fill: #b6c1bc; }
+      .body-sm { font: 400 15px 'Segoe UI', sans-serif; fill: #aab6b1; }
+      .tiny { font: 600 13px 'Segoe UI', sans-serif; letter-spacing: .4px; fill: #9eaaa6; }
+      .flow-label { font: 650 15px 'Segoe UI', sans-serif; fill: #d7e9e5; }
+      .num { font: 800 16px 'Segoe UI', sans-serif; fill: #111615; text-anchor: middle; dominant-baseline: central; }
+      .metric { font: 650 17px 'Segoe UI', sans-serif; fill: #e8e5d9; }
+      .box { fill: #222a28; stroke: #46534f; stroke-width: 2; rx: 16; filter: url(#shadow); }
+      .box-cyan { fill: #1d2c2a; stroke: #4d9f9b; stroke-width: 2.5; rx: 16; filter: url(#shadow); }
+      .box-amber { fill: #302a20; stroke: #b78d43; stroke-width: 2.5; rx: 16; filter: url(#shadow); }
+      .box-coral { fill: #30231f; stroke: #b95f50; stroke-width: 2.5; rx: 16; filter: url(#shadow); }
+      .box-sage { fill: #223028; stroke: #688d74; stroke-width: 2.5; rx: 16; filter: url(#shadow); }
+      .boundary { fill: none; stroke: #7d8c87; stroke-width: 2; stroke-dasharray: 12 12; rx: 22; }
+      .lane-cyan { fill: none; stroke: #55d7d1; stroke-width: 4; marker-end: url(#arrowCyan); }
+      .lane-amber { fill: none; stroke: #e8b85b; stroke-width: 4; marker-end: url(#arrowAmber); }
+      .lane-coral { fill: none; stroke: #ef836f; stroke-width: 4; marker-end: url(#arrowCoral); }
+      .lane-sage { fill: none; stroke: #91b79d; stroke-width: 4; marker-end: url(#arrowSage); }
+      .bus { fill: none; stroke-width: 4; }
+      .divider { stroke: #3c4844; stroke-width: 1.5; }
+      .chip { fill: #3b3122; stroke: #735a31; stroke-width: 1.4; rx: 14; }
+    </style>
+  </defs>
+
+  <rect width="3840" height="2160" fill="url(#bg)"/>
+  <rect width="3840" height="2160" fill="url(#grid)"/>
+  <rect x="0" y="0" width="2200" height="180" fill="url(#headerGlow)"/>
+
+  <!-- Header -->
+  <text x="86" y="92" class="title">TGA — Governed Agent Runtime Architecture</text>
+  <text x="90" y="140" class="subtitle">EXECUTION PATH, TRUST BOUNDARIES, PERSISTENCE, AND DEVELOPER OBSERVABILITY</text>
+  <g transform="translate(2760 52)">
+    <rect width="990" height="92" rx="14" fill="#1e2624" stroke="#46534f"/>
+    <circle cx="30" cy="28" r="7" fill="#55d7d1"/><text x="48" y="34" class="tiny">cyan = event/data</text>
+    <circle cx="230" cy="28" r="7" fill="#e8b85b"/><text x="248" y="34" class="tiny">amber = governance</text>
+    <circle cx="460" cy="28" r="7" fill="#ef836f"/><text x="478" y="34" class="tiny">coral = external execution</text>
+    <circle cx="725" cy="28" r="7" fill="#91b79d"/><text x="743" y="34" class="tiny">sage = durable state</text>
+    <line x1="30" y1="64" x2="74" y2="64" stroke="#7d8c87" stroke-width="2" stroke-dasharray="8 7"/>
+    <text x="88" y="70" class="tiny">dashed = trust boundary</text>
+  </g>
+
+  <!-- Trust boundaries -->
+  <rect x="458" y="184" width="2860" height="1358" class="boundary"/>
+  <rect x="482" y="205" width="2812" height="254" class="boundary"/>
+  <text x="500" y="227" class="boundary-label">BROWSER / UI</text>
+  <text x="478" y="205" class="boundary-label">TGA HOST RUNTIME</text>
+  <rect x="54" y="770" width="354" height="290" class="boundary"/>
+  <text x="76" y="798" class="boundary-label">MODEL PROVIDER</text>
+  <rect x="3350" y="716" width="436" height="818" class="boundary"/>
+  <text x="3372" y="744" class="boundary-label">AUTHORIZED TARGETS / MCP</text>
+
+  <!-- Layer 1 -->
+  <text x="500" y="265" class="layer">01  CLIENT &amp; ENTRY POINTS</text>
+  <rect x="520" y="288" width="720" height="128" class="box-cyan"/>
+  <text x="552" y="328" class="box-title">React + Vite Console</text>
+  <text x="552" y="360" class="body">Dashboard · New Task · Runtime · Replay</text>
+  <text x="552" y="389" class="body-sm">Zod validation · React Query · event reducer</text>
+
+  <rect x="1350" y="288" width="520" height="128" class="box"/>
+  <text x="1382" y="328" class="box-title">CLI / Desktop</text>
+  <text x="1382" y="360" class="body">tga go · tga web</text>
+  <text x="1382" y="389" class="body-sm">unified lifecycle commands</text>
+
+  <rect x="2260" y="288" width="760" height="128" class="box-cyan"/>
+  <text x="2292" y="328" class="box-title">FastAPI v2</text>
+  <text x="2292" y="360" class="body">REST commands · snapshots · SSE /events/stream</text>
+  <text x="2292" y="389" class="body-sm">input staging · settings · artifact preview · report</text>
+
+  <path d="M1240 330 V454 H2640 V416" class="lane-cyan"/>
+  <path d="M1870 382 H2260" class="lane-cyan"/>
+  <path d="M2260 405 H2100 V438 H880 V416" class="lane-cyan"/>
+  <g transform="translate(2088 307)"><circle r="16" fill="#55d7d1"/><text class="num">1</text></g>
+  <text x="1970" y="299" class="flow-label">Create task + staged assets</text>
+  <text x="1285" y="454" class="flow-label">8  SSE / report projection</text>
+
+  <!-- Layer 2 -->
+  <text x="500" y="500" class="layer">02  APPLICATION CONTROL PLANE</text>
+  <rect x="520" y="522" width="680" height="214" class="box"/>
+  <text x="552" y="564" class="box-title">Mode Profiles</text>
+  <text x="552" y="596" class="body">CTF · Pentest · IR</text>
+  <text x="552" y="624" class="body">Vuln Research · Reverse</text>
+  <line x1="552" y1="646" x2="1166" y2="646" class="divider"/>
+  <text x="552" y="678" class="body-sm">methodology · completion contract</text>
+  <text x="552" y="705" class="body-sm">recommended capabilities · defaults</text>
+
+  <rect x="1320" y="522" width="1060" height="96" class="box-cyan"/>
+  <text x="1352" y="562" class="box-title">TaskRuntimeService</text>
+  <text x="1750" y="562" class="body">transport-neutral commands &amp; queries · read-only snapshots</text>
+  <path d="M2780 416 V476 H1850 V522" class="lane-cyan"/>
+  <g transform="translate(2780 472)"><circle r="16" fill="#55d7d1"/><text class="num">2</text></g>
+  <text x="2810" y="478" class="flow-label">Service command</text>
+
+  <rect x="1320" y="642" width="1060" height="214" class="box-amber"/>
+  <text x="1352" y="687" class="box-title">Manager — authority owner</text>
+  <text x="1352" y="718" class="body">Owns lifecycle, governance, execution admission, and terminal state</text>
+  <g transform="translate(1352 746)">
+    <rect width="196" height="38" class="chip"/><text x="18" y="25" class="tiny">Session lifecycle</text>
+    <rect x="210" width="196" height="38" class="chip"/><text x="228" y="25" class="tiny">Execution policy</text>
+    <rect x="420" width="182" height="38" class="chip"/><text x="438" y="25" class="tiny">Strategy ledger</text>
+    <rect x="616" width="142" height="38" class="chip"/><text x="634" y="25" class="tiny">Risk gates</text>
+    <rect x="772" width="220" height="38" class="chip"/><text x="790" y="25" class="tiny">Completion gates</text>
+    <rect width="196" height="38" y="52" class="chip"/><text x="18" y="77" class="tiny">Observer patches</text>
+    <rect x="210" width="196" height="38" y="52" class="chip"/><text x="228" y="77" class="tiny">Ordered events</text>
+    <rect x="420" width="182" height="38" y="52" class="chip"/><text x="438" y="77" class="tiny">Turn limits</text>
+    <rect x="616" width="376" height="38" y="52" class="chip"/><text x="634" y="77" class="tiny">Pause · resume · cancel · recovery</text>
+  </g>
+  <path d="M1850 618 V642" class="lane-amber"/>
+  <g transform="translate(1850 633)"><circle r="16" fill="#e8b85b"/><text class="num">3</text></g>
+
+  <rect x="2500" y="522" width="564" height="152" class="box"/>
+  <text x="2532" y="562" class="box-title-sm">Skills &amp; Prompts</text>
+  <text x="2532" y="594" class="body">mode-scoped instructions</text>
+  <text x="2532" y="624" class="body-sm">built-ins · imported skills · system prompt</text>
+  <rect x="2500" y="700" width="564" height="156" class="box"/>
+  <text x="2532" y="742" class="box-title-sm">Challenge State / Solver Pool</text>
+  <text x="2532" y="774" class="body">bounded turns · optional subagents</text>
+  <text x="2532" y="804" class="body-sm">completion state · ownership checks</text>
+  <path d="M1200 628 H1260 V748 H1320" class="lane-amber"/>
+  <path d="M2500 598 H2440 V714 H2380" class="lane-amber"/>
+  <path d="M2500 778 H2420 V810 H2380" class="lane-amber"/>
+  <path d="M2032 856 V930" class="lane-amber"/>
+
+  <!-- Layer 3 -->
+  <text x="500" y="902" class="layer">03  PERSISTENT AGENT LOOP</text>
+  <rect x="520" y="930" width="566" height="168" class="box-cyan"/>
+  <text x="552" y="972" class="box-title">Context Builder</text>
+  <text x="552" y="1004" class="body">task files + Hint + strategy + memory</text>
+  <text x="552" y="1034" class="body-sm">bounded provider view · protocol-pair safe</text>
+  <text x="552" y="1064" class="tiny">OBSERVE: context chars · token usage · retrievals</text>
+
+  <rect x="1160" y="930" width="500" height="168" class="box-coral"/>
+  <text x="1192" y="972" class="box-title">OpenAI-Compatible Model</text>
+  <text x="1192" y="1004" class="body">native function calling</text>
+  <text x="1192" y="1034" class="body-sm">configured model · optional vision</text>
+  <text x="1192" y="1064" class="tiny">BOUNDARY: provider receives bounded context</text>
+
+  <rect x="1734" y="930" width="596" height="168" class="box-cyan"/>
+  <text x="1766" y="972" class="box-title">AgentToolSession</text>
+  <text x="1766" y="1004" class="body">durable transcript · same conversation</text>
+  <text x="1766" y="1034" class="body-sm">assistant tool_calls ↔ matching tool results</text>
+  <text x="1766" y="1064" class="tiny">OBSERVE: turns · idle continuation · provider errors</text>
+
+  <rect x="2404" y="930" width="660" height="168" class="box-amber"/>
+  <text x="2436" y="972" class="box-title">Controlled Action Executor</text>
+  <text x="2436" y="1004" class="body">schema · scope · risk · budget validation</text>
+  <text x="2436" y="1034" class="body-sm">registered capabilities only · redacted outputs</text>
+  <text x="2436" y="1064" class="tiny">OBSERVE: admission · denial code · latency · retry</text>
+
+  <path d="M1086 1014 H1160" class="lane-cyan"/>
+  <path d="M1660 1014 H1734" class="lane-cyan"/>
+  <path d="M2330 1014 H2404" class="lane-amber"/>
+  <g transform="translate(1118 1014)"><circle r="16" fill="#55d7d1"/><text class="num">4</text></g>
+  <g transform="translate(1695 1014)"><circle r="16" fill="#55d7d1"/><text class="num">5</text></g>
+  <g transform="translate(2367 1014)"><circle r="16" fill="#e8b85b"/><text class="num">6</text></g>
+  <text x="1060" y="915" class="flow-label">Bounded context</text>
+  <text x="1640" y="915" class="flow-label">Native tool call</text>
+  <text x="2320" y="915" class="flow-label">Validate + execute</text>
+
+  <!-- Non-crossing return lane -->
+  <path d="M2734 1098 V1136 H804 V1098" class="lane-cyan"/>
+  <rect x="1380" y="1118" width="810" height="38" rx="18" fill="#172220" stroke="#316f6c"/>
+  <text x="1785" y="1143" text-anchor="middle" class="flow-label">Tool result + Artifact reference → next turn</text>
+
+  <!-- Side provider route uses the clear gutter above the pipeline -->
+  <rect x="82" y="826" width="298" height="176" class="box-coral"/>
+  <text x="112" y="868" class="box-title-sm">OpenAI-compatible</text>
+  <text x="112" y="895" class="box-title-sm">endpoint</text>
+  <text x="112" y="932" class="body-sm">TGA_LLM_BASE_URL</text>
+  <text x="112" y="959" class="body-sm">model · vision support</text>
+  <path d="M380 882 H1410 V930" class="lane-coral"/>
+
+  <!-- Governance sidecars -->
+  <rect x="520" y="1184" width="786" height="112" class="box-amber"/>
+  <text x="552" y="1225" class="box-title-sm">Strategy Board</text>
+  <text x="552" y="1255" class="body-sm">candidate steps · hypotheses · evidence-linked memory</text>
+  <text x="552" y="1280" class="tiny">Manager validates state transitions</text>
+  <rect x="1394" y="1184" width="786" height="112" class="box-amber"/>
+  <text x="1426" y="1225" class="box-title-sm">Deterministic Observer</text>
+  <text x="1426" y="1255" class="body-sm">bounded read-only context → validated patch only</text>
+  <text x="1426" y="1280" class="tiny">Cannot execute tools or complete a task</text>
+  <rect x="2266" y="1184" width="798" height="112" class="box-amber"/>
+  <text x="2298" y="1225" class="box-title-sm">Completion Validator</text>
+  <text x="2298" y="1255" class="body-sm">mode contract · task-owned Artifact-backed proof</text>
+  <text x="2298" y="1280" class="tiny">Flag / finding / coverage / recovery criteria</text>
+  <text x="1170" y="1318" class="tiny">Governed adjuncts: state ownership remains with Manager</text>
+
+  <!-- Layer 4 -->
+  <text x="500" y="1342" class="layer">04  CAPABILITY &amp; INTEGRATION PLANE</text>
+  <path d="M3064 1050 H3120 V1366 H620" class="bus" stroke="#e8b85b"/>
+  <g transform="translate(3120 1335)"><circle r="16" fill="#e8b85b"/><text class="num">6</text></g>
+
+  <rect x="520" y="1384" width="464" height="126" class="box"/>
+  <text x="548" y="1424" class="box-title-sm">HTTP Session</text>
+  <text x="548" y="1454" class="body-sm">origin-isolated CookieJar</text>
+  <text x="548" y="1481" class="tiny">safe metadata only · scope checked</text>
+  <rect x="1038" y="1384" width="464" height="126" class="box"/>
+  <text x="1066" y="1424" class="box-title-sm">Workspace</text>
+  <text x="1066" y="1454" class="body-sm">read · write · shell</text>
+  <text x="1066" y="1481" class="tiny">bounded Python · allowed roots</text>
+  <rect x="1556" y="1384" width="464" height="126" class="box"/>
+  <text x="1584" y="1424" class="box-title-sm">Artifact Inspect</text>
+  <text x="1584" y="1454" class="body-sm">indexed retrieval · excerpts</text>
+  <text x="1584" y="1481" class="tiny">raw bytes remain authoritative</text>
+  <rect x="2074" y="1384" width="464" height="126" class="box-coral"/>
+  <text x="2102" y="1424" class="box-title-sm">MCP Gateway</text>
+  <text x="2102" y="1454" class="body-sm">catalog snapshot · policy</text>
+  <text x="2102" y="1481" class="tiny">live disable re-check per call</text>
+  <rect x="2592" y="1384" width="472" height="126" class="box"/>
+  <text x="2620" y="1424" class="box-title-sm">Input Tools</text>
+  <text x="2620" y="1454" class="body-sm">list · get · read · search</text>
+  <text x="2620" y="1481" class="tiny">view · materialize · immutable source</text>
+  <path d="M752 1366 V1384" class="lane-amber"/>
+  <path d="M1270 1366 V1384" class="lane-amber"/>
+  <path d="M1788 1366 V1384" class="lane-amber"/>
+  <path d="M2306 1366 V1384" class="lane-amber"/>
+  <path d="M2828 1366 V1384" class="lane-amber"/>
+
+  <!-- Right external targets/tools -->
+  <rect x="3380" y="780" width="376" height="112" class="box-coral"/>
+  <text x="3410" y="824" class="box-title-sm">HTTP / HTTPS targets</text>
+  <text x="3410" y="855" class="body-sm">authorized network scope</text>
+  <rect x="3380" y="936" width="376" height="142" class="box-coral"/>
+  <text x="3410" y="978" class="box-title-sm">Docker STDIO MCP</text>
+  <text x="3410" y="1008" class="body-sm">RO /workspace</text>
+  <text x="3410" y="1036" class="body-sm">RW /workspace/artifacts</text>
+  <rect x="3380" y="1122" width="376" height="132" class="box-coral"/>
+  <text x="3410" y="1164" class="box-title-sm">Remote HTTP / SSE MCP</text>
+  <text x="3410" y="1196" class="body-sm">no local mount</text>
+  <text x="3410" y="1224" class="body-sm">protocol content only</text>
+  <rect x="3380" y="1298" width="376" height="188" class="box-coral"/>
+  <text x="3410" y="1340" class="box-title-sm">Security tooling</text>
+  <text x="3410" y="1374" class="body-sm">nmap · nuclei · burp</text>
+  <text x="3410" y="1403" class="body-sm">binwalk · capa · gitleaks</text>
+  <text x="3410" y="1432" class="body-sm">ffuf · sqlmap · whatweb</text>
+  <text x="3410" y="1461" class="tiny">rate · concurrency · timeout limits</text>
+  <path d="M3120 1366 H3240 V836" class="bus" stroke="#ef836f"/>
+  <path d="M3240 836 H3380" class="lane-coral"/>
+  <path d="M3240 1007 H3380" class="lane-coral"/>
+  <path d="M3240 1188 H3380" class="lane-coral"/>
+  <path d="M3240 1392 H3380" class="lane-coral"/>
+  <text x="3070" y="1350" class="tiny">authorized execution trunk</text>
+
+  <!-- Layer 5 -->
+  <rect x="458" y="1572" width="2860" height="370" class="boundary"/>
+  <text x="480" y="1598" class="boundary-label">DURABLE SESSION DATA</text>
+  <rect x="482" y="1614" width="2812" height="304" rx="18" fill="#1c2922" stroke="#688d74" stroke-width="2.5"/>
+  <text x="520" y="1655" class="layer" fill="#91b79d">05  runs/&lt;session-id&gt;/</text>
+  <line x1="1200" y1="1670" x2="1200" y2="1888" class="divider"/>
+  <line x1="1910" y1="1670" x2="1910" y2="1888" class="divider"/>
+  <line x1="2570" y1="1670" x2="2570" y2="1888" class="divider"/>
+
+  <g transform="translate(520 1688)">
+    <text class="box-title">evidence.db (SQLite)</text>
+    <text y="38" class="body">tasks · sessions · solvers · actions</text>
+    <text y="70" class="body">strategy_cards · context_metrics</text>
+    <text y="102" class="body">agent_events UNIQUE(task_id, seq)</text>
+    <text y="134" class="body">findings · flags · artifact_indexes</text>
+    <rect y="166" width="620" height="40" rx="10" fill="#263b2d" stroke="#4e715a"/>
+    <text x="16" y="192" class="tiny">AUTHORITATIVE: ordered audit + governed state</text>
+  </g>
+  <g transform="translate(1240 1688)">
+    <text class="box-title">workspace/</text>
+    <text y="38" class="body">inputs/task — immutable</text>
+    <text y="70" class="body">inputs/hints — untrusted</text>
+    <text y="102" class="body">artifacts · evidence</text>
+    <text y="134" class="body">tool-results · state</text>
+    <rect y="166" width="620" height="40" rx="10" fill="#263b2d" stroke="#4e715a"/>
+    <text x="16" y="192" class="tiny">LOCAL MCP: shared path, least privilege mounts</text>
+  </g>
+  <g transform="translate(1950 1688)">
+    <text class="box-title">solvers/&lt;id&gt;/session/</text>
+    <text y="42" class="body">messages.json</text>
+    <text y="74" class="body-sm">durable assistant / tool transcript</text>
+    <text y="106" class="body-sm">resume reopens the same conversation</text>
+    <rect y="166" width="570" height="40" rx="10" fill="#263b2d" stroke="#4e715a"/>
+    <text x="16" y="192" class="tiny">IMMUTABLE AUDIT · BOUNDED PROVIDER VIEW</text>
+  </g>
+  <g transform="translate(2610 1688)">
+    <text class="box-title">checkpoints &amp; reports</text>
+    <text y="42" class="body">session/checkpoint.json</text>
+    <text y="74" class="body">board/snapshot.json</text>
+    <text y="106" class="body">reports/report.md</text>
+    <text y="138" class="body-sm">explicit POST export · GET is pure</text>
+    <rect y="166" width="634" height="40" rx="10" fill="#263b2d" stroke="#4e715a"/>
+    <text x="16" y="192" class="tiny">RECOVERY · PROJECTION · AUDITED EXPORT</text>
+  </g>
+
+  <!-- Separate, aligned persistence lanes: no route crosses the capability bus. -->
+  <path d="M752 1510 V1614" class="lane-sage"/>
+  <path d="M1270 1510 V1614" class="lane-sage"/>
+  <path d="M1788 1510 V1614" class="lane-sage"/>
+  <path d="M2306 1510 V1614" class="lane-sage"/>
+  <path d="M2828 1510 V1614" class="lane-sage"/>
+  <g transform="translate(2828 1540)"><circle r="16" fill="#91b79d"/><text class="num">7</text></g>
+  <text x="2890" y="1562" class="flow-label">Persist event + Artifact</text>
+
+  <!-- Observability -->
+  <rect x="54" y="1970" width="3732" height="146" rx="18" fill="#1d2523" stroke="#4d605a" stroke-width="2"/>
+  <text x="84" y="2002" class="layer">DEVELOPER OBSERVABILITY</text>
+  <g transform="translate(84 2022)">
+    <rect width="540" height="66" rx="12" fill="#21312e" stroke="#3f7772"/>
+    <text x="22" y="28" class="metric">Ordered AgentEvent seq</text><text x="22" y="51" class="tiny">authoritative timeline cursor</text>
+    <rect x="580" width="540" height="66" rx="12" fill="#21312e" stroke="#3f7772"/>
+    <text x="602" y="28" class="metric">SSE live timeline + replay</text><text x="602" y="51" class="tiny">reconnect · dedupe · snapshot projection</text>
+    <rect x="1160" width="540" height="66" rx="12" fill="#2d291f" stroke="#806637"/>
+    <text x="1182" y="28" class="metric">Context size &amp; token usage</text><text x="1182" y="51" class="tiny">working chars · provider usage · retrievals</text>
+    <rect x="1740" width="540" height="66" rx="12" fill="#30231f" stroke="#8e5045"/>
+    <text x="1762" y="28" class="metric">Tool latency / error / retries</text><text x="1762" y="51" class="tiny">execution result · denial code · budget</text>
+    <rect x="2320" width="540" height="66" rx="12" fill="#243128" stroke="#587761"/>
+    <text x="2342" y="28" class="metric">Artifact provenance &amp; retrieval</text><text x="2342" y="51" class="tiny">task ownership · index · excerpts</text>
+    <rect x="2900" width="780" height="66" rx="12" fill="#2d291f" stroke="#806637"/>
+    <text x="2922" y="28" class="metric">Gate rejection / completion reason</text><text x="2922" y="51" class="tiny">policy decision · missing evidence · terminal status</text>
+  </g>
+  <path d="M1880 1918 V1970" class="lane-sage"/>
+  <text x="84" y="2106" class="tiny">Audit transcript is immutable; provider context is bounded.</text>
+  <text x="3305" y="2106" class="tiny">TGA schema v4 · developer map · 2026-07-23</text>
+</svg>

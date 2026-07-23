@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from tga.modes import mode_profile
 from tga.reporting.evidence_renderer import format_list, quote_excerpt
 import re
 
@@ -12,17 +13,33 @@ from tga.reporting.report_model import events_by_type, findings_by_status, read_
 
 def render_markdown_report(snapshot: dict[str, Any]) -> str:
     task = snapshot.get("task") or {}
+    profile = mode_profile(str(task.get("mode") or "ctf"))
     lines = [
         "# TGA Report",
         "",
-        "## Summary",
+        "## Task Goal",
         f"- Task: {task.get('name', '')}",
-        f"- Mode: {task.get('mode', '')}",
-        f"- Target: {task.get('target', '')}",
-        f"- Scope: {format_list(task.get('scope'))}",
-        f"- Intensity: {task.get('intensity', '')}",
-        f"- Allow Active Scan: {task.get('allow_active_scan', False)}",
+        f"- Mode: {profile.label} ({profile.id})",
+        f"- Goal: {quote_excerpt(str(task.get('goal') or ''))}",
+        f"- Completion Focus: {profile.completion_focus}",
+        f"- Mode Config: `{task.get('mode_config') or {}}`",
+        "",
+        "## Target Resources",
+        *_resource_lines(task.get("targets") or []),
+        "",
+        "## Hints and Auxiliary Inputs",
+        *_resource_lines(task.get("hints") or []),
+        "",
+        "## Authorization Boundaries",
+        f"- Execution Policy: `{task.get('execution_policy') or {}}`",
+        f"- Legacy Migration Notes: {format_list(task.get('migration_notes') or [])}",
         f"- Tools Used: {format_list(tools_used(snapshot))}",
+        "",
+        "## Accessed Resources",
+        *_accessed_input_lines(snapshot),
+        "",
+        "## Mode Report Contract",
+        f"- Required Sections: {format_list(profile.report_sections)}",
         "",
         "## Execution Evidence",
     ]
@@ -112,12 +129,13 @@ def render_markdown_report(snapshot: dict[str, Any]) -> str:
             lines.append("  - none")
         if finding.get("remediation"):
             lines.append(f"- Remediation: {finding.get('remediation')}")
-    lines.extend(["", "## CTF Flags"])
-    flags = snapshot.get("flags", [])
-    if not flags:
-        lines.append("- none")
-    for flag in flags:
-        lines.append(f"- {flag.get('value')} (artifact: {flag.get('evidence_artifact_id')})")
+    if profile.id == "ctf":
+        lines.extend(["", "## CTF Flags"])
+        flags = snapshot.get("flags", [])
+        if not flags:
+            lines.append("- none")
+        for flag in flags:
+            lines.append(f"- {flag.get('value')} (artifact: {flag.get('evidence_artifact_id')})")
     lines.extend(["", "## Unverified Leads"])
     candidates = [
         finding
@@ -152,12 +170,44 @@ def render_markdown_report(snapshot: dict[str, Any]) -> str:
         lines.append(
             f"- {artifact.get('id')} kind={artifact.get('kind')} "
             f"tool={artifact.get('tool') or 'none'} target={artifact.get('target') or 'none'} "
-            f"path={artifact.get('path')}"
+            f"input_id={artifact.get('input_id') or 'none'} path={artifact.get('path')}"
         )
     if snapshot.get("session"):
         _append_runtime_sections(lines, snapshot)
-    lines.extend(["", "## Limitations", "- Only evidence captured in artifacts is treated as ground truth."])
+    lines.extend([
+        "", "## Limitations",
+        "- Only evidence captured in task-owned artifacts is treated as ground truth.",
+        f"- Mode completion standard: {profile.completion_focus}",
+    ])
     return "\n".join(lines) + "\n"
+
+
+def _resource_lines(resources: list[dict[str, Any]]) -> list[str]:
+    if not resources:
+        return ["- none"]
+    return [
+        f"- {item.get('id')} role={item.get('role')} kind={item.get('kind')} label={item.get('label')} "
+        f"status={item.get('status')} mime={item.get('mime_type') or 'unknown'} size={item.get('size') if item.get('size') is not None else 'unknown'} "
+        f"source={(item.get('provenance') or {}).get('source') or 'unknown'}"
+        for item in resources
+    ]
+
+
+def _accessed_input_lines(snapshot: dict[str, Any]) -> list[str]:
+    events = [
+        event for event in (snapshot.get("agent_events") or snapshot.get("events") or [])
+        if event.get("type") == "INPUT_ACCESSED"
+    ]
+    if not events:
+        return ["- none"]
+    values = []
+    for event in events:
+        payload = event.get("payload") or {}
+        values.append(
+            f"- input_id={payload.get('input_id') or 'manifest'} operation={payload.get('operation')} "
+            f"allowed={payload.get('allowed')} artifact={payload.get('artifact_id') or 'none'} code={payload.get('code') or 'none'}"
+        )
+    return values
 
 
 def _find_flags(text: str, flag_format: str | None) -> list[str]:
@@ -189,6 +239,7 @@ def _append_runtime_sections(lines: list[str], snapshot: dict[str, Any]) -> None
     solvers = snapshot.get("solvers") or []
     contract = snapshot.get("challenge_contract") or {}
     evaluation = snapshot.get("evaluation") or {}
+    profile = mode_profile(str((snapshot.get("task") or {}).get("mode") or "ctf"))
     if contract:
         lines.extend([
             "", "## Challenge Contract",
@@ -210,10 +261,43 @@ def _append_runtime_sections(lines: list[str], snapshot: dict[str, Any]) -> None
         f"- Turns: {session.get('turn_count', 0)}/{session.get('max_turns', 'unknown')}",
         f"- Stop Reason: {session.get('stop_reason') or 'none'}",
         f"- Active Solver: {session.get('active_solver_id') or 'none'}",
-        f"- Challenge Status: {challenge.get('status') or 'unknown'}",
-        f"- Completion Proof Artifact: {challenge.get('completion_proof_artifact_id') or 'none'}",
-        "", "## Validated Hypotheses",
     ])
+    if profile.id == "ctf":
+        lines.extend([
+            f"- Challenge Status: {challenge.get('status') or 'unknown'}",
+            f"- Completion Proof Artifact: {challenge.get('completion_proof_artifact_id') or 'none'}",
+        ])
+    lines.extend(["", "## Validated Hypotheses"])
+    cards = board.get("strategy_cards") or snapshot.get("strategy_cards") or []
+    lines.extend(["", "## Hint and Strategy Ledger"])
+    if not cards:
+        lines.append("- none (historical task without StrategyCard data)")
+    for card in cards:
+        lines.append(f"### {card.get('title')} ({card.get('id')})")
+        lines.append(f"- Status: {card.get('status')} · Active Step: {card.get('active_step_id') or 'none'}")
+        lines.append(f"- Summary: {_redact(str(card.get('summary') or ''))}")
+        for source in card.get("sources") or []:
+            lines.append(
+                f"- Source: {source.get('url') or source.get('hint_id') or 'inline'} "
+                f"extraction={source.get('extraction_status')} artifact={source.get('artifact_id') or 'none'}"
+            )
+        for step in card.get("steps") or []:
+            lines.append(
+                f"  - [{step.get('status')}] {step.get('id')}: {step.get('title')} "
+                f"risk={step.get('risk')} actions={format_list(step.get('action_ids') or [])} "
+                f"evidence={format_list(step.get('evidence_artifact_ids') or [])}"
+            )
+    metrics = snapshot.get("context_metrics") or []
+    lines.extend(["", "## Context and Artifact Retrieval"])
+    if metrics:
+        latest = metrics[-1]
+        lines.append(
+            f"- Latest Turn: {latest.get('turn')} · Working chars: {latest.get('working_chars')} · "
+            f"Messages: {latest.get('working_message_count')}/{latest.get('audit_message_count')} · "
+            f"Compacted results: {latest.get('summary_hits')} · Artifact retrievals: {latest.get('artifact_retrievals')}"
+        )
+    else:
+        lines.append("- no context metrics")
     verified = [item for item in board.get("hypotheses") or [] if item.get("status") == "verified"]
     _append_hypotheses(lines, verified)
     lines.extend(["", "## Inconclusive / Rejected Hypotheses"])
@@ -229,21 +313,34 @@ def _append_runtime_sections(lines: list[str], snapshot: dict[str, Any]) -> None
     lines.extend(["", "## Tools, Capabilities and Policy Refusals"])
     capabilities = sorted({str(item.get("capability")) for item in actions.values() if item.get("capability")})
     lines.append(f"- Capabilities Used: {format_list(capabilities)}")
-    refusals = [event for event in events if event.get("type") in {"GATE_REJECTED", "ACTION_BUDGET_EXCEEDED", "POLICY_REJECTED", "RESULT_REJECTED"}]
+    refusals = [event for event in events if event.get("type") in {"GATE_REJECTED", "ACTION_BUDGET_EXCEEDED", "POLICY_REJECTED", "RESULT_REJECTED", "ACTION_VALIDATION_FAILED", "SEMANTIC_REPEAT_BLOCKED"}]
     if not refusals:
         lines.append("- Policy Refusals: none")
     for event in refusals:
         payload = event.get("payload") or {}
         lines.append(f"- seq {event.get('seq')}: {event.get('type')} — {_safe_summary(payload)}")
-    lines.extend(["", "## Confirmed Flag Provenance"])
-    artifact_ids = {item.get("id") for item in snapshot.get("artifacts") or []}
-    confirmed_events = [event for event in events if event.get("type") == "FLAG_CONFIRMED"]
-    if not confirmed_events:
-        lines.append("- none; candidate flags are not treated as solved")
-    for event in confirmed_events:
+    mode = profile.id
+    if mode == "ctf":
+        lines.extend(["", "## Confirmed Flag Provenance"])
+        artifact_ids = {item.get("id") for item in snapshot.get("artifacts") or []}
+        confirmed_events = [event for event in events if event.get("type") == "FLAG_CONFIRMED"]
+        if not confirmed_events:
+            lines.append("- none; candidate flags are not treated as solved")
+        for event in confirmed_events:
+            payload = event.get("payload") or {}
+            evidence_id = payload.get("evidence_artifact_id")
+            lines.append(f"- seq {event.get('seq')}: {payload.get('value')} artifact={evidence_id} persisted={evidence_id in artifact_ids}")
+    lines.extend(["", "## Completion Validation"])
+    finish_events = [event for event in events if event.get("type") in {"FINISH_ATTEMPTED", "FINISH_REJECTED", "FINISH_ACCEPTED"}]
+    if not finish_events:
+        lines.append("- no finish_session declaration recorded")
+    for event in finish_events:
         payload = event.get("payload") or {}
-        evidence_id = payload.get("evidence_artifact_id")
-        lines.append(f"- seq {event.get('seq')}: {payload.get('value')} artifact={evidence_id} persisted={evidence_id in artifact_ids}")
+        lines.append(
+            f"- seq {event.get('seq')}: {event.get('type')} code={payload.get('validator_code') or 'unknown'} "
+            f"terminal={payload.get('terminal', False)} evidence={format_list(payload.get('evidence_artifact_ids') or [])} "
+            f"missing={format_list(payload.get('missing') or [])}"
+        )
     boundaries = [item for item in board.get("memory") or [] if item.get("kind") == "failure_boundary"]
     lines.extend(["", "## Failure Boundaries"])
     if not boundaries:
@@ -279,7 +376,13 @@ def _append_runtime_sections(lines: list[str], snapshot: dict[str, Any]) -> None
     if not actions:
         lines.append("- none")
     for action in actions.values():
-        lines.append(f"- {action.get('id')} {action.get('status')} capability={action.get('capability')} target={_redact(str(action.get('target') or ''))} artifacts={format_list(action.get('artifact_ids') or [])} summary={_redact(str(action.get('summary') or ''))}")
+        lines.append(f"- {action.get('id')} {action.get('status')} capability={action.get('capability')} target={_redact(str(action.get('target') or ''))} strategy_step={action.get('strategy_step_id') or 'none'} risk={action.get('risk')} artifacts={format_list(action.get('artifact_ids') or [])} summary={_redact(str(action.get('summary') or ''))}")
+        if action.get("rationale"):
+            lines.append(f"  - Rationale: {_redact(str(action.get('rationale')))}")
+        if action.get("expected_outcome"):
+            lines.append(f"  - Expected evidence: {_redact(str(action.get('expected_outcome')))}")
+        if action.get("retry_reason"):
+            lines.append(f"  - Retry reason: {_redact(str(action.get('retry_reason')))}")
     lines.extend(["", "### Timeline"])
     if not events:
         lines.append("- none")

@@ -1,0 +1,378 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="3840" height="2160" viewBox="0 0 3840 2160" role="img" aria-labelledby="title desc">
+  <title id="title">TGA 受治理 Agent Runtime 架构</title>
+  <desc id="desc">TGA-TeamGipsyAgent 平台控制平面、事件总线、隔离执行平面、外部依赖、持久化和开发观测架构图。</desc>
+  <defs>
+    <linearGradient id="paper" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#fbfcff"/>
+    </linearGradient>
+    <linearGradient id="panel" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#fafaff"/>
+      <stop offset="1" stop-color="#f5f8ff"/>
+    </linearGradient>
+    <linearGradient id="bus" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f7fbff"/>
+      <stop offset="1" stop-color="#eef6ff"/>
+    </linearGradient>
+    <filter id="soft" x="-15%" y="-20%" width="130%" height="145%">
+      <feDropShadow dx="0" dy="8" stdDeviation="12" flood-color="#5575bd" flood-opacity="0.12"/>
+    </filter>
+    <marker id="blueArrow" markerWidth="12" markerHeight="12" refX="9" refY="6" orient="auto" markerUnits="strokeWidth">
+      <path d="M0 0 L12 6 L0 12 Z" fill="#2369df"/>
+    </marker>
+    <marker id="dashArrow" markerWidth="12" markerHeight="12" refX="9" refY="6" orient="auto" markerUnits="strokeWidth">
+      <path d="M0 0 L12 6 L0 12 Z" fill="#8a9ac0"/>
+    </marker>
+    <style>
+      .title { font: 700 54px 'Microsoft YaHei', 'Noto Sans CJK SC', 'Segoe UI', sans-serif; letter-spacing: 1px; fill: #252b63; }
+      .subtitle { font: 400 22px 'Microsoft YaHei', 'Noto Sans CJK SC', 'Segoe UI', sans-serif; letter-spacing: 1px; fill: #7d89a7; }
+      .section { font: 700 29px 'Microsoft YaHei', 'Noto Sans CJK SC', 'Segoe UI', sans-serif; fill: #244ab5; }
+      .section-light { font: 700 27px 'Microsoft YaHei', 'Noto Sans CJK SC', 'Segoe UI', sans-serif; fill: #2064d7; }
+      .box-title { font: 700 26px 'Microsoft YaHei', 'Noto Sans CJK SC', 'Segoe UI', sans-serif; fill: #2d2e83; }
+      .box-title-blue { font: 700 25px 'Microsoft YaHei', 'Noto Sans CJK SC', 'Segoe UI', sans-serif; fill: #174fb9; }
+      .body { font: 400 18px 'Microsoft YaHei', 'Noto Sans CJK SC', 'Segoe UI', sans-serif; fill: #34436e; }
+      .body-sm { font: 400 16px 'Microsoft YaHei', 'Noto Sans CJK SC', 'Segoe UI', sans-serif; fill: #5c6c98; }
+      .tiny { font: 400 14px 'Microsoft YaHei', 'Noto Sans CJK SC', 'Segoe UI', sans-serif; fill: #7583a7; }
+      .chip { font: 600 14px 'Microsoft YaHei', 'Noto Sans CJK SC', 'Segoe UI', sans-serif; fill: #304783; }
+      .metric { font: 600 17px 'Microsoft YaHei', 'Noto Sans CJK SC', 'Segoe UI', sans-serif; fill: #2a3f7a; }
+      .boundary { fill: url(#panel); stroke: #ccd7f3; stroke-width: 3; rx: 26; }
+      .inner { fill: #ffffff; stroke: #d4def5; stroke-width: 2; rx: 18; filter: url(#soft); }
+      .inner-blue { fill: #fafdff; stroke: #b7cdf8; stroke-width: 2; rx: 18; filter: url(#soft); }
+      .inner-purple { fill: #fcfbff; stroke: #d6d2f5; stroke-width: 2; rx: 18; filter: url(#soft); }
+      .inner-amber { fill: #fffdf8; stroke: #e8d4a0; stroke-width: 2; rx: 18; filter: url(#soft); }
+      .busbox { fill: url(#bus); stroke: #a9c7f7; stroke-width: 3; rx: 26; filter: url(#soft); }
+      .pill-blue { fill: #edf4ff; stroke: #c9daf8; stroke-width: 1.5; rx: 10; }
+      .pill-purple { fill: #f2efff; stroke: #d6cef8; stroke-width: 1.5; rx: 10; }
+      .pill-amber { fill: #fff7df; stroke: #ead69c; stroke-width: 1.5; rx: 10; }
+      .line { fill: none; stroke: #2369df; stroke-width: 4; marker-end: url(#blueArrow); }
+      .line-back { fill: none; stroke: #6f8ccc; stroke-width: 3.5; marker-end: url(#dashArrow); }
+      .line-dash { fill: none; stroke: #91a3c9; stroke-width: 3; stroke-dasharray: 11 9; marker-end: url(#dashArrow); }
+      .divider { stroke: #dbe3f5; stroke-width: 2; }
+      .icon-stroke { fill: none; stroke: #4c3abf; stroke-width: 5; stroke-linecap: round; stroke-linejoin: round; }
+      .icon-blue { fill: none; stroke: #2468d9; stroke-width: 5; stroke-linecap: round; stroke-linejoin: round; }
+      .dot { fill: #4d3bc3; }
+      .number { font: 700 16px 'Segoe UI', sans-serif; fill: #ffffff; text-anchor: middle; dominant-baseline: central; }
+      .note { font: 600 15px 'Microsoft YaHei', 'Noto Sans CJK SC', 'Segoe UI', sans-serif; fill: #4865a3; }
+    </style>
+  </defs>
+
+  <rect width="3840" height="2160" fill="url(#paper)"/>
+  <path d="M100 1810 H3740" stroke="#e4e9f6" stroke-width="2"/>
+
+  <!-- Header -->
+  <text x="120" y="92" class="title">TGA 受治理 Agent Runtime 架构</text>
+  <text x="124" y="134" class="subtitle">执行路径 · 信任边界 · 持久化数据 · 开发观测面</text>
+  <g transform="translate(2640 60)">
+    <rect width="1080" height="86" rx="18" fill="#f5f7ff" stroke="#d5def4" stroke-width="2"/>
+    <circle cx="32" cy="30" r="7" fill="#2369df"/><text x="52" y="36" class="tiny">蓝色实线：控制与事件流</text>
+    <circle cx="274" cy="30" r="7" fill="#6d43c2"/><text x="294" y="36" class="tiny">紫色模块：平台治理</text>
+    <circle cx="536" cy="30" r="7" fill="#d6932b"/><text x="556" y="36" class="tiny">琥珀模块：策略与门禁</text>
+    <circle cx="858" cy="30" r="7" fill="#77a6e8"/><text x="878" y="36" class="tiny">浅蓝模块：执行与集成</text>
+    <line x1="32" y1="62" x2="78" y2="62" stroke="#91a3c9" stroke-width="3" stroke-dasharray="9 8"/>
+    <text x="92" y="68" class="tiny">虚线：只读投影或异步回传</text>
+  </g>
+
+  <!-- Left platform control plane -->
+  <rect x="120" y="188" width="1040" height="1508" class="boundary"/>
+  <text x="640" y="240" text-anchor="middle" class="section">平台控制平面</text>
+  <text x="640" y="273" text-anchor="middle" class="tiny">配置、编排、治理、状态与持久化由平台统一拥有</text>
+
+  <rect x="168" y="300" width="944" height="224" class="inner-purple"/>
+  <g transform="translate(210 346)">
+    <ellipse cx="34" cy="-7" rx="30" ry="12" fill="#4d3bc3"/>
+    <path d="M4 -7 V35 C4 52 64 52 64 35 V-7 M4 14 C4 31 64 31 64 14" fill="none" stroke="#4d3bc3" stroke-width="6"/>
+  </g>
+  <text x="304" y="348" class="box-title">统一配置中心</text>
+  <text x="304" y="382" class="body-sm">Provider、模型、Skills、能力注册、MCP 配置</text>
+  <g transform="translate(300 426)">
+    <rect width="142" height="58" class="pill-purple"/><text x="71" y="35" text-anchor="middle" class="chip">模型 Provider</text>
+    <rect x="160" width="142" height="58" class="pill-purple"/><text x="231" y="35" text-anchor="middle" class="chip">Skills / Prompt</text>
+    <rect x="320" width="142" height="58" class="pill-purple"/><text x="391" y="35" text-anchor="middle" class="chip">能力注册</text>
+    <rect x="480" width="142" height="58" class="pill-purple"/><text x="551" y="35" text-anchor="middle" class="chip">MCP Catalog</text>
+  </g>
+
+  <rect x="168" y="554" width="944" height="224" class="inner-purple"/>
+  <g transform="translate(210 606)">
+    <rect x="0" y="8" width="60" height="48" rx="13" fill="#4d3bc3"/>
+    <circle cx="17" cy="31" r="5" fill="#fff"/><circle cx="43" cy="31" r="5" fill="#fff"/>
+    <path d="M-14 21 H0 M60 21 H74 M30 8 V-10" stroke="#4d3bc3" stroke-width="6" stroke-linecap="round"/>
+  </g>
+  <text x="304" y="612" class="box-title">任务与会话管理</text>
+  <text x="304" y="646" class="body-sm">TaskRuntimeService · Manager · Solver Pool</text>
+  <g transform="translate(300 690)">
+    <rect width="160" height="58" class="pill-purple"/><text x="80" y="35" text-anchor="middle" class="chip">创建 / 恢复</text>
+    <rect x="178" width="160" height="58" class="pill-purple"/><text x="258" y="35" text-anchor="middle" class="chip">暂停 / 取消</text>
+    <rect x="356" width="160" height="58" class="pill-purple"/><text x="436" y="35" text-anchor="middle" class="chip">回合上限</text>
+    <rect x="534" width="160" height="58" class="pill-purple"/><text x="614" y="35" text-anchor="middle" class="chip">生命周期</text>
+  </g>
+
+  <rect x="168" y="808" width="944" height="248" class="inner-amber"/>
+  <g transform="translate(210 864)">
+    <path d="M10 43 V4 H59 V43 M24 4 V-13 M45 4 V-13 M0 43 H69 M-5 55 H74" class="icon-stroke"/>
+    <circle cx="24" cy="4" r="5" fill="#4d3bc3"/><circle cx="45" cy="4" r="5" fill="#4d3bc3"/>
+  </g>
+  <text x="304" y="862" class="box-title">策略与治理层</text>
+  <text x="304" y="896" class="body-sm">策略步骤、风险策略、Observer 建议、完成条件</text>
+  <g transform="translate(300 944)">
+    <rect width="176" height="58" class="pill-amber"/><text x="88" y="35" text-anchor="middle" class="chip">Strategy Board</text>
+    <rect x="194" width="176" height="58" class="pill-amber"/><text x="282" y="35" text-anchor="middle" class="chip">风险门禁</text>
+    <rect x="388" width="176" height="58" class="pill-amber"/><text x="476" y="35" text-anchor="middle" class="chip">Observer Patch</text>
+    <rect x="582" width="176" height="58" class="pill-amber"/><text x="670" y="35" text-anchor="middle" class="chip">Completion Gate</text>
+  </g>
+
+  <rect x="168" y="1086" width="944" height="224" class="inner"/>
+  <g transform="translate(210 1136)">
+    <rect x="0" y="0" width="68" height="48" rx="7" class="icon-blue"/>
+    <path d="M14 15 H54 M14 28 H54 M14 41 H42" class="icon-blue"/>
+  </g>
+  <text x="304" y="1138" class="box-title">事件与 API 投影</text>
+  <text x="304" y="1172" class="body-sm">FastAPI v2 · Snapshot · SSE · Replay · Report</text>
+  <g transform="translate(300 1216)">
+    <rect width="160" height="58" class="pill-blue"/><text x="80" y="35" text-anchor="middle" class="chip">AgentEvent seq</text>
+    <rect x="178" width="160" height="58" class="pill-blue"/><text x="258" y="35" text-anchor="middle" class="chip">SSE 实时流</text>
+    <rect x="356" width="160" height="58" class="pill-blue"/><text x="436" y="35" text-anchor="middle" class="chip">事件回放</text>
+    <rect x="534" width="160" height="58" class="pill-blue"/><text x="614" y="35" text-anchor="middle" class="chip">报告导出</text>
+  </g>
+
+  <rect x="168" y="1340" width="944" height="300" class="inner"/>
+  <g transform="translate(210 1398)">
+    <path d="M5 15 H64 M5 37 H64 M5 59 H64" class="icon-blue"/>
+    <circle cx="16" cy="15" r="6" fill="#2468d9"/><circle cx="16" cy="37" r="6" fill="#2468d9"/><circle cx="16" cy="59" r="6" fill="#2468d9"/>
+  </g>
+  <text x="304" y="1400" class="box-title">持久化与工作区</text>
+  <text x="304" y="1434" class="body-sm">每个 Session 独立 runs/&lt;session-id&gt;/</text>
+  <text x="304" y="1470" class="body-sm">原始事实保留，模型上下文受限</text>
+  <g transform="translate(300 1502)">
+    <rect width="214" height="52" class="pill-blue"/><text x="107" y="32" text-anchor="middle" class="chip">evidence.db / SQLite</text>
+    <rect x="232" width="214" height="52" class="pill-blue"/><text x="339" y="32" text-anchor="middle" class="chip">workspace / inputs</text>
+    <rect x="464" width="214" height="52" class="pill-blue"/><text x="571" y="32" text-anchor="middle" class="chip">artifacts / evidence</text>
+  </g>
+  <text x="300" y="1592" class="tiny">messages.json · checkpoint.json · board snapshot · report.md</text>
+
+  <!-- Center message bus -->
+  <rect x="1250" y="330" width="690" height="1110" class="busbox"/>
+  <text x="1595" y="392" text-anchor="middle" class="section-light">消息总线（统一顺序通道）</text>
+  <text x="1595" y="426" text-anchor="middle" class="tiny">平台与 Solver / Observer 的单一回传通道</text>
+  <line x1="1300" y1="450" x2="1890" y2="450" class="divider"/>
+
+  <rect x="1300" y="490" width="590" height="238" class="inner-blue"/>
+  <g transform="translate(1342 538)">
+    <path d="M3 38 L47 3 L76 13 L36 50 Z" fill="#2369df"/>
+    <path d="M47 3 L40 65 L27 45" fill="none" stroke="#2369df" stroke-width="5"/>
+  </g>
+  <text x="1450" y="550" class="box-title-blue">调度指令</text>
+  <text x="1450" y="584" class="body-sm">创建、启动、暂停、恢复、取消</text>
+  <g transform="translate(1342 624)">
+    <rect width="110" height="44" class="pill-blue"/><text x="55" y="28" text-anchor="middle" class="chip">launch</text>
+    <rect x="122" width="110" height="44" class="pill-blue"/><text x="177" y="28" text-anchor="middle" class="chip">pause</text>
+    <rect x="244" width="110" height="44" class="pill-blue"/><text x="299" y="28" text-anchor="middle" class="chip">resume</text>
+    <rect x="366" width="110" height="44" class="pill-blue"/><text x="421" y="28" text-anchor="middle" class="chip">cancel</text>
+  </g>
+  <text x="1342" y="704" class="tiny">来源：FastAPI v2 / CLI → Manager</text>
+
+  <rect x="1300" y="762" width="590" height="258" class="inner-blue"/>
+  <g transform="translate(1340 808)">
+    <path d="M0 38 H19 L29 16 L43 60 L59 6 L72 38 H92" class="icon-blue"/>
+  </g>
+  <text x="1450" y="820" class="box-title-blue">事件与回传</text>
+  <text x="1450" y="854" class="body-sm">AgentEvent、工具结果、Observer 信号、快照</text>
+  <g transform="translate(1342 894)">
+    <rect width="142" height="44" class="pill-blue"/><text x="71" y="28" text-anchor="middle" class="chip">MESSAGE</text>
+    <rect x="154" width="142" height="44" class="pill-blue"/><text x="225" y="28" text-anchor="middle" class="chip">TOOL RESULT</text>
+    <rect x="308" width="142" height="44" class="pill-blue"/><text x="379" y="28" text-anchor="middle" class="chip">OBSERVER</text>
+  </g>
+  <text x="1342" y="982" class="tiny">权威游标：agent_events UNIQUE(task_id, seq)</text>
+
+  <rect x="1300" y="1054" width="590" height="270" class="inner-blue"/>
+  <g transform="translate(1340 1102)">
+    <path d="M9 44 C22 11 42 11 55 44 C68 77 88 77 101 44" class="icon-blue"/>
+    <circle cx="55" cy="44" r="8" fill="#2468d9"/>
+  </g>
+  <text x="1450" y="1114" class="box-title-blue">桥接通信</text>
+  <text x="1450" y="1148" class="body-sm">连接控制平面、执行会话与外部能力</text>
+  <g transform="translate(1342 1190)">
+    <rect width="168" height="44" class="pill-blue"/><text x="84" y="28" text-anchor="middle" class="chip">strategy update</text>
+    <rect x="180" width="168" height="44" class="pill-blue"/><text x="264" y="28" text-anchor="middle" class="chip">artifact link</text>
+    <rect x="360" width="116" height="44" class="pill-blue"/><text x="418" y="28" text-anchor="middle" class="chip">SSE</text>
+  </g>
+  <text x="1342" y="1280" class="tiny">所有实时状态都经过同一顺序事件通道</text>
+
+  <rect x="1374" y="1350" width="342" height="64" class="pill-purple"/>
+  <text x="1545" y="1390" text-anchor="middle" class="note">观测：seq、回合、延迟、错误、门禁</text>
+
+  <!-- Right isolated execution plane -->
+  <rect x="2080" y="188" width="1160" height="1508" class="boundary"/>
+  <text x="2660" y="240" text-anchor="middle" class="section">隔离执行平面（Solver Session）</text>
+  <text x="2660" y="273" text-anchor="middle" class="tiny">每个会话拥有受限能力、独立工作区与可恢复 Transcript</text>
+
+  <rect x="2128" y="300" width="1064" height="328" class="inner-blue"/>
+  <text x="2166" y="346" class="section-light">AgentToolSession 主会话</text>
+  <text x="2166" y="380" class="body-sm">Manager 创建 · Context Builder 组装 · 模型原生 function calling</text>
+  <line x1="2166" y1="404" x2="3150" y2="404" class="divider"/>
+  <rect x="2166" y="430" width="442" height="154" class="inner"/>
+  <g transform="translate(2202 464)">
+    <rect width="48" height="54" rx="7" fill="#123c91"/>
+    <path d="M10 18 H38 M10 29 H32 M10 40 H38" stroke="#fff" stroke-width="4"/>
+  </g>
+  <text x="2280" y="478" class="box-title-blue">上下文与模型</text>
+  <text x="2280" y="510" class="body-sm">任务文件、Hint、策略、记忆</text>
+  <text x="2280" y="540" class="body-sm">受限上下文 · 可选视觉输入</text>
+  <text x="2202" y="566" class="tiny">观测：上下文大小、Token、检索次数</text>
+  <rect x="2640" y="430" width="510" height="154" class="inner"/>
+  <g transform="translate(2676 468)">
+    <path d="M5 7 H55 V51 H5 Z M14 19 H46 M14 31 H46 M14 43 H35" class="icon-blue"/>
+  </g>
+  <text x="2754" y="478" class="box-title-blue">持久 Transcript</text>
+  <text x="2754" y="510" class="body-sm">assistant tool_calls ↔ tool results</text>
+  <text x="2754" y="540" class="body-sm">solvers/&lt;id&gt;/session/messages.json</text>
+  <text x="2676" y="566" class="tiny">恢复：同一会话、同一工作区、同一序列</text>
+
+  <rect x="2128" y="656" width="1064" height="328" class="inner-blue"/>
+  <text x="2166" y="702" class="section-light">执行会话 A · 受治理工具循环</text>
+  <text x="2166" y="736" class="body-sm">模型提出工具调用 → Executor 验证 → 结果写入 Artifact → 进入下一回合</text>
+  <rect x="2166" y="770" width="472" height="154" class="inner-amber"/>
+  <text x="2202" y="812" class="box-title">Controlled Action Executor</text>
+  <text x="2202" y="844" class="body-sm">Schema · scope · risk · budget</text>
+  <text x="2202" y="874" class="body-sm">注册能力 · 参数校验 · 脱敏结果</text>
+  <text x="2202" y="904" class="tiny">拒绝也写入 AgentEvent，便于定位</text>
+  <rect x="2670" y="770" width="480" height="154" class="inner"/>
+  <text x="2706" y="812" class="box-title-blue">独立 Workspace</text>
+  <text x="2706" y="844" class="body-sm">inputs/task · inputs/hints</text>
+  <text x="2706" y="874" class="body-sm">artifacts · evidence · tool-results</text>
+  <text x="2706" y="904" class="tiny">Hint 是不可信数据，不扩大权限</text>
+
+  <rect x="2128" y="1012" width="1064" height="306" class="inner-blue"/>
+  <text x="2166" y="1058" class="section-light">执行会话 B / C · 可选并行 Solver</text>
+  <text x="2166" y="1092" class="body-sm">由 Solver Pool 按需创建；默认不改变 Manager 的治理权</text>
+  <g transform="translate(2166 1124)">
+    <rect width="294" height="134" class="inner"/>
+    <text x="28" y="38" class="box-title-blue">会话 B</text>
+    <text x="28" y="72" class="body-sm">独立 Solver ID</text>
+    <text x="28" y="100" class="body-sm">独立 Workspace / 上限</text>
+    <rect x="314" width="294" height="134" class="inner"/>
+    <text x="342" y="38" class="box-title-blue">会话 C</text>
+    <text x="342" y="72" class="body-sm">输入 Artifact 归属校验</text>
+    <text x="342" y="100" class="body-sm">结果回到主 Session</text>
+    <rect x="628" width="356" height="134" class="inner-amber"/>
+    <text x="656" y="38" class="box-title">Deterministic Observer</text>
+    <text x="656" y="72" class="body-sm">只读上下文 → ObserverPatch</text>
+    <text x="656" y="100" class="body-sm">不能执行工具或标记完成</text>
+  </g>
+
+  <rect x="2128" y="1346" width="1064" height="294" class="inner"/>
+  <text x="2166" y="1392" class="section-light">受控能力适配层</text>
+  <g transform="translate(2166 1430)">
+    <rect width="188" height="144" class="pill-blue"/>
+    <text x="22" y="38" class="box-title-blue">HTTP Session</text>
+    <text x="22" y="72" class="body-sm">CookieJar 按</text><text x="22" y="98" class="body-sm">任务 / Solver / Origin 隔离</text>
+    <rect x="208" width="188" height="144" class="pill-blue"/>
+    <text x="230" y="38" class="box-title-blue">Workspace</text>
+    <text x="230" y="72" class="body-sm">read / write</text><text x="230" y="98" class="body-sm">shell / Python</text>
+    <rect x="416" width="188" height="144" class="pill-blue"/>
+    <text x="438" y="38" class="box-title-blue">Artifact</text>
+    <text x="438" y="72" class="body-sm">索引、检索、</text><text x="438" y="98" class="body-sm">有界预览</text>
+    <rect x="624" width="188" height="144" class="pill-blue"/>
+    <text x="646" y="38" class="box-title-blue">MCP Gateway</text>
+    <text x="646" y="72" class="body-sm">Catalog 快照</text><text x="646" y="98" class="body-sm">每次调用复核禁用</text>
+    <rect x="832" width="188" height="144" class="pill-blue"/>
+    <text x="854" y="38" class="box-title-blue">Input Tools</text>
+    <text x="854" y="72" class="body-sm">list / get / read</text><text x="854" y="98" class="body-sm">search / view</text>
+  </g>
+
+  <!-- External dependencies -->
+  <rect x="3330" y="188" width="390" height="1508" class="boundary"/>
+  <text x="3525" y="240" text-anchor="middle" class="section">外部依赖</text>
+  <text x="3525" y="273" text-anchor="middle" class="tiny">平台之外的输入、模型与工具服务</text>
+
+  <rect x="3368" y="316" width="314" height="270" class="inner"/>
+  <g transform="translate(3492 360)">
+    <circle cx="32" cy="32" r="30" class="icon-blue"/>
+    <path d="M2 32 H62 M32 2 C17 16 17 48 32 62 M32 2 C47 16 47 48 32 62" class="icon-blue"/>
+  </g>
+  <text x="3525" y="450" text-anchor="middle" class="box-title-blue">模型 Provider</text>
+  <text x="3400" y="492" class="body-sm">OpenAI-compatible API</text>
+  <text x="3400" y="522" class="body-sm">模型调用 · Token 用量</text>
+  <text x="3400" y="552" class="tiny">TGA_LLM_BASE_URL · 可选视觉</text>
+
+  <rect x="3368" y="626" width="314" height="270" class="inner"/>
+  <g transform="translate(3490 666)">
+    <rect width="68" height="52" rx="8" class="icon-stroke"/>
+    <path d="M14 17 H54 M14 29 H54 M14 41 H44" class="icon-stroke"/>
+    <circle cx="12" cy="72" r="5" fill="#4d3bc3"/><circle cx="34" cy="72" r="5" fill="#4d3bc3"/><circle cx="56" cy="72" r="5" fill="#4d3bc3"/>
+  </g>
+  <text x="3525" y="772" text-anchor="middle" class="box-title">MCP 服务</text>
+  <text x="3400" y="814" class="body-sm">Docker STDIO · Remote HTTP / SSE</text>
+  <text x="3400" y="844" class="body-sm">工具能力扩展 · Catalog 发现</text>
+  <text x="3400" y="874" class="tiny">只读 /artifacts 挂载策略</text>
+
+  <rect x="3368" y="936" width="314" height="270" class="inner"/>
+  <g transform="translate(3492 982)">
+    <path d="M5 10 H60 V62 H5 Z M17 26 H48 M17 40 H48 M17 54 H38" class="icon-blue"/>
+    <path d="M30 62 V76 M14 76 H46" class="icon-blue"/>
+  </g>
+  <text x="3525" y="1080" text-anchor="middle" class="box-title-blue">授权目标</text>
+  <text x="3400" y="1122" class="body-sm">HTTP / HTTPS 目标</text>
+  <text x="3400" y="1152" class="body-sm">源码、二进制、日志、样本</text>
+  <text x="3400" y="1182" class="tiny">范围、速率、并发、进程策略</text>
+
+  <rect x="3368" y="1246" width="314" height="392" class="inner-amber"/>
+  <text x="3525" y="1292" text-anchor="middle" class="box-title">开发观测重点</text>
+  <text x="3400" y="1336" class="body-sm">• 模型请求与工具回合</text>
+  <text x="3400" y="1368" class="body-sm">• Tool 延迟 / 错误 / 重试</text>
+  <text x="3400" y="1400" class="body-sm">• Artifact 来源与检索</text>
+  <text x="3400" y="1432" class="body-sm">• 门禁拒绝与完成原因</text>
+  <text x="3400" y="1476" class="tiny">建议优先接入：</text>
+  <text x="3400" y="1506" class="tiny">GET session · GET events · SSE</text>
+  <text x="3400" y="1534" class="tiny">context_metrics · report export</text>
+  <text x="3400" y="1580" class="tiny">所有敏感字段在事件与报告中脱敏</text>
+
+  <!-- Non-crossing horizontal flows: each row uses its own lane -->
+  <path d="M1112 412 H1250" class="line"/>
+  <path d="M1112 666 H1250" class="line"/>
+  <path d="M1112 930 H1250" class="line"/>
+  <path d="M1112 1198 H1250" class="line"/>
+  <path d="M1112 1480 H1250" class="line"/>
+  <path d="M1940 546 H2080" class="line"/>
+  <path d="M1940 820 H2080" class="line"/>
+  <path d="M1940 1150 H2080" class="line"/>
+  <path d="M1940 1420 H2080" class="line"/>
+  <path d="M3192 450 H3330" class="line-back"/>
+  <path d="M3192 820 H3330" class="line-back"/>
+  <path d="M3192 1080 H3330" class="line-back"/>
+
+  <!-- Bottom protocol and durable state -->
+  <rect x="1250" y="1490" width="690" height="184" class="inner-purple"/>
+  <text x="1595" y="1536" text-anchor="middle" class="box-title">通信协议与数据契约</text>
+  <g transform="translate(1330 1570)">
+    <rect width="210" height="58" class="pill-purple"/><text x="105" y="36" text-anchor="middle" class="chip">REST / SSE</text>
+    <rect x="230" width="210" height="58" class="pill-purple"/><text x="335" y="36" text-anchor="middle" class="chip">AgentEvent</text>
+    <rect x="460" width="210" height="58" class="pill-purple"/><text x="565" y="36" text-anchor="middle" class="chip">Artifact 引用</text>
+  </g>
+  <path d="M1595 1440 V1490" class="line-dash"/>
+  <path d="M1595 1674 V1772" class="line-dash"/>
+  <text x="1640" y="1742" class="note">统一事件协议连接 API、UI、会话与报告</text>
+
+  <rect x="120" y="1840" width="3600" height="230" class="boundary"/>
+  <text x="170" y="1888" class="section">开发观测面</text>
+  <text x="170" y="1922" class="tiny">建议围绕一次任务回答：发生了什么、为什么发生、证据在哪里、下一步该改哪里</text>
+  <g transform="translate(170 1954)">
+    <rect width="500" height="76" class="pill-blue"/><text x="24" y="32" class="metric">① 顺序事件</text><text x="24" y="58" class="tiny">AgentEvent seq · SSE 游标 · 回放</text>
+    <rect x="540" width="500" height="76" class="pill-blue"/><text x="564" y="32" class="metric">② Agent 上下文</text><text x="564" y="58" class="tiny">Context Metrics · Token · Artifact retrieval</text>
+    <rect x="1080" width="500" height="76" class="pill-amber"/><text x="1104" y="32" class="metric">③ 治理决策</text><text x="1104" y="58" class="tiny">Policy · Observer · Gate rejection · Retry</text>
+    <rect x="1620" width="500" height="76" class="pill-blue"/><text x="1644" y="32" class="metric">④ 工具执行</text><text x="1644" y="58" class="tiny">Capability · latency · error · scope</text>
+    <rect x="2160" width="500" height="76" class="pill-blue"/><text x="2184" y="32" class="metric">⑤ 证据链</text><text x="2184" y="58" class="tiny">Artifact ownership · provenance · index</text>
+    <rect x="2700" width="660" height="76" class="pill-amber"/><text x="2724" y="32" class="metric">⑥ 完成与报告</text><text x="2724" y="58" class="tiny">Completion Validator · report export · limitations</text>
+  </g>
+  <text x="170" y="2070" class="tiny">关键原则：审计 Transcript 不删除；模型上下文有界；Observer 只能建议；GET 查询只读；报告导出显式审计。</text>
+  <text x="3180" y="2070" class="tiny">TGA schema v4 · 中文架构图 · 2026-07-23</text>
+
+  <!-- Flow numbers -->
+  <g transform="translate(1180 412)"><circle r="18" fill="#2369df"/><text class="number">1</text></g>
+  <g transform="translate(1180 666)"><circle r="18" fill="#2369df"/><text class="number">2</text></g>
+  <g transform="translate(1180 930)"><circle r="18" fill="#2369df"/><text class="number">3</text></g>
+  <g transform="translate(1180 1198)"><circle r="18" fill="#2369df"/><text class="number">4</text></g>
+  <g transform="translate(2010 546)"><circle r="18" fill="#2369df"/><text class="number">5</text></g>
+  <g transform="translate(2010 820)"><circle r="18" fill="#2369df"/><text class="number">6</text></g>
+  <g transform="translate(2010 1150)"><circle r="18" fill="#2369df"/><text class="number">7</text></g>
+  <g transform="translate(2010 1420)"><circle r="18" fill="#2369df"/><text class="number">8</text></g>
+</svg>

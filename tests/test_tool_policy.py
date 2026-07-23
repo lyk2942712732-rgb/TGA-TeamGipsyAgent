@@ -6,7 +6,7 @@ def test_active_tool_blocked_in_passive():
     task = TGATask(
         id="task_1",
         name="audit",
-        mode="web_audit",
+        mode="penetration_test",
         target="http://127.0.0.1:8080",
         scope=["127.0.0.1:8080"],
         intensity="passive",
@@ -21,7 +21,7 @@ def test_out_of_scope_tool_blocked():
     task = TGATask(
         id="task_1",
         name="audit",
-        mode="web_audit",
+        mode="penetration_test",
         target="http://127.0.0.1:8080",
         scope=["127.0.0.1:8080"],
         intensity="active",

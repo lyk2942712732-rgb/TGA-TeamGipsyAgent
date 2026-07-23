@@ -3,6 +3,7 @@ import {
   Background,
   Controls,
   MarkerType,
+  PanOnScrollMode,
   Position,
   ReactFlow,
   ReactFlowProvider,
@@ -21,6 +22,7 @@ import type {
   RuntimeEvent,
   RuntimeSnapshot,
 } from "../../runtime/event-types";
+import { MODE_PROFILES } from "../../modes";
 
 type FlowKind = "challenge" | "hypothesis" | "memory" | "manager" | "solver" | "action" | "artifact";
 type FlowData = {
@@ -134,6 +136,7 @@ export function AttackFlow({ snapshot, mode = "runtime" }: { snapshot: RuntimeSn
       />
       <GraphPane
         className={mobilePane === "topology" ? "mobile-active" : ""}
+        layout="horizontal-pulse"
         eyebrow="Agent runtime"
         title="Session & tools"
         subtitle={toolCallSummary(playbackSnapshot)}
@@ -163,30 +166,54 @@ export function AttackFlow({ snapshot, mode = "runtime" }: { snapshot: RuntimeSn
   </section>;
 }
 
-function GraphPane({ eyebrow, title, subtitle, nodes, edges, onNodeClick, action, className = "" }: {
+function GraphPane({ eyebrow, title, subtitle, nodes, edges, onNodeClick, action, className = "", layout = "fit" }: {
   eyebrow: string; title: string; subtitle: string; nodes: FlowNode[]; edges: Edge[];
   onNodeClick: (event: React.MouseEvent, node: FlowNode) => void; action?: ReactNode; className?: string;
+  layout?: "fit" | "horizontal-pulse";
 }) {
-  return <section className={`graph-pane ${className}`}>
+  return <section className={`graph-pane ${layout === "horizontal-pulse" ? "horizontal-pulse" : ""} ${className}`} data-flow-layout={layout}>
     <header className="workbench-pane-head"><div><span className="eyebrow">{eyebrow}</span><h2>{title}</h2><small>{subtitle}</small></div>{action}</header>
     <div className="flow-stage">
-      {nodes.length ? <ReactFlowProvider><FlowCanvas nodes={nodes} edges={edges} onNodeClick={onNodeClick} /></ReactFlowProvider> : <div className="workbench-empty">Waiting for runtime state.</div>}
+      {layout === "horizontal-pulse" ? <div className="pulse-direction" aria-hidden="true"><span>Earlier</span><i /><span>Latest</span></div> : null}
+      {nodes.length ? <ReactFlowProvider><FlowCanvas nodes={nodes} edges={edges} onNodeClick={onNodeClick} layout={layout} /></ReactFlowProvider> : <div className="workbench-empty">Waiting for runtime state.</div>}
     </div>
   </section>;
 }
 
-function FlowCanvas({ nodes, edges, onNodeClick }: { nodes: FlowNode[]; edges: Edge[]; onNodeClick: (event: React.MouseEvent, node: FlowNode) => void }) {
+function FlowCanvas({ nodes, edges, onNodeClick, layout }: { nodes: FlowNode[]; edges: Edge[]; onNodeClick: (event: React.MouseEvent, node: FlowNode) => void; layout: "fit" | "horizontal-pulse" }) {
   const initialized = useNodesInitialized();
   const { fitView } = useReactFlow();
   const layoutKey = nodes.map((item) => `${item.id}:${item.position.x}:${item.position.y}`).join("|");
 
   useEffect(() => {
     if (!initialized) return;
-    const frame = window.requestAnimationFrame(() => { void fitView({ padding: .22, duration: 180 }); });
+    const frame = window.requestAnimationFrame(() => {
+      if (layout === "horizontal-pulse") {
+        // Keep cards readable and follow the newest pulse instead of shrinking
+        // an arbitrarily long session into one tiny viewport.
+        const focus = nodes.length > 5 ? nodes.slice(-5) : nodes;
+        void fitView({ nodes: focus, padding: .16, duration: 220, minZoom: .52, maxZoom: .9 });
+      } else {
+        void fitView({ padding: .22, duration: 180 });
+      }
+    });
     return () => window.cancelAnimationFrame(frame);
-  }, [fitView, initialized, layoutKey]);
+  }, [fitView, initialized, layout, layoutKey, nodes]);
 
-  return <ReactFlow nodes={nodes} edges={edges} nodeOrigin={[0, .5]} onNodeClick={onNodeClick} fitView fitViewOptions={{ padding: .22 }} minZoom={.18} maxZoom={1.8} proOptions={{ hideAttribution: true }}>
+  return <ReactFlow
+    nodes={nodes}
+    edges={edges}
+    nodeOrigin={[0, .5]}
+    onNodeClick={onNodeClick}
+    fitView
+    fitViewOptions={{ padding: .22 }}
+    minZoom={layout === "horizontal-pulse" ? .42 : .18}
+    maxZoom={1.8}
+    panOnScroll={layout === "horizontal-pulse"}
+    panOnScrollMode={PanOnScrollMode.Horizontal}
+    zoomOnScroll={layout !== "horizontal-pulse"}
+    proOptions={{ hideAttribution: true }}
+  >
     <Background color="#d9dde7" gap={20} size={1} />
     <Controls showInteractive={false} />
   </ReactFlow>;
@@ -400,7 +427,10 @@ function buildKnowledgeGraph(snapshot: RuntimeSnapshot): { nodes: FlowNode[]; ed
   const hypotheses = prioritizedHypotheses(snapshot.board.hypotheses).slice(0, 4);
   const memories = snapshot.board.memory.slice(-4).reverse();
   const span = Math.max(hypotheses.length, memories.length, 1);
-  const nodes: FlowNode[] = [node("task", "challenge", 20, (span - 1) * 58, snapshot.task.name, `${snapshot.challenge.status} · ${snapshot.task.mode}`, snapshot.task.target, "running")];
+  const taskMeta = snapshot.task.mode === "ctf"
+    ? `${snapshot.challenge.status} · ${MODE_PROFILES.ctf.label}`
+    : `${snapshot.session.status} · ${MODE_PROFILES[snapshot.task.mode].label}`;
+  const nodes: FlowNode[] = [node("task", "challenge", 20, (span - 1) * 58, snapshot.task.name, taskMeta, snapshot.task.target, "running")];
   const edges: Edge[] = [];
   hypotheses.forEach((item, index) => {
     nodes.push(node(`hyp:${item.id}`, "hypothesis", 340, index * 115, item.statement, `${item.attack_class} · ${item.status} · ${Math.round(item.confidence * 100)}%`, hypothesisDetail(item), toneForHypothesis(item), "flow-hypothesis"));
@@ -415,32 +445,39 @@ function buildKnowledgeGraph(snapshot: RuntimeSnapshot): { nodes: FlowNode[]; ed
   return { nodes, edges };
 }
 
-function buildTopologyGraph(snapshot: RuntimeSnapshot, events: RuntimeEvent[]): { nodes: FlowNode[]; edges: Edge[] } {
-  const actionsPerRow = 2;
-  let laneOffset = 0;
-  const lanes = snapshot.solvers.map((solver, index) => {
-    const actions = snapshot.actions.filter((item) => item.solver_id === solver.id || (!item.solver_id && index === 0));
-    const height = Math.max(115, Math.ceil(Math.max(actions.length, 1) / actionsPerRow) * 118);
-    const lane = { solver, actions, y: laneOffset, height };
-    laneOffset += height + 36;
-    return lane;
+export function buildTopologyGraph(snapshot: RuntimeSnapshot, events: RuntimeEvent[]): { nodes: FlowNode[]; edges: Edge[] } {
+  const eventOrder = new Map<string, number>();
+  events.forEach((event) => {
+    const actionId = event.payload.action_id;
+    if (actionId && !eventOrder.has(actionId)) eventOrder.set(actionId, event.seq);
   });
-  const totalHeight = Math.max(115, laneOffset - 36);
-  const nodes: FlowNode[] = [node("manager", "manager", 20, (totalHeight - 80) / 2, "Agent Session", `${snapshot.session.status} · turn ${snapshot.session.turn_count}/${snapshot.session.max_turns}`, snapshot.session.stop_reason || "Hosts the persistent model transcript and lifecycle controls.", "manager")];
+  const orderedActions = [...snapshot.actions].sort((left, right) => {
+    const leftSeq = eventOrder.get(left.id) ?? Number.MAX_SAFE_INTEGER;
+    const rightSeq = eventOrder.get(right.id) ?? Number.MAX_SAFE_INTEGER;
+    if (leftSeq !== rightSeq) return leftSeq - rightSeq;
+    return (left.created_at ?? "").localeCompare(right.created_at ?? "") || snapshot.actions.indexOf(left) - snapshot.actions.indexOf(right);
+  });
+  const laneHeight = 230;
+  const lanes = snapshot.solvers.map((solver, index) => ({
+    solver,
+    actions: orderedActions.filter((item) => item.solver_id === solver.id || (!item.solver_id && index === 0)),
+    centerY: index * laneHeight + 125,
+  }));
+  const managerY = lanes.length ? (lanes[0]!.centerY + lanes[lanes.length - 1]!.centerY) / 2 : 125;
+  const nodes: FlowNode[] = [node("manager", "manager", 20, managerY, "Agent Session", `${snapshot.session.status} · turn ${snapshot.session.turn_count}/${snapshot.session.max_turns}`, snapshot.session.stop_reason || "Hosts the persistent model transcript and lifecycle controls.", "manager")];
   const edges: Edge[] = [];
-  lanes.forEach(({ solver, actions, y, height }) => {
-    const solverY = y + (height - 80) / 2;
-    nodes.push(node(`solver:${solver.id}`, "solver", 350, solverY, `${roleLabels[solver.role] ?? solver.role} solver`, `${solver.status} · ${solver.model_name || "model"}`, solver.id, solver.status === "running" ? "running" : "neutral"));
+  lanes.forEach(({ solver, actions, centerY }) => {
+    nodes.push(node(`solver:${solver.id}`, "solver", 350, centerY, `${roleLabels[solver.role] ?? solver.role} solver`, `${solver.status} · ${solver.model_name || "model"}`, solver.id, solver.status === "running" ? "running" : "neutral"));
     edges.push(edge(`manager:${solver.id}`, "manager", `solver:${solver.id}`, solver.status === "running" ? "running" : "neutral", true));
     if (actions.length) {
       actions.forEach((action, actionIndex) => {
-        const row = Math.floor(actionIndex / actionsPerRow);
-        const positionInRow = actionIndex % actionsPerRow;
-        const column = row % 2 === 0 ? positionInRow : actionsPerRow - 1 - positionInRow;
+        // A repeating up/down pulse creates one readable left-to-right signal
+        // while retaining a separate horizontal lane for each Solver.
+        const pulse = [0, -82, 64, 0, -46, 76, 0, -62, 48, 0];
         const actionId = `action:${action.id}`;
         const confirmedFlag = snapshot.flags.find((flag) => action.artifact_ids.includes(flag.evidence_artifact_id));
         const tone = confirmedFlag ? "flag" : toneForAction(action);
-        nodes.push(node(actionId, "action", 690 + column * 330, y + row * 118, `${actionIndex + 1}. ${actionRequestLabel(action)}`, actionCardMeta(action), actionDetail(action), tone, "flow-action", action.artifact_ids[0], action.id, confirmedFlag?.value, requestPayload(action)));
+        nodes.push(node(actionId, "action", 690 + actionIndex * 320, centerY + pulse[actionIndex % pulse.length]!, `${actionIndex + 1}. ${actionRequestLabel(action)}`, actionCardMeta(action), actionDetail(action), tone, "flow-action", action.artifact_ids[0], action.id, confirmedFlag?.value, requestPayload(action)));
         const previousId = actionIndex ? `action:${actions[actionIndex - 1]!.id}` : `solver:${solver.id}`;
         edges.push(edge(`tool-chain:${action.id}`, previousId, actionId, tone, true));
       });
@@ -449,7 +486,7 @@ function buildTopologyGraph(snapshot: RuntimeSnapshot, events: RuntimeEvent[]): 
       if (latest) nodes.find((item) => item.id === `solver:${solver.id}`)!.data.detail = `${eventTitle(latest.type)}\n${eventSummary(latest, snapshot)}`;
     }
   });
-  if (!snapshot.solvers.length) nodes.push(node("waiting", "solver", 350, 0, "Waiting for solver", "not started", "The Agent Session has not started its Solver yet.", "neutral"));
+  if (!snapshot.solvers.length) nodes.push(node("waiting", "solver", 350, 125, "Waiting for solver", "not started", "The Agent Session has not started its Solver yet.", "neutral"));
   return { nodes, edges };
 }
 
@@ -464,12 +501,12 @@ function node(id: string, kind: FlowKind, x: number, y: number, title: string, m
 }
 
 function edge(id: string, source: string, target: string, tone: string, process = false): Edge {
-  return { id, source, target, type: "smoothstep", className: `runtime-flow-edge ${tone} ${process ? "process" : ""}`, markerEnd: { type: MarkerType.ArrowClosed, width: 15, height: 15 }, animated: process || tone === "running" };
+  return { id, source, target, type: process ? "step" : "smoothstep", className: `runtime-flow-edge ${tone} ${process ? "process" : ""}`, markerEnd: { type: MarkerType.ArrowClosed, width: 15, height: 15 }, animated: process || tone === "running" };
 }
 
 function eventInspector(event: RuntimeEvent, snapshot: RuntimeSnapshot): Inspector {
   const action = event.payload.action_id ? snapshot.actions.find((item) => item.id === event.payload.action_id) : undefined;
-  const artifactId = event.payload.evidence_artifact_id || event.payload.artifact_ids?.[0] || action?.artifact_ids[0];
+  const artifactId = event.payload.evidence_artifact_id || event.payload.artifact_id || event.payload.artifact_ids?.[0] || action?.artifact_ids[0];
   const confirmedFlag = snapshot.flags.find((flag) => flag.evidence_artifact_id === artifactId);
   return { title: eventTitle(event.type), eyebrow: `Event #${event.seq}`, meta: `${solverLabel(snapshot, event.solver_id)} · ${event.created_at}`, detail: eventSummary(event, snapshot), artifactId, actionId: action?.id, flagValue: confirmedFlag?.value || (event.type === "FLAG_FOUND" ? event.payload.value : undefined), requestPayload: action ? requestPayload(action) : undefined };
 }
@@ -484,11 +521,16 @@ function eventSummary(event: RuntimeEvent, snapshot: RuntimeSnapshot): string {
   const action = event.payload.action_id ? snapshot.actions.find((item) => item.id === event.payload.action_id) : undefined;
   if (event.type === "MESSAGE_START") return "Solver is generating the next turn.";
   if (event.type === "MESSAGE_END") return event.payload.content || "Solver message completed.";
+  if (event.type === "TOOL_EXECUTION_START" && event.payload.tool_kind === "mcp") return `${event.payload.mcp_server}.${event.payload.mcp_method} started · ${clip(JSON.stringify(event.payload.arguments ?? {}), 180)} · catalog ${event.payload.catalog_version || "unknown"}.`;
+  if (event.type === "TOOL_EXECUTION_END" && event.payload.tool_kind === "mcp") return [`${event.payload.mcp_server}.${event.payload.mcp_method} · ${event.payload.status || "finished"}`, event.payload.duration_ms != null ? `${event.payload.duration_ms} ms` : "", event.payload.truncated ? "large result stored as Artifact" : "", event.payload.error?.message || ""].filter(Boolean).join(" · ");
   if (event.type === "TOOL_EXECUTION_START") return `${event.payload.tool_name || "Tool"} started.`;
   if (event.type === "TOOL_EXECUTION_END") return event.payload.summary || `${event.payload.tool_name || "Tool"} · ${event.payload.status || "finished"}`;
   if (event.type === "AGENT_ERROR") return event.payload.message || event.payload.reason || "Agent Session error.";
   if (event.type === "AGENT_FINISHED") return event.payload.summary || "Agent Session finished.";
   if (event.type === "FLAG_FOUND") return event.payload.value || "Solver found a result.";
+  if (event.type === "FLAG_CANDIDATE") return `${event.payload.value || "Candidate flag"} · waiting for Artifact provenance gate.`;
+  if (event.type === "OBSERVER_DIRECTIVE") return String(event.payload.steer_message || "Observer emitted a bounded correction.");
+  if (event.type === "ACTION_VALIDATION_FAILED" || event.type === "SEMANTIC_REPEAT_BLOCKED") return event.payload.reason || "The Manager rejected this action before execution.";
   if (event.type === "ACTION_PROPOSED") return `${event.payload.capability || action?.capability || "Action"}: 已计划，未执行。${event.payload.rationale || action?.rationale || ""}`;
   if (event.type === "ACTION_APPROVED") return `${action?.capability || event.payload.capability || "Action"} 已通过策略批准，等待执行。`;
   if (event.type === "ACTION_STARTED") return `${action?.capability || "Action"} started${action?.target ? ` · ${action.target}` : ""}`;
@@ -509,8 +551,8 @@ function matchesFilter(event: RuntimeEvent, filter: TimelineFilter) {
   return event.type === "GATE_REJECTED" || event.type === "RESULT_REJECTED" || event.type.endsWith("FAILED") || Boolean(event.payload.error);
 }
 
-function eventTone(event: RuntimeEvent) { if (event.type === "AGENT_ERROR" || event.type === "GATE_REJECTED" || event.type === "RESULT_REJECTED" || event.type.endsWith("FAILED")) return "failed"; if (event.type === "MESSAGE_START" || event.type === "TOOL_EXECUTION_START" || event.type === "ACTION_STARTED") return "running"; if (event.type === "TOOL_EXECUTION_END" || event.type === "AGENT_FINISHED" || event.type === "FLAG_FOUND" || event.type === "ACTION_FINISHED" || event.type.includes("CONFIRMED")) return "success"; if (event.type.startsWith("OBSERVER")) return "observer"; if (event.type === "MANAGER_DECISION") return "manager"; return "neutral"; }
-function eventTitle(type: string) { return ({ SESSION_STARTED: "Session started", SESSION_STOPPED: "Session stopped", SESSION_CONTROLLED: "Control accepted", SOLVER_STARTED: "Solver started", SOLVER_STOPPED: "Solver stopped", MESSAGE_START: "Solver thinking", MESSAGE_END: "Solver message", TOOL_EXECUTION_START: "Tool started", TOOL_EXECUTION_END: "Tool result", AGENT_ERROR: "Agent error", AGENT_FINISHED: "Agent finished", FLAG_FOUND: "Result found", HYPOTHESIS_CREATED: "Idea created", HYPOTHESIS_UPDATED: "Idea updated", HYPOTHESIS_STALLED: "Idea stalled", SKILLS_LOADED: "Skills loaded", PLAN_EMPTY: "Empty plan", MANAGER_DECISION: "Manager decision", MEMORY_UPSERTED: "Context updated", ACTION_PROPOSED: "Action proposed", ACTION_APPROVED: "Action approved", ACTION_STARTED: "Tool started", ACTION_FINISHED: "Tool result", RESULT_REJECTED: "Result rejected", OBSERVER_REVIEWED: "Observer review", OBSERVER_FAILED: "Observer failed", GATE_REJECTED: "Gate rejected", FLAG_CONFIRMED: "Flag confirmed", FINDING_CONFIRMED: "Finding confirmed", USER_HINT: "User hint", BOARD_SNAPSHOT: "Board checkpoint" } as Record<string, string>)[type] || type.split("_").join(" ").toLowerCase(); }
+function eventTone(event: RuntimeEvent) { if (event.type === "TOOL_EXECUTION_END" && event.payload.status === "failed") return "failed"; if (event.type === "AGENT_ERROR" || event.type === "GATE_REJECTED" || event.type === "RESULT_REJECTED" || event.type === "ACTION_VALIDATION_FAILED" || event.type === "SEMANTIC_REPEAT_BLOCKED" || event.type.endsWith("FAILED")) return "failed"; if (event.type === "MESSAGE_START" || event.type === "TOOL_EXECUTION_START" || event.type === "ACTION_STARTED") return "running"; if (event.type === "TOOL_EXECUTION_END" || event.type === "AGENT_FINISHED" || event.type === "FLAG_FOUND" || event.type === "ACTION_FINISHED" || event.type.includes("CONFIRMED")) return "success"; if (event.type.startsWith("OBSERVER")) return "observer"; if (event.type === "MANAGER_DECISION") return "manager"; return "neutral"; }
+function eventTitle(type: string) { return ({ SESSION_STARTED: "Session started", SESSION_STOPPED: "Session stopped", SESSION_CONTROLLED: "Control accepted", SOLVER_STARTED: "Solver started", SOLVER_STOPPED: "Solver stopped", MESSAGE_START: "Model plan", MESSAGE_END: "Model plan result", TOOL_EXECUTION_START: "Actual tool started", TOOL_EXECUTION_END: "Actual tool result", AGENT_ERROR: "Agent error", AGENT_FINISHED: "Agent finished", AGENT_TURN_ENDED: "Agent turn ended", CONTINUATION_TRIGGERED: "Continuation triggered", FINISH_ATTEMPTED: "Completion submitted", FINISH_REJECTED: "Completion rejected", FINISH_ACCEPTED: "Completion accepted", FLAG_FOUND: "Legacy result found", FLAG_CANDIDATE: "Flag candidate", HYPOTHESIS_CREATED: "Idea created", HYPOTHESIS_UPDATED: "Idea updated", HYPOTHESIS_STALLED: "Idea stalled", SKILLS_LOADED: "Skills loaded", PLAN_EMPTY: "Empty plan", MANAGER_DECISION: "Manager decision", MEMORY_UPSERTED: "Context updated", ACTION_PROPOSED: "Action proposed", ACTION_APPROVED: "Action approved", ACTION_STARTED: "Tool started", ACTION_FINISHED: "Tool result", ACTION_VALIDATION_FAILED: "System rejected action", SEMANTIC_REPEAT_BLOCKED: "Repeat blocked", RESULT_REJECTED: "Result rejected", OBSERVER_REVIEWED: "Observer review", OBSERVER_DIRECTIVE: "Observer directive", OBSERVER_PATCH_APPLIED: "Observer patch applied", OBSERVER_FAILED: "Observer failed", GATE_REJECTED: "Gate rejected", FLAG_CONFIRMED: "Flag confirmed", FINDING_CONFIRMED: "Finding confirmed", USER_HINT: "User hint", HINT_EXTRACTED: "Hint extracted", HINT_EXTRACTION_FAILED: "Hint extraction failed", STRATEGY_CARD_CREATED: "StrategyCard created", STRATEGY_STEP_UPDATED: "Strategy step updated", HTTP_SESSION_STATUS: "HTTP session metadata", CONTEXT_BUILT: "Working context built", ARTIFACT_RETRIEVED: "Artifact segment retrieved", BOARD_SNAPSHOT: "Board checkpoint" } as Record<string, string>)[type] || type.split("_").join(" ").toLowerCase(); }
 function solverLabel(snapshot: RuntimeSnapshot, id?: string | null) { if (!id) return "Manager"; const solver = snapshot.solvers.find((item) => item.id === id); return solver ? roleLabels[solver.role] || solver.role : id.slice(0, 18); }
 function prioritizedHypotheses(items: Hypothesis[]) { const rank = { testing: 0, pending: 1, verified: 2, inconclusive: 3, rejected: 4, superseded: 5 }; return [...items].sort((a, b) => rank[a.status] - rank[b.status] || b.confidence - a.confidence); }
 function hypothesisDetail(item: Hypothesis) { return [`Entry: ${item.entry_point}`, `Rationale: ${item.rationale || "—"}`, `Next: ${item.next_test || "—"}`, item.last_result ? `${item.status === "rejected" ? "失败边界" : "Latest"}: ${item.last_result}` : "", item.owner_solver_id ? `Owner: ${item.owner_solver_id}` : ""].filter(Boolean).join("\n\n"); }
@@ -525,9 +567,13 @@ function actionDetail(item: RuntimeAction) {
     item.error?.message ? `ERROR\n${item.error.message}` : "",
   ].filter(Boolean).join("\n\n");
 }
-function isMcpAction(item: RuntimeAction) { return item.capability === "tool.invoke" || item.capability === "tga_tool_invoke"; }
+function isMcpAction(item: RuntimeAction) { return item.capability.startsWith("mcp__") || item.capability === "tool.invoke" || item.capability === "tga_tool_invoke"; }
 function toolCallTitle(item: RuntimeAction) {
   if (!isMcpAction(item)) return item.capability;
+  if (item.capability.startsWith("mcp__")) {
+    const [, server = "MCP", method = "tool"] = item.capability.split("__");
+    return `${server}:${method}`;
+  }
   const server = String(item.arguments?.tool_id || item.arguments?.tool || "MCP");
   const method = String(item.arguments?.tool_method || item.arguments?.mcp_tool || item.arguments?.tool_name || "tool");
   return `${server}:${method}`;
@@ -536,6 +582,7 @@ function requestMethod(item: RuntimeAction) {
   return String(item.arguments?.method || (item.capability === "http.request" ? "GET" : toolCallTitle(item))).toUpperCase();
 }
 function requestPayload(item: RuntimeAction) {
+  if (item.capability.startsWith("mcp__")) return JSON.stringify(item.arguments ?? {}, null, 2);
   const value = item.arguments?.body ?? item.arguments?.data ?? item.arguments?.payload;
   return typeof value === "string" ? formatRequestPayload(value) : value == null ? "" : String(value);
 }

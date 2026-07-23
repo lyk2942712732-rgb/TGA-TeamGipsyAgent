@@ -32,20 +32,25 @@ $env:VITE_TGA_API_BASE = "https://api.example.com"
 tga web --host 0.0.0.0
 ```
 
-项目内的 `mcp-security-hub/` 会被自动发现，但 Docker 镜像**不会**由 `tga go` 自动构建。只有需要实际调用 MCP 工具时，才安装 Docker Desktop 并执行：
+MCP 使用显式 `config/mcp.json` allowlist。TGA 不扫描本机镜像，也不依赖
+`mcp-security-hub` 源码目录；已构建的 Docker 镜像可直接写入配置并通过
+标准 `initialize` / `tools/list` 动态发现能力。
 
-```powershell
-git clone https://github.com/FuzzingLabs/mcp-security-hub.git
-docker compose -f .\mcp-security-hub\docker-compose.yml build
-```
+“能力与 MCP”页面是 MCP 的唯一管理入口，通过四步向导管理 Docker STDIO 与
+MCP Streamable HTTP 服务。STDIO 可拖入 `docker save` 镜像归档或选择已有本地
+镜像；源码压缩包和 Dockerfile 不会被执行。新建 Session 页面不选择、授权或
+测试 MCP。上传方不能传入任意 Docker 参数、挂载或环境变量。
 
 ## 核心运行方式
 
-- 新建 Session 时只需目标、任务目标和可选 Hint/Flag 格式。
-- `target` 是该 Session 的目标契约，不再单独配置 scope、执行强度或主动探测开关。
+- 新建 Session 的任务信息只来自任务文件、可选 Hint 文本和 Hint 附件；URL、仓库地址、账号或题面文字应写入 Hint 或文件。
+- 文件先流式上传为临时 asset，创建成功后归档到 `runs/<session>/workspace/inputs/task` 或 `inputs/hints`。后端生成存储名、检测 MIME、限制数量/大小并记录 SHA-256。
+- 网络、文件系统、进程、速率、并发、状态变更与处置边界仍由 `executionPolicy` 独立控制，Hint 附件不会扩大授权。
+- 全局已配置、启用且已发现或可达的 MCP 自动进入新 Session 的能力快照，不存在任务级 MCP 复选框或 ACL。新增 MCP 只对之后创建的 Session 可见；全局禁用会立即阻止已有 Session 的后续调用。
+- Hint 会先转成带来源的候选 StrategyCard；工具动作需关联策略步骤、预期证据和风险信息。
 - Solver 使用原生 function calling 连续调用 HTTP、workspace 与 MCP 工具。
 - assistant `tool_calls` 与匹配的 tool result 保存在同一持久 transcript 中，支持恢复。
-- Runtime 通过顺序事件展示模型消息、工具开始/结束、错误和最终结果。
+- Runtime 通过顺序事件区分模型计划、真实工具执行、Manager 拒绝、Observer 建议和最终确认。
 
 ## 项目结构
 
@@ -54,8 +59,24 @@ docker compose -f .\mcp-security-hub\docker-compose.yml build
 - `tga/capabilities/`：HTTP、workspace 与 MCP 工具适配。
 - `apps/api/`：FastAPI v2 Runtime API。
 - `apps/web/`：React Runtime 控制台。
-- `mcp-security-hub/`：随项目放置的 MCP 工具目录。
-- `runs/`：本地任务状态、Solver transcript、workspace、artifact 与报告（运行时生成）。
+- `config/mcp.json`、`tga/tools/mcp_*`：显式 MCP allowlist、动态发现、策略与 transport。
+- `runs/`：本地任务状态、Solver transcript、Session workspace、artifact 与报告（运行时生成）。
+
+Schema-v4 Session 使用一套持久 workspace：
+
+```text
+runs/<session-id>/workspace/
+  inputs/task/       # 不可变任务文件
+  inputs/hints/      # 不可变 Hint 附件
+  artifacts/         # 派生结果
+  evidence/
+  tool-results/
+  state/             # 输入清单与弃用字段审计
+```
+
+Agent 和本地 Docker MCP 看到相同的 `/workspace/...` 路径。远程 HTTP MCP 不会
+被标记为已挂载本地目录，只有协议显式传输内容时才能接收文件。支持视觉的模型
+在首轮收到真实 `image_url` content block；文本模型收到可审计路径和图像分析指引。
 
 ## 安装
 
@@ -88,39 +109,55 @@ tga web
 
 端口被占用时可自行指定，例如 `tga web --port 5174`。`tga go` 关闭窗口会停止本地服务。
 
-## MCP 工具目录
+## MCP 工具配置
 
-默认使用项目内的相对路径：
-
-```text
-TGA-TeamGipsyAgent/
-└── mcp-security-hub/
-```
-
-无需在代码或环境变量中填写 `C:\Users\...` 等机器相关绝对路径。仅当需要使用另一份 Hub 时才设置覆盖变量：
+复制 `config/mcp.example.json`，仅声明允许 TGA 启动的本地进程或 Docker
+镜像，然后设置配置路径：
 
 ```powershell
-$env:TGA_MCP_SECURITY_HUB_ROOT = 'D:\another\mcp-security-hub'
+$env:TGA_MCP_CONFIG_PATH = 'C:\path\to\mcp.json'
+python scripts\tga_mcp_catalog.py --config $env:TGA_MCP_CONFIG_PATH
+python scripts\tga_mcp_healthcheck.py --config $env:TGA_MCP_CONFIG_PATH
+python scripts\tga_mcp_smoke.py --config $env:TGA_MCP_CONFIG_PATH --server nmap --tool quick_scan --arguments '{"target":"127.0.0.1"}'
 ```
 
-查看当前项目内的 MCP 目录和镜像可用性：
-
-```powershell
-python scripts\tga_mcp_catalog.py --hub-root .\mcp-security-hub --summary
-python scripts\tga_mcp_healthcheck.py --hub-root .\mcp-security-hub
-```
-
-MCP 工具只有在目录中被发现且本机运行依赖可用时才会出现在 Agent 工具目录中。工具失败会作为匹配的 tool result 回到当前 Solver Session。
+发现到的每个 method 会作为 `mcp__<server>__<method>` 原生 function tool
+进入 AgentSession。宿主负责 schema、可见性、风险和资源策略；小结果保留
+原始 content blocks，大结果写入 Artifact 并由 `artifact.inspect` 分段读取。
+完整字段、安全默认值和刷新行为见 [docs/MCP_CONFIGURATION.md](docs/MCP_CONFIGURATION.md)。
 
 ## Runtime API 概览
 
 - `POST /api/v2/tasks`：创建任务、初始化 v2 Session，并异步调度 Runtime。
+- `POST /api/v2/input-uploads`、`DELETE /api/v2/input-uploads/{asset_id}`：流式暂存或删除待归属文件。
 - `GET /api/v2/tasks/{task_id}/session`：读取 Session 快照。
 - `GET /api/v2/tasks/{task_id}/events/stream`：按 `seq` 增量读取 SSE 事件。
 - `POST /api/v2/tasks/{task_id}/control`、`/hints`：控制 Session 或追加上下文。
-- `GET /api/v2/tasks/{task_id}/report`：生成并下载 Markdown 报告。
+- `GET /api/v2/tasks/{task_id}/report`：只读生成并下载 Markdown 报告，不落盘。
+- `POST /api/v2/tasks/{task_id}/report/export`：显式、可审计地导出报告文件。
 
 前端不直接执行工具；页面展示服务端 Session、transcript 投影和工具事件。
+
+新建请求的核心结构为：
+
+```json
+{
+  "name": "Session name",
+  "mode": "reverse_engineering",
+  "goal": "Analyze the supplied sample",
+  "modeOptions": {"mode": "reverse_engineering"},
+  "input": {
+    "taskFileIds": ["asset_..."],
+    "hintText": "optional",
+    "hintFileIds": []
+  },
+  "executionPolicy": {}
+}
+```
+
+`targetUrls`、`references`、`mcpResources`、`mcpTools` 及 MCP grant 字段不会影响
+新 Session；若旧客户端额外发送这些字段，服务端忽略并写入弃用审计。历史
+Session 的旧 target/reference/MCP 数据仍可只读打开。
 
 ## 统一 CLI
 

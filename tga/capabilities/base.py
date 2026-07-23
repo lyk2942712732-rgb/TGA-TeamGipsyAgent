@@ -6,6 +6,7 @@ from typing import Protocol
 from pydantic import BaseModel
 
 from tga.contracts import ActionResult, ActionSpec, TGATask
+from tga.modes import TaskMode
 
 
 class ActionExecutor(Protocol):
@@ -19,7 +20,7 @@ class CapabilitySpec(BaseModel):
     description: str
     kind: str
     risk: str = "passive"
-    modes: list[str]
+    modes: list[TaskMode]
     parameter_schema: dict
     availability: str = "healthy"
     budget_key: str

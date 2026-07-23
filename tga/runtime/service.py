@@ -99,6 +99,12 @@ class TaskRuntimeService:
                 continue
             task = snapshot["task"]
             session = snapshot["session"]
+            schema_version = int(task.get("schema_version") or 0)
+            session_input = task.get("session_input") or {}
+            task_files = session_input.get("task_files") or session_input.get("taskFiles") or []
+            hint_payload = session_input.get("hint") or {}
+            hint_files = hint_payload.get("files") or []
+            hint_text = str(hint_payload.get("text") or "").strip()
             events = snapshot.get("agent_events") or []
             solvers = snapshot.get("solvers") or []
             latest = events[-1] if events else None
@@ -108,6 +114,12 @@ class TaskRuntimeService:
                 "name": task.get("name") or child.name,
                 "mode": task.get("mode") or "ctf",
                 "target": task.get("target") or "",
+                "target_summary": ", ".join(
+                    str(item.get("original_name") or item.get("originalName") or item.get("label") or item.get("id"))
+                    for item in (task_files if schema_version >= 4 else task.get("targets") or [])[:3]
+                ),
+                "target_count": len(task_files) if schema_version >= 4 else len(task.get("targets") or []),
+                "hint_count": (len(hint_files) + int(bool(hint_text))) if schema_version >= 4 else len(task.get("hints") or []),
                 "created_at": events[0].get("created_at", "") if events else "",
                 "updated_at": latest.get("created_at", "") if latest else "",
                 "status": session.get("status") or "created",
@@ -135,7 +147,20 @@ class TaskRuntimeService:
         path = Path(output) if output else self.task_root(task_id) / "reports" / "report.md"
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(render_markdown_report(snapshot), encoding="utf-8")
+        store = EvidenceStore(self.task_root(task_id) / "evidence.db")
+        try:
+            store.append_agent_event(
+                task_id=task_id,
+                type="REPORT_EXPORTED",
+                payload={"path": path.name, "format": "markdown"},
+            )
+        finally:
+            store.close()
         return path
+
+    def render_report(self, task_id: str) -> str:
+        """Pure report query used by GET endpoints."""
+        return render_markdown_report(self.snapshot(task_id))
 
     def _manager(self):
         if self._injected_manager is not None:

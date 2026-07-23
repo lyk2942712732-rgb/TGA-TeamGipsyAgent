@@ -115,7 +115,10 @@ def test_manager_start_creates_v2_session_and_persists_initial_hint(tmp_path: Pa
     snapshot = store.task_snapshot(task.id)
     assert snapshot["session"]["status"] == "created"
     assert snapshot["board"]["memory"][0]["kind"] == "hint"
-    assert [event["type"] for event in snapshot["agent_events"]] == ["USER_HINT", "MEMORY_UPSERTED", "BOARD_SNAPSHOT"]
+    assert [event["type"] for event in snapshot["agent_events"]] == [
+        "USER_HINT", "MEMORY_UPSERTED", "STRATEGY_CARD_CREATED", "BOARD_SNAPSHOT",
+    ]
+    assert snapshot["board"]["strategy_cards"][0]["status"] == "pending"
 
 
 def test_manager_exposes_policy_eligible_catalogued_mcp_methods_to_solver_context():
@@ -161,6 +164,7 @@ def test_default_manager_reloads_runtime_solver_after_model_configuration_change
 
     import tga.runtime.manager as manager_module
     monkeypatch.setattr(manager_module, "build_runtime_solver", NewlyConfiguredSolver)
+    monkeypatch.setattr(manager_module, "build_model_client_from_env", lambda: None)
 
     snapshot = manager.run_session(task.id)
 

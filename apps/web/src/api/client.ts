@@ -28,14 +28,36 @@ export class ApiError extends Error {
   constructor(public readonly status: number, message: string) { super(message); }
 }
 
+type ValidationIssue = { loc?: Array<string | number>; msg?: string };
+type ApiErrorDetail = string | { code?: string; message?: string; reason?: string } | ValidationIssue[];
+
+export function formatApiErrorDetail(detail: ApiErrorDetail | undefined, status: number): string {
+  if (typeof detail === "string" && detail) return detail;
+  if (Array.isArray(detail)) {
+    const issues = detail.map((issue) => {
+      const field = issue.loc?.filter((part) => part !== "body").join(".");
+      return [field, issue.msg].filter(Boolean).join(": ");
+    }).filter(Boolean);
+    if (issues.length) return issues.slice(0, 4).join("；");
+  }
+  if (detail && !Array.isArray(detail) && typeof detail === "object") {
+    const heading = [detail.code, detail.message].filter(Boolean).join(": ");
+    const reason = detail.reason?.trim();
+    if (heading && reason) return `${heading} — ${reason.slice(0, 800)}`;
+    if (heading) return heading;
+    if (reason) return reason.slice(0, 800);
+  }
+  return `请求失败：${status}`;
+}
+
 export async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${apiBase}${path}`, init);
   if (!response.ok) {
-    const body = await response.json().catch(() => null) as { detail?: string; message?: string } | null;
+    const body = await response.json().catch(() => null) as { detail?: ApiErrorDetail; message?: string } | null;
     const detail = body?.detail ?? body?.message;
     const message = detail === "model_not_configured"
       ? "尚未配置模型，请先到模型设置页完成配置和工具协议验证。"
-      : detail ?? `请求失败：${response.status}`;
+      : formatApiErrorDetail(detail, response.status);
     throw new ApiError(response.status, message);
   }
   return response.json() as Promise<T>;

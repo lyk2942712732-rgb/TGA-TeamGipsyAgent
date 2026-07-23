@@ -6,13 +6,14 @@ import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 from uuid import uuid4
 
 from tga.contracts import ActionResult, ActionSpec, ArtifactRecord, Finding, SessionRecord, SolverRecord, SubagentOutput, SubagentRequest, TGAError, TGATask
 from tga.core.evidence_gate import finding_ok
 from tga.evidence.store import EvidenceStore, utc_now
 from tga.models.bootstrap import build_model_client_from_env
+from tga.inputs import task_artifact_root
 from tga.runtime.board import BoardStore
 from tga.runtime.agent_session import AgentToolSession
 from tga.runtime.challenge_state import ChallengeStateMachine
@@ -25,7 +26,9 @@ from tga.runtime.solver import MainSolver, Solver, build_runtime_solver
 from tga.runtime.solver_pool import SolverPool
 from tga.runtime.solver_session import SolverSessionState
 from tga.runtime.subagents import validate_output_ownership
+from tga.runtime.strategy import StrategyBoard
 from tga.skills.registry import SkillRegistry
+from tga.tools.mcp_manager import MCPManager
 
 
 MAX_SESSION_TURNS = 48
@@ -72,7 +75,8 @@ class Manager:
     def __init__(
         self, *, store: EvidenceStore | None = None, run_root: str | Path | None = None,
         executor: ActionExecutor | None = None, solver: Solver | None = None, observer: Observer | None = None,
-        skills: SkillRegistry | None = None,
+        skills: SkillRegistry | None = None, mcp_manager: MCPManager | None = None,
+        remote_flag_verifier: Any | None = None,
     ):
         self.store = store
         self.run_root = Path(run_root or os.environ.get("TGA_RUN_ROOT", "runs"))
@@ -99,6 +103,8 @@ class Manager:
         self._solver_instances: dict[str, Solver] = {}
         self.observer = observer or BoardObserver()
         self.skills = skills or SkillRegistry()
+        self.mcp_manager = mcp_manager or MCPManager(cache_path=self.run_root / "mcp-cache.json")
+        self.remote_flag_verifier = remote_flag_verifier
         self.limits = RuntimeLimits.from_environment()
 
     def run_session(self, task_id: str) -> dict:
@@ -111,6 +117,14 @@ class Manager:
                 self.solver = build_runtime_solver()
                 self._solver_instances = {}
             task = TGATask.model_validate(snapshot["task"])
+            AgentSession(store=store, run_root=self.run_root, task_id=task_id).ensure(
+                max_turns=self.limits.max_turns,
+                schema_version=task.schema_version,
+                workspace_path="workspace" if task.schema_version >= 4 else "",
+                mcp_catalog_version=task.mcp_capabilities.catalog_version if task.schema_version >= 4 else "",
+            )
+            if task.mode == "ctf":
+                ChallengeStateMachine(store).ensure(task)
             # The application-level manager is shared by API requests.  A
             # default executor must therefore be constructed per task so its
             # ArtifactStore cannot accidentally write into a previous task's
@@ -130,6 +144,8 @@ class Manager:
                         client=client,
                         executor=executor,
                         max_turns=self.limits.max_turns,
+                        mcp_manager=self.mcp_manager,
+                        remote_flag_verifier=self.remote_flag_verifier,
                     ).run()
             return self._run(task=task, store=store, executor=executor)
         finally:
@@ -137,6 +153,11 @@ class Manager:
                 self._close_solver_instances()
             if should_close:
                 store.close()
+
+    def refresh_mcp_catalog(self) -> dict:
+        """Explicitly refresh MCP discovery; active turns keep their snapshot."""
+        self.mcp_manager.refresh()
+        return self.mcp_manager.status_snapshot()
 
     def start_session(self, *, task_id: str, initial_hint: str | None = None) -> dict:
         """Create the v2 session record before the API schedules its runner.
@@ -151,15 +172,30 @@ class Manager:
             snapshot = store.task_snapshot(task_id)
             if not snapshot.get("task"):
                 raise KeyError(f"task not found: {task_id}")
-            session = AgentSession(store=store, run_root=self.run_root, task_id=task_id).ensure(max_turns=self.limits.max_turns)
             task = TGATask.model_validate(snapshot["task"])
-            ChallengeStateMachine(store).ensure(task)
+            session = AgentSession(store=store, run_root=self.run_root, task_id=task_id).ensure(
+                max_turns=self.limits.max_turns,
+                schema_version=task.schema_version,
+                workspace_path="workspace" if task.schema_version >= 4 else "",
+                mcp_catalog_version=task.mcp_capabilities.catalog_version if task.schema_version >= 4 else "",
+            )
+            if task.mode == "ctf":
+                ChallengeStateMachine(store).ensure(task)
             if session.status in {"completed", "cancelled", "failed"}:
                 return {"accepted": False, "status": session.status, "reason": "terminal_session"}
             if session.status not in {"created", "running"}:
                 return {"accepted": False, "status": session.status, "reason": "session_not_startable"}
             if initial_hint and initial_hint.strip():
                 self._record_user_hint(store=store, task_id=task_id, content=initial_hint)
+            if not store.list_strategy_cards(task_id):
+                card = StrategyBoard(store).ensure_from_hint(
+                    task=task, hint_id=None, content=task.goal
+                )
+                EventStore(store).append(
+                    task_id,
+                    "STRATEGY_CARD_CREATED",
+                    {"strategy_card_id": card.id, "source": "task_goal", "status": card.status},
+                )
             self._checkpoint(store, task_id)
             return {"accepted": True, "status": store.get_session(task_id).status}
         finally:
@@ -337,6 +373,21 @@ class Manager:
         events = EventStore(store)
         events.append(task_id, "USER_HINT", {"memory_id": entry.id, "content": text})
         events.append(task_id, "MEMORY_UPSERTED", {"memory_id": entry.id, "kind": "hint", "source": "user"})
+        task_payload = store.task_snapshot(task_id).get("task")
+        if task_payload:
+            card = StrategyBoard(store).ensure_from_hint(
+                task=TGATask.model_validate(task_payload), hint_id=entry.id, content=text
+            )
+            events.append(
+                task_id,
+                "STRATEGY_CARD_CREATED",
+                {
+                    "strategy_card_id": card.id,
+                    "hint_id": entry.id,
+                    "status": card.status,
+                    "sources": [source.model_dump(mode="json") for source in card.sources],
+                },
+            )
         Manager._record_board_snapshot(store, task_id, cause="user_hint")
         return entry
 
@@ -352,12 +403,12 @@ class Manager:
             session = store.update_session(task.id, max_turns=self.limits.max_turns)
         if session.status in {"completed", "cancelled", "failed", "paused"}:
             return store.task_snapshot(task.id)
-        challenge_state = ChallengeStateMachine(store)
-        challenge = challenge_state.ensure(task)
-        if challenge.status == "solved":
+        challenge_state = ChallengeStateMachine(store) if task.mode == "ctf" else None
+        challenge = challenge_state.ensure(task) if challenge_state else None
+        if challenge is not None and challenge.status == "solved":
             store.update_session(task.id, status="completed", finished_at=challenge.solved_at or utc_now(), stop_reason="confirmed_flag")
             return store.task_snapshot(task.id)
-        if challenge.status != "active":
+        if challenge is not None and challenge.status != "active":
             challenge_state.activate(task, reason="session_started")
         pool = SolverPool(store=store, run_root=self.run_root, max_active=self.limits.max_active_solvers)
         if store.list_solvers(task.id):
@@ -571,10 +622,10 @@ class Manager:
                     )
                     events.append(task.id, "HYPOTHESIS_UPDATED", {"hypothesis_id": updated.id, "status": updated.status, "last_result": updated.last_result}, solver_id=solver.id)
                     self._record_board_snapshot(store, task.id, solver_id=solver.id, cause="hypothesis_updated")
-            if store.task_snapshot(task.id)["flags"]:
+            if task.mode == "ctf" and store.task_snapshot(task.id)["flags"]:
                 self._stop(store, task.id, solver.id, "completed", "confirmed_flag")
                 break
-            if result.error and result.error.code == "CHALLENGE_UNAVAILABLE":
+            if task.mode == "ctf" and result.error and result.error.code == "CHALLENGE_UNAVAILABLE":
                 availability = "provisioning" if result.error.retryable else "expired"
                 ChallengeStateMachine(store).transition(
                     task.id, "blocked" if availability == "provisioning" else "expired",
@@ -791,7 +842,7 @@ class Manager:
         return sum(1 for item in store.list_solvers(task_id) if item.status in {"starting", "running", "waiting"})
 
     def _artifact_text(self, task_id: str, artifact) -> str:
-        root = (self.run_root / task_id / "artifacts").resolve()
+        root = self._artifact_root(task_id)
         try:
             path = (root / artifact.path).resolve()
             path.relative_to(root)
@@ -892,7 +943,10 @@ class Manager:
         existing = store.get_artifact(artifact_id)
         if existing is not None:
             return existing
-        root = (self.run_root / task_id / "artifacts").resolve()
+        task_payload = store.task_snapshot(task_id).get("task")
+        if not task_payload:
+            return None
+        root = task_artifact_root(self.run_root / task_id, TGATask.model_validate(task_payload))
         matches = list(root.glob(f"{artifact_id}.*")) if root.exists() else []
         if len(matches) != 1:
             return None
@@ -941,16 +995,31 @@ class Manager:
             return self.store, False
         return EvidenceStore(self.run_root / task_id / "evidence.db"), True
 
+    def _artifact_root(self, task_id: str) -> Path:
+        store, owned = self._store_for(task_id)
+        try:
+            payload = store.task_snapshot(task_id).get("task")
+            if not payload:
+                return (self.run_root / task_id / "artifacts").resolve()
+            return task_artifact_root(self.run_root / task_id, TGATask.model_validate(payload))
+        finally:
+            if owned:
+                store.close()
+
     def _default_executor(self, task: TGATask) -> ActionExecutor:
         """Wire B's controlled adapter without giving the manager tool access."""
         from tga.capabilities.runtime import ControlledActionExecutor, ExecutionBudget
         from tga.evidence.artifacts import ArtifactStore
-        from tga.tools.bootstrap import build_tool_runner_from_env
+        artifact_root = task_artifact_root(self.run_root / task.id, task)
+        artifact_store = ArtifactStore(artifact_root)
+        legacy_runner = None
+        if os.environ.get("TGA_ENABLE_LEGACY_MCP_HUB", "").strip().lower() in {"1", "true", "yes"}:
+            from tga.tools.bootstrap import build_tool_runner_from_env
 
-        artifact_store = ArtifactStore(self.run_root / task.id / "artifacts")
+            legacy_runner = build_tool_runner_from_env(artifact_store)
         return ControlledActionExecutor(
             artifact_store=artifact_store,
-            tool_runner=build_tool_runner_from_env(artifact_store),
+            tool_runner=legacy_runner,
             # Product AgentSessions use BreachWeave's direct tool loop. Legacy
             # action/rate budgets are telemetry, not execution gates.
             budget=ExecutionBudget(unrestricted=True),
@@ -977,6 +1046,7 @@ class Manager:
                 "board": {
                     "hypotheses": [item.model_dump(mode="json") for item in store.list_hypotheses(task_id)],
                     "memory": [item.model_dump(mode="json") for item in store.list_memory(task_id)],
+                    "strategy_cards": [item.model_dump(mode="json") for item in store.list_strategy_cards(task_id)],
                 },
             },
             solver_id=solver_id,
