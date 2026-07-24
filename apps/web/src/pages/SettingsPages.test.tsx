@@ -14,7 +14,6 @@ vi.mock("../api/capabilities", () => ({
   fetchMCPHealth: (...args: unknown[]) => health(...args),
 }));
 vi.mock("../api/tasks", () => ({
-  fetchPromptSettings: vi.fn(),
   fetchSkillSettings: vi.fn(),
   getLLMSettings: vi.fn(),
   updateLLMSettings: vi.fn(),
@@ -57,11 +56,11 @@ describe("CapabilitiesPage MCP import", () => {
     render(<CapabilitiesPage />);
     await waitFor(() => expect(capabilities).toHaveBeenCalled());
     const file = new File(["docker archive"], "demo.tar", { type: "application/x-tar" });
-    fireEvent.drop(screen.getByRole("button", { name: /Drop an MCP image file here/ }), {
+    fireEvent.drop(screen.getByRole("button", { name: /将 MCP 镜像归档拖到这里/ }), {
       dataTransfer: { files: [file] },
     });
     await waitFor(() => expect(importMCP).toHaveBeenCalledWith(file));
-    expect(await screen.findByText(/2 tools discovered/)).toBeInTheDocument();
+    expect(await screen.findByText(/已发现 2 个工具/)).toBeInTheDocument();
   });
 
   it("groups tools by MCP service and supports disable plus confirmed deletion", async () => {
@@ -77,16 +76,16 @@ describe("CapabilitiesPage MCP import", () => {
     });
     health.mockResolvedValue({ configured: true, records: [{ server: "demo", enabled: true, discovered: true, tools: 2 }] });
     render(<CapabilitiesPage />);
-    const toggle = await screen.findByRole("button", { name: /demo.*2 tools/i });
+    const toggle = await screen.findByRole("button", { name: /demo.*2 个工具/i });
     expect(screen.queryByText("mcp__demo__scan")).toBeNull();
     fireEvent.click(toggle);
     expect(screen.getByText("mcp__demo__scan")).toBeInTheDocument();
     expect(screen.getByText("mcp__demo__status")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Disable" }));
+    fireEvent.click(screen.getByRole("button", { name: "停用" }));
     await waitFor(() => expect(setMCPEnabled).toHaveBeenCalledWith("demo", false));
-    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
-    expect(screen.getByRole("dialog", { name: "Delete MCP service?" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Delete from config" }));
+    fireEvent.click(screen.getByRole("button", { name: "删除" }));
+    expect(screen.getByRole("dialog", { name: "删除 MCP 服务？" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "从配置中删除" }));
     await waitFor(() => expect(deleteMCP).toHaveBeenCalledWith("demo"));
   });
 
@@ -94,7 +93,7 @@ describe("CapabilitiesPage MCP import", () => {
     health.mockResolvedValue({ configured: true, records: [{ server: "bridge", enabled: false, discovered: false, tools: 0 }] });
     setMCPEnabled.mockResolvedValue({ server_id: "bridge", enabled: true, catalog: { configured: true, records: [{ server: "bridge", enabled: true, discovered: false, tools: 0 }] } });
     render(<CapabilitiesPage />);
-    fireEvent.click(await screen.findByRole("button", { name: "Enable" }));
+    fireEvent.click(await screen.findByRole("button", { name: "启用" }));
     await waitFor(() => expect(setMCPEnabled).toHaveBeenCalledWith("bridge", true));
   });
 
@@ -104,9 +103,9 @@ describe("CapabilitiesPage MCP import", () => {
     render(<CapabilitiesPage />);
 
     expect(await screen.findByRole("alert")).toHaveTextContent("servers: MCP_CONFIG_INVALID: MCP configuration is invalid");
-    expect(screen.getByText(/0 configured services.*0 discovered tools/)).toBeInTheDocument();
-    expect(screen.queryByText(/Loading configured MCP catalog/)).toBeNull();
-    expect(screen.getByText("healthy")).toBeInTheDocument();
+    expect(screen.getByText(/已配置 0 个服务，发现 0 个工具/)).toBeInTheDocument();
+    expect(screen.queryByText(/正在读取已配置的 MCP 工具目录/)).toBeNull();
+    expect(screen.getByText("健康")).toBeInTheDocument();
   });
 
   it("leaves the loading state when the capability request itself fails", async () => {
@@ -115,8 +114,8 @@ describe("CapabilitiesPage MCP import", () => {
     render(<CapabilitiesPage />);
 
     expect(await screen.findByRole("alert")).toHaveTextContent("capabilities: capability endpoint unavailable");
-    expect(screen.getByText("MCP catalog could not be loaded; other capability data remains available.")).toBeInTheDocument();
-    expect(screen.queryByText(/Loading configured MCP catalog/)).toBeNull();
-    expect(screen.getByText("unavailable")).toBeInTheDocument();
+    expect(screen.getByText("MCP 工具目录暂时无法读取，其他运行时能力仍可使用。")).toBeInTheDocument();
+    expect(screen.queryByText(/正在读取已配置的 MCP 工具目录/)).toBeNull();
+    expect(screen.getByText("不可用")).toBeInTheDocument();
   });
 });

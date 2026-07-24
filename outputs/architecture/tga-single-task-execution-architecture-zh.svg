@@ -1,0 +1,305 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="4000" height="2400" viewBox="0 0 4000 2400" role="img" aria-labelledby="title desc">
+  <title id="title">TGA 单任务执行架构图</title>
+  <desc id="desc">以中文为主，展示一个任务从用户前端进入运行时，经上下文构建、LLM 决策、工具路由、治理审批、真实执行、证据固化，再通过快照和事件流返回前端的过程。</desc>
+  <defs>
+    <linearGradient id="page" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f8fbfd"/>
+      <stop offset="1" stop-color="#f1f7f5"/>
+    </linearGradient>
+    <marker id="blueArrow" markerWidth="13" markerHeight="13" refX="11" refY="6.5" orient="auto">
+      <path d="M0 0 L13 6.5 L0 13 Z" fill="#2468d9"/>
+    </marker>
+    <marker id="greenArrow" markerWidth="13" markerHeight="13" refX="11" refY="6.5" orient="auto">
+      <path d="M0 0 L13 6.5 L0 13 Z" fill="#0b8a6c"/>
+    </marker>
+    <marker id="orangeArrow" markerWidth="13" markerHeight="13" refX="11" refY="6.5" orient="auto">
+      <path d="M0 0 L13 6.5 L0 13 Z" fill="#c4780d"/>
+    </marker>
+    <style>
+      text{font-family:'Microsoft YaHei','Noto Sans CJK SC','PingFang SC','Segoe UI',sans-serif;letter-spacing:0}
+      .title{font-size:62px;font-weight:800;fill:#163452}
+      .subtitle{font-size:26px;font-weight:400;fill:#5a7187}
+      .lane-title{font-size:34px;font-weight:800;fill:#1b4f86}
+      .lane-note{font-size:21px;font-weight:400;fill:#657b8d}
+      .node-title{font-size:35px;font-weight:800;fill:#173f6b}
+      .node-title-green{font-size:35px;font-weight:800;fill:#125c4c}
+      .class-name{font-size:18px;font-weight:600;fill:#75889a}
+      .io-label{font-size:20px;font-weight:800;fill:#1e527f}
+      .io-label-green{font-size:20px;font-weight:800;fill:#12725d}
+      .io-label-orange{font-size:20px;font-weight:800;fill:#9b5e08}
+      .body{font-size:23px;font-weight:500;fill:#314f68}
+      .body-green{font-size:23px;font-weight:500;fill:#315e55}
+      .body-small{font-size:20px;font-weight:500;fill:#597186}
+      .edge{font-size:21px;font-weight:800;fill:#205b9b}
+      .edge-green{font-size:21px;font-weight:800;fill:#0d755e}
+      .edge-orange{font-size:21px;font-weight:800;fill:#9c5c06}
+      .badge{font-size:18px;font-weight:800;fill:#ffffff;text-anchor:middle;dominant-baseline:central}
+      .ui-title{font-size:30px;font-weight:800;fill:#174c40}
+      .ui-body{font-size:21px;font-weight:500;fill:#41675e}
+      .frame{fill:#f7fbff;stroke:#bfd3e8;stroke-width:3;rx:24}
+      .frame-green{fill:#f5fbf8;stroke:#b8d9cd;stroke-width:3;rx:24}
+      .card{fill:#ffffff;stroke:#c6d8e8;stroke-width:2.5;rx:18}
+      .card-blue{fill:#fafdff;stroke:#9fc3e9;stroke-width:3;rx:18}
+      .card-green{fill:#fbfffd;stroke:#9ed1c0;stroke-width:3;rx:18}
+      .card-orange{fill:#fffcf5;stroke:#e4c27f;stroke-width:3;rx:18}
+      .card-purple{fill:#fdfbff;stroke:#cdbde8;stroke-width:3;rx:18}
+      .input-box{fill:#eef5fd;stroke:#c8ddef;stroke-width:1.5;rx:10}
+      .output-box{fill:#eaf8f3;stroke:#b9dfd2;stroke-width:1.5;rx:10}
+      .orange-box{fill:#fff3dc;stroke:#e8cb91;stroke-width:1.5;rx:10}
+      .pause-box{fill:#eef3fb;stroke:#bdcde2;stroke-width:1.5;rx:10}
+      .stop-box{fill:#fff0ec;stroke:#e6b3a8;stroke-width:1.5;rx:10}
+      .io-label-stop{font-size:20px;font-weight:800;fill:#a64734}
+      .flow{fill:none;stroke:#2468d9;stroke-width:5;marker-end:url(#blueArrow)}
+      .flow-green{fill:none;stroke:#0b8a6c;stroke-width:5;marker-end:url(#greenArrow)}
+      .flow-orange{fill:none;stroke:#c4780d;stroke-width:5;marker-end:url(#orangeArrow)}
+      .divider{stroke:#d7e4ee;stroke-width:2}
+    </style>
+  </defs>
+
+  <rect width="4000" height="2400" fill="url(#page)"/>
+  <text x="120" y="92" class="title">TGA：一个任务的完整执行架构</text>
+  <text x="124" y="139" class="subtitle">中文主流程 · 模型只做决策 · 治理层负责授权 · 执行器真实操作 · 所有结果先固化为证据，再展示给用户</text>
+
+  <!-- 第一层：任务进入运行时 -->
+  <rect x="100" y="190" width="3800" height="410" class="frame-green"/>
+  <text x="145" y="242" class="lane-title">① 任务进入运行时</text>
+  <text x="145" y="276" class="lane-note">这一层负责接收用户意图、创建持久会话，并启动唯一的后台执行循环。</text>
+
+  <rect x="150" y="320" width="760" height="220" class="card-green"/>
+  <circle cx="200" cy="370" r="25" fill="#0b8a6c"/><text x="200" y="370" class="badge">1</text>
+  <text x="245" y="380" class="node-title-green">用户与运行时页面</text>
+  <text x="245" y="412" class="class-name">React 前端</text>
+  <text x="190" y="456" class="body-green">输入：任务目标、附件、补充提示、控制/审批操作</text>
+  <text x="190" y="497" class="body-green">输出：实时过程、证据产物、最终结果、报告</text>
+
+  <path d="M910 430 H1060" class="flow-green"/>
+  <text x="935" y="408" class="edge-green">任务请求</text>
+
+  <rect x="1060" y="320" width="800" height="220" class="card"/>
+  <circle cx="1110" cy="370" r="25" fill="#2468d9"/><text x="1110" y="370" class="badge">2</text>
+  <text x="1155" y="380" class="node-title">运行时接口与调度器</text>
+  <text x="1155" y="412" class="class-name">FastAPI · TaskRuntimeService · RuntimeScheduler</text>
+  <text x="1100" y="456" class="body">输入：创建任务、暂停/恢复/取消、用户提示</text>
+  <text x="1100" y="497" class="body">输出：任务编号、调度命令、顺序事件</text>
+
+  <path d="M1860 430 H2010" class="flow"/>
+  <text x="1885" y="408" class="edge">任务编号</text>
+
+  <rect x="2010" y="320" width="890" height="220" class="card-blue"/>
+  <circle cx="2060" cy="370" r="25" fill="#2468d9"/><text x="2060" y="370" class="badge">3</text>
+  <text x="2105" y="380" class="node-title">会话管理与生命周期</text>
+  <text x="2105" y="412" class="class-name">Manager · SessionCoordinator</text>
+  <text x="2050" y="456" class="body">输入：任务、模型配置、运行上限、恢复状态</text>
+  <text x="2050" y="497" class="body">输出：主 Agent 编号、运行状态、启动/停止事件</text>
+
+  <path d="M2900 430 H3050" class="flow"/>
+  <text x="2920" y="408" class="edge">会话状态</text>
+
+  <rect x="3050" y="320" width="700" height="220" class="card"/>
+  <circle cx="3100" cy="370" r="25" fill="#2468d9"/><text x="3100" y="370" class="badge">4</text>
+  <text x="3145" y="380" class="node-title">持久化事实源</text>
+  <text x="3145" y="412" class="class-name">EvidenceStore · workspace · messages.json</text>
+  <text x="3090" y="456" class="body">保存：会话、动作、事件、策略、证据、对话</text>
+  <text x="3090" y="497" class="body">提供：恢复状态、快照、事件游标</text>
+
+  <!-- 第二层：ReAct 主循环 -->
+  <rect x="100" y="640" width="3800" height="1080" class="frame"/>
+  <text x="145" y="698" class="lane-title">② 受治理的 ReAct 主循环</text>
+  <text x="145" y="733" class="lane-note">蓝色箭头是本轮主路径；下方结果先回填同一对话，再由“循环出口判定”决定继续、挂起或终态结束。</text>
+
+  <!-- 上排主路径 -->
+  <rect x="150" y="790" width="800" height="360" class="card-blue"/>
+  <circle cx="205" cy="845" r="26" fill="#2468d9"/><text x="205" y="845" class="badge">5</text>
+  <text x="255" y="855" class="node-title">构建本轮上下文</text>
+  <text x="255" y="888" class="class-name">SessionContextBuilder · Context Builder</text>
+  <rect x="190" y="925" width="720" height="82" class="input-box"/>
+  <text x="215" y="958" class="io-label">输入</text>
+  <text x="285" y="958" class="body-small">任务目标、输入清单、策略、记忆、上一轮工具结果</text>
+  <text x="285" y="987" class="body-small">以及只读纠偏建议和 MCP 工具目录快照</text>
+  <rect x="190" y="1026" width="720" height="84" class="output-box"/>
+  <text x="215" y="1060" class="io-label-green">输出</text>
+  <text x="285" y="1060" class="body-small">受限工作上下文 + 本轮可用工具定义</text>
+  <text x="285" y="1089" class="body-small">同时记录上下文字符数、检索次数等指标</text>
+
+  <path d="M950 970 H1080" class="flow"/>
+  <text x="962" y="944" class="edge">上下文 + 工具定义</text>
+
+  <rect x="1080" y="790" width="760" height="360" class="card-purple"/>
+  <circle cx="1135" cy="845" r="26" fill="#6648b5"/><text x="1135" y="845" class="badge">6</text>
+  <text x="1185" y="855" class="node-title">大语言模型决策</text>
+  <text x="1185" y="888" class="class-name">LLM Provider</text>
+  <rect x="1120" y="925" width="680" height="82" class="input-box"/>
+  <text x="1145" y="958" class="io-label">输入</text>
+  <text x="1215" y="958" class="body-small">工作上下文、工具参数结构、模型配置</text>
+  <text x="1215" y="987" class="body-small">模型没有文件、网络或命令执行权限</text>
+  <rect x="1120" y="1026" width="680" height="84" class="output-box"/>
+  <text x="1145" y="1060" class="io-label-green">输出</text>
+  <text x="1215" y="1060" class="body-small">文字判断 + 工具调用意图 + 结束原因</text>
+  <text x="1215" y="1089" class="body-small">以及 Token 用量和模型耗时</text>
+
+  <path d="M1840 970 H1970" class="flow"/>
+  <text x="1858" y="944" class="edge">工具调用意图</text>
+
+  <rect x="1970" y="790" width="760" height="360" class="card-blue"/>
+  <circle cx="2025" cy="845" r="26" fill="#2468d9"/><text x="2025" y="845" class="badge">7</text>
+  <text x="2075" y="855" class="node-title">工具路由器</text>
+  <text x="2075" y="888" class="class-name">ToolDispatcher（工具分发器）</text>
+  <rect x="2010" y="925" width="680" height="82" class="input-box"/>
+  <text x="2035" y="958" class="io-label">输入</text>
+  <text x="2105" y="958" class="body-small">工具名称、参数、策略步骤、执行理由</text>
+  <text x="2105" y="987" class="body-small">预期结果、影响范围和副作用说明</text>
+  <rect x="2010" y="1026" width="680" height="84" class="output-box"/>
+  <text x="2035" y="1060" class="io-label-green">输出</text>
+  <text x="2105" y="1060" class="body-small">动作规格，路由到输入/能力/MCP/完成处理器</text>
+  <text x="2105" y="1089" class="body-small">无效参数会直接返回结构化拒绝</text>
+
+  <path d="M2730 970 H2860" class="flow"/>
+  <text x="2745" y="944" class="edge">动作规格</text>
+
+  <rect x="2860" y="790" width="890" height="360" class="card-orange"/>
+  <circle cx="2915" cy="845" r="26" fill="#c4780d"/><text x="2915" y="845" class="badge">8</text>
+  <text x="2965" y="855" class="node-title">治理、观察与完成校验</text>
+  <text x="2965" y="888" class="class-name">Policy Handler · Observer · Completion Gate</text>
+  <rect x="2900" y="925" width="810" height="82" class="orange-box"/>
+  <text x="2925" y="958" class="io-label-orange">检查</text>
+  <text x="3000" y="958" class="body-small">参数结构、授权范围、风险、速率/并发、策略关联</text>
+  <text x="3000" y="987" class="body-small">高影响动作可进入“等待用户审批”状态</text>
+  <rect x="2900" y="1026" width="810" height="84" class="output-box"/>
+  <text x="2925" y="1060" class="io-label-green">输出</text>
+  <text x="3000" y="1060" class="body-small">允许执行 / 拒绝 / 等待审批 / 完成通过</text>
+  <text x="3000" y="1089" class="body-small">完成任务必须引用属于本任务的真实证据</text>
+
+  <!-- 下排执行与反馈 -->
+  <path d="M3305 1150 V1240" class="flow-orange"/>
+  <text x="3330" y="1204" class="edge-orange">授权后的动作</text>
+
+  <rect x="2860" y="1240" width="890" height="350" class="card-green"/>
+  <circle cx="2915" cy="1295" r="26" fill="#0b8a6c"/><text x="2915" y="1295" class="badge">9</text>
+  <text x="2965" y="1305" class="node-title-green">真实执行器</text>
+  <text x="2965" y="1338" class="class-name">ControlledActionExecutor · Input Handler · MCP Manager</text>
+  <rect x="2900" y="1370" width="810" height="82" class="input-box"/>
+  <text x="2925" y="1403" class="io-label">输入</text>
+  <text x="3000" y="1403" class="body-small">已授权动作 + 受限工作区 + 超时/并发预算</text>
+  <text x="3000" y="1432" class="body-small">执行位置：本地能力、输入存储、MCP 服务或授权目标</text>
+  <rect x="2900" y="1471" width="810" height="82" class="output-box"/>
+  <text x="2925" y="1505" class="io-label-green">输出</text>
+  <text x="3000" y="1505" class="body-small">动作结果、原始输出、执行位置、耗时、错误码</text>
+  <text x="3000" y="1534" class="body-small">本地 Docker MCP 与远程 MCP 都由同一治理边界控制</text>
+
+  <path d="M2860 1415 H2730" class="flow-green"/>
+  <text x="2742" y="1390" class="edge-green">真实执行结果</text>
+
+  <rect x="1820" y="1240" width="910" height="350" class="card-green"/>
+  <circle cx="1875" cy="1295" r="26" fill="#0b8a6c"/><text x="1875" y="1295" class="badge">10</text>
+  <text x="1925" y="1305" class="node-title-green">证据与事件固化</text>
+  <text x="1925" y="1338" class="class-name">Artifact Store · AgentEvent · EvidenceStore</text>
+  <rect x="1860" y="1370" width="830" height="82" class="input-box"/>
+  <text x="1885" y="1403" class="io-label">输入</text>
+  <text x="1955" y="1403" class="body-small">动作结果、工具原始输出、模型用量、治理决定</text>
+  <text x="1955" y="1432" class="body-small">失败和拒绝也会留下可审计事件</text>
+  <rect x="1860" y="1471" width="830" height="82" class="output-box"/>
+  <text x="1885" y="1505" class="io-label-green">输出</text>
+  <text x="1955" y="1505" class="body-small">证据编号 + 顺序事件 + 脱敏摘要 + 会话快照</text>
+  <text x="1955" y="1534" class="body-small">原始事实先落盘，之后才返回模型和前端</text>
+
+  <path d="M1820 1415 H1690" class="flow-green"/>
+  <text x="1698" y="1390" class="edge-green">受限结果</text>
+
+  <rect x="950" y="1240" width="740" height="350" class="card-blue"/>
+  <circle cx="1005" cy="1295" r="26" fill="#2468d9"/><text x="1005" y="1295" class="badge">11</text>
+  <text x="1055" y="1305" class="node-title">回填同一模型对话</text>
+  <text x="1055" y="1338" class="class-name">Tool Result → Transcript</text>
+  <rect x="990" y="1370" width="660" height="82" class="input-box"/>
+  <text x="1015" y="1403" class="io-label">输入</text>
+  <text x="1085" y="1403" class="body-small">成功/失败状态、摘要、证据编号、缺失条件</text>
+  <text x="1085" y="1432" class="body-small">必要时附加受限图片内容块</text>
+  <rect x="990" y="1471" width="660" height="82" class="output-box"/>
+  <text x="1015" y="1505" class="io-label-green">输出</text>
+  <text x="1085" y="1505" class="body-small">追加到持久对话，并提交循环出口判定</text>
+  <text x="1085" y="1534" class="body-small">保留完整 assistant / tool 协议对</text>
+
+  <path d="M950 1415 H850" class="flow-green"/>
+  <text x="858" y="1390" class="edge-green">状态与结果</text>
+
+  <rect x="150" y="1240" width="700" height="420" class="card-orange"/>
+  <circle cx="205" cy="1295" r="26" fill="#c4780d"/><text x="205" y="1295" class="badge">12</text>
+  <text x="255" y="1305" class="node-title">循环出口判定</text>
+  <text x="255" y="1338" class="class-name">Session 状态机 · Completion Gate · 回合上限</text>
+  <rect x="190" y="1368" width="620" height="68" class="input-box"/>
+  <text x="215" y="1410" class="io-label">输入</text>
+  <text x="285" y="1410" class="body-small">终态标志、Session 状态、回合数、运行异常</text>
+  <rect x="190" y="1452" width="620" height="52" class="output-box"/>
+  <text x="215" y="1485" class="io-label-green">继续</text>
+  <text x="285" y="1485" class="body-small">仍在运行且未完成：回到第 5 步，开始下一轮</text>
+  <rect x="190" y="1520" width="620" height="52" class="pause-box"/>
+  <text x="215" y="1553" class="io-label">挂起</text>
+  <text x="285" y="1553" class="body-small">暂停 / 待审批 / blocked（模型失败、回合上限）：可恢复</text>
+  <rect x="190" y="1588" width="620" height="52" class="stop-box"/>
+  <text x="215" y="1621" class="io-label-stop">终态</text>
+  <text x="285" y="1621" class="body-small">完成校验通过 / 用户取消 / 不可恢复失败：结束 ReAct</text>
+
+  <path d="M150 1478 H110 V970 H150" class="flow-green"/>
+  <text x="132" y="1200" transform="rotate(-90 132 1200)" class="edge-green">继续：finish 被拒绝或任务尚未完成</text>
+
+  <path d="M500 1660 V1695 H900 V1880 H505 V1900" class="flow-orange"/>
+  <text x="930" y="1694" class="edge-orange">退出或挂起 → 写入状态事件 → 前端显示原因</text>
+
+  <!-- 第三层：前端投影 -->
+  <rect x="100" y="1760" width="3800" height="540" class="frame-green"/>
+  <text x="145" y="1818" class="lane-title">③ 结果如何回到截图中的前端页面</text>
+  <text x="145" y="1853" class="lane-note">前端只读取持久化快照和顺序事件，不直接执行工具，也不展示模型内部原始推理。</text>
+
+  <rect x="150" y="1900" width="710" height="320" class="card"/>
+  <text x="190" y="1955" class="ui-title">快照与实时事件桥</text>
+  <text x="190" y="1992" class="class-name">Session Snapshot + SSE 事件流</text>
+  <line x1="190" y1="2014" x2="820" y2="2014" class="divider"/>
+  <text x="190" y="2057" class="ui-body">输入：会话、动作、策略、证据、按序号增量事件</text>
+  <text x="190" y="2094" class="ui-body">处理：断线续传、事件补齐、权威快照刷新</text>
+  <text x="190" y="2131" class="ui-body">输出：页面状态、停止原因和三栏运行时视图</text>
+
+  <path d="M860 2060 H990" class="flow-green"/>
+  <text x="874" y="2035" class="edge-green">页面数据</text>
+
+  <rect x="990" y="1900" width="650" height="320" class="card-green"/>
+  <text x="1030" y="1955" class="ui-title">顶部状态栏</text>
+  <text x="1030" y="2003" class="ui-body">模型名称、回合数、Token</text>
+  <text x="1030" y="2040" class="ui-body">运行时间、事件流状态</text>
+  <text x="1030" y="2077" class="ui-body">报告、回放、补充提示</text>
+  <text x="1030" y="2114" class="ui-body">暂停、恢复、取消、审批</text>
+  <text x="1030" y="2162" class="io-label-green">来源：Session + Provider Usage + SSE</text>
+
+  <rect x="1690" y="1900" width="650" height="320" class="card-green"/>
+  <text x="1730" y="1955" class="ui-title">左栏：策略与记忆</text>
+  <text x="1730" y="2003" class="ui-body">初始任务策略</text>
+  <text x="1730" y="2040" class="ui-body">当前步骤与验证状态</text>
+  <text x="1730" y="2077" class="ui-body">步骤关联的证据编号</text>
+  <text x="1730" y="2114" class="ui-body">用户补充提示和持久记忆</text>
+  <text x="1730" y="2162" class="io-label-green">来源：StrategyCard + Memory</text>
+
+  <rect x="2390" y="1900" width="650" height="320" class="card-green"/>
+  <text x="2430" y="1955" class="ui-title">中栏：执行时间线</text>
+  <text x="2430" y="2003" class="ui-body">上下文构建与模型请求</text>
+  <text x="2430" y="2040" class="ui-body">模型返回的工具意图</text>
+  <text x="2430" y="2077" class="ui-body">治理决定与真实执行</text>
+  <text x="2430" y="2114" class="ui-body">耗时、位置、错误和回传摘要</text>
+  <text x="2430" y="2162" class="io-label-green">来源：顺序 AgentEvent</text>
+
+  <rect x="3090" y="1900" width="650" height="320" class="card-green"/>
+  <text x="3130" y="1955" class="ui-title">右栏：证据与结果</text>
+  <text x="3130" y="2003" class="ui-body">证据产物列表</text>
+  <text x="3130" y="2040" class="ui-body">证据预览与下载</text>
+  <text x="3130" y="2077" class="ui-body">完成校验后的结论和 Flag</text>
+  <text x="3130" y="2114" class="ui-body">覆盖范围、限制、结束原因</text>
+  <text x="3130" y="2162" class="io-label-green">来源：Artifact + 完成事件</text>
+
+  <!-- 清晰的数据连接：只用竖线 -->
+  <path d="M3400 540 V620 H550 V790" class="flow"/>
+  <text x="660" y="615" class="edge">恢复信息与持久对话进入首轮上下文</text>
+  <path d="M2275 1590 V1760" class="flow-green"/>
+  <text x="2300" y="1685" class="edge-green">快照、事件、证据</text>
+  <path d="M3305 790 V690 H530 V540" class="flow-orange"/>
+  <text x="760" y="680" class="edge-orange">高影响动作：经运行时接口向用户请求批准或拒绝</text>
+
+  <line x1="100" y1="2345" x2="3900" y2="2345" stroke="#d5e2e8" stroke-width="2"/>
+  <text x="120" y="2380" class="body-small">核心链路：前端 → API/调度 → Manager/Coordinator → Context Builder → LLM → Dispatcher → Handler/Observer/Gate → Executor/MCP → Artifact/Event → Snapshot/SSE → 前端</text>
+</svg>

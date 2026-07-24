@@ -35,7 +35,7 @@ export type ModeProfileContract = {
   id: TaskMode; label: string; description: string; default_goal: string;
   default_mode_config: ModeConfig; default_execution_policy: ExecutionPolicy;
   allowed_input_kinds: string[]; required_conditions: string[];
-  recommended_capabilities: string[]; prompt_instruction: string;
+  recommended_capabilities: string[];
   completion_validator: string; report_sections: string[]; uses_flag: boolean;
   advanced_settings: string[]; mode_config_schema: Record<string, unknown>; execution_policy_schema: Record<string, unknown>;
 };
@@ -114,7 +114,8 @@ export const updateLLMSettings = (payload: LLMSettingsUpdate) => requestJson<LLM
 export const verifyLLMSettings = () => requestJson<{ configured: boolean; reachable: boolean; action_tools: boolean; model: string; verification_status: LLMVerification["status"]; capabilities: Record<string, boolean | null>; tool_catalog: { tool_count: number; schema_bytes: number; accepted: boolean } }>("/api/v2/settings/llm/verify", { method: "POST" });
 export type SkillSetting = { name: string; modes: TaskMode[]; capabilities: string[]; tags: string[]; version: string; source: "builtin" | "custom"; summary: string; editable: boolean };
 export type SkillDetail = SkillSetting & { body: string };
-export type PromptSetting = { id: string; role: string; instruction: string; source: string; editable: boolean };
+export type ModePromptSettings = { id: TaskMode; label: string; methodology: string[]; completion_focus: string; observer_focus: string };
+export type AgentPromptSettings = { schema_version: 1; common_system_prompt: string; modes: ModePromptSettings[] };
 export const fetchSkillSettings = () => requestJson<{ schema_version: number; skills: SkillSetting[] }>("/api/v2/settings/skills");
 export const fetchSkillDetail = (name: string) => requestJson<{ skill: SkillDetail }>(`/api/v2/settings/skills/${encodeURIComponent(name)}`);
 export async function importSkill(file: File, scene?: TaskMode): Promise<{ skill: SkillDetail }> {
@@ -135,4 +136,7 @@ export const updateSkill = (name: string, payload: Pick<SkillDetail, "modes" | "
   method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
 });
 export const deleteSkill = (name: string) => requestJson<{ name: string; deleted: boolean }>(`/api/v2/settings/skills/${encodeURIComponent(name)}`, { method: "DELETE" });
-export const fetchPromptSettings = () => requestJson<{ schema_version: number; prompts: PromptSetting[] }>("/api/v2/settings/prompts");
+export const fetchAgentPromptSettings = () => requestJson<AgentPromptSettings>("/api/v2/settings/agent-prompts");
+export const updateAgentPromptSettings = (payload: AgentPromptSettings) => requestJson<AgentPromptSettings>("/api/v2/settings/agent-prompts", {
+  method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
+});

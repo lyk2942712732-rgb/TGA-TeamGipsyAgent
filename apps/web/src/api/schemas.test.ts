@@ -18,4 +18,14 @@ describe("runtime schemas", () => {
     });
     expect(value.context_metrics[0]).toMatchObject({ turn: 1, provider_input_tokens: undefined, provider_output_tokens: undefined });
   });
+  it("preserves the frozen task model when no solver record is available", () => {
+    const value = RuntimeSnapshotSchema.parse({
+      task: {
+        id: "task", name: "Task", mode: "ctf", session_input: { prompt: "inspect", files: [] },
+        model_snapshot: { provider: "openai-compatible", model: "frozen-model", verification_id: "verify_1", verified_at: "2026-07-24T00:00:00Z" },
+      },
+      session: { status: "paused", turn_count: 0, max_turns: 8 }, runtime: { strategy_cards: [], memory: [] }, events: [], latest_seq: 0,
+    });
+    expect(value.task.model_snapshot?.model).toBe("frozen-model");
+  });
 });

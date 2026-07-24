@@ -23,7 +23,7 @@ export function ResizableWorkspace({ strategy, timeline, evidence }: { strategy:
   if (compact) {
     const content = tab === "strategy" ? strategy : tab === "timeline" ? timeline : evidence;
     return <section className="runtime-compact-workspace">
-      <div className="runtime-workspace-tabs" role="tablist" aria-label="Runtime 面板">
+      <div className="runtime-workspace-tabs" role="tablist" aria-label="任务运行面板">
         {([ ["strategy", "策略"], ["timeline", "时间线"], ["evidence", "证据与结果"] ] as [WorkspaceTab, string][]).map(([value, label]) => <button key={value} role="tab" aria-selected={tab === value} className={tab === value ? "active" : ""} onClick={() => setTab(value)}>{label}</button>)}
       </div>
       <div className="runtime-compact-panel">{content}</div>

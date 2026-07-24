@@ -473,10 +473,11 @@ def test_v2_settings_and_capabilities_routes(monkeypatch):
     assert client.get("/api/v2/capabilities").json()["capabilities"][0]["name"] == "workspace.write"
     assert client.get("/api/v2/tools/health").json()["configured"] is True
     skills = client.get("/api/v2/settings/skills").json()
-    prompts = client.get("/api/v2/settings/prompts").json()
+    prompts = client.get("/api/v2/settings/agent-prompts").json()
     assert skills["schema_version"] == 3 and skills["skills"]
-    assert {item["role"] for item in prompts["prompts"]} == {"main", "recon", "targeted", "research"}
-    assert all(item["editable"] is False for item in prompts["prompts"])
+    assert prompts["schema_version"] == 1
+    assert {item["id"] for item in prompts["modes"]} == {"ctf", "penetration_test", "incident_response", "vulnerability_research", "reverse_engineering"}
+    assert client.get("/api/v2/settings/prompts").status_code == 404
 
 
 def test_mcp_catalog_refresh_route(monkeypatch):

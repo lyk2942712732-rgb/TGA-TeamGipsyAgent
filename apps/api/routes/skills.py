@@ -8,7 +8,6 @@ from urllib.parse import unquote
 
 from fastapi import APIRouter, HTTPException, Request
 
-from tga.runtime.prompts import ROLE_INSTRUCTIONS
 from tga.modes import is_task_mode
 from tga.skills.loader import load_skill_text
 from tga.skills.registry import SkillRegistry
@@ -111,15 +110,3 @@ def delete_skill(name: str) -> dict[str, Any]:
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=_api_error("INVALID_SKILL_NAME", str(exc))) from exc
     return {"name": name, "deleted": deleted}
-
-
-@router.get("/settings/prompts")
-def prompt_settings() -> dict[str, Any]:
-    """Describe authoritative role prompts without exposing model secrets."""
-    return {
-        "schema_version": 2,
-        "prompts": [
-            {"id": f"solver.{role}", "role": role, "instruction": instruction, "source": "tga.runtime.prompts", "editable": False}
-            for role, instruction in ROLE_INSTRUCTIONS.items()
-        ],
-    }

@@ -15,6 +15,7 @@ from tga.models.bootstrap import model_config_status
 from tga.modes import mode_profile, normalize_mode, validate_task_profile
 from tga.network_policy import input_network_seeds
 from tga.runtime.service import TaskRuntimeService
+from tga.runtime.prompt_settings import load_agent_prompt_settings, snapshot_for_mode
 from tga.tools.mcp_manager import MCPManager
 
 
@@ -88,6 +89,7 @@ class TaskCreationService:
             policy = command.execution_policy.model_copy(deep=True)
             policy.network.seed_origins = seed_origins
             capabilities = build_mcp_capability_snapshot(self.mcp_manager)
+            prompt_snapshot = snapshot_for_mode(load_agent_prompt_settings(), mode)
             task = TGATask(
                 id=task_id,
                 name=command.name.strip(),
@@ -98,6 +100,7 @@ class TaskCreationService:
                 session_input=session_input,
                 task_entry_url=entry_url,
                 mcp_capabilities=capabilities,
+                agent_prompt_snapshot=prompt_snapshot.model_dump(mode="json"),
                 model_snapshot={
                     "provider": provider.get("provider") or "openai-compatible",
                     "model": provider.get("model") or "",

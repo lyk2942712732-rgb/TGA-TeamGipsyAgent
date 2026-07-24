@@ -45,9 +45,10 @@ test("runtime renders turn-grouped ReAct execution and confirmed evidence", asyn
   await expect(page.getByRole("heading", { name: "策略与记忆" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "证据与结果" })).toBeVisible();
   await expect(page.getByTestId("react-turn")).toHaveCount(2);
-  await page.getByRole("button", { name: /TURN 01/ }).click();
+  await page.getByRole("button", { name: /第 01 轮/ }).click();
   await expect(page.getByLabel("ReAct 回合时间线").getByText("task-owned Artifact")).toBeVisible();
-  await expect(page.getByTestId("execution-location").first()).toContainText("Input Store");
+  await expect(page.getByTestId("execution-location").first()).toContainText("输入存储");
+  await expect(page.getByText("第 02 轮")).toBeVisible();
   await page.getByRole("button", { name: "最终结果" }).click();
   await expect(page.getByTestId("final-result")).toContainText("已确认最终结果");
   await expect(page.getByText("CTF{evidence_backed}")).toBeVisible();

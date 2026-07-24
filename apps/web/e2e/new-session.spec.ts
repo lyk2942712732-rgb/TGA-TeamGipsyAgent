@@ -21,7 +21,7 @@ test("new task selects a scene and stages task files plus Hint without task-leve
       default_mode_config: { mode: "ctf", subtype: "auto", expected_flag_count: 1, verifier: { kind: "local_regex" } },
       default_execution_policy: policy,
       allowed_input_kinds: ["file", "archive", "image"], required_conditions: ["prompt_or_files"],
-      recommended_capabilities: [], prompt_instruction: "", completion_validator: "ctf", report_sections: ["evidence"],
+      recommended_capabilities: [], completion_validator: "ctf", report_sections: ["evidence"],
       uses_flag: true, advanced_settings: [], mode_config_schema: {}, execution_policy_schema: {},
     }],
   } }));

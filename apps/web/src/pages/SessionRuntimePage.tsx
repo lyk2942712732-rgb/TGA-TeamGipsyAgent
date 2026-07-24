@@ -23,7 +23,7 @@ export function SessionRuntimePage({ taskId, mode, onReplay }: Props) {
   if (!snapshot) return <section className="runtime-workspace"><RuntimeLoading error={error} onRetry={() => void refresh()} /></section>;
 
   const profile = MODE_PROFILES[snapshot.task.mode];
-  const model = snapshot.solvers[0]?.model_name || "未记录模型";
+  const model = snapshot.task.model_snapshot?.model || snapshot.solvers[0]?.model_name || "未记录模型";
   const elapsed = elapsedLabel(snapshot.session.started_at, snapshot.session.finished_at);
   const runtimeError = latestRuntimeError(snapshot);
   const pendingApproval = snapshot.session.status === "awaiting_approval"
@@ -34,7 +34,7 @@ export function SessionRuntimePage({ taskId, mode, onReplay }: Props) {
     try {
       const result = await runtimeApi.control(taskId, action);
       if (result.accepted === false) throw new Error(result.reason || "运行时拒绝了控制请求");
-      setNotice(action === "pause" ? "暂停请求已接受，将在当前边界停止下一回合。" : action === "resume" ? "恢复请求已接受，将从 Transcript 与事件游标继续。" : "任务已取消。");
+      setNotice(action === "pause" ? "暂停请求已接受，将在当前边界停止下一回合。" : action === "resume" ? "恢复请求已接受，将从已保存的对话记录与事件位置继续。" : "任务已取消。");
     } catch (reason) {
       setNotice(reason instanceof Error ? reason.message : "运行时控制失败");
     } finally { setBusy(null); setConfirmCancel(false); }
@@ -44,7 +44,7 @@ export function SessionRuntimePage({ taskId, mode, onReplay }: Props) {
     try {
       const result = await runtimeApi.control(taskId, decision, actionId);
       if (result.accepted === false) throw new Error(result.reason || "运行时拒绝了审批决定");
-      setNotice(decision === "approve_action" ? "已批准该操作，将执行已持久化的原始动作。" : "已拒绝该操作，结构化拒绝结果将返回给同一 ReAct 对话。");
+      setNotice(decision === "approve_action" ? "已批准该操作，将执行已保存的原始动作。" : "已拒绝该操作，拒绝结果将返回给当前模型对话。");
       void refresh();
     } catch (reason) {
       setNotice(reason instanceof Error ? reason.message : "审批操作失败");
@@ -53,7 +53,7 @@ export function SessionRuntimePage({ taskId, mode, onReplay }: Props) {
   const submitHint = async (event: FormEvent) => {
     event.preventDefault(); if (!hint.trim()) return;
     setBusy("hint"); setNotice(null);
-    try { const result = await runtimeApi.hint(taskId, hint.trim()); if (result.accepted === false) throw new Error(result.reason || "运行时拒绝了提示"); setHint(""); setHintOpen(false); setNotice("提示已写入 EvidenceMemory，并关联新的 StrategyCard。" ); }
+    try { const result = await runtimeApi.hint(taskId, hint.trim()); if (result.accepted === false) throw new Error(result.reason || "运行时拒绝了提示"); setHint(""); setHintOpen(false); setNotice("提示已写入证据记忆，并关联新的候选策略。" ); }
     catch (reason) { setNotice(reason instanceof Error ? reason.message : "提示提交失败"); }
     finally { setBusy(null); }
   };
@@ -83,22 +83,22 @@ export function SessionRuntimePage({ taskId, mode, onReplay }: Props) {
       {snapshot.session.stop_reason ? <div className="stop-reason"><b>stop_reason</b><code>{snapshot.session.stop_reason}</code></div> : null}
     </header>
 
-    {mode === "replay" ? <div className="runtime-banner">回放模式只读取已持久化 Snapshot 和 AgentEvent，不发送控制、提示或目标请求。</div> : null}
+    {mode === "replay" ? <div className="runtime-banner">回放模式只读取已保存的运行快照和事件，不发送控制、提示或目标请求。</div> : null}
     {error ? <div className="runtime-banner error" role="alert">实时同步降级：{error}<button onClick={() => void refresh()}>重试</button></div> : null}
     {notice ? <div className="runtime-banner" role="status">{notice}<button onClick={() => setNotice(null)}>关闭</button></div> : null}
     {runtimeError ? <RuntimeErrorPanel error={runtimeError} retrying={busy === "resume"} onRetry={snapshot.session.status === "blocked" ? () => void control("resume") : undefined} /> : null}
     {mode === "runtime" && pendingApproval ? <ApprovalCard action={pendingApproval} busy={busy === "approval"} onDecide={decideApproval} /> : null}
     <ReactWorkbench snapshot={snapshot} />
 
-    {hintOpen ? <div className="runtime-modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setHintOpen(false); }}><form className="runtime-modal" role="dialog" aria-modal="true" aria-labelledby="hint-title" onSubmit={submitHint}><header><div><span>HUMAN GUIDANCE</span><h2 id="hint-title">补充任务上下文</h2></div><button type="button" onClick={() => setHintOpen(false)}>关闭</button></header><p>提示作为不可信候选指导写入 EvidenceMemory，不会扩大授权范围，也不会直接成为已验证结论。</p><label>补充提示<textarea autoFocus maxLength={800} value={hint} onChange={(event) => setHint(event.target.value)} placeholder="补充已知路径、失败边界或验证建议" /><small>{hint.length}/800</small></label><footer><button type="button" onClick={() => setHintOpen(false)}>返回</button><button className="primary" disabled={busy === "hint" || !hint.trim()}>{busy === "hint" ? "提交中" : "提交提示"}</button></footer></form></div> : null}
-    {confirmCancel ? <div className="runtime-modal-backdrop"><section className="runtime-modal" role="dialog" aria-modal="true" aria-labelledby="cancel-title"><header><div><span>SESSION CONTROL</span><h2 id="cancel-title">取消这个任务？</h2></div></header><p>当前 ReAct 链路会停止，并持久化已完成的 Action、Artifact 和事件。该操作不会删除任务文件。</p><footer><button onClick={() => setConfirmCancel(false)}>返回</button><button className="danger" disabled={busy === "cancel"} onClick={() => void control("cancel")}>{busy === "cancel" ? "正在取消" : "确认取消"}</button></footer></section></div> : null}
+    {hintOpen ? <div className="runtime-modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setHintOpen(false); }}><form className="runtime-modal" role="dialog" aria-modal="true" aria-labelledby="hint-title" onSubmit={submitHint}><header><div><span>人工补充</span><h2 id="hint-title">补充任务上下文</h2></div><button type="button" onClick={() => setHintOpen(false)}>关闭</button></header><p>提示将作为未经验证的候选指导写入证据记忆，不会扩大授权范围，也不会直接成为已验证结论。</p><label>补充提示<textarea autoFocus maxLength={800} value={hint} onChange={(event) => setHint(event.target.value)} placeholder="补充已知路径、失败边界或验证建议" /><small>{hint.length}/800</small></label><footer><button type="button" onClick={() => setHintOpen(false)}>返回</button><button className="primary" disabled={busy === "hint" || !hint.trim()}>{busy === "hint" ? "提交中" : "提交提示"}</button></footer></form></div> : null}
+    {confirmCancel ? <div className="runtime-modal-backdrop"><section className="runtime-modal" role="dialog" aria-modal="true" aria-labelledby="cancel-title"><header><div><span>任务控制</span><h2 id="cancel-title">取消这个任务？</h2></div></header><p>当前执行链路会停止，并保存已经完成的操作、证据产物和运行事件。该操作不会删除任务文件。</p><footer><button onClick={() => setConfirmCancel(false)}>返回</button><button className="danger" disabled={busy === "cancel"} onClick={() => void control("cancel")}>{busy === "cancel" ? "正在取消" : "确认取消"}</button></footer></section></div> : null}
   </section>;
 }
 
 function ApprovalCard({ action, busy, onDecide }: { action: RuntimeSnapshot["actions"][number]; busy: boolean; onDecide: (actionId: string, decision: "approve_action" | "reject_action") => void }) {
   const effect = action.effect;
   return <section className="approval-card" aria-label="高影响操作审批">
-    <header><div><span>HIGH-IMPACT REVIEW</span><h2><ShieldAlert size={17} />需要审批的操作</h2></div><b>{approvalDeadline(action.approval_expires_at)}</b></header>
+    <header><div><span>高影响操作审查</span><h2><ShieldAlert size={17} />需要审批的操作</h2></div><b>{approvalDeadline(action.approval_expires_at)}</b></header>
     <dl>
       <div><dt>能力</dt><dd>{action.capability}</dd></div><div><dt>目标</dt><dd>{action.actual_target || action.target}</dd></div>
       <div><dt>风险</dt><dd>{riskLabel(action.risk)}</dd></div><div><dt>预期结果</dt><dd>{action.expected_outcome || "未声明"}</dd></div>

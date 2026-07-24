@@ -125,7 +125,7 @@ describe("NewTaskPage multimodal input flow", () => {
     const user = userEvent.setup();
     render(<NewTaskPage onCreated={vi.fn()} />);
     await user.click(screen.getByRole("button", { name: /渗透测试/ }));
-    resolveProfiles({ schema_version: 5, profiles: [{ id: "ctf", label: "CTF 解题", description: "CTF", default_goal: "backend goal", default_mode_config: { mode: "ctf", subtype: "web" }, default_execution_policy: backendPolicy, allowed_input_kinds: [], required_conditions: [], recommended_capabilities: [], prompt_instruction: "", completion_validator: "ctf", report_sections: [], uses_flag: true, advanced_settings: [], mode_config_schema: {}, execution_policy_schema: {} }] });
+    resolveProfiles({ schema_version: 5, profiles: [{ id: "ctf", label: "CTF 解题", description: "CTF", default_goal: "backend goal", default_mode_config: { mode: "ctf", subtype: "web" }, default_execution_policy: backendPolicy, allowed_input_kinds: [], required_conditions: [], recommended_capabilities: [], completion_validator: "ctf", report_sections: [], uses_flag: true, advanced_settings: [], mode_config_schema: {}, execution_policy_schema: {} }] });
     await user.click(screen.getByRole("button", { name: /执行边界/ }));
     expect(screen.getByLabelText("执行策略")).toHaveValue("safe_observation");
   });

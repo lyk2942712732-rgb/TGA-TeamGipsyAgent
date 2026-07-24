@@ -57,20 +57,20 @@ class DeterministicObserver:
             if artifact_ids and summary:
                 memories.append(MemorySuggestion(
                     kind="failure_boundary",
-                    content=("Consecutive failures require a new diagnosis before retry: " + summary)[:800],
+                    content=("连续失败，重试前必须重新诊断：" + summary)[:800],
                     artifact_ids=artifact_ids,
                 ))
-            advice = "Change evidence, parameters, or validation purpose before retrying."
+            advice = "重试前请更换证据、参数或验证目的。"
         if "semantic_repeat" in triggers:
-            advice = "Supply a retry reason tied to new evidence, changed parameters, or explicit verification."
+            advice = "请提供与新证据、参数变化或明确验证目的相关的重试理由。"
         if "marker_missing" in triggers:
-            advice = "The success marker was not observed; validate encoding, parameters, and prerequisites."
+            advice = "未观察到成功标记；请检查编码、参数和前置条件。"
         if "http_session_anomaly" in triggers:
-            advice = "Diagnose HTTP session continuity before increasing side effects."
+            advice = "提高操作影响前，请先诊断 HTTP 会话连续性。"
         if "context_budget" in triggers:
-            advice = "Use bounded artifact retrieval and retain only source references and durable conclusions."
+            advice = "请限制证据产物读取范围，仅保留来源引用和可复用结论。"
         if "high_side_effect" in triggers:
-            advice = "Record expected side effects and compare a lower-impact evidence path first."
+            advice = "请记录预期副作用，并优先比较影响更低的取证路径。"
         return ObserverSuggestion(memory_suggestions=memories, strategy_advice=advice[:280])
 
 

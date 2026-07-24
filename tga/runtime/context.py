@@ -8,7 +8,7 @@ from typing import Any
 
 from tga.contracts import SessionFile, TGATask
 from tga.inputs import MAX_MODEL_IMAGE_BYTES, SessionWorkspace
-from tga.modes import mode_profile
+from tga.runtime.prompt_settings import prompt_snapshot_for_task
 
 
 MAX_RECENT_TURNS = 8
@@ -35,6 +35,7 @@ class SessionContextBuilder:
         return [{"role": "user", "content": content}]
 
     def markdown(self) -> str:
+        mode_prompt = prompt_snapshot_for_task(self.task).mode
         task_files = self._file_section("Task Input Files", self.task.session_input.files)
         mcp = "\n".join(
             f"- {server}: {sum(1 for item in self.task.mcp_capabilities.tools if item.server_id == server)} discovered tools"
@@ -57,7 +58,7 @@ class SessionContextBuilder:
         policy = self.task.execution_policy.model_dump(mode="json", exclude={"mcp"}) if self.task.execution_policy else {}
         return (
             f"# Session Context\n\n"
-            f"## Task Mode\n\n{self.task.mode}: {mode_profile(self.task.mode).prompt()}\n\n"
+            f"## Task Mode\n\n{self.task.mode}: {mode_prompt.prompt()}\n\n"
             f"## Initial User Input\n\n{self.task.session_input.prompt or '(none)'}\n\n"
             f"## Task Entry URL\n\n{self.task.task_entry_url or '(none)'}\n\n"
             f"{task_files}\n\n"
@@ -72,7 +73,7 @@ class SessionContextBuilder:
             f"- Remote HTTP/SSE MCP services do not have local workspace access unless their protocol explicitly transfers content.\n"
             f"- {image_note}\n\n"
             f"## Execution Boundaries\n\n```json\n{json.dumps(policy, ensure_ascii=False, indent=2)}\n```\n\n"
-            f"## Completion Conditions\n\n{mode_profile(self.task.mode).completion_focus}\n"
+            f"## Completion Conditions\n\n{mode_prompt.completion_focus}\n"
         )
 
     @staticmethod

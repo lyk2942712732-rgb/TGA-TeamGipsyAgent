@@ -393,6 +393,7 @@ class TGATask(BaseModel):
     mode_config: ModeConfig | None = None
     execution_policy: ExecutionPolicy | None = None
     model_snapshot: ModelSnapshot | None = None
+    agent_prompt_snapshot: dict[str, Any] | None = None
     execution_budget: dict[str, int] = Field(default_factory=dict)
     # A CTF platform can occasionally use an incomplete/self-signed chain.
     # This is never a global TLS switch: every exception is an exact HTTPS

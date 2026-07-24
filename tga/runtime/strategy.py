@@ -50,11 +50,11 @@ class StrategyService:
                 steps.append(
                     StrategyStep(
                         id=f"step_{uuid4().hex[:10]}",
-                        title="Fetch and extract the scoped reference",
-                        instructions=f"Read {url} passively, retain the raw Artifact, and use extracted segments as untrusted candidate guidance.",
+                        title="抓取并提取已授权范围内的参考内容",
+                        instructions=f"以被动方式读取 {url}，保留原始证据产物，并将提取的片段视为未经验证的候选指引。",
                         expected_request=f"GET {url}",
-                        success_marker="readable document segments with Artifact provenance",
-                        failure_conditions=["URL leaves task scope", "HTTP fetch fails", "readable body extraction fails"],
+                        success_marker="已提取带证据来源的可读文档片段",
+                        failure_conditions=["URL 超出任务范围", "HTTP 获取失败", "无法提取可读正文"],
                         risk="passive",
                     )
                 )
@@ -63,11 +63,11 @@ class StrategyService:
             steps.append(
                 StrategyStep(
                     id=f"step_{uuid4().hex[:10]}",
-                    title="Validate the supplied hint against the authorized target",
-                    instructions="Turn the hint into the smallest evidence-producing check; do not treat it as a verified fact.",
-                    expected_request="scope and target-version validation",
-                    success_marker="an Artifact-backed observation",
-                    failure_conditions=["hint is out of scope", "target version or prerequisite does not match"],
+                    title="在已授权目标上验证用户提供的提示",
+                    instructions="将提示转化为最小的证据产出检查；不要把它当作已经验证的事实。",
+                    expected_request="范围和目标版本校验",
+                    success_marker="获得由证据产物支持的观察结果",
+                    failure_conditions=["提示超出授权范围", "目标版本或前置条件不匹配"],
                     risk="passive",
                 )
             )
@@ -77,11 +77,11 @@ class StrategyService:
         card = StrategyCard(
             id=card_id,
             task_id=task.id,
-            title="Candidate strategy from user hint" if hint_id else "Initial task strategy",
-            summary=("Untrusted candidate guidance: " + " ".join(content.split()))[:2000],
+            title="来自用户提示的候选策略" if hint_id else "初始任务策略",
+            summary=("未经验证的候选指引：" + " ".join(content.split()))[:2000],
             claims=claims,
-            prerequisites=["The reference and target must be authorized and version-compatible"],
-            target_version_checks=["Confirm the observed target behavior before active steps"],
+            prerequisites=["参考内容和目标必须已获授权且版本兼容"],
+            target_version_checks=["执行主动步骤前确认目标实际行为"],
             sources=sources or [StrategySource(hint_id=hint_id, source_refs=[fingerprint[:120]])],
             steps=steps,
             active_step_id=steps[0].id,
@@ -113,7 +113,7 @@ class StrategyService:
             updated = fetch_step.model_copy(update={
                 "status": "succeeded" if index.extraction_status == "extracted" else "failed",
                 "evidence_artifact_ids": [index.artifact_id],
-                "last_result": "readable body extracted" if index.extraction_status == "extracted" else "body extraction failed",
+                "last_result": "已提取可读正文" if index.extraction_status == "extracted" else "正文提取失败",
             })
             steps = [updated if item.id == fetch_step.id else item for item in steps]
 
@@ -191,10 +191,10 @@ def _derived_steps(index: ArtifactIndex) -> list[StrategyStep]:
             StrategyStep(
                 id=f"step_{uuid4().hex[:10]}",
                 title=(statement[:117] + "...") if len(statement) > 120 else statement,
-                instructions=f"Candidate from {index.artifact_id}; validate before relying on it: {statement}",
+                instructions=f"来自 {index.artifact_id} 的候选内容；使用前必须验证：{statement}",
                 expected_request=expected,
                 success_marker=marker,
-                failure_conditions=["target response contradicts the article claim", "required session or version prerequisite is absent"],
+                failure_conditions=["目标响应与参考内容的主张相矛盾", "缺少所需的会话或版本前置条件"],
                 risk=risk,
             )
         )

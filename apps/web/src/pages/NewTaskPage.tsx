@@ -45,7 +45,7 @@ const fallbackProfiles = Object.fromEntries(TASK_MODES.map((mode) => [mode, {
   id: mode, label: MODE_PROFILES[mode].label, description: MODE_PROFILES[mode].description,
   default_goal: MODE_PROFILES[mode].defaultGoal, default_mode_config: fallbackConfig(mode), default_execution_policy: fallbackPolicy(mode),
   allowed_input_kinds: ["file", "archive", "image"], required_conditions: ["prompt_or_files"], recommended_capabilities: [],
-  prompt_instruction: "", completion_validator: mode, report_sections: [], uses_flag: mode === "ctf", advanced_settings: [],
+  completion_validator: mode, report_sections: [], uses_flag: mode === "ctf", advanced_settings: [],
   mode_config_schema: {}, execution_policy_schema: {},
 }])) as unknown as Record<TaskMode, ModeProfileContract>;
 

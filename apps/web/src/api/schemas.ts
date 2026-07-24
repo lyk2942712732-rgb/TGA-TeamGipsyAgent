@@ -27,6 +27,12 @@ const RuntimeTaskSchema = z.object({
   goal: z.string().optional(),
   schema_version: z.number().int().positive().optional(),
   task_entry_url: z.string().nullable().optional(),
+  model_snapshot: z.object({
+    provider: z.string(),
+    model: z.string(),
+    verification_id: z.string(),
+    verified_at: z.string(),
+  }).passthrough().nullable().optional().transform((value) => value ?? undefined),
   session_input: z.object({ prompt: z.string().default(""), files: z.array(SessionFileSchema).default([]) }).default({ prompt: "", files: [] }),
   mcp_capabilities: z.object({ catalog_version: z.string(), server_ids: z.array(z.string()).default([]), tools: z.array(z.object({ provider_name: z.string(), server_id: z.string(), method: z.string(), description: z.string().optional() })).default([]) }).optional(),
   mode_config: z.record(z.string(), z.unknown()).optional(),

@@ -46,12 +46,12 @@ export function RuntimeApp() {
         {!collapsed ? <div className="nav-caption">配置</div> : null}
         <Nav active={route.page === "models"} icon="◈" label="Provider 与模型" collapsed={collapsed} onClick={() => go("/settings/models")} />
         <Nav active={route.page === "capabilities"} icon="⌘" label="能力与 MCP" collapsed={collapsed} onClick={() => go("/settings/capabilities")} />
-        <Nav active={route.page === "skills"} icon="◇" label="Skills 与 Prompts" collapsed={collapsed} onClick={() => go("/settings/skills")} />
+        <Nav active={route.page === "skills"} icon="◇" label="Skills 与模型指令" collapsed={collapsed} onClick={() => go("/settings/skills")} />
       </nav>
       <button className="nav-refresh" title="刷新任务列表" onClick={() => void refreshTasks()}>↻{!collapsed ? " 刷新任务" : ""}</button>
     </aside>
     <main className={`app-main ${route.page === "runtime" || route.page === "replay" ? "runtime-main" : ""}`}>
-      {llmConfigured === false && route.page !== "models" ? <div className="model-config-banner" role="alert"><div><strong>尚未配置模型</strong><span>Agent 任务需要模型才能启动或恢复，请先完成 Provider 配置。</span></div><button onClick={() => go("/settings/models")}>去配置模型</button></div> : null}
+      {llmConfigured === false && route.page !== "models" ? <div className="model-config-banner" role="alert"><div><strong>尚未配置模型</strong><span>任务需要可用模型才能启动或恢复，请先完成 Provider 配置。</span></div><button onClick={() => go("/settings/models")}>去配置模型</button></div> : null}
       {route.page === "dashboard" ? <DashboardPage tasks={tasks} onNew={() => go("/tasks/new")} onOpen={(id) => go(`/tasks/${encodeURIComponent(id)}/runtime`)} onDelete={removeTask} /> : null}
       {route.page === "new" ? <NewTaskPage onCreated={(id) => { void refreshTasks(); go(`/tasks/${encodeURIComponent(id)}/runtime`); }} /> : null}
       {route.page === "runtime" && route.taskId ? <SessionRuntimePage taskId={route.taskId} mode="runtime" onReplay={() => go(`/tasks/${encodeURIComponent(route.taskId!)}/replay`)} /> : null}

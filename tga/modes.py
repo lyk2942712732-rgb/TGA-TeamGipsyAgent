@@ -198,7 +198,6 @@ def mode_profiles_payload() -> list[dict[str, Any]]:
             "allowed_input_kinds": list(profile.allowed_input_kinds),
             "required_conditions": list(profile.required_conditions),
             "recommended_capabilities": list(profile.recommended_capabilities),
-            "prompt_instruction": profile.prompt(),
             "completion_validator": profile.completion_validator,
             "report_sections": list(profile.report_sections),
             "uses_flag": profile.uses_flag,

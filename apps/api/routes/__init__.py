@@ -2,6 +2,7 @@
 
 from fastapi import APIRouter
 
+from apps.api.routes.agent_prompts import router as agent_prompts_router
 from apps.api.routes.artifacts import router as artifacts_router
 from apps.api.routes.capabilities import router as capabilities_router
 from apps.api.routes.events import router as events_router
@@ -23,6 +24,7 @@ for domain_router in (
     reports_router,
     inputs_router,
     llm_settings_router,
+    agent_prompts_router,
     skills_router,
     mcp_router,
     capabilities_router,

@@ -6,3 +6,4 @@ import pytest
 @pytest.fixture(autouse=True)
 def isolate_browser_model_settings(tmp_path, monkeypatch):
     monkeypatch.setenv("TGA_LLM_CONFIG_PATH", str(tmp_path / "user-config" / "llm-settings.json"))
+    monkeypatch.setenv("TGA_AGENT_PROMPT_CONFIG_PATH", str(tmp_path / "user-config" / "agent-prompt-settings.json"))
