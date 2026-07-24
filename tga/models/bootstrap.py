@@ -1,31 +1,44 @@
-"""Build model clients from environment variables."""
+"""Build model clients from browser-managed settings or environment fallback."""
 
 from __future__ import annotations
 
-import os
-
 from tga.models.openai_compatible import OpenAICompatibleClient
+from tga.models.settings import effective_model_settings
 
 
-def build_model_client_from_env() -> OpenAICompatibleClient | None:
-    base_url = os.environ.get("TGA_LLM_BASE_URL")
-    api_key = os.environ.get("TGA_LLM_API_KEY")
-    model = os.environ.get("TGA_LLM_MODEL")
-    if not base_url or not api_key or not model:
+def build_model_client() -> OpenAICompatibleClient | None:
+    settings = effective_model_settings()
+    api_key = settings["api_key"]
+    base_url = settings["base_url"]
+    model = settings["model"]
+    if not api_key or not base_url or not model:
         return None
-    vision_value = os.environ.get("TGA_LLM_SUPPORTS_VISION", "").strip().casefold()
-    supports_vision = None if not vision_value else vision_value in {"1", "true", "yes", "on"}
     return OpenAICompatibleClient(
         base_url=base_url, api_key=api_key, model=model,
-        supports_vision=supports_vision,
+        supports_vision=settings["supports_vision"], temperature=settings["temperature"],
+        timeout_s=settings["timeout_seconds"],
+        max_tokens=settings["max_output_tokens"],
+        reasoning_mode=settings["reasoning_mode"],
+        provider_name="openai-compatible",
     )
 
 
 def model_config_status() -> dict:
+    settings = effective_model_settings()
+    client = build_model_client()
     return {
-        "configured": build_model_client_from_env() is not None,
-        "base_url": os.environ.get("TGA_LLM_BASE_URL", ""),
-        "model": os.environ.get("TGA_LLM_MODEL", ""),
-        "supports_vision": os.environ.get("TGA_LLM_SUPPORTS_VISION", "").strip().casefold() in {"1", "true", "yes", "on"}
-        if os.environ.get("TGA_LLM_SUPPORTS_VISION", "").strip() else None,
+        "configured": client is not None,
+        "base_url": settings["base_url"],
+        "model": settings["model"],
+        "provider": "openai-compatible",
+        "api_key_set": bool(settings["api_key"]),
+        "browser_configured": settings["browser_configured"],
+        "temperature": settings["temperature"],
+        "max_output_tokens": settings["max_output_tokens"],
+        "timeout_seconds": settings["timeout_seconds"],
+        "reasoning_mode": settings["reasoning_mode"],
+        "supports_vision": settings["supports_vision"],
+        "verification_status": settings["verification_status"],
+        "verification": settings["verification"],
+        "chat_completions_url": client.chat_completions_url if client else "",
     }

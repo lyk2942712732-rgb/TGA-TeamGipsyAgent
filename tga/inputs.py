@@ -122,12 +122,10 @@ def media_kind_for(mime_type: str, original_name: str) -> MediaKind:
 
 
 def task_artifact_root(task_root: str | Path, task: Any) -> Path:
-    """Return the durable ArtifactStore root for a persisted task schema."""
+    """Return the durable ArtifactStore root for a Session workspace."""
 
     root = Path(task_root).resolve()
-    schema_version = int(getattr(task, "schema_version", 0) or 0)
-    relative = Path("workspace") / "artifacts" if schema_version >= 4 else Path("artifacts")
-    return (root / relative).resolve()
+    return (root / "workspace" / "artifacts").resolve()
 
 
 def cleanup_expired_staged_inputs(
@@ -173,7 +171,7 @@ class SessionWorkspace:
         self.limits = limits or InputLimits.from_environment()
 
     def ensure(self) -> Path:
-        for relative in ("inputs/task", "inputs/hints", "artifacts", "evidence", "tool-results", "state"):
+        for relative in ("inputs/files", "work", "artifacts", "evidence", "tool-results", "state"):
             path = (self.root / relative).resolve()
             self._inside(path, self.root)
             path.mkdir(parents=True, exist_ok=True)
@@ -183,11 +181,10 @@ class SessionWorkspace:
         self,
         *,
         staging_root: str | Path,
-        task_asset_ids: list[str],
-        hint_text: str | None,
-        hint_asset_ids: list[str],
+        prompt: str,
+        asset_ids: list[str],
     ) -> tuple[SessionInput, list[Path]]:
-        ids = [*task_asset_ids, *hint_asset_ids]
+        ids = list(asset_ids)
         if len(ids) != len(set(ids)):
             raise ValueError("asset ids must be unique")
         if len(ids) > self.limits.max_files:
@@ -195,24 +192,23 @@ class SessionWorkspace:
         staging = Path(staging_root).resolve()
         records: list[tuple[str, str, Path, dict[str, Any]]] = []
         total = 0
-        for kind, asset_ids in (("task", task_asset_ids), ("hint", hint_asset_ids)):
-            for asset_id in asset_ids:
-                if not re.fullmatch(r"asset_[a-f0-9]{32}", asset_id):
-                    raise ValueError(f"invalid asset id: {asset_id}")
-                token = asset_id.removeprefix("asset_")
-                stage = (staging / token).resolve()
-                self._inside(stage, staging)
-                try:
-                    metadata = json.loads((stage / "manifest.json").read_text(encoding="utf-8"))
-                except (OSError, json.JSONDecodeError) as exc:
-                    raise ValueError(f"staged asset is unavailable: {asset_id}") from exc
-                if metadata.get("asset_id") != asset_id:
-                    raise ValueError(f"staged asset identity mismatch: {asset_id}")
-                size = int(metadata.get("size") or 0)
-                if size > self.limits.max_file_bytes:
-                    raise ValueError("input exceeds per-file size limit")
-                total += size
-                records.append((kind, asset_id, stage, metadata))
+        for asset_id in asset_ids:
+            if not re.fullmatch(r"asset_[a-f0-9]{32}", asset_id):
+                raise ValueError(f"invalid asset id: {asset_id}")
+            token = asset_id.removeprefix("asset_")
+            stage = (staging / token).resolve()
+            self._inside(stage, staging)
+            try:
+                metadata = json.loads((stage / "manifest.json").read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as exc:
+                raise ValueError(f"staged asset is unavailable: {asset_id}") from exc
+            if metadata.get("asset_id") != asset_id:
+                raise ValueError(f"staged asset identity mismatch: {asset_id}")
+            size = int(metadata.get("size") or 0)
+            if size > self.limits.max_file_bytes:
+                raise ValueError("input exceeds per-file size limit")
+            total += size
+            records.append(("task_input", asset_id, stage, metadata))
         if total > self.limits.max_total_bytes:
             raise ValueError("input total size limit exceeded")
 
@@ -227,8 +223,7 @@ class SessionWorkspace:
                 suffix = Path(original_name).suffix.casefold()
                 safe_suffix = suffix if re.fullmatch(r"\.[a-z0-9]{1,16}", suffix) else ""
                 stored_name = f"{asset_id.removeprefix('asset_')}{safe_suffix}"
-                folder = "task" if kind == "task" else "hints"
-                relative_path = f"inputs/{folder}/{stored_name}"
+                relative_path = f"inputs/files/{stored_name}"
                 destination = (self.root / relative_path).resolve()
                 self._inside(destination, self.root)
                 digest = hashlib.sha256()
@@ -252,16 +247,18 @@ class SessionWorkspace:
                     sha256=digest.hexdigest(),
                     kind=kind,
                     mediaKind=media_kind_for(mime_type, original_name),
+                    provenance=ResourceProvenance(
+                        source="user_upload",
+                        created_at=str(metadata.get("created_at") or "") or None,
+                        original_name=original_name,
+                    ),
                 ))
                 cleanup.append(stage)
         except Exception:
             for path in created:
                 path.unlink(missing_ok=True)
             raise
-        session_input = SessionInput(
-            taskFiles=[item for item in files if item.kind == "task"],
-            hint={"text": hint_text, "files": [item for item in files if item.kind == "hint"]},
-        )
+        session_input = SessionInput(prompt=prompt, files=files)
         manifest = self.root / "state" / "input-manifest.json"
         manifest.write_text(session_input.model_dump_json(indent=2, by_alias=True), encoding="utf-8")
         return session_input, cleanup

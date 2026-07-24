@@ -372,14 +372,8 @@ class MCPManager:
         """Perform a side-effect-free MCP resources/read behind task policy."""
 
         self.ensure_catalog(workspace=workspace)
-        policy = task.execution_policy.mcp if task.execution_policy and task.schema_version < 4 else None
-        if task.schema_version >= 4:
-            if server_id not in task.mcp_capabilities.server_ids:
-                raise PermissionError("MCP_SERVER_NOT_IN_SESSION_SNAPSHOT")
-        elif server_id not in task.mcp_servers or (policy and server_id not in policy.enabled_servers):
-            raise PermissionError("MCP_SERVER_NOT_AUTHORIZED")
-        if policy and policy.enabled_resources and uri not in policy.enabled_resources:
-            raise PermissionError("MCP_RESOURCE_NOT_AUTHORIZED")
+        if server_id not in task.mcp_capabilities.server_ids:
+            raise PermissionError("MCP_SERVER_NOT_IN_SESSION_SNAPSHOT")
         server = self.config.servers.get(server_id) if self.config else None
         if server is None or not server.enabled:
             raise PermissionError("MCP_SERVER_NOT_AVAILABLE")

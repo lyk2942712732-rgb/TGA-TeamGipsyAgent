@@ -100,7 +100,7 @@ def test_docker_archive_with_multiple_repo_tags_requires_selection(tmp_path: Pat
 def test_delete_server_removes_only_the_config_entry(tmp_path: Path) -> None:
     path = tmp_path / "mcp.json"
     path.write_text(
-        json.dumps({"version": 1, "servers": {"demo": {"command": "docker", "args": ["run", "--rm", "-i", "demo-mcp:latest"]}}}),
+        json.dumps({"version": 1, "servers": {"demo": {"transport": "stdio", "stdio": {"source": "docker_image", "image": "demo-mcp:latest"}}}}),
         encoding="utf-8",
     )
 

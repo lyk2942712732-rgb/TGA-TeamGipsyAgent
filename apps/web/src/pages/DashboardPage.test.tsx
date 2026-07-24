@@ -7,7 +7,7 @@ const task = (status = "completed"): TaskListItem => ({
   task_id: "task_history",
   name: "历史任务",
   mode: "ctf",
-  target: "https://challenge.example",
+  task_entry_url: "https://challenge.example",
   created_at: "2026-07-17T00:00:00Z",
   status,
   flags: 1,
@@ -28,6 +28,7 @@ describe("DashboardPage history deletion", () => {
     expect(screen.getByRole("heading", { name: "逆向分析" })).toBeInTheDocument();
     expect(screen.getByText("历史任务")).toBeInTheDocument();
     expect(screen.getByText("固件分析")).toBeInTheDocument();
+    expect(screen.queryByText(/Solver/i)).not.toBeInTheDocument();
   });
 
   it("requires confirmation before deleting a historical task", async () => {

@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from tga.contracts import ActionResult, TGATask
+from tga.contracts import TGATask
 from tga.capabilities.registry import build_default_registry
 from tga.evidence.artifacts import ArtifactStore
 from tga.evidence.store import EvidenceStore
@@ -17,10 +17,8 @@ from tga.runtime.completion_validators import (
     finish_tool_schema,
     validator_for,
 )
-from tga.runtime.challenge_state import ChallengeStateMachine
-from tga.runtime.manager import Manager, RuntimeLimits
+from tga.runtime.coordinator import SessionCoordinator
 from tga.runtime.prompts import build_agent_system_prompt
-from tga.orchestrator.planner import plan_initial_intents
 from tga.skills.registry import SkillRegistry
 from tga.tools.mcp_config import MCPVisibilityConfig, load_mcp_config
 
@@ -30,7 +28,7 @@ def _task(task_id: str, mode: str, **updates) -> TGATask:
         "id": task_id,
         "name": task_id,
         "mode": mode,
-        "target": "https://target.example",
+        "task_entry_url": "https://target.example",
         "goal": "complete the requested analysis",
         "flag_format": r"CTF\{[^}]+\}" if mode == "ctf" else None,
     }
@@ -42,11 +40,13 @@ def _context(tmp_path, task: TGATask, *, text: str = "evidence"):
     root = tmp_path / task.id
     store = EvidenceStore(root / "evidence.db")
     store.create_task(task)
-    ChallengeStateMachine(store).activate(task, reason="test_started")
+    coordinator = SessionCoordinator(store)
+    _, agent_id = coordinator.ensure_runtime(task=task, max_turns=4)
+    coordinator.start(task_id=task.id, solver_id=agent_id)
     artifacts = ArtifactStore(root / "artifacts")
     artifact = artifacts.save_text(
         task_id=task.id, intent_id="act_1", kind="tool_output", text=text,
-        tool="test.evidence", target=task.target,
+        tool="test.evidence", target=task.default_action_target(),
     )
     store.add_artifact(artifact)
     context = CompletionValidationContext(
@@ -58,16 +58,15 @@ def _context(tmp_path, task: TGATask, *, text: str = "evidence"):
     return store, artifact, context
 
 
-def test_five_modes_and_legacy_values_share_one_authoritative_migration_boundary():
+def test_five_modes_are_authoritative_and_removed_aliases_are_rejected():
     assert set(TASK_MODES) == {
         "ctf", "penetration_test", "incident_response",
         "vulnerability_research", "reverse_engineering",
     }
     assert set(MODE_PROFILES) == set(TASK_MODES)
-    assert _task("old_web", "web_audit", flag_format="flag").mode == "penetration_test"
-    assert _task("old_code", "code_audit").mode == "vulnerability_research"
-    assert _task("old_binary", "binary_ctf").mode == "reverse_engineering"
-    assert _task("old_web_flag", "web_audit", flag_format=r"FLAG\{.*\}").flag_format is None
+    for removed in ("web_audit", "code_audit", "binary_ctf"):
+        with pytest.raises(ValueError, match="unsupported task mode"):
+            _task(f"removed_{removed}", removed)
     for mode in TASK_MODES:
         assert _task(f"task_{mode}", mode).model_dump(mode="json")["mode"] == mode
 
@@ -99,20 +98,16 @@ def test_finish_schema_is_strict_and_exposes_flag_only_for_ctf():
         assert "flag" not in schema["properties"]
 
 
-def test_each_mode_drives_prompt_plan_capabilities_and_skills(monkeypatch):
-    monkeypatch.setattr("tga.agent.llm_planner.build_model_client_from_env", lambda: None)
+def test_each_mode_drives_prompt_capabilities_and_skills():
     capabilities = build_default_registry().snapshot()["capabilities"]
     skills = SkillRegistry()
-    first_goals: set[str] = set()
     for mode in TASK_MODES:
         task = _task(f"profile_{mode}", mode)
         prompt = build_agent_system_prompt(task)
         assert MODE_PROFILES[mode].label in prompt
         assert MODE_PROFILES[mode].completion_focus in prompt
-        first_goals.add(plan_initial_intents(task)[0].goal)
         assert any(mode in item["modes"] for item in capabilities)
         assert skills.query(mode=mode, limit=3)
-    assert len(first_goals) == len(TASK_MODES)
 
 
 def test_ctf_requires_an_artifact_backed_non_placeholder_flag(tmp_path):
@@ -131,7 +126,12 @@ def test_ctf_requires_an_artifact_backed_non_placeholder_flag(tmp_path):
     assert missing.accepted is False and missing.code == "CTF_FLAG_REQUIRED"
     assert fake.accepted is False and fake.code == "INVALID_EVIDENCE_REFERENCE"
     assert accepted.accepted is True and accepted.code == "CTF_FLAG_VERIFIED"
-    assert store.task_snapshot(task.id)["flags"][0]["evidence_artifact_id"] == artifact.id
+    assert accepted.evidence_artifact_ids == [artifact.id]
+    assert store.task_snapshot(task.id)["flags"] == [{
+        "value": "CTF{real_evidence}",
+        "evidence_artifact_id": artifact.id,
+        "created_at": store.task_snapshot(task.id)["flags"][0]["created_at"],
+    }]
     store.close()
 
 
@@ -149,8 +149,8 @@ def test_configured_remote_flag_verifier_is_the_final_ctf_oracle(tmp_path):
     context.remote_flag_verifier = lambda _task, _flag: True
     accepted = validator_for(task.mode).validate(context=context, submission=submission)
     assert accepted.accepted is True
-    confirmed = next(event for event in store.list_agent_events(task.id) if event.type == "FLAG_CONFIRMED")
-    assert confirmed.payload["verification"] == "remote_verifier_accepted"
+    assert accepted.details["verification"] == "remote_verifier_accepted"
+    assert any(event.type == "FLAG_CONFIRMED" for event in store.list_agent_events(task.id))
     store.close()
 
 
@@ -251,99 +251,4 @@ def test_reverse_engineering_without_analysis_artifact_is_rejected(tmp_path):
     )
     assert result.accepted is False
     assert "at least one task-owned evidence Artifact" in result.missing
-    store.close()
-
-
-class _RejectedThenRecoveredModel:
-    model = "finish-state-machine-test"
-
-    def __init__(self):
-        self.turn = 0
-
-    def chat_tools(self, messages, *, tools, temperature=0.2):
-        self.turn += 1
-        if self.turn == 1:
-            call = {"id": "finish_bad", "type": "function", "function": {
-                "name": "finish_session", "arguments": json.dumps({"summary": "done", "flag": "CTF{loop_ok}"}),
-            }}
-        elif self.turn == 2:
-            rejected = json.loads(next(item["content"] for item in reversed(messages) if item.get("tool_call_id") == "finish_bad"))
-            assert rejected["accepted"] is False and rejected["terminal"] is False
-            call = {"id": "get_evidence", "type": "function", "function": {
-                "name": "tga_http_request", "arguments": json.dumps({"method": "GET", "path": "/"}),
-            }}
-        else:
-            tool_result = json.loads(next(item["content"] for item in reversed(messages) if item.get("tool_call_id") == "get_evidence"))
-            artifact_id = tool_result["artifacts"][-1]["artifact_id"]
-            call = {"id": "finish_good", "type": "function", "function": {
-                "name": "finish_session", "arguments": json.dumps({
-                    "summary": "Recovered the verified flag.", "flag": "CTF{loop_ok}",
-                    "evidence_artifact_ids": [artifact_id],
-                }),
-            }}
-        return {"message": {"role": "assistant", "content": "", "tool_calls": [call]}, "finish_reason": "tool_calls"}
-
-
-class _FlagExecutor:
-    def __init__(self, artifacts):
-        self.artifacts = artifacts
-
-    def execute(self, *, task, action, workspace):
-        artifact = self.artifacts.save_text(
-            task_id=task.id, intent_id=action.id, kind="http_response",
-            text="response CTF{loop_ok}", tool=action.capability, target=task.target,
-        )
-        return ActionResult(
-            action_id=action.id, task_id=task.id, solver_id=action.solver_id,
-            status="succeeded", summary="captured response", artifact_ids=[artifact.id],
-            candidate_flags=["CTF{loop_ok}"],
-        )
-
-
-def test_rejected_finish_returns_to_the_same_session_then_can_complete(tmp_path, monkeypatch):
-    task = _task("finish_retry", "ctf")
-    root = tmp_path / "runs"
-    store = EvidenceStore(root / task.id / "evidence.db")
-    store.create_task(task)
-    model = _RejectedThenRecoveredModel()
-    monkeypatch.setattr("tga.runtime.manager.build_model_client_from_env", lambda: model)
-    manager = Manager(
-        store=store, run_root=root,
-        executor=_FlagExecutor(ArtifactStore(root / task.id / "artifacts")),
-    )
-    snapshot = manager.run_session(task.id)
-    event_types = [event["type"] for event in snapshot["agent_events"]]
-    assert snapshot["session"]["status"] == "completed"
-    assert snapshot["session"]["turn_count"] == 3
-    assert "FINISH_REJECTED" in event_types and "FINISH_ACCEPTED" in event_types
-    assert event_types.index("FINISH_REJECTED") < event_types.index("TOOL_EXECUTION_START") < event_types.index("FINISH_ACCEPTED")
-    store.close()
-
-
-class _NaturalTurnModel:
-    model = "natural-turn-test"
-
-    def chat_tools(self, messages, *, tools, temperature=0.2):
-        return {
-            "message": {"role": "assistant", "content": "Maybe CTF{plain_text_only}, but I have no evidence."},
-            "finish_reason": "stop",
-        }
-
-
-def test_plain_flag_text_continues_until_max_turns_not_fixed_two_turn_block(tmp_path, monkeypatch):
-    task = _task("plain_turns", "ctf")
-    root = tmp_path / "runs"
-    store = EvidenceStore(root / task.id / "evidence.db")
-    store.create_task(task)
-    monkeypatch.setattr("tga.runtime.manager.build_model_client_from_env", lambda: _NaturalTurnModel())
-    manager = Manager(store=store, run_root=root)
-    manager.limits = RuntimeLimits(max_turns=3)
-    snapshot = manager.run_session(task.id)
-    events = snapshot["agent_events"]
-    assert snapshot["session"]["status"] == "blocked"
-    assert snapshot["session"]["stop_reason"] == "session_turn_limit"
-    assert snapshot["session"]["turn_count"] == 3
-    assert len([event for event in events if event["type"] == "CONTINUATION_TRIGGERED"]) == 3
-    assert len([event for event in events if event["type"] == "AGENT_TURN_ENDED"]) == 3
-    assert not snapshot["flags"]
     store.close()

@@ -1,0 +1,54 @@
+{
+  "capability": "http.request",
+  "semantic_fingerprint": "34122be3dcd472d03257b09e",
+  "method": "GET",
+  "final_method": "GET",
+  "requested_url": "http://127.0.0.1:54685/",
+  "final_url": "http://127.0.0.1:54685/",
+  "redirect_chain": [],
+  "request_headers": {
+    "User-Agent": "TGA-Capability-Runtime/2"
+  },
+  "preflight": {
+    "body_format": null,
+    "parameter_count": 0,
+    "encoded_length": 0
+  },
+  "http_session": {
+    "profile": "persistent",
+    "origin": "http://127.0.0.1:54685",
+    "reused": false,
+    "request_count": 1,
+    "origin_count": 1,
+    "generation": 1,
+    "rebuild_count": 0,
+    "cross_process_recovery": false
+  },
+  "status": 200,
+  "response_headers": {
+    "Server": "BaseHTTP/0.6 Python/3.13.12",
+    "Date": "Fri, 24 Jul 2026 14:39:36 GMT",
+    "Content-Type": "text/plain; charset=utf-8",
+    "Content-Length": "73"
+  },
+  "content_type": "text/plain; charset=utf-8",
+  "body_excerpt": "CTF training fixture. The verified flag is TGA{real_provider_http_smoke}.",
+  "body_bytes": 73,
+  "truncated": false,
+  "duration_ms": 64,
+  "page": {},
+  "challenge_availability": null,
+  "tls": {
+    "mode": "verified"
+  },
+  "error": null,
+  "body_artifact_id": "artifact_d20861ca1d52",
+  "document": {
+    "extraction_status": "extracted",
+    "document_type": "text",
+    "summary": "CTF training fixture. The verified flag is TGA{real_provider_http_smoke}.",
+    "segment_refs": [
+      "artifact_d20861ca1d52#segment-1"
+    ]
+  }
+}

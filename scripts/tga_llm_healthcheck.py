@@ -3,11 +3,11 @@ from __future__ import annotations
 import json
 
 from tga.models.base import ModelMessage
-from tga.models.bootstrap import build_model_client_from_env, model_config_status
+from tga.models.bootstrap import build_model_client, model_config_status
 
 
 def main() -> int:
-    client = build_model_client_from_env()
+    client = build_model_client()
     if client is None:
         print(json.dumps({"ok": False, "status": model_config_status(), "error": "LLM_NOT_CONFIGURED"}, ensure_ascii=False, indent=2))
         return 0

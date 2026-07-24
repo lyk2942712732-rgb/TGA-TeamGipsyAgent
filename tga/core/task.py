@@ -5,6 +5,7 @@ from __future__ import annotations
 from uuid import uuid4
 
 from tga.contracts import TGATask
+from tga.network_policy import normalize_origin
 
 
 def new_task_id() -> str:
@@ -12,13 +13,13 @@ def new_task_id() -> str:
 
 
 def normalize_task(task: TGATask) -> TGATask:
-    """Return a validated task with de-duplicated scope entries."""
-    scope = []
-    seen = set()
-    for item in task.scope:
-        clean = item.strip()
-        if clean and clean not in seen:
-            seen.add(clean)
-            scope.append(clean)
-    return task.model_copy(update={"scope": scope})
+    """Return a validated task with canonical, de-duplicated network origins."""
+    policy = task.execution_policy.model_copy(deep=True)
+    policy.network.seed_origins = list(
+        dict.fromkeys(normalize_origin(item) for item in policy.network.seed_origins)
+    )
+    policy.network.custom_origins = list(
+        dict.fromkeys(normalize_origin(item) for item in policy.network.custom_origins)
+    )
+    return task.model_copy(update={"execution_policy": policy})
 

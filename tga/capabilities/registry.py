@@ -8,7 +8,6 @@ from .base import CapabilitySpec
 from .schemas import (
     ArtifactInspectArguments,
     HTTPRequestArguments,
-    ToolInvokeArguments,
     WorkspacePythonArguments,
     WorkspaceReadArguments,
     WorkspaceShellArguments,
@@ -57,7 +56,6 @@ def build_default_registry() -> CapabilityRegistry:
     register = registry.register
     all_modes = ["ctf", "penetration_test", "incident_response", "vulnerability_research", "reverse_engineering"]
     register(CapabilitySpec(name="http.request", description="Scoped HTTP request with redirect verification.", kind="http", risk="passive", modes=["ctf", "penetration_test", "incident_response", "vulnerability_research"], parameter_schema={}, budget_key="http"), HTTPRequestArguments)
-    register(CapabilitySpec(name="tool.invoke", description="Invoke an explicitly named, catalogued MCP tool method.", kind="tool", risk="active", modes=all_modes, parameter_schema={}, budget_key="mcp"), ToolInvokeArguments)
     register(CapabilitySpec(name="workspace.read", description="Read a file from this solver's private workspace.", kind="workspace", risk="passive", modes=all_modes, parameter_schema={}, budget_key="workspace"), WorkspaceReadArguments)
     register(CapabilitySpec(name="workspace.write", description="Write a file in this solver's private workspace.", kind="workspace", risk="active", modes=all_modes, parameter_schema={}, budget_key="workspace"), WorkspaceWriteArguments)
     register(CapabilitySpec(name="workspace.python", description="Run a bounded Python helper in the Solver workspace.", kind="workspace", risk="active", modes=["ctf", "incident_response", "vulnerability_research", "reverse_engineering"], parameter_schema={}, budget_key="python"), WorkspacePythonArguments)

@@ -1,13 +1,10 @@
 ﻿import { expect, test } from "@playwright/test";
 
 const policy = {
-  network: { mode: "none", allowed_scopes: [], rate_limit: 30, concurrency: 2 },
-  filesystem: { mode: "read_only", allowed_roots: [] },
-  process_execution: { mode: "forbidden", timeout_seconds: 60 },
-  fuzzing: { mode: "disabled", max_cases: 0, max_duration_seconds: 0, concurrency: 0 },
-  state_change: { mode: "forbidden", allowed_actions: [] },
-  containment: { mode: "observe_only", allowed_actions: [] },
-  source: "default",
+  preset: "autonomous_ctf",
+  network: { access: "public_internet", interaction: "interact", seed_origins: [], custom_origins: [], custom_domains: [], custom_cidrs: [], deny_private_networks: true, deny_loopback: true, deny_link_local: true, deny_cloud_metadata: true, rate_limit_per_minute: 30, concurrency: 2, request_timeout_seconds: 30 },
+  local_compute: { mode: "isolated", timeout_seconds: 120, concurrency: 2, network_inheritance: "task_network_policy" },
+  high_impact: { mode: "approval_required", allowed_actions: [] },
 };
 
 test("new task selects a scene and stages task files plus Hint without task-level MCP grants", async ({ page }) => {
@@ -18,12 +15,12 @@ test("new task selects a scene and stages task files plus Hint without task-leve
   let createPayload: Record<string, unknown> | undefined;
   await page.route("**/api/v2/settings/llm", (route) => route.fulfill({ json: { configured: true, model: "mock-model" } }));
   await page.route("**/api/v2/mode-profiles", (route) => route.fulfill({ json: {
-    schema_version: 3,
+    schema_version: 5,
     profiles: [{
       id: "ctf", label: "CTF 解题", description: "Solve with evidence", default_goal: "Recover a verified flag.",
       default_mode_config: { mode: "ctf", subtype: "auto", expected_flag_count: 1, verifier: { kind: "local_regex" } },
-      default_execution_policy: { ...policy, mcp: { enabled_servers: ["legacy"], enabled_tools: [] } },
-      allowed_input_kinds: ["file", "archive", "image"], required_conditions: ["task_files_or_hint"],
+      default_execution_policy: policy,
+      allowed_input_kinds: ["file", "archive", "image"], required_conditions: ["prompt_or_files"],
       recommended_capabilities: [], prompt_instruction: "", completion_validator: "ctf", report_sections: ["evidence"],
       uses_flag: true, advanced_settings: [], mode_config_schema: {}, execution_policy_schema: {},
     }],
@@ -56,9 +53,9 @@ test("new task selects a scene and stages task files plus Hint without task-leve
     await route.fulfill({ json: { tasks: [] } });
   });
   await page.route("**/api/v2/tasks/task_created/session", (route) => route.fulfill({ json: {
-    task: { id: "task_created", name: "new", mode: "ctf", target: "", scope: [] },
-    session: { status: "created", turn_count: 0, max_turns: 48 }, solvers: [], challenge: null, subagents: [],
-    board: { hypotheses: [], memory: [] }, actions: [], flags: [], findings: [], artifacts: [], events: [], latest_seq: 0,
+    task: { id: "task_created", name: "new", mode: "ctf", task_entry_url: null, session_input: { prompt: "Analyze the supplied diagram.", files: [] } },
+    session: { status: "created", turn_count: 0, max_turns: 48 }, solvers: [], challenge: null,
+    runtime: { memory: [], strategy_cards: [] }, actions: [], flags: [], findings: [], artifacts: [], events: [], latest_seq: 0,
   } }));
   await page.route("**/api/v2/tasks/task_created/events/stream?*", (route) => route.fulfill({ status: 200, contentType: "text/event-stream", body: "event: heartbeat\ndata: {}\n\n" }));
 
@@ -70,17 +67,19 @@ test("new task selects a scene and stages task files plus Hint without task-leve
     text: await page.locator("body").innerText(),
     errors: browserErrors,
     scripts: await page.locator("script").evaluateAll((items) => items.map((item) => item.getAttribute("src"))),
-  }), { timeout: 5000 }).toMatchObject({ text: expect.stringContaining("任务材料与 Hint"), errors: [] });
-  await page.getByRole("button", { name: /任务材料与 Hint/ }).click();
-  const fileInputs = page.locator('input[type="file"]');
-  await fileInputs.nth(0).setInputFiles({ name: "challenge.txt", mimeType: "text/plain", buffer: Buffer.from("question") });
-  await fileInputs.nth(1).setInputFiles({ name: "diagram.png", mimeType: "image/png", buffer: Buffer.from("89504e470d0a1a0a", "hex") });
+  }), { timeout: 5000 }).toMatchObject({ text: expect.stringContaining("任务提示与材料"), errors: [] });
+  await page.getByRole("button", { name: /任务提示与材料/ }).click();
+  const fileInput = page.locator('input[type="file"]');
+  await fileInput.setInputFiles([
+    { name: "challenge.txt", mimeType: "text/plain", buffer: Buffer.from("question") },
+    { name: "diagram.png", mimeType: "image/png", buffer: Buffer.from("89504e470d0a1a0a", "hex") },
+  ]);
   await expect(page.getByText("已上传")).toHaveCount(2);
   await expect(page.getByAltText("diagram.png 缩略图")).toBeVisible();
-  await page.getByLabel("Hint 文本").fill("Analyze the supplied diagram.");
+  await page.getByLabel("任务提示词").fill("Analyze the supplied diagram.");
 
   await page.getByRole("button", { name: /执行边界/ }).click();
-  await expect(page.getByLabel("网络权限")).toBeVisible();
+  await expect(page.getByLabel("网络访问")).toBeVisible();
   await expect(page.getByText("MCP 服务与方法授权")).toHaveCount(0);
   await page.getByRole("button", { name: /创建摘要/ }).click();
   await expect(page.getByText("fixture")).toBeVisible();
@@ -91,11 +90,15 @@ test("new task selects a scene and stages task files plus Hint without task-leve
   expect(createPayload).toMatchObject({
     mode: "ctf",
     input: {
-      taskFileIds: [`asset_${"1".padStart(32, "0")}`],
-      hintText: "Analyze the supplied diagram.",
-      hintFileIds: [`asset_${"2".padStart(32, "0")}`],
+      text: "Analyze the supplied diagram.",
     },
   });
+  const createdInput = createPayload?.input as { text: string; fileIds: string[] };
+  expect(createdInput.fileIds.sort()).toEqual([
+    `asset_${"1".padStart(32, "0")}`,
+    `asset_${"2".padStart(32, "0")}`,
+  ]);
+  expect(createdInput.fileIds).toHaveLength(2);
   for (const removed of ["targetUrls", "references", "mcpResources", "mcpTools", "mcpServiceGrants", "mcpMethodGrants", "mcp_servers", "targets"]) {
     expect(createPayload).not.toHaveProperty(removed);
   }

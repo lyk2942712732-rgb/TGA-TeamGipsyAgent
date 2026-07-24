@@ -11,6 +11,7 @@ from tga.tools.mcp_config import MCPServerConfig
 from tga.tools.mcp_manager import MCPManager
 from tga.tools.mcp_transport import MCPTransportError, StreamableHTTPTransport
 from tga.contracts import TGATask
+from tests.runtime_fixtures import execution_policy, mcp_snapshot
 
 
 class _MCPHandler(BaseHTTPRequestHandler):
@@ -170,8 +171,9 @@ def test_http_server_discovery_allowlist_and_agent_tool_call(endpoint: str, tmp_
     snapshot = manager.refresh()
     assert [route.provider_name for route in snapshot.routes] == ["mcp__remote__echo"]
     task = TGATask(
-        id="http_mcp", name="http mcp", mode="ctf", target="http://127.0.0.1", goal="test",
-        allow_active_scan=True, mcp_servers=["remote"],
+        id="http_mcp", name="http mcp", mode="ctf", task_entry_url="http://127.0.0.1/", goal="test",
+        execution_policy=execution_policy([endpoint]),
+        mcp_capabilities=mcp_snapshot(snapshot, "remote"),
     )
     outcome = manager.call_tool(
         task=task,

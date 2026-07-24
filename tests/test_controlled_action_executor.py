@@ -7,6 +7,7 @@ from pathlib import Path
 from tga.capabilities.runtime import ControlledActionExecutor
 from tga.contracts import ActionSpec, TGATask
 from tga.evidence.artifacts import ArtifactStore
+from tests.runtime_fixtures import execution_policy
 
 
 def _task() -> TGATask:
@@ -14,8 +15,8 @@ def _task() -> TGATask:
         id="task_action_executor",
         name="controlled executor",
         mode="ctf",
-        target="http://127.0.0.1:1",
-        scope=["127.0.0.1:1"],
+        task_entry_url="http://127.0.0.1:1/",
+        execution_policy=execution_policy(["127.0.0.1:1"]),
         goal="test",
     )
 
@@ -84,7 +85,8 @@ def test_http_result_exposes_only_candidate_flag(tmp_path: Path) -> None:
     thread.start()
     try:
         target = f"http://127.0.0.1:{server.server_port}"
-        task = _task().model_copy(update={"target": target, "scope": [f"127.0.0.1:{server.server_port}"]})
+        scope = [f"127.0.0.1:{server.server_port}"]
+        task = _task().model_copy(update={"task_entry_url": f"{target}/", "execution_policy": execution_policy(scope)})
         executor = ControlledActionExecutor(artifact_store=ArtifactStore(tmp_path))
 
         result = executor.execute(

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from tga.contracts import Finding, TGATask
-from tga.core.scope import is_in_scope
+from tga.network_policy import authorize_url
 
 
 def finding_ok(
@@ -12,7 +12,9 @@ def finding_ok(
     task: TGATask,
     artifact_text: str | None,
 ) -> bool:
-    if not is_in_scope(finding.target, task.scope):
+    try:
+        authorize_url(finding.target, task.execution_policy.network, resolve_dns=False)
+    except (PermissionError, ValueError):
         return False
     if not finding.evidence_artifact_id:
         return False

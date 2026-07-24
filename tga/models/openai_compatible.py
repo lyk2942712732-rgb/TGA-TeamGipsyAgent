@@ -10,10 +10,19 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from typing import Any, Iterable
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from tga.models.base import ModelMessage, ModelResponse
+from tga.models.settings import MAX_MAX_OUTPUT_TOKENS, MIN_MAX_OUTPUT_TOKENS
+
+
+def chat_completions_url(base_url: str) -> str:
+    """Return the final endpoint while accepting either an origin or full path."""
+    normalized = base_url.strip().rstrip("/")
+    if normalized.casefold().endswith("/chat/completions"):
+        return normalized
+    return normalized + "/chat/completions"
 
 
 @dataclass
@@ -22,14 +31,23 @@ class OpenAICompatibleClient:
     api_key: str
     model: str
     timeout_s: int = 60
+    max_tokens: int = 512
+    temperature: float = 0.2
+    provider_name: str = "openai-compatible"
     supports_vision: bool | None = None
+    reasoning_mode: str = "auto"
+
+    @property
+    def chat_completions_url(self) -> str:
+        return chat_completions_url(self.base_url)
 
     def chat_tools(
         self,
         messages: list[dict[str, Any]],
         *,
         tools: list[dict[str, Any]],
-        temperature: float = 0.2,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
     ) -> dict[str, Any]:
         """Run one native agent turn and preserve the provider tool envelope.
 
@@ -38,49 +56,73 @@ class OpenAICompatibleClient:
         required for the same protocol; flattening it into a JSON planning
         string was the source of the old one-action-at-a-time runtime.
         """
-        url = self.base_url.rstrip("/") + "/chat/completions"
+        url = self.chat_completions_url
+        output_budget = self.max_tokens if max_tokens is None else max_tokens
         payload: dict[str, Any] = {
             "model": self.model,
             "messages": messages,
-            "temperature": temperature,
+            "temperature": self.temperature if temperature is None else temperature,
             "tools": tools,
             "tool_choice": "auto",
+            "max_tokens": output_budget,
         }
+        self._apply_reasoning_mode(payload)
         try:
             raw = self._post_json(url, payload)
-        except HTTPError as exc:
-            text = exc.read().decode("utf-8", errors="replace")
-            raise RuntimeError(f"model agent request failed: {exc.code} {text}") from exc
+        except RuntimeError:
+            raise
+        except (HTTPError, URLError, TimeoutError) as exc:
+            raise RuntimeError(self._provider_error("agent request", exc)) from exc
         choice = raw.get("choices", [{}])[0]
         message = choice.get("message")
         if not isinstance(message, dict):
             raise RuntimeError("model agent response did not contain an assistant message")
-        return {"message": message, "finish_reason": choice.get("finish_reason"), "raw": raw}
+        retry_metadata: dict[str, Any] | None = None
+        if self._reasoning_tool_call_was_truncated(choice, message):
+            retry_budget = min(MAX_MAX_OUTPUT_TOKENS, max(output_budget * 2, output_budget + 512))
+            if retry_budget > output_budget:
+                retry_payload = dict(payload)
+                retry_payload["max_tokens"] = retry_budget
+                try:
+                    raw = self._post_json(url, retry_payload)
+                except RuntimeError:
+                    raise
+                except (HTTPError, URLError, TimeoutError) as exc:
+                    raise RuntimeError(self._provider_error("agent retry", exc)) from exc
+                choice = raw.get("choices", [{}])[0]
+                message = choice.get("message")
+                if not isinstance(message, dict):
+                    raise RuntimeError("model agent retry did not contain an assistant message")
+                retry_metadata = {
+                    "event": "PROVIDER_RETRY",
+                    "reason": "tool_call_truncated_after_reasoning",
+                    "attempts": 2,
+                    "previous_max_output_tokens": output_budget,
+                    "retry_max_output_tokens": retry_budget,
+                }
+        result = {
+            "message": message,
+            "finish_reason": choice.get("finish_reason"),
+            "usage": raw.get("usage") if isinstance(raw.get("usage"), dict) else {},
+            "request_id": raw.get("id"),
+        }
+        if retry_metadata is not None:
+            result["provider_retry"] = retry_metadata
+        return result
 
-    def chat(self, messages: list[ModelMessage], *, temperature: float = 0.2) -> ModelResponse:
-        url = self.base_url.rstrip("/") + "/chat/completions"
-        body = json.dumps(
-            {
-                "model": self.model,
-                "messages": [{"role": message.role, "content": message.content} for message in messages],
-                "temperature": temperature,
-            }
-        ).encode("utf-8")
-        request = Request(
-            url,
-            data=body,
-            method="POST",
-            headers={
-                "Authorization": f"Bearer {self.api_key}",
-                "Content-Type": "application/json",
-            },
-        )
+    def chat(self, messages: list[ModelMessage], *, temperature: float | None = None) -> ModelResponse:
+        url = self.chat_completions_url
+        payload: dict[str, Any] = {
+            "model": self.model,
+            "messages": [{"role": message.role, "content": message.content} for message in messages],
+            "temperature": self.temperature if temperature is None else temperature,
+            "max_tokens": self.max_tokens,
+        }
+        self._apply_reasoning_mode(payload)
         try:
-            with urlopen(request, timeout=self.timeout_s) as response:
-                raw = json.loads(response.read().decode("utf-8"))
-        except HTTPError as exc:
-            text = exc.read().decode("utf-8", errors="replace")
-            raise RuntimeError(f"model request failed: {exc.code} {text}") from exc
+            raw = self._post_json(url, payload)
+        except RuntimeError:
+            raise
         content = raw.get("choices", [{}])[0].get("message", {}).get("content", "")
         return ModelResponse(content=content, model=self.model, raw=raw)
 
@@ -92,20 +134,21 @@ class OpenAICompatibleClient:
         tool_description: str,
         parameters: dict,
         thinking: bool | None = None,
-        temperature: float = 0.2,
+        temperature: float | None = None,
     ) -> ModelResponse:
         """Request one native OpenAI-compatible function call.
 
-        Modern OpenAI-compatible providers (including DeepSeek V4) validate
-        a tool-call envelope more reliably than an instruction asking the
+        OpenAI-compatible providers validate a tool-call envelope more
+        reliably than an instruction asking the
         model to print JSON.  The runtime still validates the arguments and
         executes nothing from this client directly.
         """
-        url = self.base_url.rstrip("/") + "/chat/completions"
+        url = self.chat_completions_url
         payload = {
             "model": self.model,
             "messages": [{"role": message.role, "content": message.content} for message in messages],
-            "temperature": temperature,
+            "temperature": self.temperature if temperature is None else temperature,
+            "max_tokens": self.max_tokens,
             "tools": [{"type": "function", "function": {
                 "name": tool_name, "description": tool_description, "parameters": parameters,
             }}],
@@ -113,24 +156,25 @@ class OpenAICompatibleClient:
         }
         if thinking is not None:
             payload["thinking"] = {"type": "enabled" if thinking else "disabled"}
+        else:
+            self._apply_reasoning_mode(payload)
         try:
             raw = self._post_json(url, payload)
-        except HTTPError as exc:
-            text = exc.read().decode("utf-8", errors="replace")
-            # DeepSeek reasoning/thinking models accept tools but reject a
-            # forced ``tool_choice``.  BreachWeave-style provider negotiation
-            # retries with the same bounded tool catalog in automatic mode;
+        except RuntimeError as exc:
+            safe_error = str(exc)
+            # Some reasoning models accept tools but reject a forced
+            # ``tool_choice``. Retry with the same bounded tool catalog in
+            # automatic mode;
             # the host still validates every returned argument before use.
-            if exc.code == 400 and thinking is not False and "does not support this tool_choice" in text.casefold():
+            if "status=400" in safe_error and thinking is not False and "does not support this tool_choice" in safe_error.casefold():
                 fallback_payload = dict(payload)
                 fallback_payload.pop("tool_choice", None)
                 try:
                     raw = self._post_json(url, fallback_payload)
-                except HTTPError as retry_exc:
-                    retry_text = retry_exc.read().decode("utf-8", errors="replace")
-                    raise RuntimeError(f"model tool request failed after automatic tool selection: {retry_exc.code} {retry_text}") from retry_exc
+                except RuntimeError as retry_exc:
+                    raise RuntimeError(f"provider tool retry failed: {retry_exc}") from retry_exc
             else:
-                raise RuntimeError(f"model tool request failed: {exc.code} {text}") from exc
+                raise
         choice = raw.get("choices", [{}])[0]
         message = choice.get("message", {})
         calls = message.get("tool_calls") or []
@@ -168,19 +212,66 @@ class OpenAICompatibleClient:
                 "Content-Type": "application/json",
             },
         )
-        with urlopen(request, timeout=self.timeout_s) as response:
-            return json.loads(response.read().decode("utf-8"))
+        try:
+            with urlopen(request, timeout=self.timeout_s) as response:
+                raw = json.loads(response.read().decode("utf-8"))
+        except (HTTPError, URLError, TimeoutError) as exc:
+            raise RuntimeError(self._provider_error("request", exc)) from exc
+        if not isinstance(raw, dict):
+            raise RuntimeError("provider request returned an invalid JSON envelope")
+        return raw
 
-    def chat_stream(self, messages: list[ModelMessage], *, temperature: float = 0.2) -> Iterable[str]:
-        url = self.base_url.rstrip("/") + "/chat/completions"
-        body = json.dumps(
-            {
-                "model": self.model,
-                "messages": [{"role": message.role, "content": message.content} for message in messages],
-                "temperature": temperature,
-                "stream": True,
-            }
-        ).encode("utf-8")
+    def preflight_tools(self, tools: list[dict[str, Any]]) -> dict[str, Any]:
+        """Perform one minimal tool-capability request before a task starts."""
+        if not tools:
+            raise RuntimeError("provider tool preflight requires at least one tool definition")
+        result = self.chat_tools(
+            [{"role": "system", "content": "Return a tool call if the tool protocol is supported."},
+             {"role": "user", "content": "Protocol preflight."}],
+            tools=tools[:1], temperature=0, max_tokens=max(MIN_MAX_OUTPUT_TOKENS, self.max_tokens),
+        )
+        message = result.get("message")
+        calls = message.get("tool_calls") if isinstance(message, dict) else None
+        if not isinstance(calls, list) or not calls:
+            raise RuntimeError("provider tool preflight failed: model returned no function call")
+        return {"ok": True, "request_id": result.get("request_id")}
+
+    def _provider_error(self, phase: str, exc: BaseException, *, body: str | None = None) -> str:
+        if isinstance(exc, HTTPError):
+            request_id = exc.headers.get("x-request-id") or exc.headers.get("request-id") or "unknown"
+            try:
+                payload = json.loads(body if body is not None else exc.read().decode("utf-8", errors="replace"))
+                message = payload.get("error", {}).get("message", "provider request failed") if isinstance(payload, dict) else "provider request failed"
+            except Exception:
+                message = "provider request failed"
+            return f"provider {phase} failed: status={exc.code} type=http_error request_id={request_id} message={_redact(str(message))[:240]}"
+        return f"provider {phase} failed: type={type(exc).__name__} message={_redact(str(exc))[:240]}"
+
+    def _apply_reasoning_mode(self, payload: dict[str, Any]) -> None:
+        if self.reasoning_mode in {"enabled", "disabled"}:
+            payload["thinking"] = {"type": self.reasoning_mode}
+
+    @staticmethod
+    def _reasoning_tool_call_was_truncated(choice: dict[str, Any], message: dict[str, Any]) -> bool:
+        reasoning = message.get("reasoning_content")
+        return (
+            choice.get("finish_reason") == "length"
+            and not message.get("tool_calls")
+            and isinstance(reasoning, str)
+            and bool(reasoning.strip())
+        )
+
+    def chat_stream(self, messages: list[ModelMessage], *, temperature: float | None = None) -> Iterable[str]:
+        url = self.chat_completions_url
+        payload: dict[str, Any] = {
+            "model": self.model,
+            "messages": [{"role": message.role, "content": message.content} for message in messages],
+            "temperature": self.temperature if temperature is None else temperature,
+            "max_tokens": self.max_tokens,
+            "stream": True,
+        }
+        self._apply_reasoning_mode(payload)
+        body = json.dumps(_unicode_scalar_value(payload), ensure_ascii=False).encode("utf-8")
         request = Request(
             url,
             data=body,
@@ -208,9 +299,8 @@ class OpenAICompatibleClient:
                     delta = payload.get("choices", [{}])[0].get("delta", {}).get("content")
                     if delta:
                         yield str(delta)
-        except HTTPError as exc:
-            text = exc.read().decode("utf-8", errors="replace")
-            raise RuntimeError(f"model stream failed: {exc.code} {text}") from exc
+        except (HTTPError, URLError, TimeoutError) as exc:
+            raise RuntimeError(self._provider_error("stream request", exc)) from exc
 
 
 def _unicode_scalar_value(value: Any) -> Any:
@@ -226,4 +316,12 @@ def _unicode_scalar_value(value: Any) -> Any:
             _unicode_scalar_value(key) if isinstance(key, str) else key: _unicode_scalar_value(item)
             for key, item in value.items()
         }
+    return value
+
+
+def _redact(value: str) -> str:
+    import re
+    value = re.sub(r"(?i)(authorization|proxy-authorization|cookie|set-cookie|x-api-key)\s*:\s*[^\r\n]+", r"\1: [REDACTED]", value)
+    value = re.sub(r"(?i)\b(bearer\s+)[A-Za-z0-9._~+/=-]{8,}", r"\1[REDACTED]", value)
+    value = re.sub(r"(?i)\b(token|secret|api[_-]?key|password)\s*[=:]\s*[^\s,;}&]+", r"\1=[REDACTED]", value)
     return value

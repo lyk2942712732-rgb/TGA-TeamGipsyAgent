@@ -19,7 +19,7 @@ describe("resolveApiBase", () => {
   it("renders FastAPI validation issues with their field path", () => {
     expect(formatApiErrorDetail([
       { loc: ["body", "task"], msg: "Field required" },
-      { loc: ["body", "input", "hintText"], msg: "String should have at most 16384 characters" },
-    ], 422)).toBe("task: Field required；input.hintText: String should have at most 16384 characters");
+      { loc: ["body", "input", "text"], msg: "String should have at most 16384 characters" },
+    ], 422)).toBe("task: Field required；input.text: String should have at most 16384 characters");
   });
 });

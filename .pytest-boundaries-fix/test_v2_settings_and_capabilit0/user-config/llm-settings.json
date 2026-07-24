@@ -1,0 +1,22 @@
+{
+  "schema_version": 2,
+  "base_url": "https://example.test/v1",
+  "model": "second-model",
+  "supports_vision": false,
+  "max_output_tokens": 1024,
+  "timeout_seconds": 60,
+  "temperature": 0.2,
+  "reasoning_mode": "auto",
+  "verification": {
+    "status": "unverified",
+    "id": null,
+    "verified_at": null,
+    "capability_fingerprint": null,
+    "capabilities": {
+      "tool_calling": false,
+      "vision": null
+    },
+    "last_error": null
+  },
+  "api_key_dpapi": "AQAAANCMnd8BFdERjHoAwE/Cl+sBAAAAlQkgFz9xPE223JYnW/mxwgAAAAAkAAAAVABHAEEAIABtAG8AZABlAGwAIABBAFAASQAgAGsAZQB5AAAAEGYAAAABAAAgAAAAX0Rxc6ZP98RInCGmv2vOPZDS6OdT0IHxEYG0F6kUV9YAAAAADoAAAAACAAAgAAAA8n7Q+Oiq5gsr0dKT48VxvWq+W/11Dd0TEuPPUiNQ8FsQAAAADzB236KgixNUPoYL+F3WXUAAAAADlgdm/qmxvsZq2RfvCiTo9cb4d6k9LDAuL0Dr7B9jzAUn2XgU/rjCfHmMXvCWqP2ep+0yyX8D/QGXsSdRYae3"
+}

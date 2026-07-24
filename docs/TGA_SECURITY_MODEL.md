@@ -2,8 +2,8 @@
 
 ## Input trust boundary
 
-Schema-v4 Session input is limited to staged task files, optional Hint text, and
-Hint attachments. The backend does not trust client paths, MIME declarations,
+Schema-v5 Session input is one initial user prompt plus staged task files. The
+backend does not trust client paths, MIME declarations,
 stored names, sizes, or digests. It generates asset IDs/stored names, rejects
 unsafe filenames, streams bytes through size limits, detects MIME from content
 where supported, and records SHA-256 metadata.
@@ -11,8 +11,7 @@ where supported, and records SHA-256 metadata.
 Each Session owns one persistent workspace:
 
 ```text
-workspace/inputs/task
-workspace/inputs/hints
+workspace/inputs/files
 workspace/artifacts
 workspace/evidence
 workspace/tool-results
@@ -24,22 +23,23 @@ or modified content must be written to `artifacts`. A failed creation removes th
 partial Session tree while retaining traceable staging for bounded retry; an
 expiry sweeper removes unclaimed staging.
 
-Hint text and attachments are untrusted context. They never add network scope,
-filesystem roots, process permission, state-change authority, or MCP permission.
+Initial prompt text and attachments are untrusted context. They create only the
+creation-time `task_sources` URL seeds; later hints, artifacts, and model/OCR
+output never widen network authorization, filesystem roots, process permission,
+high-impact authority, or MCP permission.
 
 ## Execution boundaries
 
 Removing task-level MCP selection does not remove execution governance. The
 enforced boundaries remain:
 
-- network mode, exact allowed scopes, rate, and concurrency;
-- filesystem read-only/workspace-write mode and allowed roots;
-- process execution mode and timeout;
-- bounded fuzzing budgets;
-- state-change and incident-containment modes/action allowlists;
+- network access, interaction, seed/custom origins, rate, and concurrency;
+- fixed read-only inputs plus writable work/artifacts workspace layout;
+- isolated local compute mode, timeout, and concurrency;
+- high-impact forbidden/approval-required/allowlist policy;
 - per-server MCP rate, concurrency, timeout, output, and transport controls.
 
-Manager creates a candidate StrategyCard before Solver execution and binds
+Manager creates a candidate StrategyCard before Agent execution and binds
 actions to a strategy step, rationale, and expected outcome. The controlled
 executor validates capability input and scope; AgentSession cannot widen it.
 
@@ -51,9 +51,9 @@ visibility, not as a user-selected grant. New services affect only subsequently
 created Sessions. Global disable/removal is checked again before every call and
 immediately blocks existing Sessions.
 
-Active MCP methods require a relevant general execution boundary. Destructive
-methods additionally require `state_change.mode = authorized` and an exact
-`mcp:<server>.<method>` allowed action. Host Windows paths are rejected for
+Active MCP methods require a relevant general execution boundary. High-impact
+methods are forbidden, require durable user approval, or require an exact
+`mcp:<server>.<method>` allowlist entry. Host Windows paths are rejected for
 Docker MCP calls.
 
 Local Docker MCP calls receive the Session workspace as `/workspace:ro` and only
@@ -69,7 +69,7 @@ boundaries, and completion conditions. It does not inline arbitrary binary or
 archive bytes. Vision-capable models receive bounded real image content blocks;
 text-only models receive paths and explicit image-analysis guidance.
 
-HTTP state uses one in-memory CookieJar per task, Solver, and origin. Cookie and
+HTTP state uses one in-memory CookieJar per task, Agent session, and origin. Cookie and
 authorization values are excluded from events, reports, checkpoints, and UI.
 Raw tool output remains an immutable Artifact. Derived indexes and excerpts are
 non-authoritative projections with stable source references.
@@ -80,13 +80,15 @@ redacted state and may return only an ObserverPatch; it cannot call tools or mar
 a task solved.
 
 The full audit transcript is retained while the provider receives a bounded
-working context that preserves assistant/tool protocol pairs and schema-v4 input
+working context that preserves assistant/tool protocol pairs and schema-v5 input
 metadata. `GET` endpoints are read-only; material report export is an explicit,
 audited `POST` operation.
 
-## Legacy compatibility
+## Historical schema boundary
 
-Schema 2/3 task payloads, URL/reference inputs, MCP Resource/Tool records, and
-old MCP ACL fields remain readable for historical Sessions. Schema-aware readers
-use their legacy `inputs`/`artifacts` roots. Those fields do not participate in
-new schema-v4 Session creation or authorization.
+Schema 2/3 rows and user files are preserved for explicit offline migration,
+but the live Runtime API and Manager reject them with
+`SCHEMA_VERSION_UNSUPPORTED`. The product does not project old URL/reference,
+MCP Resource/Tool, or task-level MCP ACL semantics into the current UI and does
+not execute or dual-write them. Only schema-v5 Session inputs and the creation
+time MCP catalog snapshot participate in authorization.

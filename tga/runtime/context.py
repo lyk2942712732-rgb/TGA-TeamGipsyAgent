@@ -25,9 +25,9 @@ class SessionContextBuilder:
 
     def build(self) -> list[dict[str, Any]]:
         content: list[dict[str, Any]] = [{"type": "text", "text": self.markdown()}]
-        if self.supports_vision is not False:
+        if self.supports_vision is True:
             store = SessionWorkspace(self.workspace.parent)
-            for item in [*self.task.session_input.task_files, *self.task.session_input.hint.files]:
+            for item in self.task.session_input.files:
                 if item.media_kind != "image":
                     continue
                 if item.size <= MAX_MODEL_IMAGE_BYTES:
@@ -35,19 +35,18 @@ class SessionContextBuilder:
         return [{"role": "user", "content": content}]
 
     def markdown(self) -> str:
-        task_files = self._file_section("Task Files", self.task.session_input.task_files)
-        hint_files = self._file_section("Hint Attachments", self.task.session_input.hint.files)
+        task_files = self._file_section("Task Input Files", self.task.session_input.files)
         mcp = "\n".join(
             f"- {server}: {sum(1 for item in self.task.mcp_capabilities.tools if item.server_id == server)} discovered tools"
             for server in self.task.mcp_capabilities.server_ids
         ) or "- None available at Session creation"
         oversized_images = [
             item.container_path
-            for item in [*self.task.session_input.task_files, *self.task.session_input.hint.files]
+            for item in self.task.session_input.files
             if item.media_kind == "image" and item.size > MAX_MODEL_IMAGE_BYTES
         ]
-        if self.supports_vision is False:
-            image_note = "The configured model is text-only. Image files remain at the paths above; use an available image-analysis/OCR tool to inspect them."
+        if self.supports_vision is not True:
+            image_note = "The model has not been verified for vision. Images remain available through controlled input tools and are not sent automatically."
         elif oversized_images:
             image_note = (
                 "Images up to 20 MB are included as real image content blocks. Larger images remain available by path and require an image-analysis/OCR tool: "
@@ -59,8 +58,9 @@ class SessionContextBuilder:
         return (
             f"# Session Context\n\n"
             f"## Task Mode\n\n{self.task.mode}: {mode_profile(self.task.mode).prompt()}\n\n"
-            f"## User Hint\n\n{self.task.session_input.hint.text or '(none)'}\n\n"
-            f"{task_files}\n\n{hint_files}\n\n"
+            f"## Initial User Input\n\n{self.task.session_input.prompt or '(none)'}\n\n"
+            f"## Task Entry URL\n\n{self.task.task_entry_url or '(none)'}\n\n"
+            f"{task_files}\n\n"
             f"## Available MCP Capabilities\n\nCatalog snapshot: `{self.task.mcp_capabilities.catalog_version}`\n\n{mcp}\n\n"
             f"These services were globally enabled and discovered when the Session was created. Global disable is enforced immediately; newly added services are available only to newly created Sessions.\n\n"
             f"## Workspace Rules\n\n"
@@ -88,7 +88,7 @@ class SessionContextBuilder:
                 f"  - MIME: {item.mime_type}",
                 f"  - Size: {item.size}",
                 f"  - SHA-256: {item.sha256}",
-                f"  - Purpose: {'primary task material' if item.kind == 'task' else 'auxiliary hint material'}",
+                f"  - Purpose: task input",
             ])
         return "\n".join(lines)
 
@@ -219,21 +219,11 @@ def _compact_message(message: dict[str, Any]) -> tuple[dict[str, Any], bool]:
 
 
 def _working_input_manifest(task: dict[str, Any]) -> dict[str, Any]:
-    if int(task.get("schema_version") or 0) >= 4:
+    if int(task.get("schema_version") or 0) >= 5:
         session_input = task.get("session_input") or {}
-        hint = session_input.get("hint") or {}
         return {
-            "hint_text": hint.get("text"),
-            "task_files": session_input.get("task_files") or session_input.get("taskFiles") or [],
-            "hint_files": hint.get("files") or [],
+            "prompt": session_input.get("prompt") or "",
+            "files": session_input.get("files") or [],
+            "task_entry_url": task.get("task_entry_url"),
         }
-    return {
-        "inputs": [
-            {
-                key: item.get(key)
-                for key in ("id", "role", "kind", "label", "uri", "mime_type", "size", "sha256", "summary", "status")
-                if item.get(key) is not None
-            }
-            for item in [*(task.get("targets") or []), *(task.get("hints") or [])]
-        ]
-    }
+    return {"unsupported_schema": task.get("schema_version")}

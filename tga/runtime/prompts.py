@@ -15,9 +15,9 @@ MAX_ARTIFACT_OBSERVATIONS = 6
 
 ROLE_INSTRUCTIONS: dict[SolverRole, str] = {
     "recon": "Map assets, endpoints, forms and protocols; report coverage gaps and avoid speculative exploitation.",
-    "targeted": "Test exactly one active hypothesis with the smallest evidence-producing action.",
+    "targeted": "Execute the current StrategyStep with the smallest evidence-producing action.",
     "research": "Turn observed versions, errors or protocols into one executable next test; do not announce vulnerabilities.",
-    "main": "Coordinate priorities and structured child tasks; do not bypass the evidence gate.",
+    "main": "Follow StrategyCards, preserve evidence provenance, and do not bypass the completion gate.",
 }
 
 
@@ -54,13 +54,9 @@ def build_solver_context(
     intentionally excluded.  A solver can request a specific artifact through
     the controlled executor when it needs detail.
     """
-    board = snapshot.get("board") or {}
+    runtime = snapshot.get("runtime") or {}
     profile = mode_profile(task.mode)
-    memory = (board.get("memory") or [])[-MAX_MEMORY_ITEMS:]
-    hypotheses = [
-        item for item in (board.get("hypotheses") or [])
-        if item.get("status") in {"pending", "testing", "inconclusive"}
-    ]
+    memory = (runtime.get("memory") or [])[-MAX_MEMORY_ITEMS:]
     actions = (snapshot.get("actions") or [])[-MAX_ACTION_SUMMARIES:]
     return {
         "task": {
@@ -74,7 +70,7 @@ def build_solver_context(
         "session": snapshot.get("session") or {},
         "challenge": snapshot.get("challenge") or {},
         "solver": {"id": solver_id, "role": role},
-        "hypotheses": hypotheses,
+        "strategy_cards": runtime.get("strategy_cards") or [],
         "memory": [
             {"id": item.get("id"), "kind": item.get("kind"), "content": item.get("content"),
              "artifact_ids": item.get("artifact_ids") or [], "source": item.get("source")}
@@ -82,7 +78,7 @@ def build_solver_context(
         ],
         "recent_actions": [
             {"id": item.get("id"), "capability": item.get("capability"), "target": item.get("target"),
-             "status": item.get("status"), "hypothesis_id": item.get("hypothesis_id"),
+             "status": item.get("status"), "strategy_step_id": item.get("strategy_step_id"),
              "result": {key: (item.get("result") or {}).get(key) for key in ("summary", "artifact_ids", "facts", "leads", "candidate_flags", "error")}}
             for item in actions
         ],

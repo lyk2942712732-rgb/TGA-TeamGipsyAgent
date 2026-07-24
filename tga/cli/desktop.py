@@ -88,9 +88,6 @@ def _prepare_frontend(*, root: Path, host: str, port: int, build: bool) -> Path:
     # These values are needed by the Python API process as well as the Vite
     # build subprocess.  Keep the user's explicit environment configuration.
     os.environ.setdefault("TGA_RUN_ROOT", str(root / "runs"))
-    hub = root / "mcp-security-hub"
-    if hub.is_dir():
-        os.environ.setdefault("TGA_MCP_SECURITY_HUB_ROOT", str(hub))
     if not build and (dist / "index.html").is_file():
         return dist
     if not build:

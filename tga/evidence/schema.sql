@@ -74,24 +74,6 @@ CREATE TABLE IF NOT EXISTS solvers (
     finished_at TEXT
 );
 
-CREATE TABLE IF NOT EXISTS hypotheses (
-    id TEXT PRIMARY KEY,
-    task_id TEXT NOT NULL,
-    statement TEXT NOT NULL,
-    attack_class TEXT NOT NULL,
-    entry_point TEXT NOT NULL,
-    rationale TEXT NOT NULL,
-    next_test TEXT NOT NULL,
-    status TEXT NOT NULL,
-    confidence REAL NOT NULL,
-    attempt_count INTEGER NOT NULL DEFAULT 0,
-    evidence_json TEXT NOT NULL DEFAULT '[]',
-    last_result TEXT NOT NULL DEFAULT '',
-    owner_solver_id TEXT,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
-);
-
 CREATE TABLE IF NOT EXISTS memory_entries (
     id TEXT PRIMARY KEY,
     task_id TEXT NOT NULL,
@@ -108,7 +90,6 @@ CREATE TABLE IF NOT EXISTS actions (
     id TEXT PRIMARY KEY,
     task_id TEXT NOT NULL,
     solver_id TEXT NOT NULL,
-    hypothesis_id TEXT,
     kind TEXT NOT NULL,
     capability TEXT NOT NULL,
     target TEXT NOT NULL,
@@ -120,7 +101,8 @@ CREATE TABLE IF NOT EXISTS actions (
     expected_outcome TEXT NOT NULL DEFAULT '',
     retry_reason TEXT NOT NULL DEFAULT '',
     alternative_analysis TEXT NOT NULL DEFAULT '',
-    expected_side_effects TEXT NOT NULL DEFAULT '',
+    effect_json TEXT NOT NULL DEFAULT '{}',
+    approval_expires_at TEXT,
     input_id TEXT,
     target_ref TEXT,
     actual_target TEXT,
@@ -185,29 +167,22 @@ CREATE TABLE IF NOT EXISTS agent_event_sequences (
     next_seq INTEGER NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS runtime_leases (
+    task_id TEXT PRIMARY KEY,
+    owner_id TEXT NOT NULL,
+    expires_at REAL NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS challenge_contracts (
     task_id TEXT PRIMARY KEY,
     payload_json TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS subagent_requests (
-    id TEXT PRIMARY KEY,
-    task_id TEXT NOT NULL,
-    solver_id TEXT NOT NULL UNIQUE,
-    fingerprint TEXT NOT NULL,
-    payload_json TEXT NOT NULL,
-    status TEXT NOT NULL,
-    output_json TEXT,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
-);
-
 CREATE INDEX IF NOT EXISTS idx_agent_events_task_seq ON agent_events(task_id, seq);
-CREATE INDEX IF NOT EXISTS idx_hypotheses_task_status ON hypotheses(task_id, status);
 CREATE INDEX IF NOT EXISTS idx_memory_entries_task_created ON memory_entries(task_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_actions_task_created ON actions(task_id, created_at);
-CREATE INDEX IF NOT EXISTS idx_subagent_requests_task_status ON subagent_requests(task_id, status);
 CREATE INDEX IF NOT EXISTS idx_strategy_cards_task_updated ON strategy_cards(task_id, updated_at);
 CREATE INDEX IF NOT EXISTS idx_artifact_indexes_task_created ON artifact_indexes(task_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_context_metrics_task_turn ON context_metrics(task_id, solver_id, turn);

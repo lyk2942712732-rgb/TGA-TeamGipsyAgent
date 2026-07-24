@@ -1,0 +1,26 @@
+{
+  "schema_version": 2,
+  "base_url": "https://model.test/v1",
+  "model": "test-model",
+  "supports_vision": false,
+  "max_output_tokens": 1024,
+  "timeout_seconds": 60,
+  "temperature": 0.2,
+  "reasoning_mode": "auto",
+  "api_key_dpapi": "AQAAANCMnd8BFdERjHoAwE/Cl+sBAAAAlQkgFz9xPE223JYnW/mxwgAAAAAkAAAAVABHAEEAIABtAG8AZABlAGwAIABBAFAASQAgAGsAZQB5AAAAEGYAAAABAAAgAAAAYAZMzfFcpZotYcFqtVhqINlk/UBAXKcp1MTJv1edGHYAAAAADoAAAAACAAAgAAAAem/RlXXAqxq+Che9mfI631o6fUi3X/Lovb1RUV1bx+MQAAAAg9bMt5tUnZ+UoY76TXPoW0AAAABPldLXnD4MaqpySphaHF3es5jEJhGrCS3p0Y/RWfnjzkwT3LT/a4uYy+4DxeSzS512i78cTnvRLpmZkAoJ4617",
+  "verification": {
+    "status": "verified",
+    "id": "verify_test_provider",
+    "verified_at": "2026-07-24T14:41:15.479264+00:00",
+    "capability_fingerprint": "d7f38bcfe09f54bdeb9a495768b4670a32c46f8a152e51679b9149587c88ecf2",
+    "capabilities": {
+      "chat_completions": false,
+      "tool_calling": true,
+      "forced_tool_choice": false,
+      "auto_tool_choice": false,
+      "vision": false,
+      "reasoning_content": false
+    },
+    "last_error": null
+  }
+}

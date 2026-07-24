@@ -1,6 +1,6 @@
 # TGA — Agent Session Runtime
 
-TGA 是面向 CTF 与安全分析任务的本地 Agent Runtime。产品架构采用 BreachWeave 式持久 Solver Session：模型直接接收工具定义，工具结果回填同一会话，持续运行到完成、暂停、取消或达到回合上限。
+TGA 是面向 CTF 与安全分析任务的本地 Agent Runtime。产品采用持久、受治理的 ReAct Session：模型接收工具定义，工具结果回填同一会话，持续运行到完成、暂停、取消或达到回合上限。
 
 ## Quick Start
 
@@ -33,8 +33,12 @@ tga web --host 0.0.0.0
 ```
 
 MCP 使用显式 `config/mcp.json` allowlist。TGA 不扫描本机镜像，也不依赖
-`mcp-security-hub` 源码目录；已构建的 Docker 镜像可直接写入配置并通过
+外部源码目录；已构建的 Docker 镜像可直接写入配置并通过
 标准 `initialize` / `tools/list` 动态发现能力。
+
+模型 Provider、模型 ID 和 API Key 可在“Provider 与模型”页面配置。API Key
+只写不读，Windows 使用当前用户 DPAPI 加密并保存到用户配置目录；部署环境变量
+仍可作为更高优先级的配置来源。公网部署时应限制模型设置接口的管理访问。
 
 “能力与 MCP”页面是 MCP 的唯一管理入口，通过四步向导管理 Docker STDIO 与
 MCP Streamable HTTP 服务。STDIO 可拖入 `docker save` 镜像归档或选择已有本地
@@ -43,12 +47,12 @@ MCP Streamable HTTP 服务。STDIO 可拖入 `docker save` 镜像归档或选择
 
 ## 核心运行方式
 
-- 新建 Session 的任务信息只来自任务文件、可选 Hint 文本和 Hint 附件；URL、仓库地址、账号或题面文字应写入 Hint 或文件。
-- 文件先流式上传为临时 asset，创建成功后归档到 `runs/<session>/workspace/inputs/task` 或 `inputs/hints`。后端生成存储名、检测 MIME、限制数量/大小并记录 SHA-256。
-- 网络、文件系统、进程、速率、并发、状态变更与处置边界仍由 `executionPolicy` 独立控制，Hint 附件不会扩大授权。
+- 新建 Session 使用一份初始任务输入文本和统一附件列表；URL、仓库地址、账号或题面文字写入初始文本或文件。
+- 文件先流式上传为临时 asset，创建成功后统一归档到 `runs/<session>/workspace/inputs/files`。后端生成存储名、检测 MIME、限制数量/大小并记录 SHA-256。
+- 网络访问、网络交互、本地隔离计算和高影响操作由 `executionPolicy` 的独立维度控制；后续 Hint 和附件不会扩大授权。
 - 全局已配置、启用且已发现或可达的 MCP 自动进入新 Session 的能力快照，不存在任务级 MCP 复选框或 ACL。新增 MCP 只对之后创建的 Session 可见；全局禁用会立即阻止已有 Session 的后续调用。
 - Hint 会先转成带来源的候选 StrategyCard；工具动作需关联策略步骤、预期证据和风险信息。
-- Solver 使用原生 function calling 连续调用 HTTP、workspace 与 MCP 工具。
+- Agent 通过原生 function calling 提出 HTTP、workspace 与 MCP 工具调用，执行统一进入 ToolDispatcher 和受治理 Handler。
 - assistant `tool_calls` 与匹配的 tool result 保存在同一持久 transcript 中，支持恢复。
 - Runtime 通过顺序事件区分模型计划、真实工具执行、Manager 拒绝、Observer 建议和最终确认。
 
@@ -60,14 +64,13 @@ MCP Streamable HTTP 服务。STDIO 可拖入 `docker save` 镜像归档或选择
 - `apps/api/`：FastAPI v2 Runtime API。
 - `apps/web/`：React Runtime 控制台。
 - `config/mcp.json`、`tga/tools/mcp_*`：显式 MCP allowlist、动态发现、策略与 transport。
-- `runs/`：本地任务状态、Solver transcript、Session workspace、artifact 与报告（运行时生成）。
+- `runs/`：本地任务状态、Agent transcript、Session workspace、artifact 与报告（运行时生成）。
 
-Schema-v4 Session 使用一套持久 workspace：
+Schema-v5 Session 使用一套持久 workspace：
 
 ```text
 runs/<session-id>/workspace/
-  inputs/task/       # 不可变任务文件
-  inputs/hints/      # 不可变 Hint 附件
+  inputs/files/      # 不可变任务输入文件
   artifacts/         # 派生结果
   evidence/
   tool-results/
@@ -147,17 +150,17 @@ python scripts\tga_mcp_smoke.py --config $env:TGA_MCP_CONFIG_PATH --server nmap 
   "goal": "Analyze the supplied sample",
   "modeOptions": {"mode": "reverse_engineering"},
   "input": {
-    "taskFileIds": ["asset_..."],
-    "hintText": "optional",
-    "hintFileIds": []
+    "text": "optional initial task input",
+    "fileIds": ["asset_..."]
   },
   "executionPolicy": {}
 }
 ```
 
-`targetUrls`、`references`、`mcpResources`、`mcpTools` 及 MCP grant 字段不会影响
-新 Session；若旧客户端额外发送这些字段，服务端忽略并写入弃用审计。历史
-Session 的旧 target/reference/MCP 数据仍可只读打开。
+`targetUrls`、`references`、`mcpResources`、`mcpTools`、任务级 MCP grant 及其他
+已删除字段不属于当前请求契约；服务端以 `422` 拒绝包含这些字段的请求，不会
+静默忽略、记录后继续执行或转换成当前授权。旧 schema 数据保留在磁盘上，但
+当前 Runtime 明确拒绝执行。
 
 ## 统一 CLI
 
@@ -172,14 +175,4 @@ tga cancel task_web_ctf_demo
 tga resume task_web_ctf_demo
 ```
 
-`tga run <task.json>` 是“创建 + 运行 + 生成报告”的快捷方式。迁移细节、持久目录与旧调度器删除条件见 `docs/V2_MIGRATION.md`；目标架构与验收见 `docs/REFACTOR_PLAN.md`。
-
-Runtime 控制台围绕 Solver、消息、工具调用、Artifact 和结果展示；架构映射见 `docs/REFACTOR_PLAN.md`。
-
-## 本地评测
-
-```powershell
-python evals\run_eval.py
-```
-
-评测覆盖 Agent 工具循环、HTTP/POST、workspace、恢复、事件顺序与最终结果。
+`tga run <task.json>` 是“创建 + 运行 + 生成报告”的快捷方式。Runtime 控制台围绕 ReAct 回合、治理决策、工具调用、Artifact 和完成校验展示。

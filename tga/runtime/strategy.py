@@ -6,7 +6,7 @@ import re
 from uuid import uuid4
 
 from tga.contracts import ArtifactIndex, StrategyCard, StrategySource, StrategyStep, TGATask
-from tga.core.scope import is_in_scope
+from tga.network_policy import authorize_url
 from tga.evidence.store import EvidenceStore, utc_now
 
 
@@ -17,7 +17,7 @@ _CLAIM_TERMS = (
 )
 
 
-class StrategyBoard:
+class StrategyService:
     def __init__(self, store: EvidenceStore):
         self.store = store
 
@@ -34,7 +34,11 @@ class StrategyBoard:
         sources: list[StrategySource] = []
         steps: list[StrategyStep] = []
         for url in urls:
-            scoped = is_in_scope(url, task.scope)
+            try:
+                authorize_url(url, task.execution_policy.network, resolve_dns=False)  # type: ignore[union-attr]
+                scoped = True
+            except (PermissionError, ValueError):
+                scoped = False
             sources.append(
                 StrategySource(
                     hint_id=hint_id,
@@ -107,7 +111,7 @@ class StrategyBoard:
         fetch_step = next((item for item in steps if item.expected_request == f"GET {url}"), None)
         if fetch_step:
             updated = fetch_step.model_copy(update={
-                "status": "verified" if index.extraction_status == "extracted" else "rejected",
+                "status": "succeeded" if index.extraction_status == "extracted" else "failed",
                 "evidence_artifact_ids": [index.artifact_id],
                 "last_result": "readable body extracted" if index.extraction_status == "extracted" else "body extraction failed",
             })
@@ -146,11 +150,11 @@ class StrategyBoard:
                 steps.append(step)
                 continue
             if not succeeded or expected_marker_found is False:
-                status = "rejected"
+                status = "failed"
             elif step.success_marker and expected_marker_found is None:
                 status = "testing"
             else:
-                status = "verified"
+                status = "succeeded"
             steps.append(step.model_copy(update={
                 "status": status,
                 "action_ids": list(dict.fromkeys([*step.action_ids, action_id]))[-128:],
@@ -159,7 +163,7 @@ class StrategyBoard:
             }))
         active = next((item.id for item in steps if item.status in {"pending", "testing"}), None)
         statuses = {item.status for item in steps}
-        card_status = "verified" if steps and statuses == {"verified"} else "testing"
+        card_status = "succeeded" if steps and statuses == {"succeeded"} else "testing"
         updated = card.model_copy(update={"steps": steps, "active_step_id": active, "status": card_status, "updated_at": utc_now()})
         return self.store.upsert_strategy_card(updated)
 

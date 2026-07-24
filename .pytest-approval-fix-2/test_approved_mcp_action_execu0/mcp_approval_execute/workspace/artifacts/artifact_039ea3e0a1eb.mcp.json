@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "trace_id": "trace_6350ec3bc117458290af20a91bd840ad",
+  "catalog_version": "mcp_121a591f24a1c38a",
+  "mcp_request_id": "mcp_8ff2421f6cc34bf2",
+  "task_id": "mcp_approval_execute",
+  "session_id": "mcp_approval_execute",
+  "solver_id": "agent_c2ccb9056c55",
+  "action_id": "act_6e0f2e770f79",
+  "llm_tool_call_id": "mcp_high_impact_call",
+  "server": "fixture",
+  "method": "echo",
+  "arguments": {
+    "text": "persisted approval arguments"
+  },
+  "content": [
+    {
+      "type": "text",
+      "text": "persisted approval arguments"
+    }
+  ],
+  "structured_content": null,
+  "raw_result": {
+    "content": [
+      {
+        "type": "text",
+        "text": "persisted approval arguments"
+      }
+    ],
+    "isError": false
+  },
+  "stdout": "{\"jsonrpc\": \"2.0\", \"id\": \"init_d71c87b2a269\", \"result\": {\"protocolVersion\": \"2024-11-05\", \"capabilities\": {\"tools\": {}}, \"serverInfo\": {\"name\": \"tga-test-mcp\", \"version\": \"1.0\"}}}\n{\"jsonrpc\": \"2.0\", \"id\": \"mcp_8ff2421f6cc34bf2\", \"result\": {\"content\": [{\"type\": \"text\", \"text\": \"persisted approval arguments\"}], \"isError\": false}}\n",
+  "stderr": "fixture diagnostic\n",
+  "isError": false,
+  "returncode": 0,
+  "timed_out": false,
+  "output_truncated": false,
+  "artifact_truncated": false,
+  "original_bytes": 83,
+  "saved_bytes": 83,
+  "server_info": {
+    "name": "tga-test-mcp",
+    "version": "1.0"
+  },
+  "protocol_version": "2024-11-05",
+  "timings": {
+    "discovery_ms": 0,
+    "container_start_ms": 5,
+    "initialize_ms": 31,
+    "tool_call_ms": 0,
+    "result_serialization_ms": 0,
+    "total_ms": 43
+  },
+  "error": null
+}

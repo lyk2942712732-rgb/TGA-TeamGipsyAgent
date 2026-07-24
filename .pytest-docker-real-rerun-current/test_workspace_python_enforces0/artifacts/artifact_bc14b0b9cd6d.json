@@ -1,0 +1,1 @@
+{"script": "work/.tga_action_capability.py", "argv": [], "timeout": 10, "timed_out": false, "exit_code": 0, "stdout": "input=input-is-visible\ninput_read_only=true\nhost_path_hidden=true\nroot_read_only=true\nnetwork_disabled=true\ncgroup={\"memory.max\": \"536870912\", \"pids.max\": \"128\", \"cpu.max\": \"100000 100000\"}\n", "stderr": "", "truncated": false}

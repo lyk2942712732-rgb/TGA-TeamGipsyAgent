@@ -1,6 +1,5 @@
-# TGA 阿里云公网部署手册
+﻿# TGA 阿里云公网部署手册
 
-本文档面向一台 Ubuntu 22.04/24.04 ECS。目标是让指导老师可以通过公网访问 TGA Web，并由服务器本地调用 `mcp-security-hub` 的 Docker 镜像执行工具。
 
 ## 1. 推荐拓扑
 
@@ -17,10 +16,8 @@ FastAPI / TGA
   |
   | 本地 Docker 调用
   v
-mcp-security-hub images
 ```
 
-当前 TGA 不需要把 `mcp-security-hub` 作为公网 HTTP 服务暴露出去。MCP 工具镜像在服务器本地构建，TGA 运行时通过本地 Docker 调用。
 
 ## 2. ECS 与安全组
 
@@ -51,7 +48,6 @@ sudo chown -R $USER:$USER /opt/tga
 cd /opt/tga
 
 git clone <你的TGA仓库地址> TGA-TeamGipsyAgent
-git clone https://github.com/FuzzingLabs/mcp-security-hub.git mcp-security-hub
 ```
 
 如果仓库暂时没有推到 Git，也可以用 `scp` 或压缩包上传到 `/opt/tga/TGA-TeamGipsyAgent`。
@@ -61,7 +57,6 @@ git clone https://github.com/FuzzingLabs/mcp-security-hub.git mcp-security-hub
 先构建 MVP 必需工具：
 
 ```bash
-cd /opt/tga/mcp-security-hub
 docker compose build whatweb-mcp semgrep-mcp gitleaks-mcp
 ```
 
@@ -79,27 +74,22 @@ python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install -e ".[dev]"
 
-export TGA_MCP_SECURITY_HUB_ROOT=/opt/tga/mcp-security-hub
-python scripts/tga_mcp_healthcheck.py --hub-root "$TGA_MCP_SECURITY_HUB_ROOT"
 ```
 
 三个基础镜像显示健康即可进入下一步。
 
 ## 6. 配置 TGA 后端
 
-创建 `/opt/tga/TGA-TeamGipsyAgent/.env`：
+配置非敏感运行参数；模型 API 密钥应由 systemd `EnvironmentFile`、密钥管理服务或进程环境注入，不能写入仓库：
 
 ```bash
 TGA_RUN_ROOT=/opt/tga/TGA-TeamGipsyAgent/runs
-TGA_MCP_SECURITY_HUB_ROOT=/opt/tga/mcp-security-hub
 
-# 可选：OpenAI-compatible 国内模型或比赛指定 AI 安全网关
-TGA_LLM_BASE_URL=
-TGA_LLM_API_KEY=
-TGA_LLM_MODEL=
+# OpenAI-compatible provider 非敏感参数
+TGA_LLM_TEMPERATURE=0.2
 ```
 
-当前 Week1 MVP 已有 LLM 适配层和连通性检查脚本，但默认 planner 仍以规则决策为主。配置模型后可以先检查：
+产品只有真实 Provider 驱动的 ReAct 路径；模型未配置时任务会明确失败，不会退回旧规则执行架构。配置模型后可以先检查：
 
 ```bash
 source .venv/bin/activate
@@ -229,8 +219,6 @@ sudo journalctl -u tga-api -f
 ```bash
 cd /opt/tga/TGA-TeamGipsyAgent
 source .venv/bin/activate
-export TGA_MCP_SECURITY_HUB_ROOT=/opt/tga/mcp-security-hub
-python scripts/tga_mcp_healthcheck.py --hub-root "$TGA_MCP_SECURITY_HUB_ROOT"
 ```
 
 重建前端：

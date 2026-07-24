@@ -1,0 +1,81 @@
+{
+  "capability": "http.request",
+  "semantic_fingerprint": "e4f09d1b998d020ab44061cf",
+  "method": "GET",
+  "final_method": "GET",
+  "requested_url": "https://28ed2923-f81d-42d8-857d-26bc95635a17.challenge.ctf.show/",
+  "final_url": "https://28ed2923-f81d-42d8-857d-26bc95635a17.challenge.ctf.show/",
+  "redirect_chain": [],
+  "request_headers": {
+    "User-Agent": "TGA-Capability-Runtime/2"
+  },
+  "preflight": {
+    "body_format": null,
+    "parameter_count": 0,
+    "encoded_length": 0
+  },
+  "http_session": {
+    "profile": "stateless",
+    "origin": "https://28ed2923-f81d-42d8-857d-26bc95635a17.challenge.ctf.show",
+    "reused": false,
+    "request_count": 1,
+    "origin_count": 0,
+    "generation": 1,
+    "rebuild_count": 0,
+    "cross_process_recovery": false
+  },
+  "status": 200,
+  "response_headers": {
+    "Server": "nginx/1.20.1",
+    "Date": "Fri, 24 Jul 2026 15:57:00 GMT",
+    "Content-Type": "text/html; charset=UTF-8",
+    "Transfer-Encoding": "chunked",
+    "Connection": "close",
+    "Access-Control-Allow-Methods": "GET,POST,PUT,DELETE,OPTIONS",
+    "Access-Control-Allow-Credentials": "true",
+    "Access-Control-Expose-Headers": "Content-Type,Cookies,Aaa,Date,Server,Content-Length,Connection",
+    "Access-Control-Allow-Headers": "DNT,X-CustomHeader,Keep-Alive,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Authorization,x-auth-token,Cookies,Aaa,Date,Server,Content-Length,Connection",
+    "Access-Control-Max-Age": "1728000"
+  },
+  "content_type": "text/html; charset=UTF-8",
+  "body_excerpt": "Shell Code Executor",
+  "body_bytes": 2678,
+  "truncated": false,
+  "duration_ms": 2042,
+  "page": {
+    "title": "Shell Code Executor",
+    "forms": [
+      {
+        "method": "POST",
+        "action": "https://28ed2923-f81d-42d8-857d-26bc95635a17.challenge.ctf.show/",
+        "enctype": "application/x-www-form-urlencoded",
+        "fields": [
+          {
+            "name": "code",
+            "type": "textarea",
+            "value": "ls"
+          }
+        ]
+      }
+    ],
+    "links": [],
+    "script_src": [],
+    "api_hints": [],
+    "websocket_hints": [],
+    "interaction_notes": [
+      "form method=POST action=https://28ed2923-f81d-42d8-857d-26bc95635a17.challenge.ctf.show/ fields=[code]"
+    ]
+  },
+  "challenge_availability": null,
+  "tls": {
+    "mode": "verified"
+  },
+  "error": null,
+  "body_artifact_id": "artifact_cffd295a3e7d",
+  "document": {
+    "extraction_status": "failed",
+    "document_type": "html",
+    "summary": "Shell Code Executor",
+    "segment_refs": []
+  }
+}

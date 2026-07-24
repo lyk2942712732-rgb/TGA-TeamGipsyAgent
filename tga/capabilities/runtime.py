@@ -1,6 +1,6 @@
 """Controlled bridge from runtime actions to concrete capabilities.
 
-This module deliberately has no knowledge of boards, flags, or event storage.
+This module deliberately has no knowledge of strategy state, flags, or event storage.
 It turns one validated ``ActionSpec`` into one ``ActionResult`` and leaves
 confirmation and persistence orchestration to the caller.
 """
@@ -22,11 +22,10 @@ from urllib.parse import urlparse
 
 from pydantic import ValidationError
 
-from tga.contracts import ActionResult, ActionSpec, Intent, TGAError, TGATask
+from tga.contracts import ActionResult, ActionSpec, TGAError, TGATask
 from tga.evidence.artifacts import ArtifactStore
 from tga.evidence.indexing import build_artifact_index, retrieve_segments
 from tga.tools.rate_limit import RateLimiter
-from tga.tools.tool_runner import ToolRunner
 from tga.tools.tool_policy import is_allowed
 
 from .http import execute_http, extract_candidate_flags, semantic_fingerprint
@@ -51,26 +50,33 @@ class ExecutionBudget:
         max_fingerprint_retries: int | None = None,
         *,
         http_requests_per_minute: int = 30,
+        http_concurrency: int = 2,
+        process_concurrency: int = 2,
         http_burst: int = 5,
-        max_mcp_concurrency: int = 2,
         max_action_timeout_s: int = 120,
+        http_timeout_s: int | None = None,
+        process_timeout_s: int | None = None,
         max_output_bytes: int = 262_144,
         unrestricted: bool = False,
     ) -> None:
         self.max_actions_per_solver = max_actions_per_solver
         self.max_fingerprint_retries = max_fingerprint_retries
         self.max_action_timeout_s = max_action_timeout_s
+        self.http_timeout_s = http_timeout_s or max_action_timeout_s
+        self.process_timeout_s = process_timeout_s or max_action_timeout_s
         self.max_output_bytes = max_output_bytes
         self.unrestricted = unrestricted
+        self.http_concurrency = max(1, http_concurrency)
+        self.process_concurrency = max(1, process_concurrency)
         self.actions: defaultdict[tuple[str, str], int] = defaultdict(int)
         self.fingerprints: defaultdict[tuple[str, str], int] = defaultdict(int)
         self.http_limiter = RateLimiter(
             default_rate_per_second=http_requests_per_minute / 60,
             default_burst=http_burst,
         )
-        self._mcp_slots = threading.BoundedSemaphore(max_mcp_concurrency)
-        self._mcp_acquired: set[str] = set()
         self._lock = threading.Lock()
+        self._active_http: defaultdict[str, int] = defaultdict(int)
+        self._active_process: defaultdict[str, int] = defaultdict(int)
 
     def reserve(
         self, action: ActionSpec, fingerprint: str | None = None, *, http_target: str | None = None
@@ -97,21 +103,25 @@ class ExecutionBudget:
                 # broader action target used for orchestration.
                 host = _budget_host(http_target or action.target)
                 if not host or not self.http_limiter.allow(f"{action.task_id}:{host}"):
-                    return TGAError(code="ACTION_BUDGET_EXCEEDED", message=f"HTTP request rate budget exhausted for host {host or 'unknown'}")
-            if action.capability == "tool.invoke" and not self._mcp_slots.acquire(blocking=False):
-                return TGAError(code="ACTION_BUDGET_EXCEEDED", message="MCP concurrency budget exhausted", retryable=True)
+                    return TGAError(code="RATE_LIMITED", message=f"HTTP request rate limit reached for host {host or 'unknown'}", retryable=True)
+                if self._active_http[action.task_id] >= self.http_concurrency:
+                    return TGAError(code="CONCURRENCY_WAIT", message="HTTP concurrency limit reached", retryable=True)
+                self._active_http[action.task_id] += 1
+            if action.capability in {"workspace.python", "workspace.shell"}:
+                if self._active_process[action.task_id] >= self.process_concurrency:
+                    return TGAError(code="CONCURRENCY_WAIT", message="local compute concurrency limit reached", retryable=True)
+                self._active_process[action.task_id] += 1
             self.actions[key] += 1
             if fingerprint:
                 self.fingerprints[(action.task_id, fingerprint)] += 1
-            if action.capability == "tool.invoke":
-                self._mcp_acquired.add(action.id)
         return None
 
     def release(self, action: ActionSpec) -> None:
         with self._lock:
-            if action.id in self._mcp_acquired:
-                self._mcp_acquired.remove(action.id)
-                self._mcp_slots.release()
+            if action.capability == "http.request" and self._active_http[action.task_id] > 0:
+                self._active_http[action.task_id] -= 1
+            if action.capability in {"workspace.python", "workspace.shell"} and self._active_process[action.task_id] > 0:
+                self._active_process[action.task_id] -= 1
 
 
 class ControlledActionExecutor:
@@ -122,13 +132,11 @@ class ControlledActionExecutor:
         *,
         artifact_store: ArtifactStore,
         registry: CapabilityRegistry | None = None,
-        tool_runner: ToolRunner | None = None,
         budget: ExecutionBudget | None = None,
         http_sessions: HTTPSessionRegistry | None = None,
     ) -> None:
         self.artifact_store = artifact_store
         self.registry = registry or build_default_registry()
-        self.tool_runner = tool_runner
         self.budget = budget or ExecutionBudget()
         self.http_sessions = http_sessions or HTTPSessionRegistry()
 
@@ -139,7 +147,7 @@ class ControlledActionExecutor:
         return self.http_sessions.snapshot(task_id=task_id, solver_id=solver_id)
 
     def execute(self, *, task: TGATask, action: ActionSpec, workspace: Path) -> ActionResult:
-        """Return a structured outcome; never update a board or confirm a flag."""
+        """Return a structured outcome; never mutate strategy state or confirm a flag."""
         if action.task_id != task.id:
             return self._reject(action, "ACTION_TASK_MISMATCH", "action task_id does not match the execution task")
 
@@ -161,16 +169,12 @@ class ControlledActionExecutor:
 
         if _risk_rank(action.risk) < _risk_rank(registered.spec.risk):
             return self._reject(action, "RISK_UNDERSPECIFIED", "action risk is lower than capability risk")
-        if action.hypothesis_id is None and not (action.capability in {"http.request", "workspace.read", "artifact.inspect"} and action.risk == "passive"):
-            return self._reject(action, "HYPOTHESIS_REQUIRED", "active execution requires a hypothesis_id")
-        if action.capability == "tool.invoke" and self.tool_runner is None:
-            return self._reject(action, "TOOL_RUNNER_UNAVAILABLE", "MCP tool execution is not configured", retryable=True)
         fingerprint = None
         http_target = None
         if isinstance(arguments, HTTPRequestArguments):
             try:
                 from .http import _resolve_url
-                http_target = _resolve_url(action.target, arguments)
+                http_target = _resolve_url(task.task_entry_url or action.target, arguments)
                 fingerprint = semantic_fingerprint(action=action, args=arguments, url=http_target)
             except ValueError:
                 pass
@@ -180,7 +184,8 @@ class ControlledActionExecutor:
             task=task,
             risk=action.risk,
             action=arguments.method if isinstance(arguments, HTTPRequestArguments) else action.capability,
-            sandboxed=False,
+            sandboxed=task.execution_policy.local_compute.mode == "isolated" if task.execution_policy else False,
+            approved=action.authorization.get("approved_action_id") == action.id,
         )
         if not decision.allowed:
             return self._reject(action, decision.code or "POLICY_DENIED", decision.reason)
@@ -191,8 +196,6 @@ class ControlledActionExecutor:
         try:
             if action.capability == "http.request":
                 return self._execute_http(task=task, action=action, arguments=arguments)
-            if action.capability == "tool.invoke":
-                return self._execute_tool(task=task, action=action, arguments=arguments)
             if isinstance(arguments, WorkspaceReadArguments):
                 return self._workspace_read(task=task, action=action, arguments=arguments, workspace=workspace)
             if isinstance(arguments, WorkspaceWriteArguments):
@@ -215,10 +218,9 @@ class ControlledActionExecutor:
         try:
             # The action target is part of A's approved request.  Preserve the
             # task scope while ensuring relative paths resolve against it.
-            execution_task = task.model_copy(update={"target": action.target})
-            bounded_args = arguments.model_copy(update={"timeout": min(arguments.timeout, self.budget.max_action_timeout_s)})
+            bounded_args = arguments.model_copy(update={"timeout": min(arguments.timeout, self.budget.http_timeout_s)})
             payload, raw, facts, leads = execute_http(
-                task=execution_task, action=action, args=bounded_args,
+                task=task, action=action, args=bounded_args,
                 max_output_bytes=self.budget.max_output_bytes, sessions=self.http_sessions,
             )
             body_artifact = None
@@ -227,7 +229,7 @@ class ControlledActionExecutor:
                 suffix = ".html" if "html" in content_type.casefold() else ".body"
                 body_artifact = self.artifact_store.save_bytes(
                     task_id=task.id,
-                    intent_id=action.hypothesis_id,
+                    intent_id=action.strategy_step_id,
                     kind="http_body",
                     data=raw,
                     tool="http.request.body",
@@ -252,7 +254,7 @@ class ControlledActionExecutor:
                 payload["body_excerpt"] = index.summary[: min(6000, self.budget.max_output_bytes)]
             artifact = self.artifact_store.save_text(
                 task_id=task.id,
-                intent_id=action.hypothesis_id,
+                intent_id=action.strategy_step_id,
                 kind="http_response",
                 text=json.dumps(payload, ensure_ascii=False, indent=2),
                 tool="http.request",
@@ -293,67 +295,6 @@ class ControlledActionExecutor:
         except (ValueError, RuntimeError) as exc:
             return self._reject(action, "HTTP_EXECUTION_FAILED", redact_text(str(exc), 500), retryable=True)
 
-    def _execute_tool(self, *, task: TGATask, action: ActionSpec, arguments: Any) -> ActionResult:
-        if self.tool_runner is None:
-            return self._reject(action, "TOOL_RUNNER_UNAVAILABLE", "MCP tool execution is not configured", retryable=True)
-
-        server = self.tool_runner.catalog.get(arguments.tool_id)
-        if server is None:
-            return self._reject(action, "TOOL_NOT_AVAILABLE", f"tool is not registered: {arguments.tool_id}")
-        if not any(item.name == arguments.tool_method for item in server.tools):
-            return self._reject(
-                action,
-                "UNKNOWN_TOOL_METHOD",
-                f"tool method is not registered for {server.id}: {arguments.tool_method}",
-            )
-
-        intent = Intent(
-            id=f"action_{action.id}",
-            task_id=task.id,
-            kind="verify",
-            target=action.target,
-            goal=action.rationale,
-            risk=action.risk,
-        )
-        try:
-            artifact = self.tool_runner.run_tool(
-                task=task,
-                intent=intent,
-                tool=server.id,
-                target=action.target,
-                args={
-                    "mcp_tool": arguments.tool_method,
-                    "timeout_seconds": min(arguments.timeout, self.budget.max_action_timeout_s),
-                    **arguments.arguments,
-                },
-                max_output_bytes=self.budget.max_output_bytes,
-            )
-            payload = _json_payload(self.artifact_store.read_text(artifact.id))
-            error_payload = payload.get("error") if isinstance(payload, dict) else None
-            error = _error_from_payload(error_payload)
-            status_value = str(payload.get("status") or "failed") if isinstance(payload, dict) else "failed"
-            if status_value != "ok" and error is None:
-                error = TGAError(
-                    code="TOOL_TIMEOUT" if status_value == "timeout" else "TOOL_EXECUTION_FAILED",
-                    message=f"{server.id}.{arguments.tool_method} returned status {status_value}",
-                    retryable=status_value == "timeout",
-                )
-            status = "succeeded" if status_value == "ok" and error is None else "failed"
-            output = "\n".join(str(payload.get(key) or "") for key in ("stdout", "stderr")) if isinstance(payload, dict) else ""
-            return ActionResult(
-                action_id=action.id,
-                task_id=task.id,
-                solver_id=action.solver_id,
-                status=status,
-                summary=_tool_summary(server.id, arguments.tool_method, status_value, error),
-                artifact_ids=[artifact.id],
-                facts=[f"{server.id}.{arguments.tool_method} -> {status_value}"],
-                candidate_flags=_candidate_flags(output, task.flag_format),
-                error=error,
-            )
-        except Exception as exc:  # Existing MCP clients can fail at process boundaries.
-            return self._reject(action, "TOOL_EXECUTION_FAILED", redact_text(str(exc), 500), retryable=True)
-
     def _workspace_read(self, *, task: TGATask, action: ActionSpec, arguments: WorkspaceReadArguments, workspace: Path) -> ActionResult:
         try:
             path = resolve_solver_path(workspace, arguments.relative_path)
@@ -366,7 +307,7 @@ class ControlledActionExecutor:
             return self._reject(action, str(exc), "workspace path escapes the solver workspace")
         except OSError as exc:
             return self._reject(action, "WORKSPACE_READ_FAILED", redact_text(str(exc), 500))
-        artifact = self.artifact_store.save_text(task_id=task.id, intent_id=action.hypothesis_id, kind="file", text=json.dumps({"relative_path": arguments.relative_path, "offset": arguments.offset, "size": size, "excerpt": redact_text(excerpt, self.budget.max_output_bytes), "truncated": arguments.offset + len(raw) < size}, ensure_ascii=False), tool="workspace.read", target=str(path), suffix=".json")
+        artifact = self.artifact_store.save_text(task_id=task.id, intent_id=action.strategy_step_id, kind="file", text=json.dumps({"relative_path": arguments.relative_path, "offset": arguments.offset, "size": size, "excerpt": redact_text(excerpt, self.budget.max_output_bytes), "truncated": arguments.offset + len(raw) < size}, ensure_ascii=False), tool="workspace.read", target=str(path), suffix=".json")
         return ActionResult(action_id=action.id, task_id=task.id, solver_id=action.solver_id, status="succeeded", summary=f"read {arguments.relative_path} ({size} bytes)", artifact_ids=[artifact.id], facts=[f"workspace file observed: {arguments.relative_path}"], candidate_flags=_candidate_flags(excerpt, task.flag_format))
 
     def _workspace_write(self, *, task: TGATask, action: ActionSpec, arguments: WorkspaceWriteArguments, workspace: Path) -> ActionResult:
@@ -378,7 +319,7 @@ class ControlledActionExecutor:
             return self._reject(action, str(exc), "workspace path escapes the solver workspace")
         except OSError as exc:
             return self._reject(action, "WORKSPACE_WRITE_FAILED", redact_text(str(exc), 500))
-        artifact = self.artifact_store.save_text(task_id=task.id, intent_id=action.hypothesis_id, kind="file", text=json.dumps({"relative_path": arguments.relative_path, "bytes_written": len(arguments.content.encode())}), tool="workspace.write", target=str(path), suffix=".json")
+        artifact = self.artifact_store.save_text(task_id=task.id, intent_id=action.strategy_step_id, kind="file", text=json.dumps({"relative_path": arguments.relative_path, "bytes_written": len(arguments.content.encode())}), tool="workspace.write", target=str(path), suffix=".json")
         return ActionResult(action_id=action.id, task_id=task.id, solver_id=action.solver_id, status="succeeded", summary=f"wrote {arguments.relative_path}", artifact_ids=[artifact.id])
 
     def _workspace_python(self, *, task: TGATask, action: ActionSpec, arguments: WorkspacePythonArguments, workspace: Path) -> ActionResult:
@@ -386,24 +327,28 @@ class ControlledActionExecutor:
         root.mkdir(parents=True, exist_ok=True)
         try:
             if arguments.source is not None:
-                script = root / f".tga_{action.id}.py"
+                script = root / "work" / f".tga_{action.id}.py"
+                script.parent.mkdir(parents=True, exist_ok=True)
                 script.write_text(arguments.source, encoding="utf-8")
             else:
                 script = resolve_solver_path(root, arguments.script_path or "")
-            returncode, stdout, stderr, timed_out, output_truncated = _run_bounded_python(
-                script=script,
+            container_script = _container_workspace_path(root, script)
+            returncode, stdout, stderr, timed_out, output_truncated = _run_isolated_process(
+                workspace=root,
+                command=["python", container_script, *arguments.argv],
                 argv=arguments.argv,
-                cwd=root,
-                timeout=min(arguments.timeout, self.budget.max_action_timeout_s),
+                timeout=min(arguments.timeout, self.budget.process_timeout_s),
                 output_limit=self.budget.max_output_bytes,
             )
         except PermissionError as exc:
             return self._reject(action, str(exc), "workspace path escapes the solver workspace")
         except OSError as exc:
+            if "ISOLATED_RUNTIME_UNAVAILABLE" in str(exc):
+                return self._reject(action, "ISOLATED_RUNTIME_UNAVAILABLE", redact_text(str(exc), 500), retryable=True)
             return self._reject(action, "WORKSPACE_PYTHON_FAILED", redact_text(str(exc), 500))
         output_limit = self.budget.max_output_bytes
-        payload = {"script": script.relative_to(root).as_posix(), "argv": arguments.argv, "timeout": min(arguments.timeout, self.budget.max_action_timeout_s), "timed_out": timed_out, "exit_code": None if timed_out else returncode, "stdout": redact_text(stdout, output_limit), "stderr": redact_text(stderr, output_limit), "truncated": output_truncated}
-        artifact = self.artifact_store.save_text(task_id=task.id, intent_id=action.hypothesis_id, kind="tool_output", text=json.dumps(payload, ensure_ascii=False), tool="workspace.python", target=str(script), suffix=".json")
+        payload = {"script": script.relative_to(root).as_posix(), "argv": arguments.argv, "timeout": min(arguments.timeout, self.budget.process_timeout_s), "timed_out": timed_out, "exit_code": None if timed_out else returncode, "stdout": redact_text(stdout, output_limit), "stderr": redact_text(stderr, output_limit), "truncated": output_truncated}
+        artifact = self.artifact_store.save_text(task_id=task.id, intent_id=action.strategy_step_id, kind="tool_output", text=json.dumps(payload, ensure_ascii=False), tool="workspace.python", target=str(script), suffix=".json")
         if timed_out:
             return ActionResult(action_id=action.id, task_id=task.id, solver_id=action.solver_id, status="failed", summary="workspace Python timed out", artifact_ids=[artifact.id], error=TGAError(code="ACTION_TIMEOUT", message="workspace Python timed out"))
         return ActionResult(action_id=action.id, task_id=task.id, solver_id=action.solver_id, status="succeeded" if returncode == 0 else "failed", summary=f"workspace Python exited {returncode}", artifact_ids=[artifact.id], candidate_flags=_candidate_flags(stdout + "\n" + stderr, task.flag_format))
@@ -411,17 +356,15 @@ class ControlledActionExecutor:
     def _workspace_shell(self, *, task: TGATask, action: ActionSpec, arguments: WorkspaceShellArguments, workspace: Path) -> ActionResult:
         root = workspace.resolve()
         root.mkdir(parents=True, exist_ok=True)
-        timeout = min(arguments.timeout, self.budget.max_action_timeout_s)
-        command = (
-            ["powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", arguments.command]
-            if os.name == "nt"
-            else ["/bin/bash", "-lc", arguments.command]
-        )
+        timeout = min(arguments.timeout, self.budget.process_timeout_s)
         try:
-            returncode, stdout, stderr, timed_out, output_truncated = _run_bounded_process(
-                command=command, cwd=root, timeout=timeout, output_limit=self.budget.max_output_bytes,
+            returncode, stdout, stderr, timed_out, output_truncated = _run_isolated_process(
+                workspace=root, command=["/bin/sh", "-lc", arguments.command], argv=[],
+                timeout=timeout, output_limit=self.budget.max_output_bytes,
             )
         except OSError as exc:
+            if "ISOLATED_RUNTIME_UNAVAILABLE" in str(exc):
+                return self._reject(action, "ISOLATED_RUNTIME_UNAVAILABLE", redact_text(str(exc), 500), retryable=True)
             return self._reject(action, "WORKSPACE_SHELL_FAILED", redact_text(str(exc), 500))
         payload = {
             "command": arguments.command,
@@ -433,7 +376,7 @@ class ControlledActionExecutor:
             "truncated": output_truncated,
         }
         artifact = self.artifact_store.save_text(
-            task_id=task.id, intent_id=action.hypothesis_id, kind="tool_output",
+            task_id=task.id, intent_id=action.strategy_step_id, kind="tool_output",
             text=json.dumps(payload, ensure_ascii=False), tool="workspace.shell",
             target=str(root), suffix=".json",
         )
@@ -492,7 +435,7 @@ class ControlledActionExecutor:
         error = TGAError(code=code, message=message, retryable=retryable)
         artifact = self.artifact_store.save_text(
             task_id=action.task_id,
-            intent_id=action.hypothesis_id,
+            intent_id=action.strategy_step_id,
             kind="tool_output",
             text=json.dumps(
                 {"action_id": action.id, "capability": action.capability, "status": "blocked", "error": error.model_dump()},
@@ -611,6 +554,69 @@ def _run_bounded_python(
         output_limit=output_limit,
         env={"PATH": os.environ.get("PATH", ""), "PYTHONIOENCODING": "utf-8", "PYTHONDONTWRITEBYTECODE": "1"},
     )
+
+
+def _run_isolated_process(
+    *, workspace: Path, command: list[str], argv: list[str], timeout: int, output_limit: int
+) -> tuple[int, str, str, bool, bool]:
+    """Run local compute only inside a locked-down, network-isolated Docker worker.
+
+    ``network_inheritance=task_network_policy`` means network use must be
+    mediated by the host ``http.request`` capability. Direct container
+    networking stays disabled so compute cannot bypass DNS pinning, SSRF
+    checks, redirect authorization, or per-task rate limits.
+    """
+    del argv
+    root = workspace.resolve()
+    inputs = root / "inputs"
+    work = root / "work"
+    artifacts = root / "artifacts"
+    for path in (inputs, work, artifacts):
+        path.mkdir(parents=True, exist_ok=True)
+    image = os.environ.get("TGA_ISOLATED_COMPUTE_IMAGE", "python:3.12-alpine").strip()
+    if not image:
+        raise OSError("ISOLATED_RUNTIME_UNAVAILABLE: no isolated compute image configured")
+    try:
+        probe = subprocess.run(
+            ["docker", "info", "--format", "{{.ServerVersion}}"],
+            capture_output=True, timeout=5, check=False,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
+        raise OSError("ISOLATED_RUNTIME_UNAVAILABLE: Docker runtime is unavailable") from exc
+    if probe.returncode != 0:
+        raise OSError("ISOLATED_RUNTIME_UNAVAILABLE: Docker daemon is not running")
+    docker = [
+        "docker", "run", "--rm", "--network", "none", "--read-only",
+        "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
+        "--pids-limit", "128", "--memory", "512m", "--cpus", "1",
+        "--tmpfs", "/tmp:rw,noexec,nosuid,size=64m",
+        "--mount", f"type=bind,src={inputs},dst=/workspace/inputs,readonly",
+        "--mount", f"type=bind,src={work},dst=/workspace/work",
+        "--mount", f"type=bind,src={artifacts},dst=/workspace/artifacts",
+        "--workdir", "/workspace/work", image, *command,
+    ]
+    try:
+        result = _run_bounded_process(
+            command=docker, cwd=root, timeout=timeout, output_limit=output_limit,
+            env={"PATH": os.environ.get("PATH", "")},
+        )
+    except FileNotFoundError as exc:
+        raise OSError("ISOLATED_RUNTIME_UNAVAILABLE: Docker CLI is not installed") from exc
+    returncode, _stdout, stderr, _timed_out, _truncated = result
+    lowered = stderr.casefold()
+    if returncode in {125, 126, 127} and any(
+        marker in lowered
+        for marker in ("unable to find image", "pull access denied", "cannot connect", "daemon", "no such image")
+    ):
+        raise OSError(f"ISOLATED_RUNTIME_UNAVAILABLE: {redact_text(stderr, 300)}")
+    return result
+
+
+def _container_workspace_path(root: Path, path: Path) -> str:
+    relative = path.resolve().relative_to(root.resolve())
+    if not relative.parts or relative.parts[0] not in {"inputs", "work", "artifacts"}:
+        raise PermissionError("isolated compute may access only inputs, work, or artifacts")
+    return "/workspace/" + relative.as_posix()
 
 
 def _run_bounded_process(

@@ -1,5 +1,6 @@
 from tga.contracts import Finding, TGATask
 from tga.core.evidence_gate import finding_ok
+from tests.runtime_fixtures import execution_policy
 
 
 def _task():
@@ -7,9 +8,8 @@ def _task():
         id="task_1",
         name="audit",
         mode="penetration_test",
-        target="http://127.0.0.1:8080",
-        scope=["127.0.0.1:8080"],
-        allow_active_scan=True,
+        task_entry_url="http://127.0.0.1:8080/",
+        execution_policy=execution_policy(["127.0.0.1:8080"]),
         goal="audit",
     )
 

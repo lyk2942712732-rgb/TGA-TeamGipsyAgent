@@ -2,7 +2,7 @@
 name: web-vuln-triage
 version: "1"
 modes: [ctf, penetration_test, vulnerability_research]
-capabilities: [http.request, tool.invoke, artifact.inspect]
+capabilities: [http.request, artifact.inspect]
 tags: [sqli, idor, upload, auth]
 ---
 # When to use

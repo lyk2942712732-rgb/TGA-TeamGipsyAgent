@@ -1,17 +1,19 @@
 from __future__ import annotations
 
 import hashlib
+import http.client
 import json
 import re
+import socket
 import ssl
 import time
 from http.cookiejar import CookieJar
 from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qsl, urlencode, urljoin, urlparse, urlunparse
-from urllib.request import HTTPCookieProcessor, HTTPSHandler, HTTPRedirectHandler, Request, build_opener
+from urllib.request import HTTPHandler, HTTPCookieProcessor, HTTPSHandler, HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
 from tga.contracts import ActionSpec, TGATask
-from tga.core.scope import is_in_scope
+from tga.network_policy import authorize_url
 from tga.ctf.web_observer import analyze_html
 
 from .schemas import HTTPRequestArguments
@@ -29,23 +31,64 @@ class _NoRedirect(HTTPRedirectHandler):
         return None
 
 
+class _PinnedHTTPConnection(http.client.HTTPConnection):
+    def __init__(self, host: str, *, pinned_ip: str, **kwargs):
+        self._pinned_ip = pinned_ip
+        super().__init__(host, **kwargs)
+
+    def connect(self) -> None:
+        self.sock = socket.create_connection(
+            (self._pinned_ip, self.port), self.timeout, self.source_address
+        )
+
+
+class _PinnedHTTPSConnection(http.client.HTTPSConnection):
+    def __init__(self, host: str, *, pinned_ip: str, **kwargs):
+        self._pinned_ip = pinned_ip
+        super().__init__(host, **kwargs)
+
+    def connect(self) -> None:
+        sock = socket.create_connection(
+            (self._pinned_ip, self.port), self.timeout, self.source_address
+        )
+        self.sock = self._context.wrap_socket(sock, server_hostname=self.host)
+
+
+class _PinnedHTTPHandler(HTTPHandler):
+    def __init__(self, pinned_ip: str):
+        super().__init__()
+        self.pinned_ip = pinned_ip
+
+    def http_open(self, req):  # type: ignore[no-untyped-def]
+        def connection(host, timeout=socket._GLOBAL_DEFAULT_TIMEOUT, **kwargs):  # type: ignore[no-untyped-def]
+            return _PinnedHTTPConnection(host, pinned_ip=self.pinned_ip, timeout=timeout, **kwargs)
+        return self.do_open(connection, req)
+
+
+class _PinnedHTTPSHandler(HTTPSHandler):
+    def __init__(self, pinned_ip: str, *, context: ssl.SSLContext | None = None):
+        super().__init__(context=context)
+        self.pinned_ip = pinned_ip
+
+    def https_open(self, req):  # type: ignore[no-untyped-def]
+        context = self._context
+        def connection(host, timeout=socket._GLOBAL_DEFAULT_TIMEOUT, **kwargs):  # type: ignore[no-untyped-def]
+            return _PinnedHTTPSConnection(
+                host, pinned_ip=self.pinned_ip, timeout=timeout, context=context, **kwargs
+            )
+        return self.do_open(connection, req)
+
+
 def execute_http(
     *, task: TGATask, action: ActionSpec, args: HTTPRequestArguments, max_output_bytes: int = 262_144,
     sessions: HTTPSessionRegistry | None = None,
 ) -> tuple[dict, bytes, list[str], list[str]]:
-    url = _resolve_url(task.target, args)
-    authorized_scope = task.execution_policy.network.allowed_scopes if task.schema_version >= 3 and task.execution_policy else task.scope
-    if not is_in_scope(url, authorized_scope):
-        raise PermissionError("OUT_OF_SCOPE")
-    if task.schema_version >= 3 and task.execution_policy:
-        if args.method != "GET" and task.execution_policy.network.mode != "interact":
-            raise PermissionError("NETWORK_INTERACTION_NOT_AUTHORIZED")
-        if args.method in {"PUT", "PATCH", "DELETE"}:
-            state = task.execution_policy.state_change
-            if state.mode != "authorized" or args.method.casefold() not in {item.casefold() for item in state.allowed_actions}:
-                raise PermissionError("STATE_CHANGE_NOT_AUTHORIZED")
-    elif args.method not in {"GET", "POST"} and (action.risk != "active" or not task.allow_active_scan):
-        raise PermissionError("ACTIVE_HTTP_METHOD_NOT_ALLOWED")
+    url = _resolve_url(task.task_entry_url or "", args)
+    policy = task.execution_policy
+    assert policy is not None
+    approved_addresses = authorize_url(url, policy.network)
+    if args.method not in {"GET", "HEAD"} and policy.network.interaction != "interact":
+        raise PermissionError("NETWORK_INTERACTION_NOT_AUTHORIZED")
 
     headers = _safe_headers(args.headers)
     data, request_headers, preflight = _encode_body(args)
@@ -55,6 +98,7 @@ def execute_http(
     session_metadata: dict = {}
     started = time.monotonic()
     current = url
+    current_method = args.method
     for _ in range(6):
         cookies, current_session = sessions.acquire(
             task_id=task.id,
@@ -64,10 +108,10 @@ def execute_http(
         )
         if not session_metadata:
             session_metadata = current_session
-        opener = build_opener(_NoRedirect(), HTTPCookieProcessor(cookies))
         response = _request(
-            opener, current, args.method, request_headers, data, args.timeout,
+            current, current_method, request_headers, data, args.timeout,
             max(max_output_bytes, MAX_RAW_ARTIFACT_BYTES),
+            approved_addresses=approved_addresses,
             allow_insecure_tls=_allows_insecure_tls(task, current), cookies=cookies,
         )
         status = response["status"]
@@ -75,10 +119,27 @@ def execute_http(
         if status in {301, 302, 303, 307, 308} and location:
             next_url = urljoin(current, location)
             redirects.append({"status": status, "from": current, "to": next_url})
-            if not is_in_scope(next_url, authorized_scope):
+            cross_origin = _origin(current) != _origin(next_url)
+            if cross_origin and policy.network.access == "task_sources":
                 raise PermissionError("REDIRECT_OUT_OF_SCOPE")
+            try:
+                next_addresses = authorize_url(next_url, policy.network)
+            except PermissionError as exc:
+                raise PermissionError("REDIRECT_OUT_OF_SCOPE") from exc
+            if cross_origin:
+                request_headers = {
+                    name: value for name, value in request_headers.items()
+                    if name.casefold() not in {
+                        "authorization", "proxy-authorization", "cookie", "host"
+                    }
+                }
             current = next_url
-            if status == 303:
+            approved_addresses = next_addresses
+            if (
+                (status == 303 and current_method != "HEAD")
+                or (status in {301, 302} and current_method == "POST")
+            ):
+                current_method = "GET"
                 data = None
                 request_headers.pop("Content-Type", None)
             continue
@@ -96,6 +157,7 @@ def execute_http(
         "capability": "http.request",
         "semantic_fingerprint": semantic_fingerprint(action=action, args=args, url=url),
         "method": args.method,
+        "final_method": current_method,
         "requested_url": url,
         "final_url": current,
         "redirect_chain": redirects,
@@ -158,15 +220,20 @@ def semantic_fingerprint(*, action: ActionSpec, args: HTTPRequestArguments, url:
         "body_schema": body_schema,
         "body_digest": body_digest,
         "target": f"{parsed.scheme}://{parsed.netloc}",
-        "hypothesis_id": action.hypothesis_id,
+        "strategy_step_id": action.strategy_step_id,
     }
     return hashlib.sha256(json.dumps(normalized, sort_keys=True).encode()).hexdigest()[:24]
 
 
 def _resolve_url(target: str, args: HTTPRequestArguments) -> str:
-    base = target if "://" in target else f"http://{target}"
+    base = target
     raw = args.url or args.path or ""
-    url = urljoin(base.rstrip("/") + "/", raw)
+    if raw.startswith(("http://", "https://")):
+        url = raw
+    elif base:
+        url = urljoin(base.rstrip("/") + "/", raw)
+    else:
+        raise ValueError("relative HTTP URL requires task_entry_url")
     parsed = urlparse(url)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         raise ValueError("invalid HTTP URL")
@@ -260,35 +327,55 @@ def _validate_preflight(args: HTTPRequestArguments, data: bytes | None, headers:
 
 
 def _request(
-    opener, url: str, method: str, headers: dict[str, str], data: bytes | None, timeout: int, max_output_bytes: int,
-    *, allow_insecure_tls: bool = False, cookies: CookieJar | None = None,
+    url: str, method: str, headers: dict[str, str], data: bytes | None, timeout: int, max_output_bytes: int,
+    *, approved_addresses: list[str], allow_insecure_tls: bool = False, cookies: CookieJar | None = None,
 ) -> dict:  # type: ignore[no-untyped-def]
+    if not approved_addresses:
+        raise PermissionError("NETWORK_DNS_RESOLUTION_FAILED")
     request = Request(url, data=data, headers=headers, method=method)
-    try:
-        return _read_response(opener, request, timeout, max_output_bytes)
-    except HTTPError as exc:
-        raw = exc.read(max_output_bytes + 1)
-        return {"status": int(exc.code), "response_headers": dict(exc.headers.items()) if exc.headers else {}, "content_type": exc.headers.get("Content-Type", "") if exc.headers else "", "raw": raw[:max_output_bytes], "output_limited": len(raw) > max_output_bytes, "error": None}
-    except (URLError, TimeoutError, OSError) as exc:
-        if allow_insecure_tls and _certificate_verification_failed(exc):
-            insecure_opener = build_opener(
-                _NoRedirect(), HTTPCookieProcessor(cookies or CookieJar()),
-                HTTPSHandler(context=ssl._create_unverified_context()),
-            )
-            try:
-                recovered = _read_response(insecure_opener, request, timeout, max_output_bytes)
-                recovered["tls"] = {
-                    "mode": "verification_disabled_for_exact_origin",
-                    "origin": _https_origin(url),
-                    "trigger": "certificate_verify_failed",
-                }
-                return recovered
-            except HTTPError as retry_error:
-                raw = retry_error.read(max_output_bytes + 1)
-                return {"status": int(retry_error.code), "response_headers": dict(retry_error.headers.items()) if retry_error.headers else {}, "content_type": retry_error.headers.get("Content-Type", "") if retry_error.headers else "", "raw": raw[:max_output_bytes], "output_limited": len(raw) > max_output_bytes, "error": None, "tls": {"mode": "verification_disabled_for_exact_origin", "origin": _https_origin(url), "trigger": "certificate_verify_failed"}}
-            except (URLError, TimeoutError, OSError) as retry_error:
-                return {"status": 0, "response_headers": {}, "content_type": "", "raw": b"", "output_limited": False, "error": str(retry_error), "tls": {"mode": "verification_disabled_for_exact_origin", "origin": _https_origin(url), "trigger": "certificate_verify_failed"}}
-        return {"status": 0, "response_headers": {}, "content_type": "", "raw": b"", "output_limited": False, "error": str(exc)}
+    last_error: Exception | None = None
+    for pinned_ip in approved_addresses:
+        opener = _pinned_opener(pinned_ip, cookies=cookies)
+        try:
+            return _read_response(opener, request, timeout, max_output_bytes)
+        except HTTPError as exc:
+            raw = exc.read(max_output_bytes + 1)
+            return {"status": int(exc.code), "response_headers": dict(exc.headers.items()) if exc.headers else {}, "content_type": exc.headers.get("Content-Type", "") if exc.headers else "", "raw": raw[:max_output_bytes], "output_limited": len(raw) > max_output_bytes, "error": None}
+        except (URLError, TimeoutError, OSError) as exc:
+            last_error = exc
+            if allow_insecure_tls and _certificate_verification_failed(exc):
+                insecure_opener = _pinned_opener(
+                    pinned_ip, cookies=cookies, context=ssl._create_unverified_context()
+                )
+                try:
+                    recovered = _read_response(insecure_opener, request, timeout, max_output_bytes)
+                    recovered["tls"] = {"mode": "verification_disabled_for_exact_origin", "origin": _https_origin(url), "trigger": "certificate_verify_failed"}
+                    return recovered
+                except HTTPError as retry_error:
+                    raw = retry_error.read(max_output_bytes + 1)
+                    return {"status": int(retry_error.code), "response_headers": dict(retry_error.headers.items()) if retry_error.headers else {}, "content_type": retry_error.headers.get("Content-Type", "") if retry_error.headers else "", "raw": raw[:max_output_bytes], "output_limited": len(raw) > max_output_bytes, "error": None, "tls": {"mode": "verification_disabled_for_exact_origin", "origin": _https_origin(url), "trigger": "certificate_verify_failed"}}
+                except (URLError, TimeoutError, OSError) as retry_error:
+                    last_error = retry_error
+    return {"status": 0, "response_headers": {}, "content_type": "", "raw": b"", "output_limited": False, "error": str(last_error or "connection failed")}
+
+
+def _pinned_opener(
+    pinned_ip: str, *, cookies: CookieJar | None, context: ssl.SSLContext | None = None,
+):  # type: ignore[no-untyped-def]
+    return build_opener(
+        ProxyHandler({}),
+        _NoRedirect(),
+        HTTPCookieProcessor(cookies if cookies is not None else CookieJar()),
+        _PinnedHTTPHandler(pinned_ip),
+        _PinnedHTTPSHandler(pinned_ip, context=context),
+    )
+
+
+def _origin(url: str) -> tuple[str, str, int | None]:
+    parsed = urlparse(url)
+    scheme = parsed.scheme.casefold()
+    port = parsed.port or (443 if scheme == "https" else 80 if scheme == "http" else None)
+    return scheme, (parsed.hostname or "").casefold(), port
 
 
 def _read_response(opener, request: Request, timeout: int, max_output_bytes: int) -> dict:  # type: ignore[no-untyped-def]

@@ -2,16 +2,33 @@ import { apiBase, requestJson } from "./client";
 import type { TaskMode } from "../modes";
 
 export type ModeConfig = { mode: TaskMode; [key: string]: unknown };
-// Read-only compatibility projection for historical Session snapshots.
-export type ResourceRef = { id: string; role: "target" | "hint"; kind: string; label: string; [key: string]: unknown };
 export type ExecutionPolicy = {
-  network: { mode: "none" | "observe" | "interact"; allowed_scopes: string[]; rate_limit: number; concurrency: number };
-  filesystem: { mode: "read_only" | "workspace_write"; allowed_roots: string[] };
-  process_execution: { mode: "forbidden" | "sandbox_only" | "authorized_host"; timeout_seconds: number };
-  fuzzing: { mode: "disabled" | "bounded" | "extended"; max_cases: number; max_duration_seconds: number; concurrency: number };
-  state_change: { mode: "forbidden" | "approval_required" | "authorized"; allowed_actions: string[] };
-  containment: { mode: "observe_only" | "approval_required" | "authorized"; allowed_actions: string[] };
-  source: "default" | "user" | "legacy_migration";
+  preset: "autonomous_ctf" | "safe_observation" | "offline_analysis" | "custom";
+  network: {
+    access: "disabled" | "task_sources" | "public_internet" | "custom";
+    interaction: "observe" | "interact";
+    seed_origins: string[];
+    custom_origins: string[];
+    custom_domains: string[];
+    custom_cidrs: string[];
+    deny_private_networks: boolean;
+    deny_loopback: boolean;
+    deny_link_local: boolean;
+    deny_cloud_metadata: boolean;
+    rate_limit_per_minute: number;
+    concurrency: number;
+    request_timeout_seconds: number;
+  };
+  local_compute: {
+    mode: "disabled" | "isolated";
+    timeout_seconds: number;
+    concurrency: number;
+    network_inheritance: "task_network_policy";
+  };
+  high_impact: {
+    mode: "forbidden" | "approval_required" | "allowlisted";
+    allowed_actions: string[];
+  };
 };
 
 export type ModeProfileContract = {
@@ -41,19 +58,26 @@ export type CreateSessionRequest = {
   mode: TaskMode;
   goal: string;
   modeOptions: ModeConfig;
-  input: { taskFileIds: string[]; hintText?: string; hintFileIds: string[] };
+  input: { text: string; fileIds: string[] };
   executionPolicy: ExecutionPolicy;
 };
 
 export type TaskListItem = {
-  schema_version?: number; task_id: string; name: string; mode: TaskMode; target: string;
+  schema_version?: number; task_id: string; name: string; mode: TaskMode; task_entry_url?: string | null;
   target_summary?: string; target_count?: number; hint_count?: number; created_at: string;
   updated_at?: string; status: string; turn_count?: number; max_turns?: number;
   active_solvers?: number; latest_event?: { seq?: number; type?: string } | null;
   flags: number; findings: number; artifacts: number;
 };
 
-export type LLMSettings = { configured: boolean; base_url: string; model: string; api_key_set: boolean; supports_vision?: boolean | null };
+export type LLMVerification = {
+  status: "unverified" | "verifying" | "verified" | "failed" | "stale";
+  verified_at?: string | null;
+  last_error?: { code: string; message: string } | null;
+  capabilities?: Record<string, boolean | null>;
+};
+export type LLMSettings = { configured: boolean; base_url: string; model: string; api_key_set: boolean; browser_configured?: boolean; supports_vision?: boolean | null; max_output_tokens?: number; timeout_seconds?: number; temperature?: number; reasoning_mode?: "auto" | "enabled" | "disabled"; verification_status?: LLMVerification["status"]; verification?: LLMVerification };
+export type LLMSettingsUpdate = { base_url: string; model: string; api_key?: string; supports_vision?: boolean | null; max_output_tokens?: number; timeout_seconds?: number; temperature?: number; reasoning_mode?: "auto" | "enabled" | "disabled" };
 
 export const createTask = (request: CreateSessionRequest) => requestJson<{
   task_id: string; status: string; scheduled: boolean;
@@ -73,9 +97,9 @@ function uploadError(payload: unknown, status: number): string {
   return `Upload failed (${status})`;
 }
 
-export async function stageInput(file: File): Promise<StagedAsset> {
+export async function stageInput(file: File, signal?: AbortSignal): Promise<StagedAsset> {
   const response = await fetch(`${apiBase}/api/v2/input-uploads?filename=${encodeURIComponent(file.name)}`, {
-    method: "POST", headers: { "Content-Type": file.type || "application/octet-stream" }, body: file,
+    method: "POST", headers: { "Content-Type": file.type || "application/octet-stream" }, body: file, signal,
   });
   const payload = await response.json().catch(() => ({})) as { asset?: StagedAsset };
   if (!response.ok || !payload.asset) throw new Error(uploadError(payload, response.status));
@@ -86,8 +110,8 @@ export const deleteStagedInput = (assetId: string) => requestJson<{ asset_id: st
 export const fetchTasks = () => requestJson<{ tasks: TaskListItem[] }>("/api/v2/tasks");
 export const deleteTask = (taskId: string) => requestJson<{ task_id: string; deleted: boolean }>(`/api/v2/tasks/${encodeURIComponent(taskId)}`, { method: "DELETE" });
 export const getLLMSettings = () => requestJson<LLMSettings>("/api/v2/settings/llm");
-export const updateLLMSettings = (payload: { base_url: string; api_key: string; model: string }) => requestJson<LLMSettings>("/api/v2/settings/llm", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
-export const verifyLLMSettings = () => requestJson<{ configured: boolean; reachable: boolean; action_tools: boolean; model: string }>("/api/v2/settings/llm/verify", { method: "POST" });
+export const updateLLMSettings = (payload: LLMSettingsUpdate) => requestJson<LLMSettings>("/api/v2/settings/llm", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+export const verifyLLMSettings = () => requestJson<{ configured: boolean; reachable: boolean; action_tools: boolean; model: string; verification_status: LLMVerification["status"]; capabilities: Record<string, boolean | null>; tool_catalog: { tool_count: number; schema_bytes: number; accepted: boolean } }>("/api/v2/settings/llm/verify", { method: "POST" });
 export type SkillSetting = { name: string; modes: TaskMode[]; capabilities: string[]; tags: string[]; version: string; source: "builtin" | "custom"; summary: string; editable: boolean };
 export type SkillDetail = SkillSetting & { body: string };
 export type PromptSetting = { id: string; role: string; instruction: string; source: string; editable: boolean };

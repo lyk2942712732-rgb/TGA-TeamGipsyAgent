@@ -8,6 +8,7 @@ from tga.contracts import TGATask
 from tga.tools.mcp_gateway import MCPGateway, TGA_MCP_TOOL, gateway_definition
 from tga.tools.mcp_config import MCPServerConfig
 from tga.tools.mcp_manager import MCPManager
+from tests.runtime_fixtures import mcp_policy, mcp_snapshot
 
 
 def _manager(tmp_path: Path) -> MCPManager:
@@ -16,8 +17,8 @@ def _manager(tmp_path: Path) -> MCPManager:
     config.write_text(json.dumps({
         "version": 1,
         "servers": {"fixture": {
-            "command": sys.executable,
-            "args": [str(fixture)],
+            "transport": "stdio",
+            "stdio": {"source": "local_process", "command": sys.executable, "args": [str(fixture)]},
             "visibility": {"risk": "active"},
             "methods": {"echo": {"risk": "passive"}},
         }},
@@ -27,8 +28,12 @@ def _manager(tmp_path: Path) -> MCPManager:
     return manager
 
 
-def _task(**values) -> TGATask:
-    return TGATask(id="gateway", name="gateway", mode="ctf", target="http://127.0.0.1", goal="test", **values)
+def _task(snapshot=None, *, allow_active: bool = False) -> TGATask:
+    values = {} if snapshot is None else {
+        "execution_policy": mcp_policy("fixture", allow_active=allow_active),
+        "mcp_capabilities": mcp_snapshot(snapshot, "fixture"),
+    }
+    return TGATask(id="gateway", name="gateway", mode="ctf", task_entry_url="http://127.0.0.1/", goal="test", **values)
 
 
 def test_empty_task_has_no_mcp_and_gateway_is_single_bounded_tool(tmp_path: Path) -> None:
@@ -41,7 +46,7 @@ def test_empty_task_has_no_mcp_and_gateway_is_single_bounded_tool(tmp_path: Path
 
 def test_gateway_search_hides_schema_and_active_method_remains_describable(tmp_path: Path) -> None:
     manager = _manager(tmp_path)
-    task = _task(mcp_servers=["fixture"], allow_active_scan=False)
+    task = _task(manager.snapshot, allow_active=False)
     gateway = MCPGateway(manager=manager, task=task, snapshot=manager.snapshot_for_task(task))
     status = gateway.query(action="status")
     assert [item["server"] for item in status["servers"]] == ["fixture"]
@@ -51,7 +56,7 @@ def test_gateway_search_hides_schema_and_active_method_remains_describable(tmp_p
     described = gateway.query(action="describe", server="fixture", tool="large_result")
     assert described["risk"] == "active"
     assert described["allowed"] is False
-    assert "allow_active_scan" in described["reason"]
+    assert "execution boundaries" in described["reason"]
     passive = gateway.query(action="describe", server="fixture", tool="echo")
     assert passive["allowed"] is True
     active_route = gateway.resolve(server="fixture", tool="large_result")
@@ -61,7 +66,7 @@ def test_gateway_search_hides_schema_and_active_method_remains_describable(tmp_p
 
 def test_health_changes_only_after_real_tools_call(tmp_path: Path) -> None:
     manager = _manager(tmp_path)
-    task = _task(mcp_servers=["fixture"])
+    task = _task(manager.snapshot)
     assert manager.status_snapshot()["records"][0]["runnable"] is None
     route = manager.snapshot_for_task(task).route("mcp__fixture__echo")
     assert route is not None
@@ -78,10 +83,10 @@ def test_health_changes_only_after_real_tools_call(tmp_path: Path) -> None:
 def test_container_rejects_host_windows_path_in_favor_of_automatic_container_path(tmp_path: Path) -> None:
     manager = _manager(tmp_path)
     server = MCPServerConfig.model_validate({
-        "transport": "stdio", "command": "docker", "args": ["run", "--rm", "-i", "demo:latest"],
-        "visibility": {"risk": "passive"}, "workspaceMount": {"enabled": False},
+        "transport": "stdio", "stdio": {"source": "docker_image", "image": "demo:latest"},
+        "visibility": {"risk": "passive"},
     })
-    task = _task(mcp_servers=["fixture"])
+    task = _task(manager.snapshot)
     route = manager.snapshot.route("mcp__fixture__echo")
     assert route is not None
     denial = manager.policy.authorize(task=task, server=server, route=route, arguments={"text": r"C:\Users\lyk\sample.bin"})

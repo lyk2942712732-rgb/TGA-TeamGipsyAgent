@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import hashlib
+import os
+import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -29,7 +31,7 @@ class ArtifactStore:
         digest = hashlib.sha256(data).hexdigest()
         artifact_id = f"artifact_{digest[:12]}"
         path = self.root / f"{artifact_id}{suffix}"
-        path.write_bytes(data)
+        self._atomic_write(path, data)
         return ArtifactRecord(
             id=artifact_id,
             task_id=task_id,
@@ -52,12 +54,17 @@ class ArtifactStore:
         tool: str | None = None,
         target: str | None = None,
         suffix: str = ".bin",
+        identity_context: str | None = None,
     ) -> ArtifactRecord:
         """Persist an opaque response without decoding or logging it inline."""
         digest = hashlib.sha256(data).hexdigest()
-        artifact_id = f"artifact_{digest[:12]}"
+        identity = hashlib.sha256(
+            (identity_context.encode("utf-8", errors="replace") + b"\0" + data)
+            if identity_context is not None else data
+        ).hexdigest()
+        artifact_id = f"artifact_{identity[:12]}"
         path = self.root / f"{artifact_id}{suffix}"
-        path.write_bytes(data)
+        self._atomic_write(path, data)
         return ArtifactRecord(
             id=artifact_id,
             task_id=task_id,
@@ -75,3 +82,17 @@ class ArtifactStore:
         if not matches:
             return ""
         return matches[0].read_text(encoding="utf-8", errors="replace")
+
+    @staticmethod
+    def _atomic_write(path: Path, data: bytes) -> None:
+        fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+        temporary_path = Path(temporary)
+        try:
+            with os.fdopen(fd, "wb") as handle:
+                handle.write(data)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary_path, path)
+        except BaseException:
+            temporary_path.unlink(missing_ok=True)
+            raise

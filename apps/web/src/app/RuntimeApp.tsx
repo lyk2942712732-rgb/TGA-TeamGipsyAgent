@@ -56,7 +56,7 @@ export function RuntimeApp() {
       {route.page === "new" ? <NewTaskPage onCreated={(id) => { void refreshTasks(); go(`/tasks/${encodeURIComponent(id)}/runtime`); }} /> : null}
       {route.page === "runtime" && route.taskId ? <SessionRuntimePage taskId={route.taskId} mode="runtime" onReplay={() => go(`/tasks/${encodeURIComponent(route.taskId!)}/replay`)} /> : null}
       {route.page === "replay" && route.taskId ? <SessionRuntimePage taskId={route.taskId} mode="replay" onReplay={() => undefined} /> : null}
-      {route.page === "models" ? <ModelsPage /> : null}
+      {route.page === "models" ? <ModelsPage onConfiguredChange={setLLMConfigured} /> : null}
       {route.page === "capabilities" ? <CapabilitiesPage /> : null}
       {route.page === "skills" ? <SkillsPage /> : null}
     </main>

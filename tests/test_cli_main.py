@@ -8,19 +8,28 @@ from tga.cli.desktop import _prepare_frontend
 from tga.cli.main import main
 
 
-def test_cli_run_writes_report(tmp_path: Path):
+def test_cli_run_fails_clearly_without_a_configured_model(tmp_path: Path, monkeypatch):
     config = tmp_path / "task.json"
     config.write_text(
-        '{"id":"task_cli","name":"demo","mode":"vulnerability_research","target":".","scope":["."],"intensity":"passive","allow_active_scan":false,"goal":"scan","flag_format":null}',
+        json.dumps(
+            {
+                "id": "task_cli",
+                "name": "demo",
+                "mode": "vulnerability_research",
+                "goal": "scan",
+                "mode_config": {"mode": "vulnerability_research"},
+                "execution_policy": {},
+                "session_input": {"prompt": "", "files": []},
+                "schema_version": 5,
+            }
+        ),
         encoding="utf-8",
     )
     run_root = tmp_path / "runs"
 
-    assert main(["run", str(config), "--run-root", str(run_root)]) == 0
-
-    report_path = run_root / "task_cli" / "reports" / "report.md"
-    assert report_path.exists()
-    assert "# TGA Report" in report_path.read_text(encoding="utf-8")
+    monkeypatch.delenv("TGA_LLM_API_KEY", raising=False)
+    with pytest.raises(RuntimeError, match="runtime model is not configured"):
+        main(["run", str(config), "--run-root", str(run_root)])
 
 
 def test_cli_go_delegates_to_desktop_launcher(monkeypatch):
@@ -77,18 +86,6 @@ def test_desktop_uses_existing_bundle_when_npm_is_not_on_path(tmp_path: Path, mo
     monkeypatch.setattr("tga.cli.desktop.subprocess.run", lambda *args, **kwargs: (_ for _ in ()).throw(FileNotFoundError()))
 
     assert _prepare_frontend(root=root, host="127.0.0.1", port=8000, build=True) == dist
-
-
-def test_desktop_uses_project_relative_mcp_hub(tmp_path: Path, monkeypatch):
-    root = tmp_path / "project"
-    dist = root / "apps" / "web" / "dist"
-    dist.mkdir(parents=True)
-    (dist / "index.html").write_text("<!doctype html>", encoding="utf-8")
-    (root / "mcp-security-hub").mkdir()
-    monkeypatch.delenv("TGA_MCP_SECURITY_HUB_ROOT", raising=False)
-
-    assert _prepare_frontend(root=root, host="127.0.0.1", port=8123, build=False) == dist
-    assert Path(os.environ["TGA_MCP_SECURITY_HUB_ROOT"]).resolve() == root / "mcp-security-hub"
 
 
 def test_desktop_prefers_windows_npm_cmd(tmp_path: Path, monkeypatch):

@@ -1,0 +1,5043 @@
+{
+  "version": 1,
+  "servers": {
+    "binwalk": {
+      "configHash": "bdcbf5b5407ce312ec43bf6ede2e0d53a826bd620268b546159a894c12d55c66",
+      "serverInfo": {
+        "name": "binwalk-mcp",
+        "version": "1.28.1"
+      },
+      "protocolVersion": "2024-11-05",
+      "tools": [
+        {
+          "name": "binwalk_scan",
+          "description": "Scan a firmware file for embedded files, filesystems, and signatures. Identifies compressed archives, filesystems, bootloaders, and more.",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "filepath": {
+                "type": "string",
+                "description": "Path to the firmware file to scan"
+              },
+              "timeout": {
+                "type": "integer",
+                "description": "Scan timeout in seconds",
+                "default": 300
+              }
+            },
+            "required": [
+              "filepath"
+            ]
+          }
+        },
+        {
+          "name": "binwalk_extract",
+          "description": "Extract embedded files and filesystems from firmware. Recursively extracts archives, SquashFS, JFFS2, CPIO, and more.",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "filepath": {
+                "type": "string",
+                "description": "Path to the firmware file to extract"
+              },
+              "timeout": {
+                "type": "integer",
+                "description": "Extraction timeout in seconds",
+                "default": 600
+              }
+            },
+            "required": [
+              "filepath"
+            ]
+          }
+        },
+        {
+          "name": "binwalk_entropy",
+          "description": "Analyze file entropy to detect compressed or encrypted sections. High entropy regions often indicate encryption or compression.",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "filepath": {
+                "type": "string",
+                "description": "Path to the file to analyze"
+              },
+              "timeout": {
+                "type": "integer",
+                "description": "Analysis timeout in seconds",
+                "default": 120
+              }
+            },
+            "required": [
+              "filepath"
+            ]
+          }
+        },
+        {
+          "name": "binwalk_hexdump",
+          "description": "Display hex dump of a file section. Useful for examining specific offsets found during signature scanning.",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "filepath": {
+                "type": "string",
+                "description": "Path to the file"
+              },
+              "offset": {
+                "type": "integer",
+                "description": "Starting offset in bytes",
+                "default": 0
+              },
+              "length": {
+                "type": "integer",
+                "description": "Number of bytes to display",
+                "default": 256
+              }
+            },
+            "required": [
+              "filepath"
+            ]
+          }
+        },
+        {
+          "name": "get_scan_results",
+          "description": "Retrieve results from a previous scan by scan ID.",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "scan_id": {
+                "type": "string",
+                "description": "Scan ID returned from a previous scan"
+              },
+              "include_raw": {
+                "type": "boolean",
+                "description": "Include raw binwalk output",
+                "default": false
+              }
+            },
+            "required": [
+              "scan_id"
+            ]
+          }
+        },
+        {
+          "name": "list_extractions",
+          "description": "List all completed extractions with their file contents.",
+          "input_schema": {
+            "type": "object",
+            "properties": {}
+          }
+        },
+        {
+          "name": "list_active_scans",
+          "description": "List currently running scans.",
+          "input_schema": {
+            "type": "object",
+            "properties": {}
+          }
+        }
+      ],
+      "discoveredAt": "2026-07-24T15:09:52.575375Z"
+    },
+    "capa": {
+      "configHash": "bdcbf5b5407ce312ec43bf6ede2e0d53a826bd620268b546159a894c12d55c66",
+      "serverInfo": {
+        "name": "capa-mcp",
+        "version": "1.28.1"
+      },
+      "protocolVersion": "2024-11-05",
+      "tools": [
+        {
+          "name": "capa_analyze",
+          "description": "Analyze a binary file for capabilities using Mandiant's capa. Detects malware behaviors, techniques, and capabilities mapped to MITRE ATT&CK.",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "filepath": {
+                "type": "string",
+                "description": "Path to the binary file to analyze"
+              },
+              "timeout": {
+                "type": "integer",
+                "description": "Analysis timeout in seconds",
+                "default": 300
+              }
+            },
+            "required": [
+              "filepath"
+            ]
+          }
+        },
+        {
+          "name": "get_analysis_results",
+          "description": "Retrieve results from a previous analysis.",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "scan_id": {
+                "type": "string",
+                "description": "Analysis ID"
+              }
+            },
+            "required": [
+              "scan_id"
+            ]
+          }
+        },
+        {
+          "name": "list_active_scans",
+          "description": "List running analyses.",
+          "input_schema": {
+            "type": "object",
+            "properties": {}
+          }
+        }
+      ],
+      "discoveredAt": "2026-07-24T15:09:53.361076Z"
+    },
+    "radare2": {
+      "configHash": "bdcbf5b5407ce312ec43bf6ede2e0d53a826bd620268b546159a894c12d55c66",
+      "serverInfo": {
+        "name": "Radare2 MCP Connector",
+        "version": "1.8.4"
+      },
+      "protocolVersion": "2025-06-18",
+      "tools": [
+        {
+          "name": "open_file",
+          "description": "Opens a binary file with radare2 for analysis <think>Call this tool before any other one from r2mcp. Use an absolute file_path</think>",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "file_path": {
+                "type": "string",
+                "description": "Path to the file to open"
+              },
+              "baddr": {
+                "type": "string",
+                "description": "Optional base address for PIE binaries, same as radare2 -B (for example 0x400000)"
+              }
+            },
+            "required": [
+              "file_path"
+            ]
+          }
+        },
+        {
+          "name": "close_file",
+          "description": "Close the currently open file",
+          "input_schema": {
+            "type": "object",
+            "properties": {}
+          }
+        },
+        {
+          "name": "list_functions",
+          "description": "Lists all functions discovered during analysis",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "only_named": {
+                "type": "boolean",
+                "description": "If true, only list functions with named symbols (excludes functions with numeric suffixes like sym.func.1000016c8)"
+              },
+              "filter": {
+                "type": "string",
+                "description": "Regular expression to filter the results"
+              },
+              "count": {
+                "type": "boolean",
+                "description": "If true, return only the number of matching results instead of the full list"
+              },
+              "start": {
+                "type": "integer",
+                "description": "Starting index for pagination (default: 0)"
+              },
+              "max_length": {
+                "type": "integer",
+                "description": "Maximum number of results to return, -1 for all (default: 50)"
+              }
+            }
+          }
+        },
+        {
+          "name": "list_functions_tree",
+          "description": "Lists functions and successors (aflmu)",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "filter": {
+                "type": "string",
+                "description": "Regular expression to filter the results"
+              },
+              "count": {
+                "type": "boolean",
+                "description": "If true, return only the number of matching results instead of the full list"
+              },
+              "cursor": {
+                "type": "string",
+                "description": "Cursor for pagination (line number to start from)"
+              },
+              "page_size": {
+                "type": "integer",
+                "description": "Number of lines per page (default: 1000, max: 10000)"
+              }
+            }
+          }
+        },
+        {
+          "name": "list_libraries",
+          "description": "Lists all shared libraries linked to the binary",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "filter": {
+                "type": "string",
+                "description": "Regular expression to filter the results"
+              },
+              "count": {
+                "type": "boolean",
+                "description": "If true, return only the number of matching results instead of the full list"
+              },
+              "cursor": {
+                "type": "string",
+                "description": "Cursor for pagination (line number to start from)"
+              },
+              "page_size": {
+                "type": "integer",
+                "description": "Number of lines per page (default: 1000, max: 10000)"
+              }
+            }
+          }
+        },
+        {
+          "name": "list_imports",
+          "description": "Lists imported symbols (note: use list_symbols for addresses with sym.imp. prefix)",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "filter": {
+                "type": "string",
+                "description": "Regular expression to filter the results"
+              },
+              "count": {
+                "type": "boolean",
+                "description": "If true, return only the number of matching results instead of the full list"
+              },
+              "cursor": {
+                "type": "string",
+                "description": "Cursor for pagination (line number to start from)"
+              },
+              "page_size": {
+                "type": "integer",
+                "description": "Number of lines per page (default: 1000, max: 10000)"
+              }
+            }
+          }
+        },
+        {
+          "name": "list_exports",
+          "description": "Lists exported symbols from the binary or process",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "filter": {
+                "type": "string",
+                "description": "Regular expression to filter the results"
+              },
+              "count": {
+                "type": "boolean",
+                "description": "If true, return only the number of matching results instead of the full list"
+              },
+              "cursor": {
+                "type": "string",
+                "description": "Cursor for pagination (line number to start from)"
+              },
+              "page_size": {
+                "type": "integer",
+                "description": "Number of lines per page (default: 1000, max: 10000)"
+              }
+            }
+          }
+        },
+        {
+          "name": "list_sections",
+          "description": "Displays memory sections and segments from the binary",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "filter": {
+                "type": "string",
+                "description": "Regular expression to filter the results"
+              },
+              "count": {
+                "type": "boolean",
+                "description": "If true, return only the number of matching results instead of the full list"
+              },
+              "cursor": {
+                "type": "string",
+                "description": "Cursor for pagination (line number to start from)"
+              },
+              "page_size": {
+                "type": "integer",
+                "description": "Number of lines per page (default: 1000, max: 10000)"
+              }
+            }
+          }
+        },
+        {
+          "name": "list_memory_maps",
+          "description": "Lists memory regions of the process with addresses and permissions",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "filter": {
+                "type": "string",
+                "description": "Regular expression to filter the results"
+              },
+              "count": {
+                "type": "boolean",
+                "description": "If true, return only the number of matching results instead of the full list"
+              },
+              "cursor": {
+                "type": "string",
+                "description": "Cursor for pagination (line number to start from)"
+              },
+              "page_size": {
+                "type": "integer",
+                "description": "Number of lines per page (default: 1000, max: 10000)"
+              }
+            }
+          }
+        },
+        {
+          "name": "show_function_details",
+          "description": "Displays detailed information about the current function",
+          "input_schema": {
+            "type": "object",
+            "properties": {}
+          }
+        },
+        {
+          "name": "get_current_address",
+          "description": "Shows the current position and function name",
+          "input_schema": {
+            "type": "object",
+            "properties": {}
+          }
+        },
+        {
+          "name": "show_info",
+          "description": "Displays information about the binary or target process",
+          "input_schema": {
+            "type": "object",
+            "properties": {}
+          }
+        },
+        {
+          "name": "list_symbols",
+          "description": "Shows all symbols (functions, variables, imports) with addresses",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "filter": {
+                "type": "string",
+                "description": "Regular expression to filter the results"
+              },
+              "count": {
+                "type": "boolean",
+                "description": "If true, return only the number of matching results instead of the full list"
+              },
+              "cursor": {
+                "type": "string",
+                "description": "Cursor for pagination (line number to start from)"
+              },
+              "page_size": {
+                "type": "integer",
+                "description": "Number of lines per page (default: 1000, max: 10000)"
+              }
+            }
+          }
+        },
+        {
+          "name": "list_entrypoints",
+          "description": "Displays program entrypoints, constructors and main function",
+          "input_schema": {
+            "type": "object",
+            "properties": {}
+          }
+        },
+        {
+          "name": "list_methods",
+          "description": "Lists all methods belonging to the specified class",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "classname": {
+                "type": "string",
+                "description": "Name of the class to list methods for"
+              },
+              "filter": {
+                "type": "string",
+                "description": "Regular expression to filter the results"
+              },
+              "count": {
+                "type": "boolean",
+                "description": "If true, return only the number of matching results instead of the full list"
+              },
+              "cursor": {
+                "type": "string",
+                "description": "Cursor for pagination (line number to start from)"
+              },
+              "page_size": {
+                "type": "integer",
+                "description": "Number of lines per page (default: 1000, max: 10000)"
+              }
+            },
+            "required": [
+              "classname"
+            ]
+          }
+        },
+        {
+          "name": "list_classes",
+          "description": "Lists class names from various languages (C++, ObjC, Swift, Java, Dalvik)",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "filter": {
+                "type": "string",
+                "description": "Regular expression to filter the results"
+              },
+              "count": {
+                "type": "boolean",
+                "description": "If true, return only the number of matching results instead of the full list"
+              },
+              "cursor": {
+                "type": "string",
+                "description": "Cursor for pagination (line number to start from)"
+              },
+              "page_size": {
+                "type": "integer",
+                "description": "Number of lines per page (default: 1000, max: 10000)"
+              }
+            }
+          }
+        },
+        {
+          "name": "list_decompilers",
+          "description": "Shows all available decompiler backends",
+          "input_schema": {
+            "type": "object",
+            "properties": {}
+          }
+        },
+        {
+          "name": "rename_function",
+          "description": "Renames the function at the specified address",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "New function name"
+              },
+              "address": {
+                "type": "string",
+                "description": "Address of the function to rename"
+              }
+            },
+            "required": [
+              "name",
+              "address"
+            ]
+          }
+        },
+        {
+          "name": "rename_flag",
+          "description": "Renames a local variable or data reference within the specified address",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "address": {
+                "type": "string",
+                "description": "Address of the flag containing the variable or data reference"
+              },
+              "name": {
+                "type": "string",
+                "description": "Current variable name or data reference"
+              },
+              "new_name": {
+                "type": "string",
+                "description": "New variable name or data reference"
+              }
+            },
+            "required": [
+              "address",
+              "name",
+              "new_name"
+            ]
+          }
+        },
+        {
+          "name": "use_decompiler",
+          "description": "Selects which decompiler backend to use (default: pdc)",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "Name of the decompiler"
+              }
+            },
+            "required": [
+              "name"
+            ]
+          }
+        },
+        {
+          "name": "get_function_prototype",
+          "description": "Retrieves the function signature at the specified address",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "address": {
+                "type": "string",
+                "description": "Address of the function"
+              }
+            },
+            "required": [
+              "address"
+            ]
+          }
+        },
+        {
+          "name": "set_function_prototype",
+          "description": "Sets the function signature (return type, name, arguments)",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "address": {
+                "type": "string",
+                "description": "Address of the function"
+              },
+              "prototype": {
+                "type": "string",
+                "description": "Function signature in C-like syntax"
+              }
+            },
+            "required": [
+              "address",
+              "prototype"
+            ]
+          }
+        },
+        {
+          "name": "set_comment",
+          "description": "Adds a comment at the specified address",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "address": {
+                "type": "string",
+                "description": "Address to put the comment in"
+              },
+              "message": {
+                "type": "string",
+                "description": "Comment text to use"
+              }
+            },
+            "required": [
+              "address",
+              "message"
+            ]
+          }
+        },
+        {
+          "name": "list_strings",
+          "description": "Lists strings from data sections with optional regex filter",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "filter": {
+                "type": "string",
+                "description": "Regular expression to filter the results"
+              },
+              "count": {
+                "type": "boolean",
+                "description": "If true, return only the number of matching results instead of the full list"
+              },
+              "cursor": {
+                "type": "string",
+                "description": "Cursor for pagination (line number to start from)"
+              },
+              "page_size": {
+                "type": "integer",
+                "description": "Number of lines per page (default: 1000, max: 10000)"
+              }
+            }
+          }
+        },
+        {
+          "name": "list_all_strings",
+          "description": "Scans the entire binary for strings with optional regex filter",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "filter": {
+                "type": "string",
+                "description": "Regular expression to filter the results"
+              },
+              "count": {
+                "type": "boolean",
+                "description": "If true, return only the number of matching results instead of the full list"
+              },
+              "cursor": {
+                "type": "string",
+                "description": "Cursor for pagination (line number to start from)"
+              },
+              "page_size": {
+                "type": "integer",
+                "description": "Number of lines per page (default: 1000, max: 10000)"
+              }
+            }
+          }
+        },
+        {
+          "name": "analyze",
+          "description": "Runs binary analysis with optional depth level",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "level": {
+                "type": "number",
+                "description": "Analysis level (0-4, higher is more thorough)"
+              },
+              "timeout_seconds": {
+                "type": "integer",
+                "description": "Optional maximum analysis time in seconds for this call only. Use 0 to disable the timeout."
+              }
+            },
+            "required": []
+          }
+        },
+        {
+          "name": "xrefs_to",
+          "description": "Finds all code references to the specified address",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "address": {
+                "type": "string",
+                "description": "Address to check for cross-references"
+              }
+            },
+            "required": [
+              "address"
+            ]
+          }
+        },
+        {
+          "name": "decompile_function",
+          "description": "Show C-like pseudocode of the function in the given address. <think>Use this to inspect the code in a function, do not run multiple times in the same offset</think>",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "address": {
+                "type": "string",
+                "description": "Address of the function to decompile"
+              },
+              "cursor": {
+                "type": "string",
+                "description": "Cursor for pagination (line number to start from)"
+              },
+              "page_size": {
+                "type": "integer",
+                "description": "Number of lines per page (default: 1000, max: 10000)"
+              }
+            },
+            "required": [
+              "address"
+            ]
+          }
+        },
+        {
+          "name": "list_files",
+          "description": "Lists files in the specified path using radare2's ls -q command. Files ending with / are directories, otherwise they are files.",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string",
+                "description": "Path to list files from"
+              },
+              "filter": {
+                "type": "string",
+                "description": "Regular expression to filter the results"
+              },
+              "count": {
+                "type": "boolean",
+                "description": "If true, return only the number of matching results instead of the full list"
+              },
+              "cursor": {
+                "type": "string",
+                "description": "Cursor for pagination (line number to start from)"
+              },
+              "page_size": {
+                "type": "integer",
+                "description": "Number of lines per page (default: 1000, max: 10000)"
+              }
+            },
+            "required": [
+              "path"
+            ]
+          }
+        },
+        {
+          "name": "disassemble_function",
+          "description": "Shows assembly listing of the function at the specified address",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "address": {
+                "type": "string",
+                "description": "Address of the function to disassemble"
+              },
+              "cursor": {
+                "type": "string",
+                "description": "Cursor for pagination (line number to start from)"
+              },
+              "page_size": {
+                "type": "integer",
+                "description": "Number of lines per page (default: 1000, max: 10000)"
+              }
+            },
+            "required": [
+              "address"
+            ]
+          }
+        },
+        {
+          "name": "disassemble",
+          "description": "Disassembles a specific number of instructions from an address <think>Use this tool to inspect a portion of memory as code without depending on function analysis boundaries. Use this tool when functions are large and you are only interested on few instructions</think>",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "address": {
+                "type": "string",
+                "description": "Address to start disassembly"
+              },
+              "num_instructions": {
+                "type": "integer",
+                "description": "Number of instructions to disassemble (default: 10)"
+              }
+            },
+            "required": [
+              "address"
+            ]
+          }
+        },
+        {
+          "name": "calculate",
+          "description": "Evaluate a math expression using core->num (r_num_math). Usecases: do proper 64-bit math, resolve addresses for flag names/symbols, and avoid hallucinated results.",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "expression": {
+                "type": "string",
+                "description": "Math expression to evaluate (eg. 0x100 + sym.flag - 4)"
+              }
+            },
+            "required": [
+              "expression"
+            ]
+          }
+        },
+        {
+          "name": "get_pid",
+          "description": "Get the process ID of the target process",
+          "input_schema": {
+            "type": "object",
+            "properties": {}
+          }
+        },
+        {
+          "name": "list_threads",
+          "description": "List all threads in the target process with their IDs and state",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "filter": {
+                "type": "string",
+                "description": "Regular expression to filter the results"
+              },
+              "count": {
+                "type": "boolean",
+                "description": "If true, return only the number of matching results instead of the full list"
+              },
+              "cursor": {
+                "type": "string",
+                "description": "Cursor for pagination (line number to start from)"
+              },
+              "page_size": {
+                "type": "integer",
+                "description": "Number of lines per page (default: 1000, max: 10000)"
+              }
+            }
+          }
+        },
+        {
+          "name": "dump_registers",
+          "description": "Show register values for the target process threads",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "thread_id": {
+                "type": "integer",
+                "description": "Optional thread ID to show registers for a specific thread"
+              }
+            }
+          }
+        },
+        {
+          "name": "hexdump",
+          "description": "Print memory contents in hexdump style at the given address",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "address": {
+                "type": "string",
+                "description": "Address to hexdump"
+              },
+              "size": {
+                "type": "string",
+                "description": "Number of bytes to dump (empty string for default size)"
+              }
+            },
+            "required": [
+              "address",
+              "size"
+            ]
+          }
+        },
+        {
+          "name": "memory_map_here",
+          "description": "Show memory map information at the current address",
+          "input_schema": {
+            "type": "object",
+            "properties": {}
+          }
+        },
+        {
+          "name": "list_heap_allocations",
+          "description": "List malloc/heap memory ranges in the target process",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "filter": {
+                "type": "string",
+                "description": "Regular expression to filter the results"
+              },
+              "count": {
+                "type": "boolean",
+                "description": "If true, return only the number of matching results instead of the full list"
+              },
+              "cursor": {
+                "type": "string",
+                "description": "Cursor for pagination (line number to start from)"
+              },
+              "page_size": {
+                "type": "integer",
+                "description": "Number of lines per page (default: 1000, max: 10000)"
+              }
+            }
+          }
+        },
+        {
+          "name": "search",
+          "description": "Search for strings, hex patterns, wide strings, or numeric values",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "query": {
+                "type": "string",
+                "description": "The search query (string, hex bytes, or numeric value)"
+              },
+              "type": {
+                "type": "string",
+                "description": "Search type: string (default), hex, wide, or value"
+              },
+              "value_size": {
+                "type": "integer",
+                "description": "For value search: byte width 1, 2, 4 (default), or 8"
+              }
+            },
+            "required": [
+              "query"
+            ]
+          }
+        },
+        {
+          "name": "lookup_address",
+          "description": "Describe what is at a given address (flag name, symbol, module)",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "address": {
+                "type": "string",
+                "description": "Address to describe"
+              }
+            },
+            "required": [
+              "address"
+            ]
+          }
+        },
+        {
+          "name": "lookup_export",
+          "description": "Resolve an export name to its implementation address",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "Export name to look up"
+              }
+            },
+            "required": [
+              "name"
+            ]
+          }
+        },
+        {
+          "name": "lookup_symbol",
+          "description": "Resolve an address to its symbol name",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "address": {
+                "type": "string",
+                "description": "Address to resolve"
+              }
+            },
+            "required": [
+              "address"
+            ]
+          }
+        }
+      ],
+      "discoveredAt": "2026-07-24T15:09:53.706766Z"
+    },
+    "yara": {
+      "configHash": "bdcbf5b5407ce312ec43bf6ede2e0d53a826bd620268b546159a894c12d55c66",
+      "serverInfo": {
+        "name": "yara-mcp",
+        "version": "1.28.1"
+      },
+      "protocolVersion": "2024-11-05",
+      "tools": [
+        {
+          "name": "yara_scan",
+          "description": "Scan files or directories using YARA rules for malware detection and pattern matching. Uses pre-installed rule sets by default.",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "target": {
+                "type": "string",
+                "description": "File or directory path to scan"
+              },
+              "rules_file": {
+                "type": "string",
+                "description": "Specific YARA rules file to use (relative to rules dir)"
+              },
+              "recursive": {
+                "type": "boolean",
+                "description": "Scan directories recursively",
+                "default": true
+              },
+              "timeout": {
+                "type": "integer",
+                "description": "Scan timeout in seconds",
+                "default": 300
+              }
+            },
+            "required": [
+              "target"
+            ]
+          }
+        },
+        {
+          "name": "yara_scan_with_rules",
+          "description": "Scan files using custom inline YARA rules. Provide your own YARA rule definitions.",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "target": {
+                "type": "string",
+                "description": "File or directory path to scan"
+              },
+              "rules": {
+                "type": "string",
+                "description": "YARA rules as a string (e.g., 'rule test { strings: $a = \"malware\" condition: $a }')"
+              },
+              "recursive": {
+                "type": "boolean",
+                "description": "Scan directories recursively",
+                "default": true
+              },
+              "timeout": {
+                "type": "integer",
+                "description": "Scan timeout in seconds",
+                "default": 300
+              }
+            },
+            "required": [
+              "target",
+              "rules"
+            ]
+          }
+        },
+        {
+          "name": "list_rulesets",
+          "description": "List available YARA rule sets and their details.",
+          "input_schema": {
+            "type": "object",
+            "properties": {}
+          }
+        },
+        {
+          "name": "get_scan_results",
+          "description": "Retrieve results from a previous scan by scan ID.",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "scan_id": {
+                "type": "string",
+                "description": "Scan ID returned from a previous scan"
+              },
+              "include_raw": {
+                "type": "boolean",
+                "description": "Include raw YARA output",
+                "default": false
+              }
+            },
+            "required": [
+              "scan_id"
+            ]
+          }
+        },
+        {
+          "name": "list_active_scans",
+          "description": "List currently running scans.",
+          "input_schema": {
+            "type": "object",
+            "properties": {}
+          }
+        }
+      ],
+      "discoveredAt": "2026-07-24T15:09:54.476398Z"
+    },
+    "daml-viewer": {
+      "configHash": "bdcbf5b5407ce312ec43bf6ede2e0d53a826bd620268b546159a894c12d55c66",
+      "serverInfo": {
+        "name": "daml-viewer-mcp",
+        "version": "1.28.1"
+      },
+      "protocolVersion": "2024-11-05",
+      "tools": [
+        {
+          "name": "damlviewer_generate_table",
+          "description": "Generate a DAML access-control markdown table from a project directory or a single `.daml` file.",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string",
+                "description": "Path to a DAML project root (directory) or a single `.daml` file."
+              },
+              "output": {
+                "type": "string",
+                "description": "Optional output path for the markdown table. Defaults to an MCP run directory under /app/output."
+              },
+              "cleared": {
+                "type": "boolean",
+                "default": false,
+                "description": "Clear placeholder cells `(N/A)` and `(none)` from output."
+              },
+              "timeout": {
+                "type": "integer",
+                "default": 120,
+                "description": "Timeout in seconds."
+              },
+              "include_stdout": {
+                "type": "boolean",
+                "default": false
+              },
+              "include_stderr": {
+                "type": "boolean",
+                "default": false
+              },
+              "include_table_preview": {
+                "type": "boolean",
+                "default": true
+              }
+            },
+            "required": [
+              "path"
+            ]
+          }
+        },
+        {
+          "name": "get_run_results",
+          "description": "Retrieve results from a previous run by run ID.",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "run_id": {
+                "type": "string",
+                "description": "Run ID returned by a previous tool call."
+              },
+              "include_stdout": {
+                "type": "boolean",
+                "default": false
+              },
+              "include_stderr": {
+                "type": "boolean",
+                "default": false
+              },
+              "include_table_preview": {
+                "type": "boolean",
+                "default": true
+              }
+            },
+            "required": [
+              "run_id"
+            ]
+          }
+        },
+        {
+          "name": "list_runs",
+          "description": "List completed DAML viewer runs (most recent first).",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "status": {
+                "type": "string",
+                "description": "Filter by status (completed|failed|timeout|error)."
+              },
+              "limit": {
+                "type": "integer",
+                "default": 50,
+                "description": "Maximum number of runs to return."
+              }
+            }
+          }
+        },
+        {
+          "name": "list_active_runs",
+          "description": "List currently running DAML viewer jobs.",
+          "input_schema": {
+            "type": "object",
+            "properties": {}
+          }
+        }
+      ],
+      "discoveredAt": "2026-07-24T15:09:55.132248Z"
+    },
+    "medusa": {
+      "configHash": "bdcbf5b5407ce312ec43bf6ede2e0d53a826bd620268b546159a894c12d55c66",
+      "serverInfo": {
+        "name": "medusa-mcp",
+        "version": "1.28.1"
+      },
+      "protocolVersion": "2024-11-05",
+      "tools": [
+        {
+          "name": "medusa_init",
+          "description": "Initialize Medusa in the current directory.",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "workspace": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        {
+          "name": "medusa_fuzz",
+          "description": "Run the Medusa fuzzing process.",
+          "input_schema": {
+            "properties": {
+              "workspace": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Subdirectory to run fuzz in (optional)",
+                "title": "Workspace"
+              },
+              "timeout": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Time limit in seconds",
+                "title": "Timeout"
+              },
+              "config": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Path to medusa.json config file",
+                "title": "Config"
+              },
+              "compilation-target": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Target contract or directory to compile",
+                "title": "Compilation-Target"
+              },
+              "workers": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Number of fuzzer workers",
+                "title": "Workers"
+              },
+              "test-limit": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Number of transactions to test before exiting (0 = no limit)",
+                "title": "Test-Limit"
+              },
+              "seq-len": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Maximum transactions to run in sequence",
+                "title": "Seq-Len"
+              },
+              "target-contracts": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "List of target contracts for fuzz testing",
+                "title": "Target-Contracts"
+              },
+              "corpus-dir": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Directory for corpus items and coverage reports",
+                "title": "Corpus-Dir"
+              },
+              "senders": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Account addresses used to send state-changing txns",
+                "title": "Senders"
+              },
+              "deployer": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Account address used to deploy contracts",
+                "title": "Deployer"
+              },
+              "no-color": {
+                "default": false,
+                "description": "Disable colored terminal output",
+                "title": "No-Color",
+                "type": "boolean"
+              },
+              "fail-fast": {
+                "default": false,
+                "description": "Stop on first failed test",
+                "title": "Fail-Fast",
+                "type": "boolean"
+              },
+              "explore": {
+                "default": false,
+                "description": "Enable exploration mode",
+                "title": "Explore",
+                "type": "boolean"
+              },
+              "use-slither": {
+                "default": false,
+                "description": "Run slither and use cached results",
+                "title": "Use-Slither",
+                "type": "boolean"
+              },
+              "use-slither-force": {
+                "default": false,
+                "description": "Run slither and overwrite cached results",
+                "title": "Use-Slither-Force",
+                "type": "boolean"
+              },
+              "rpc-url": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "RPC URL to fetch contracts over",
+                "title": "Rpc-Url"
+              },
+              "rpc-block": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Block number to use when fetching contracts over RPC",
+                "title": "Rpc-Block"
+              },
+              "verbosity": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Execution trace verbosity level (1=-v, 2=-vv, 3=-vvv)",
+                "title": "Verbosity"
+              },
+              "log-level": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Log level: trace, debug, info, warn, error, or panic",
+                "title": "Log-Level"
+              }
+            },
+            "title": "FuzzArguments",
+            "type": "object"
+          }
+        },
+        {
+          "name": "medusa_get_config",
+          "description": "Read medusa.json.",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "workspace": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        {
+          "name": "medusa_update_config",
+          "description": "Update medusa.json fields.",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "updates": {
+                "type": "object"
+              },
+              "workspace": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "updates"
+            ]
+          }
+        }
+      ],
+      "discoveredAt": "2026-07-24T15:09:55.835875Z"
+    },
+    "solazy": {
+      "configHash": "bdcbf5b5407ce312ec43bf6ede2e0d53a826bd620268b546159a894c12d55c66",
+      "serverInfo": {
+        "name": "solazy-mcp",
+        "version": "1.28.1"
+      },
+      "protocolVersion": "2024-11-05",
+      "tools": [
+        {
+          "name": "solazy_reverse",
+          "description": "Reverse engineer a compiled Solana sBPF `.so` file. Generates disassembly (`disassembly.out`), immediate table (`immediate_data_table.out`), and/or CFG (`cfg.dot`) depending on mode.",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "filepath": {
+                "type": "string",
+                "description": "Path to the `.so` file to analyze"
+              },
+              "mode": {
+                "type": "string",
+                "enum": [
+                  "disass",
+                  "cfg",
+                  "both"
+                ],
+                "default": "both",
+                "description": "Output mode"
+              },
+              "labeling": {
+                "type": "boolean",
+                "default": true,
+                "description": "Enable symbol/section labeling in analysis"
+              },
+              "reduced": {
+                "type": "boolean",
+                "default": false,
+                "description": "Generate a reduced CFG (functions after entrypoint)"
+              },
+              "only_entrypoint": {
+                "type": "boolean",
+                "default": false,
+                "description": "Generate a CFG containing only the entrypoint cluster"
+              },
+              "timeout": {
+                "type": "integer",
+                "default": 300,
+                "description": "Timeout in seconds"
+              },
+              "include_artifact_previews": {
+                "type": "boolean",
+                "default": false,
+                "description": "Include small previews of generated artifacts"
+              }
+            },
+            "required": [
+              "filepath"
+            ]
+          }
+        },
+        {
+          "name": "solazy_sast",
+          "description": "Run SAST (Starlark rules) on an Anchor or SBF project directory.",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "target_dir": {
+                "type": "string",
+                "description": "Path to the project directory (Anchor root or SBF crate root)"
+              },
+              "rules_dir": {
+                "type": "string",
+                "description": "Optional external rules directory (contains `.star` files)"
+              },
+              "syn_scan_only": {
+                "type": "boolean",
+                "default": false,
+                "description": "Only parse Rust AST (skip rule evaluation)"
+              },
+              "use_internal_rules": {
+                "type": "boolean",
+                "default": true,
+                "description": "Include built-in sol-azy rules"
+              },
+              "timeout": {
+                "type": "integer",
+                "default": 600,
+                "description": "Timeout in seconds"
+              }
+            },
+            "required": [
+              "target_dir"
+            ]
+          }
+        },
+        {
+          "name": "solazy_recap",
+          "description": "Generate an audit-friendly markdown recap for an Anchor project. Produces `recap-solazy.md` in the run output directory.",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "anchor_dir": {
+                "type": "string",
+                "description": "Path to the Anchor project root"
+              },
+              "timeout": {
+                "type": "integer",
+                "default": 300,
+                "description": "Timeout in seconds"
+              },
+              "include_markdown": {
+                "type": "boolean",
+                "default": true,
+                "description": "Include a truncated markdown preview in the response"
+              }
+            },
+            "required": [
+              "anchor_dir"
+            ]
+          }
+        },
+        {
+          "name": "solazy_fetcher",
+          "description": "Fetch a deployed program bytecode (or account) from a Solana RPC endpoint. Writes `fetched_program.so` or `fetched_account.bin` to the run output directory.",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "program_id": {
+                "type": "string",
+                "description": "Solana Program ID to fetch"
+              },
+              "rpc_url": {
+                "type": "string",
+                "description": "Optional RPC URL"
+              },
+              "timeout": {
+                "type": "integer",
+                "default": 120,
+                "description": "Timeout in seconds"
+              }
+            },
+            "required": [
+              "program_id"
+            ]
+          }
+        },
+        {
+          "name": "solazy_dotting",
+          "description": "Reinsert functions (clusters) into a reduced CFG `.dot` using a JSON config.",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "config_path": {
+                "type": "string",
+                "description": "Path to JSON config: {\"functions\": [\"10\", ...]}"
+              },
+              "reduced_dot_path": {
+                "type": "string",
+                "description": "Path to reduced .dot file"
+              },
+              "full_dot_path": {
+                "type": "string",
+                "description": "Path to full .dot file"
+              },
+              "timeout": {
+                "type": "integer",
+                "default": 120,
+                "description": "Timeout in seconds"
+              },
+              "include_updated_dot": {
+                "type": "boolean",
+                "default": false,
+                "description": "Include a truncated preview of the updated dot file"
+              }
+            },
+            "required": [
+              "config_path",
+              "reduced_dot_path",
+              "full_dot_path"
+            ]
+          }
+        },
+        {
+          "name": "get_run_results",
+          "description": "Retrieve results from a previous run by run ID.",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "run_id": {
+                "type": "string",
+                "description": "Run ID returned by a previous tool"
+              },
+              "include_stdout": {
+                "type": "boolean",
+                "default": false
+              },
+              "include_stderr": {
+                "type": "boolean",
+                "default": false
+              },
+              "include_artifacts": {
+                "type": "boolean",
+                "default": true
+              },
+              "include_artifact_previews": {
+                "type": "boolean",
+                "default": false
+              }
+            },
+            "required": [
+              "run_id"
+            ]
+          }
+        },
+        {
+          "name": "list_runs",
+          "description": "List completed runs (most recent first).",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "run_type": {
+                "type": "string",
+                "description": "Filter by run type (reverse|sast|recap|fetcher|dotting)"
+              },
+              "status": {
+                "type": "string",
+                "description": "Filter by status (completed|failed|timeout|error)"
+              },
+              "limit": {
+                "type": "integer",
+                "default": 50,
+                "description": "Max results"
+              }
+            }
+          }
+        },
+        {
+          "name": "list_active_runs",
+          "description": "List currently running jobs.",
+          "input_schema": {
+            "type": "object",
+            "properties": {}
+          }
+        }
+      ],
+      "discoveredAt": "2026-07-24T15:09:56.486410Z"
+    },
+    "prowler": {
+      "configHash": "bdcbf5b5407ce312ec43bf6ede2e0d53a826bd620268b546159a894c12d55c66",
+      "serverInfo": {
+        "name": "prowler-mcp",
+        "version": "1.28.1"
+      },
+      "protocolVersion": "2024-11-05",
+      "tools": [
+        {
+          "name": "prowler_scan",
+          "description": "Run security assessment on AWS, Azure, GCP, or Kubernetes. Checks for misconfigurations, compliance issues, and security best practices.",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "provider": {
+                "type": "string",
+                "enum": [
+                  "aws",
+                  "azure",
+                  "gcp",
+                  "kubernetes"
+                ],
+                "description": "Cloud provider to scan (aws, azure, gcp, kubernetes)"
+              },
+              "services": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Specific services to scan (e.g., s3, ec2, iam for AWS)"
+              },
+              "regions": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Regions to scan (e.g., us-east-1, eu-west-1)"
+              },
+              "severity": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "critical",
+                    "high",
+                    "medium",
+                    "low",
+                    "informational"
+                  ]
+                },
+                "description": "Filter by severity levels"
+              },
+              "timeout": {
+                "type": "integer",
+                "description": "Scan timeout in seconds (default 1800 = 30 min)",
+                "default": 1800
+              }
+            },
+            "required": [
+              "provider"
+            ]
+          }
+        },
+        {
+          "name": "prowler_compliance",
+          "description": "Check cloud environment against compliance frameworks (CIS, PCI-DSS, HIPAA, SOC2, GDPR, NIST, etc.).",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "provider": {
+                "type": "string",
+                "enum": [
+                  "aws",
+                  "azure",
+                  "gcp",
+                  "kubernetes"
+                ],
+                "description": "Cloud provider to scan"
+              },
+              "framework": {
+                "type": "string",
+                "description": "Compliance framework (e.g., cis_2.0_aws, pci_3.2.1_aws, hipaa_aws)"
+              },
+              "regions": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Regions to scan"
+              },
+              "timeout": {
+                "type": "integer",
+                "description": "Scan timeout in seconds",
+                "default": 1800
+              }
+            },
+            "required": [
+              "provider",
+              "framework"
+            ]
+          }
+        },
+        {
+          "name": "list_checks",
+          "description": "List available security checks for a cloud provider.",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "provider": {
+                "type": "string",
+                "enum": [
+                  "aws",
+                  "azure",
+                  "gcp",
+                  "kubernetes"
+                ],
+                "description": "Cloud provider"
+              },
+              "service": {
+                "type": "string",
+                "description": "Filter by service (e.g., s3, iam, ec2)"
+              }
+            },
+            "required": [
+              "provider"
+            ]
+          }
+        },
+        {
+          "name": "list_compliance_frameworks",
+          "description": "List available compliance frameworks for each cloud provider.",
+          "input_schema": {
+            "type": "object",
+            "properties": {}
+          }
+        },
+        {
+          "name": "get_scan_results",
+          "description": "Retrieve results from a previous scan by scan ID.",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "scan_id": {
+                "type": "string",
+                "description": "Scan ID returned from a previous scan"
+              },
+              "show_all_findings": {
+                "type": "boolean",
+                "description": "Include all findings (not just critical/high)",
+                "default": false
+              }
+            },
+            "required": [
+              "scan_id"
+            ]
+          }
+        },
+        {
+          "name": "list_active_scans",
+          "description": "List currently running scans.",
+          "input_schema": {
+            "type": "object",
+            "properties": {}
+          }
+        }
+      ],
+      "discoveredAt": "2026-07-24T15:09:57.092471Z"
+    },
+    "roadrecon": {
+      "configHash": "bdcbf5b5407ce312ec43bf6ede2e0d53a826bd620268b546159a894c12d55c66",
+      "serverInfo": {
+        "name": "ROADrecon Analyzer",
+        "version": "1.28.1"
+      },
+      "protocolVersion": "2024-11-05",
+      "tools": [
+        {
+          "name": "find_privileged_users",
+          "description": "Find users with high-privilege directory roles",
+          "input_schema": {
+            "properties": {},
+            "title": "find_privileged_usersArguments",
+            "type": "object"
+          }
+        },
+        {
+          "name": "analyze_mfa_status",
+          "description": "Analyze MFA status across all users",
+          "input_schema": {
+            "properties": {},
+            "title": "analyze_mfa_statusArguments",
+            "type": "object"
+          }
+        },
+        {
+          "name": "find_applications_with_secrets",
+          "description": "Find applications with secrets or certificates and analyze their expiration",
+          "input_schema": {
+            "properties": {},
+            "title": "find_applications_with_secretsArguments",
+            "type": "object"
+          }
+        },
+        {
+          "name": "analyze_groups",
+          "description": "Analyze group types and membership in the tenant",
+          "input_schema": {
+            "properties": {},
+            "title": "analyze_groupsArguments",
+            "type": "object"
+          }
+        },
+        {
+          "name": "identify_stale_accounts",
+          "description": "Find user accounts that have not logged in or changed password in a specified number of days",
+          "input_schema": {
+            "properties": {
+              "days": {
+                "default": 90,
+                "title": "Days",
+                "type": "integer"
+              }
+            },
+            "title": "identify_stale_accountsArguments",
+            "type": "object"
+          }
+        },
+        {
+          "name": "analyze_pim_implementation",
+          "description": "Analyze whether Privileged Identity Management (PIM) is implemented for just-in-time admin access",
+          "input_schema": {
+            "properties": {},
+            "title": "analyze_pim_implementationArguments",
+            "type": "object"
+          }
+        },
+        {
+          "name": "analyze_service_principal_credentials",
+          "description": "Analyze service principals for over-permissioned credentials with long expiration times",
+          "input_schema": {
+            "properties": {},
+            "title": "analyze_service_principal_credentialsArguments",
+            "type": "object"
+          }
+        },
+        {
+          "name": "analyze_legacy_authentication",
+          "description": "Analyze for potential legacy authentication protocols that bypass MFA",
+          "input_schema": {
+            "properties": {},
+            "title": "analyze_legacy_authenticationArguments",
+            "type": "object"
+          }
+        },
+        {
+          "name": "analyze_conditional_access_policies",
+          "description": "Analyze conditional access policies for security gaps and best practice alignment",
+          "input_schema": {
+            "properties": {
+              "file_path": {
+                "default": "",
+                "title": "File Path",
+                "type": "string"
+              }
+            },
+            "title": "analyze_conditional_access_policiesArguments",
+            "type": "object"
+          }
+        }
+      ],
+      "discoveredAt": "2026-07-24T15:09:57.889645Z"
+    },
+    "trivy": {
+      "configHash": "bdcbf5b5407ce312ec43bf6ede2e0d53a826bd620268b546159a894c12d55c66",
+      "serverInfo": {
+        "name": "Trivy MCP Server 🚀",
+        "version": "v0.0.20"
+      },
+      "protocolVersion": "2024-11-05",
+      "tools": [
+        {
+          "name": "findings_get",
+          "description": "Get a finding from a scan",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "batchID": {
+                "type": "string"
+              },
+              "id": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "batchID",
+              "id"
+            ]
+          }
+        },
+        {
+          "name": "findings_list",
+          "description": "List the findings from a scan",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "batchID": {
+                "type": "string"
+              },
+              "categories": {
+                "items": {
+                  "default": "vuln",
+                  "description": "The type of scan to perform",
+                  "enum": [
+                    "vuln",
+                    "misconfig",
+                    "license",
+                    "secret"
+                  ],
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "limit": {
+                "default": 100,
+                "type": "number"
+              },
+              "minSeverity": {
+                "type": "string"
+              },
+              "token": {
+                "description": "The token to use for pagination, only required when paging through the results",
+                "type": "string"
+              }
+            },
+            "required": [
+              "batchID",
+              "minSeverity",
+              "categories"
+            ]
+          }
+        },
+        {
+          "name": "scan_filesystem",
+          "description": "Scan a local filesystem project for vulnerabilities, misconfigurations, licenses, and secrets issue using Trivy. \nFollow the instructions that are given in the response.",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "fixedOnly": {
+                "default": false,
+                "description": "Vulnerabilities that have no fixes will be exluded from the report if this is set to true",
+                "type": "boolean"
+              },
+              "outputFormat": {
+                "default": "json",
+                "description": "The format of the output which should normally be json. \\n\n\tWhen generating an SBOM report you can use either cyclonedx or spdx. For sbom, prefer cyclonedx. \\n\n\tIf the user requests spdx, use spdx rather than spdx-json.",
+                "enum": [
+                  "json",
+                  "cyclonedx",
+                  "spdx",
+                  "spdx-json"
+                ],
+                "type": "string"
+              },
+              "scanType": {
+                "description": "Which scanners you want to run, use as many as you want to limit the number of scans that need to be permformed",
+                "items": {
+                  "default": "vuln",
+                  "description": "The type of scan to perform",
+                  "enum": [
+                    "vuln",
+                    "misconfig",
+                    "license",
+                    "secret"
+                  ],
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "severities": {
+                "description": "The minimum severity levels to include in the scan, if you chose HIGH for example, only HIGH and CRITICAL will be included",
+                "items": {
+                  "default": "CRITICAL",
+                  "description": "The severity levels to include in the scan",
+                  "enum": [
+                    "CRITICAL",
+                    "HIGH",
+                    "MEDIUM",
+                    "LOW",
+                    "UNKNOWN"
+                  ],
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "target": {
+                "description": "This is the target of the scan, it can be a directory, a file, container image or a repository \\n\n\tWhen the target is the current working directory, use the absolute path rather than \".\"",
+                "type": "string"
+              },
+              "targetType": {
+                "default": "filesystem",
+                "description": "The type of target, it can be a directory, a file, container image or a repository",
+                "enum": [
+                  "filesystem"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "target",
+              "scanType",
+              "outputFormat",
+              "targetType"
+            ]
+          }
+        },
+        {
+          "name": "scan_image",
+          "description": "Scan a container image for vulnerabilities, misconfigurations, licenses, and secrets issue using Trivy\nFollow the instructions that are given in the response.",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "fixedOnly": {
+                "default": false,
+                "description": "Vulnerabilities that have no fixes will be exluded from the report if this is set to true",
+                "type": "boolean"
+              },
+              "outputFormat": {
+                "default": "json",
+                "description": "The format of the output which should normally be json. \\n\n\tWhen generating an SBOM report you can use either cyclonedx or spdx. For sbom, prefer cyclonedx. \\n\n\tIf the user requests spdx, use spdx rather than spdx-json.",
+                "enum": [
+                  "json",
+                  "cyclonedx",
+                  "spdx",
+                  "spdx-json"
+                ],
+                "type": "string"
+              },
+              "scanType": {
+                "description": "Which scanners you want to run, use as many as you want to limit the number of scans that need to be permformed",
+                "items": {
+                  "default": "vuln",
+                  "description": "The type of scan to perform",
+                  "enum": [
+                    "vuln",
+                    "misconfig",
+                    "license",
+                    "secret"
+                  ],
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "severities": {
+                "description": "The minimum severity levels to include in the scan, if you chose HIGH for example, only HIGH and CRITICAL will be included",
+                "items": {
+                  "default": "CRITICAL",
+                  "description": "The severity levels to include in the scan",
+                  "enum": [
+                    "CRITICAL",
+                    "HIGH",
+                    "MEDIUM",
+                    "LOW",
+                    "UNKNOWN"
+                  ],
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "target": {
+                "description": "This is the target of the scan, it can be a directory, a file, container image or a repository \\n\n\tWhen the target is the current working directory, use the absolute path rather than \".\"",
+                "type": "string"
+              },
+              "targetType": {
+                "default": "image",
+                "description": "The type of target, it can be a directory, a file, container image or a repository",
+                "enum": [
+                  "image"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "target",
+              "scanType",
+              "outputFormat",
+              "targetType"
+            ]
+          }
+        },
+        {
+          "name": "scan_repository",
+          "description": "Scan a remote git repository for vulnerabilities, misconfigurations, licenses, and secrets issue using Trivy.\nFollow the instructions that are given in the response.",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "fixedOnly": {
+                "default": false,
+                "description": "Vulnerabilities that have no fixes will be exluded from the report if this is set to true",
+                "type": "boolean"
+              },
+              "outputFormat": {
+                "default": "json",
+                "description": "The format of the output which should normally be json. \\n\n\tWhen generating an SBOM report you can use either cyclonedx or spdx. For sbom, prefer cyclonedx. \\n\n\tIf the user requests spdx, use spdx rather than spdx-json.",
+                "enum": [
+                  "json",
+                  "cyclonedx",
+                  "spdx",
+                  "spdx-json"
+                ],
+                "type": "string"
+              },
+              "scanType": {
+                "description": "Which scanners you want to run, use as many as you want to limit the number of scans that need to be permformed",
+                "items": {
+                  "default": "vuln",
+                  "description": "The type of scan to perform",
+                  "enum": [
+                    "vuln",
+                    "misconfig",
+                    "license",
+                    "secret"
+                  ],
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "severities": {
+                "description": "The minimum severity levels to include in the scan, if you chose HIGH for example, only HIGH and CRITICAL will be included",
+                "items": {
+                  "default": "CRITICAL",
+                  "description": "The severity levels to include in the scan",
+                  "enum": [
+                    "CRITICAL",
+                    "HIGH",
+                    "MEDIUM",
+                    "LOW",
+                    "UNKNOWN"
+                  ],
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "target": {
+                "description": "This is the target of the scan, it can be a directory, a file, container image or a repository \\n\n\tWhen the target is the current working directory, use the absolute path rather than \".\"",
+                "type": "string"
+              },
+              "targetType": {
+                "default": "repository",
+                "description": "The type of target, it can be a directory, a file, container image or a repository",
+                "enum": [
+                  "repository"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "target",
+              "scanType",
+              "outputFormat",
+              "targetType"
+            ]
+          }
+        },
+        {
+          "name": "trivy_version",
+          "description": "Returns the version of the embedded Trivy, or the version of the Trivy binary if specified if explicitly specified",
+          "input_schema": {
+            "type": "object"
+          }
+        }
+      ],
+      "discoveredAt": "2026-07-24T15:09:58.242427Z"
+    },
+    "go-analyzer": {
+      "configHash": "bdcbf5b5407ce312ec43bf6ede2e0d53a826bd620268b546159a894c12d55c66",
+      "serverInfo": {
+        "name": "go-analyzer-mcp",
+        "version": "1.28.1"
+      },
+      "protocolVersion": "2024-11-05",
+      "tools": [
+        {
+          "name": "go_analyze",
+          "description": "Analyze a Go project to identify fuzzable entry points, existing fuzz targets (Fuzz* functions), unsafe/cgo usage, and known CVEs via govulncheck. Returns structured analysis with function signatures, file locations, and vulnerability details. Use this as the first step in a Go fuzzing pipeline.",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "project_path": {
+                "type": "string",
+                "description": "Path to the Go project directory containing go.mod"
+              },
+              "run_vulncheck": {
+                "type": "boolean",
+                "description": "Run govulncheck for CVE detection",
+                "default": true
+              },
+              "timeout": {
+                "type": "integer",
+                "description": "Analysis timeout in seconds",
+                "default": 300
+              }
+            },
+            "required": [
+              "project_path"
+            ]
+          }
+        }
+      ],
+      "discoveredAt": "2026-07-24T15:09:58.887198Z"
+    },
+    "go-crash-analyzer": {
+      "configHash": "bdcbf5b5407ce312ec43bf6ede2e0d53a826bd620268b546159a894c12d55c66",
+      "serverInfo": {
+        "name": "go-crash-analyzer-mcp",
+        "version": "1.28.1"
+      },
+      "protocolVersion": "2024-11-05",
+      "tools": [
+        {
+          "name": "go_crash_analyze",
+          "description": "Analyze Go fuzzing crash inputs: reproduce, classify, and deduplicate. Supports crash files from go_fuzz_run output (/app/output/crashes/) or testdata/fuzz/ directories. Classifies by type (nil-dereference, index-out-of-range, panic, data-race, etc.) and severity. Deduplicates using target + crash type + top stack frames.",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "project_path": {
+                "type": "string",
+                "description": "Path to the Go project directory containing go.mod"
+              },
+              "crashes_path": {
+                "type": "string",
+                "description": "Path to crash files. Can be a directory containing subdirectories named by fuzz target, or a flat directory, or a single file. Default: /app/output/crashes/ or testdata/fuzz/"
+              },
+              "reproduce": {
+                "type": "boolean",
+                "description": "Whether to attempt crash reproduction (default: true)",
+                "default": true
+              },
+              "reproduce_timeout": {
+                "type": "integer",
+                "description": "Timeout per crash reproduction in seconds (default: 10)",
+                "default": 10
+              },
+              "max_crashes": {
+                "type": "integer",
+                "description": "Maximum number of crashes to analyze (default: 50)",
+                "default": 50
+              }
+            },
+            "required": [
+              "project_path"
+            ]
+          }
+        }
+      ],
+      "discoveredAt": "2026-07-24T15:09:59.555045Z"
+    },
+    "go-fuzzer": {
+      "configHash": "bdcbf5b5407ce312ec43bf6ede2e0d53a826bd620268b546159a894c12d55c66",
+      "serverInfo": {
+        "name": "go-fuzzer-mcp",
+        "version": "1.28.1"
+      },
+      "protocolVersion": "2024-11-05",
+      "tools": [
+        {
+          "name": "go_fuzz_run",
+          "description": "Run Go native fuzzing (go test -fuzz) on fuzz targets for a fixed duration. Collects crash inputs and execution statistics. The project must have *_test.go files with Fuzz* functions. Returns crash file paths and fuzzing metrics for each target. This is a BLOCKING call — use go_fuzz_start for continuous mode.",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "project_path": {
+                "type": "string",
+                "description": "Path to the Go project directory containing go.mod"
+              },
+              "duration": {
+                "type": "integer",
+                "description": "Total fuzzing duration in seconds (split across targets)",
+                "default": 60
+              },
+              "targets": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Optional: specific FuzzXxx names to fuzz (default: all)"
+              },
+              "parallel": {
+                "type": "integer",
+                "description": "Number of parallel fuzzing goroutines",
+                "default": 1
+              }
+            },
+            "required": [
+              "project_path"
+            ]
+          }
+        },
+        {
+          "name": "go_fuzz_start",
+          "description": "Start continuous Go fuzzing in the background. Returns immediately with a session_id. The fuzzer runs in rounds (60s per target per round) indefinitely until stopped. Use go_fuzz_status to monitor and go_fuzz_stop to stop.",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "project_path": {
+                "type": "string",
+                "description": "Path to the Go project directory containing go.mod"
+              },
+              "targets": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Optional: specific FuzzXxx names to fuzz (default: all)"
+              },
+              "parallel": {
+                "type": "integer",
+                "description": "Number of parallel fuzzing goroutines",
+                "default": 1
+              }
+            },
+            "required": [
+              "project_path"
+            ]
+          }
+        },
+        {
+          "name": "go_fuzz_status",
+          "description": "Get live status and metrics from a running continuous fuzzing session. Returns current target, round number, execution count, new interesting inputs, crashes found, and recent output lines.",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "session_id": {
+                "type": "string",
+                "description": "Session ID returned by go_fuzz_start"
+              }
+            },
+            "required": [
+              "session_id"
+            ]
+          }
+        },
+        {
+          "name": "go_fuzz_stop",
+          "description": "Stop a running continuous fuzzing session and collect final results. Returns final metrics summary including total executions, crashes found, and crash file paths.",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "session_id": {
+                "type": "string",
+                "description": "Session ID of the session to stop"
+              }
+            },
+            "required": [
+              "session_id"
+            ]
+          }
+        }
+      ],
+      "discoveredAt": "2026-07-24T15:10:00.220503Z"
+    },
+    "go-harness-tester": {
+      "configHash": "bdcbf5b5407ce312ec43bf6ede2e0d53a826bd620268b546159a894c12d55c66",
+      "serverInfo": {
+        "name": "go-harness-tester-mcp",
+        "version": "1.28.1"
+      },
+      "protocolVersion": "2024-11-05",
+      "tools": [
+        {
+          "name": "go_harness_test",
+          "description": "Test Go fuzz harnesses by compiling, executing with seed inputs, and running short fuzzing trials. Returns detailed quality assessments with actionable feedback including compilation errors, coverage metrics, performance ratings, and stability analysis. Requires the project to have *_test.go files with Fuzz* functions.",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "project_path": {
+                "type": "string",
+                "description": "Path to the Go project directory containing go.mod"
+              },
+              "target_harness": {
+                "type": "string",
+                "description": "Optional: test only this specific harness (FuzzXxx name)"
+              },
+              "trial_duration": {
+                "type": "integer",
+                "description": "Duration for each fuzzing trial in seconds",
+                "default": 30
+              },
+              "execution_timeout": {
+                "type": "integer",
+                "description": "Timeout for execution test in seconds",
+                "default": 10
+              }
+            },
+            "required": [
+              "project_path"
+            ]
+          }
+        }
+      ],
+      "discoveredAt": "2026-07-24T15:10:00.890756Z"
+    },
+    "searchsploit": {
+      "configHash": "bdcbf5b5407ce312ec43bf6ede2e0d53a826bd620268b546159a894c12d55c66",
+      "serverInfo": {
+        "name": "searchsploit-mcp",
+        "version": "1.28.1"
+      },
+      "protocolVersion": "2024-11-05",
+      "tools": [
+        {
+          "name": "searchsploit_search",
+          "description": "Search Exploit-DB for exploits by keyword. Searches titles, paths, and descriptions offline.",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "query": {
+                "type": "string",
+                "description": "Search query (e.g., 'apache 2.4', 'wordpress', 'windows smb')"
+              },
+              "exact": {
+                "type": "boolean",
+                "description": "Exact match only",
+                "default": false
+              },
+              "exclude": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Terms to exclude from results"
+              }
+            },
+            "required": [
+              "query"
+            ]
+          }
+        },
+        {
+          "name": "searchsploit_examine",
+          "description": "Get the code/content of a specific exploit by EDB-ID.",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "edb_id": {
+                "type": "string",
+                "description": "Exploit-DB ID (e.g., '42315')"
+              }
+            },
+            "required": [
+              "edb_id"
+            ]
+          }
+        },
+        {
+          "name": "list_recent_searches",
+          "description": "List recent exploit searches.",
+          "input_schema": {
+            "type": "object",
+            "properties": {}
+          }
+        }
+      ],
+      "discoveredAt": "2026-07-24T15:10:01.556270Z"
+    },
+    "boofuzz": {
+      "configHash": "bdcbf5b5407ce312ec43bf6ede2e0d53a826bd620268b546159a894c12d55c66",
+      "serverInfo": {
+        "name": "boofuzz-mcp",
+        "version": "1.28.1"
+      },
+      "protocolVersion": "2024-11-05",
+      "tools": [
+        {
+          "name": "boofuzz_create_script",
+          "description": "Create and save a Boofuzz Python script on the server. The script should accept 'target_host' and 'target_port' as arguments or environment variables.",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "script_name": {
+                "type": "string",
+                "description": "A short name for the script (e.g., 'ftp_fuzzer')."
+              },
+              "script_content": {
+                "type": "string",
+                "description": "The full Python code for the Boofuzz script."
+              },
+              "description": {
+                "type": "string",
+                "description": "A brief description of what the script does."
+              }
+            },
+            "required": [
+              "script_name",
+              "script_content"
+            ]
+          }
+        },
+        {
+          "name": "boofuzz_run_fuzzer",
+          "description": "Execute a saved Boofuzz fuzzer script against a target. Runs asynchronously with a timeout.",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "script_name": {
+                "type": "string",
+                "description": "Name of the previously saved script."
+              },
+              "target_host": {
+                "type": "string",
+                "description": "IP address or hostname of the target."
+              },
+              "target_port": {
+                "type": "integer",
+                "description": "Port number of the target service."
+              },
+              "timeout": {
+                "type": "integer",
+                "description": "Maximum execution time in seconds.",
+                "default": 60
+              }
+            },
+            "required": [
+              "script_name",
+              "target_host",
+              "target_port"
+            ]
+          }
+        },
+        {
+          "name": "boofuzz_list_scripts",
+          "description": "List all saved fuzzer scripts.",
+          "input_schema": {
+            "type": "object",
+            "properties": {}
+          }
+        },
+        {
+          "name": "boofuzz_get_results",
+          "description": "Retrieve the crash log or audit results from a fuzzing session.",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "session_id": {
+                "type": "string",
+                "description": "The session ID returned by boofuzz_run_fuzzer."
+              }
+            },
+            "required": [
+              "session_id"
+            ]
+          }
+        }
+      ],
+      "discoveredAt": "2026-07-24T15:10:02.221464Z"
+    },
+    "dharma": {
+      "configHash": "bdcbf5b5407ce312ec43bf6ede2e0d53a826bd620268b546159a894c12d55c66",
+      "serverInfo": {
+        "name": "dharma-mcp",
+        "version": "1.28.1"
+      },
+      "protocolVersion": "2024-11-05",
+      "tools": [
+        {
+          "name": "dharma_generate",
+          "description": "Generate test cases using a Dharma grammar file located on the server.",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "grammar_path": {
+                "type": "string",
+                "description": "Absolute path to the grammar file (e.g. /app/grammars/json.dg)."
+              },
+              "count": {
+                "type": "integer",
+                "description": "Number of test cases to generate.",
+                "default": 1
+              }
+            },
+            "required": [
+              "grammar_path"
+            ]
+          }
+        },
+        {
+          "name": "dharma_generate_custom",
+          "description": "Generate test cases from a custom Dharma grammar provided as a string. Useful for dynamically generated grammars or quick testing without saving files.",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "grammar_content": {
+                "type": "string",
+                "description": "The full content of the Dharma grammar file (plain text)."
+              },
+              "count": {
+                "type": "integer",
+                "description": "Number of test cases to generate.",
+                "default": 1
+              }
+            },
+            "required": [
+              "grammar_content"
+            ]
+          }
+        }
+      ],
+      "discoveredAt": "2026-07-24T15:10:02.837246Z"
+    },
+    "dnstwist": {
+      "configHash": "bdcbf5b5407ce312ec43bf6ede2e0d53a826bd620268b546159a894c12d55c66",
+      "serverInfo": {
+        "name": "dnstwist-server",
+        "version": "0.1.0",
+        "capabilities": {
+          "tools": {}
+        }
+      },
+      "protocolVersion": "2024-11-05",
+      "tools": [
+        {
+          "name": "fuzz_domain",
+          "description": "Generate and analyze domain permutations to detect potential typosquatting, phishing, and brand impersonation",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "domain": {
+                "type": "string",
+                "description": "Domain name to analyze (e.g., example.com)"
+              },
+              "nameservers": {
+                "type": "string",
+                "description": "Comma-separated list of DNS servers to use (default: 1.1.1.1)",
+                "default": "1.1.1.1"
+              },
+              "threads": {
+                "type": "number",
+                "description": "Number of threads to use for parallel processing",
+                "minimum": 1,
+                "maximum": 100,
+                "default": 50
+              },
+              "format": {
+                "type": "string",
+                "enum": [
+                  "json",
+                  "csv",
+                  "list"
+                ],
+                "description": "Output format",
+                "default": "json"
+              },
+              "registered_only": {
+                "type": "boolean",
+                "description": "Show only registered domain permutations",
+                "default": true
+              },
+              "mxcheck": {
+                "type": "boolean",
+                "description": "Check for MX records",
+                "default": true
+              },
+              "ssdeep": {
+                "type": "boolean",
+                "description": "Generate fuzzy hashes of web pages to detect phishing",
+                "default": false
+              },
+              "banners": {
+                "type": "boolean",
+                "description": "Capture HTTP banner information",
+                "default": true
+              }
+            },
+            "required": [
+              "domain"
+            ]
+          }
+        }
+      ],
+      "discoveredAt": "2026-07-24T15:10:03.209025Z"
+    },
+    "maigret": {
+      "configHash": "bdcbf5b5407ce312ec43bf6ede2e0d53a826bd620268b546159a894c12d55c66",
+      "serverInfo": {
+        "name": "maigret-server",
+        "version": "0.1.0",
+        "capabilities": {
+          "tools": {}
+        },
+        "timeout": 600000
+      },
+      "protocolVersion": "2024-11-05",
+      "tools": [
+        {
+          "name": "search_username",
+          "description": "Search for a username across social networks and sites",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "username": {
+                "type": "string",
+                "description": "Username to search for"
+              },
+              "format": {
+                "type": "string",
+                "enum": [
+                  "txt",
+                  "html",
+                  "pdf",
+                  "json",
+                  "csv",
+                  "xmind"
+                ],
+                "description": "Output format",
+                "default": "pdf"
+              },
+              "use_all_sites": {
+                "type": "boolean",
+                "description": "Use all available sites instead of top 500",
+                "default": false
+              },
+              "tags": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Filter sites by tags (e.g. photo, dating, us)",
+                "default": []
+              }
+            },
+            "required": [
+              "username"
+            ]
+          }
+        },
+        {
+          "name": "parse_url",
+          "description": "Parse a URL to extract information and search for associated usernames",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "url": {
+                "type": "string",
+                "format": "uri",
+                "description": "URL to parse and analyze"
+              },
+              "format": {
+                "type": "string",
+                "enum": [
+                  "txt",
+                  "html",
+                  "pdf",
+                  "json",
+                  "csv",
+                  "xmind"
+                ],
+                "description": "Output format",
+                "default": "pdf"
+              }
+            },
+            "required": [
+              "url"
+            ]
+          }
+        }
+      ],
+      "discoveredAt": "2026-07-24T15:10:03.551027Z"
+    },
+    "masscan": {
+      "configHash": "bdcbf5b5407ce312ec43bf6ede2e0d53a826bd620268b546159a894c12d55c66",
+      "serverInfo": {
+        "name": "masscan-mcp",
+        "version": "1.28.1"
+      },
+      "protocolVersion": "2024-11-05",
+      "tools": [
+        {
+          "name": "masscan_scan",
+          "description": "Fast port scan using masscan. Can scan millions of hosts per minute. Requires root/NET_RAW capability for raw packet transmission.",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "targets": {
+                "type": "string",
+                "description": "Target IP, range, or CIDR (e.g., 10.0.0.1, 10.0.0.0/24, 10.0.0.1-10.0.0.255)"
+              },
+              "ports": {
+                "type": "string",
+                "description": "Ports to scan (e.g., 80, 80,443, 1-1000, 0-65535)"
+              },
+              "rate": {
+                "type": "integer",
+                "description": "Packets per second (default 1000, max depends on network)",
+                "default": 1000
+              },
+              "timeout": {
+                "type": "integer",
+                "description": "Timeout in seconds",
+                "default": 600
+              }
+            },
+            "required": [
+              "targets",
+              "ports"
+            ]
+          }
+        },
+        {
+          "name": "masscan_top_ports",
+          "description": "Scan the top 20 most common ports on target(s).",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "targets": {
+                "type": "string",
+                "description": "Target IP, range, or CIDR"
+              },
+              "rate": {
+                "type": "integer",
+                "description": "Packets per second",
+                "default": 1000
+              }
+            },
+            "required": [
+              "targets"
+            ]
+          }
+        },
+        {
+          "name": "get_scan_results",
+          "description": "Retrieve results from a previous scan.",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "scan_id": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "scan_id"
+            ]
+          }
+        },
+        {
+          "name": "list_active_scans",
+          "description": "List running scans.",
+          "input_schema": {
+            "type": "object",
+            "properties": {}
+          }
+        }
+      ],
+      "discoveredAt": "2026-07-24T15:10:04.299292Z"
+    },
+    "nmap": {
+      "configHash": "bdcbf5b5407ce312ec43bf6ede2e0d53a826bd620268b546159a894c12d55c66",
+      "serverInfo": {
+        "name": "nmap-mcp",
+        "version": "1.28.1"
+      },
+      "protocolVersion": "2024-11-05",
+      "tools": [
+        {
+          "name": "port_scan",
+          "description": "Scan ports on a target host or network. Discovers open ports using SYN scan.",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "target": {
+                "type": "string",
+                "description": "Target IP, hostname, or CIDR range (e.g., 192.168.1.1, example.com, 10.0.0.0/24)"
+              },
+              "ports": {
+                "type": "string",
+                "description": "Port specification (e.g., '22,80,443', '1-1000', 'U:53,T:21-25,80')"
+              },
+              "timing": {
+                "type": "integer",
+                "description": "Timing template 0-5 (0=paranoid, 3=normal, 5=insane)",
+                "default": 3,
+                "minimum": 0,
+                "maximum": 5
+              },
+              "timeout": {
+                "type": "integer",
+                "description": "Scan timeout in seconds",
+                "default": 300
+              }
+            },
+            "required": [
+              "target"
+            ]
+          }
+        },
+        {
+          "name": "service_scan",
+          "description": "Detect service versions on target ports. Identifies software and versions running on open ports.",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "target": {
+                "type": "string",
+                "description": "Target IP or hostname"
+              },
+              "ports": {
+                "type": "string",
+                "description": "Port specification (default: common ports)"
+              },
+              "timeout": {
+                "type": "integer",
+                "description": "Scan timeout in seconds",
+                "default": 300
+              }
+            },
+            "required": [
+              "target"
+            ]
+          }
+        },
+        {
+          "name": "os_detection",
+          "description": "Fingerprint the operating system of the target. Requires at least one open and one closed port.",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "target": {
+                "type": "string",
+                "description": "Target IP or hostname"
+              },
+              "timeout": {
+                "type": "integer",
+                "description": "Scan timeout in seconds",
+                "default": 300
+              }
+            },
+            "required": [
+              "target"
+            ]
+          }
+        },
+        {
+          "name": "script_scan",
+          "description": "Run NSE (Nmap Scripting Engine) scripts against target. Scripts can detect vulnerabilities, gather information, and more.",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "target": {
+                "type": "string",
+                "description": "Target IP or hostname"
+              },
+              "scripts": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Script names to run (e.g., 'http-title', 'ssl-cert', 'vuln')"
+              },
+              "ports": {
+                "type": "string",
+                "description": "Port specification"
+              },
+              "timeout": {
+                "type": "integer",
+                "description": "Scan timeout in seconds",
+                "default": 300
+              }
+            },
+            "required": [
+              "target"
+            ]
+          }
+        },
+        {
+          "name": "quick_scan",
+          "description": "Fast scan of the 100 most common ports with service detection.",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "target": {
+                "type": "string",
+                "description": "Target IP or hostname"
+              }
+            },
+            "required": [
+              "target"
+            ]
+          }
+        },
+        {
+          "name": "get_scan_results",
+          "description": "Retrieve results from a previous scan by scan ID.",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "scan_id": {
+                "type": "string",
+                "description": "Scan ID returned from a previous scan"
+              },
+              "include_raw": {
+                "type": "boolean",
+                "description": "Include raw nmap output",
+                "default": false
+              }
+            },
+            "required": [
+              "scan_id"
+            ]
+          }
+        },
+        {
+          "name": "list_active_scans",
+          "description": "List currently running scans.",
+          "input_schema": {
+            "type": "object",
+            "properties": {}
+          }
+        }
+      ],
+      "discoveredAt": "2026-07-24T15:10:05.082391Z"
+    },
+    "pd-tools": {
+      "configHash": "bdcbf5b5407ce312ec43bf6ede2e0d53a826bd620268b546159a894c12d55c66",
+      "serverInfo": {
+        "name": "projectdiscovery-mcp",
+        "version": "1.0.0"
+      },
+      "protocolVersion": "2024-11-05",
+      "tools": [
+        {
+          "name": "subfinder",
+          "description": "Discover subdomains for a given domain using passive sources",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "domain": {
+                "type": "string",
+                "description": "Target domain (e.g., example.com)"
+              },
+              "silent": {
+                "type": "boolean",
+                "description": "Show only subdomains in output"
+              }
+            },
+            "required": [
+              "domain"
+            ]
+          }
+        },
+        {
+          "name": "dnsx",
+          "description": "Resolve DNS records for domains and subdomains",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "domains": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "List of domains to resolve"
+              },
+              "recordType": {
+                "type": "string",
+                "description": "DNS record type (A, AAAA, CNAME, etc.)"
+              }
+            },
+            "required": [
+              "domains"
+            ]
+          }
+        },
+        {
+          "name": "naabu",
+          "description": "Fast port scanner to discover open ports on hosts",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "hosts": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "List of hosts to scan"
+              },
+              "ports": {
+                "type": "string",
+                "description": "Ports to scan (e.g., '80,443' or '1-1000')"
+              },
+              "topPorts": {
+                "type": "number",
+                "description": "Scan top N ports"
+              }
+            },
+            "required": [
+              "hosts"
+            ]
+          }
+        },
+        {
+          "name": "httpx",
+          "description": "Probe HTTP/HTTPS servers and gather information",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "urls": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "List of URLs or hosts to probe"
+              },
+              "followRedirects": {
+                "type": "boolean",
+                "description": "Follow HTTP redirects"
+              },
+              "screenshot": {
+                "type": "boolean",
+                "description": "Take screenshots"
+              }
+            },
+            "required": [
+              "urls"
+            ]
+          }
+        },
+        {
+          "name": "katana",
+          "description": "Fast web crawler for discovering endpoints and paths",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "urls": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "List of URLs to crawl"
+              },
+              "depth": {
+                "type": "number",
+                "description": "Crawl depth (default: 2)"
+              },
+              "scope": {
+                "type": "string",
+                "description": "Crawl scope (e.g., regex pattern)"
+              }
+            },
+            "required": [
+              "urls"
+            ]
+          }
+        },
+        {
+          "name": "nuclei",
+          "description": "Fast vulnerability scanner using YAML-based templates",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "targets": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "List of targets to scan"
+              },
+              "templates": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Specific templates to use"
+              },
+              "severity": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Filter by severity (critical, high, medium, low, info)"
+              }
+            },
+            "required": [
+              "targets"
+            ]
+          }
+        },
+        {
+          "name": "bug_bounty_workflow",
+          "description": "Execute complete bug bounty reconnaissance workflow: subdomain discovery, DNS resolution, port scanning, HTTP probing, crawling, and vulnerability scanning",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "domain": {
+                "type": "string",
+                "description": "Target domain for bug bounty reconnaissance"
+              },
+              "portScan": {
+                "type": "boolean",
+                "description": "Include port scanning (default: true)"
+              },
+              "crawl": {
+                "type": "boolean",
+                "description": "Include web crawling (default: true)"
+              },
+              "vulnerabilityScan": {
+                "type": "boolean",
+                "description": "Include vulnerability scanning (default: true)"
+              },
+              "severityFilter": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Nuclei severity filter (critical, high, medium, low)"
+              },
+              "maxCrawlUrls": {
+                "type": "number",
+                "description": "Maximum URLs to crawl (default: 10)"
+              },
+              "maxScanUrls": {
+                "type": "number",
+                "description": "Maximum URLs to scan with Nuclei (default: 20)"
+              },
+              "maxTopPorts": {
+                "type": "number",
+                "description": "Maximum top ports for Naabu (default: 100)"
+              },
+              "batchSize": {
+                "type": "number",
+                "description": "Batch size for DNS/HTTP requests (default: 50)"
+              },
+              "delayBetweenBatches": {
+                "type": "number",
+                "description": "Delay in milliseconds between batches (default: 1000)"
+              },
+              "crawlDepth": {
+                "type": "number",
+                "description": "Crawl depth for Katana (default: 2)"
+              }
+            },
+            "required": [
+              "domain"
+            ]
+          }
+        }
+      ],
+      "discoveredAt": "2026-07-24T15:10:05.564551Z"
+    },
+    "whatweb": {
+      "configHash": "bdcbf5b5407ce312ec43bf6ede2e0d53a826bd620268b546159a894c12d55c66",
+      "serverInfo": {
+        "name": "whatweb-mcp",
+        "version": "1.28.1"
+      },
+      "protocolVersion": "2024-11-05",
+      "tools": [
+        {
+          "name": "whatweb_scan",
+          "description": "Identify web technologies, CMS, frameworks, and server software. Detects WordPress, Drupal, Apache, nginx, jQuery, and hundreds more.",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "target": {
+                "type": "string",
+                "description": "Target URL or domain (e.g., https://example.com)"
+              },
+              "aggression": {
+                "type": "string",
+                "enum": [
+                  "stealthy",
+                  "passive",
+                  "polite",
+                  "normal",
+                  "aggressive"
+                ],
+                "description": "Scan aggression level",
+                "default": "normal"
+              },
+              "timeout": {
+                "type": "integer",
+                "description": "Timeout in seconds",
+                "default": 300
+              }
+            },
+            "required": [
+              "target"
+            ]
+          }
+        },
+        {
+          "name": "get_scan_results",
+          "description": "Retrieve results from a previous scan by scan ID.",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "scan_id": {
+                "type": "string",
+                "description": "Scan ID"
+              }
+            },
+            "required": [
+              "scan_id"
+            ]
+          }
+        },
+        {
+          "name": "list_active_scans",
+          "description": "List currently running scans.",
+          "input_schema": {
+            "type": "object",
+            "properties": {}
+          }
+        }
+      ],
+      "discoveredAt": "2026-07-24T15:10:06.216246Z"
+    },
+    "zoomeye": {
+      "configHash": "bdcbf5b5407ce312ec43bf6ede2e0d53a826bd620268b546159a894c12d55c66",
+      "serverInfo": {
+        "name": "mcp-zoomeye",
+        "version": "1.4.1"
+      },
+      "protocolVersion": "2024-11-05",
+      "tools": [
+        {
+          "name": "zoomeye_search",
+          "description": "\n### Search Syntax Guide\n\n- Search Scope covers devices (IPv4, IPv6) and websites (domains).\n- When entering a search string, the system will match keywords in \"global\" mode, including content from various\n  protocols such as HTTP, SSH, FTP, etc. (e.g., HTTP/HTTPS protocol headers, body, SSL, title, and other protocol\n  banners).\n- Search strings are case-insensitive and will be segmented for matching (the search results page provides a \"\n  segmentation\" test feature). When using == for search, it enforces exact case-sensitive matching with strict syntax.\n- Please use quotes for search strings (e.g., \"Cisco System\" or 'Cisco System'). If the search string contains quotes,\n  use the escape character, e.g.,\"a\"b\". If the search string contains parentheses, use the escape character, e.g.,\n  portinfo\\(\\).\n\n### The logical operators of the syntax：\n\n- =， Search for assets containing keywords\n  title=\"knownsec\"\n  Search for websites with titles containing Knownsec's assets\n- ==， Accurate search, indicating a complete match of keywords (case sensitive), can search for data with empty values\n  title==\"knownsec\"\n  Precise search, which means exact match of keywords (case sensitive), and can search for data with empty values Search\n  for assets with the website title \"Knownsec\"\n- ||， Enter \"||\" in the search box to indicate the logical operation of \"or\"\n  service=\"ssh\" || service=\"http\"\n  Search for SSH or HTTP data\n- &&， Enter \"&&\" in the search box to indicate the logical operation of \"and\"\n  device=\"router\" && after=\"2020-01-01\"\n  Search for routers after Jan 1, 2020\n- !=， Enter \"!=\" in the search box to indicate the logical operation of \"not\"\n  country=\"US\" && subdivisions!=\"new york\"\n  Search for data in united states excluding new york\n- ()， Enter \"()\" in the search box to indicate the logical operation of \"priority processing\"\n  (country=\"US\" && port!=80) || (country=\"US\" && title!=\"404 Not Found\")\n  Search excluding port 80 in US or \"404 not found\" in the US\n- *，Fuzzy search, use * for search\n  title=\"*google\"\n  Fuzzy search, use * to search Search for assets containing Knowsec in the website title, and the title can start with\n  any character\n\n### Grammatical keywords\n\n#### Geographical Location Search\n\n- country=\"CN\"    Search for country assets\n  Input country abbreviations or names, e.g.\n  country=\"china\"\n- subdivisions=\"beijing\"  Search for assets in the specified administrative region\n  Input in English, e.g.\n  subdivisions=\"beijing\"\n- city=\"changsha\" Search for city assets\n  Input in English, e.g.\n  city=\"changsha\"\n\n#### Certificate Search\n\n- ssl=\"google\"    Search for assets with \"google\" string in ssl certificate Often used to search for corresponding\n  targets by product name and company name\n- ssl.cert.fingerprint=\"F3C98F223D82CC41CF83D94671CCC6C69873FABF\" Search for certificate-related fingerprint assets\n- ssl.chain_count=3 Search for SSL chain count assets\n- ssl.cert.alg=\"SHA256-RSA\"   Search for signature algorithms supported by certificates\n- ssl.cert.issuer.cn=\"pbx.wildix.com\" Search for the common domain name of the user certificate issuer\n- ssl.cert.pubkey.rsa.bits=2048 Search for rsa_bits certificate public key bit number\n- ssl.cert.pubkey.ecdsa.bits=256 Search for ecdsa_bits certificate public key bit number\n- ssl.cert.pubkey.type=\"RSA\"  Search for the public key type of the certificate\n- ssl.cert.serial=\"18460192207935675900910674501\" Search for certificate serial number\n- ssl.cipher.bits=\"128\"   Search for encryption suite bit number\n- ssl.cipher.name=\"TLS_AES_128_GCM_SHA256\"    Search for encryption suite name\n- ssl.cipher.version=\"TLSv1.3\"    Search for encryption suite version\n- ssl.version=\"TLSv1.3\"   Search for the SSL version of the certificate\n- ssl.cert.subject.cn=\"example.com\"   Search for the common domain name of the user certificate holder\n- ssl.jarm=\"29d29d15d29d29d00029d29d29d29dea0f89a2e5fb09e4d8e099befed92cfa\"   Search for assets related to Jarm\n  Fingerprint content\n- ssl.ja3s=45094d08156d110d8ee97b204143db14 Find assets related to specific JA3S fingerprints\n\n#### IP or Domain Name Related Information Search\n\n- ip=\"8.8.8.8\"    Search for assets related to the specified IPv4 address\n  ip=\"2600:3c00::f03c:91ff:fefc:574a\" Search for assets related to specified IPv6 address\n- cidr=\"52.2.254.36/24\"   Search for C-class assets of IP\n  cidr=\"52.2.254.36/16\"is the B class of the IP, cidr=\"52.2.254.36/8\"is the A class of the IP, e.g.\n  cidr=\"52.2.254.36/16\"\n  cidr=\"52.2.254.36/8\"\n- org=\"Stanford University\"   Search for assets of related organizations Used to locate IP assets corresponding to\n  universities, structures, and large Internet companies\n- isp=\"China Mobile\"  Search for assets of related network service providers Can be supplemented with org data\n- asn=42893 Search for IP assets related to corresponding ASN (Autonomous system number)\n- port=80 Search for related port assets Currently does not support simultaneous open multi-port target search\n- hostname=\"google.com\"       Search for assets of related IP \"hostname\"\n- domain=\"baidu.com\"  Search for domain-related assets Used to search domain and subdomain data\n\n- banner=\"FTP\" Search by protocol messages Used for searching HTTP response header data\n- http.header=\"http\"   Search by HTTP response header Used for searching HTTP response header data\n- http.header_hash=\"27f9973fe57298c3b63919259877a84d\"  Search by the hash values calculated from HTTP header.\n- http.header.server=\"Nginx\"   Search by server of the HTTP header Used for searching the server data in HTTP response\n  headers\n- http.header.version=\"1.2\"    Search by version number in the HTTP header\n- http.header.status_code=\"200\"    Search by HTTP response status code Search for assets with HTTP response status code\n  200 or other status codes, such as 302, 404, etc.\n- http.body=\"document\" Search by HTML body\n- http.body_hash=\"84a18166fde3ee7e7c974b8d1e7e21b4\"    Search by hash value calculated from HTML body\n\n#### Fingerprint Search\n\n- app=\"Cisco ASA SSL VPN\" Search for Cisco ASA-SSL-VPN devices For more app rules, please refer to [object Object].\n  Entering keywords such as \"Cisco\" in the search box will display related app prompts\n- service=\"ssh\"   Search for assets related to the specified service protocol Common service protocols include: http,\n  ftp,\n  ssh, telnet, etc. (other services can be found in the domain name sidebar aggregation display of search results)\n- device=\"router\" Search for router-related device types Common types include router, switch, storage-misc, etc. (other\n  types can be found in the domain name sidebar aggregation display of search results)\n- os=\"RouterOS\"   Search for related operating systems Common systems include Linux, Windows, RouterOS, IOS, JUNOS,\n  etc. (\n  other systems can be found in the domain name sidebar aggregation display of search results)\n- title=\"Cisco\"   Search for data with \"Cisco\" in the title of the HTML content\n- industry=\"government\"   Search for assets related to the specified industry type Common industry types include\n  technology, energy, finance, manufacturing, etc. (other types can be supplemented with org data)\n\n- product=\"Cisco\"  Search for assets with \"Cisco\" in the component information Support mainstream asset component\n  search\n- protocol=\"TCP\"   Search for assets with the transmission protocol as TCP Common transmission protocols include TCP,\n  UDP, TCP6, SCTP\n- is_honeypot=\"True\"   Filter for honeypot assets\n\n#### Time Node or Interval Related Search\n\n- after=\"2020-01-01\" && port=\"50050\"  Search for assets with an update time after Jan 1, 2020 and a port 50050 Time\n  filters need to be combined with other filters\n- before=\"2020-01-01\" && port=\"50050\" Search for assets with an update time before Jan 1, 2020 and a port 50050 Time\n  filters need to be combined with other filters\n\n#### Dig\n\n- dig=\"baidu.com 220.181.38.148\"  Search for assets with related dig content\n\n#### Iconhash\n\n- iconhash=\"f3418a443e7d841097c714d69ec4bcb8\" Analyze the target data by MD5 and search for assets with related content\n  based on the icon Search for assets with the \"google\" icon\n- iconhash=\"1941681276\"   Analyze the target data by MMH3 and search for assets with related content based on the icon\n  Search for assets with the \"amazon\" icon\n\n#### Filehash\n\n- filehash=\"0b5ce08db7fb8fffe4e14d05588d49d9\" Search for assets with related content based on the parsed file data\n  Search\n  for assets parsed with \"Gitlab\"\n\n### Syntax Examples:\n\n- Search for all assets of China Merchants Group in Arabic\n  org=\"مكتب التجار الصيني\" || ssl=\"مكتب التجار الصيني\"\n\n- Search for Starlink devices\n  app=Starlink || device=Starlink\n\n- Search for network devices running http service on port 80\n  port=80 && service=\"http\"\n\n- Search for network devices running ssl on port 443 in Nagoya\n  city=nagoya && port=443 && service=ssl\n\n- Search for network devices running Windows operating system in the United States\n  country=us && os=windows\n\n- Search for devices running Microsoft NTP application\n  app=\"Microsoft NTP\"\n\n- Search for webcams in Tokyo\n  city=tokyo && device=webcam\n\n- Search for industrial control devices with component 6ES7 315-2EH14-0AB0 running on port 102\n  port=102 && module_id=6ES7 215-1BG40-0XB0\n\n- Search for assets indexed after 2020-01-01 with port 50050 open\n  after=\"2020-01-01\" && port=50050\n\n- Search for assets in Delta, Canada\n  country=Canada && city=Delta\n\n- Search for assets in Poland with Linux system and port 22\n  os=linux && port=22 && country=PL\n\n- Search for FTP service with hostname example\n  service=ftp && hostname=example\n\n- Search for IPv4 assets\n  is_ipv4=true\n\n- Search for IPv6 assets\n  is_ipv6=true\n\n- Search for IP assets containing \"FreeBSD\", including both IPv4 and IPv6\n  FreeBSD && (is_ipv4=true || is_ipv6=true)\n\n- Search for website assets containing FreeBSD\n  FreeBSD && is_domain=true\n\n- Search for assets with \"Knownsec\" in the body\n  http.body=\"Knownsec\"\n\n- Search for specific Header hash\n  http.header_hash=\"9763f6e29aa78e7ca2179ac82decbc25\"\n",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "qbase64": {
+                "type": "string",
+                "description": "Base64 encoded query string for ZoomEye search"
+              },
+              "page": {
+                "type": "integer",
+                "description": "View asset page number, default is 1",
+                "default": 1
+              },
+              "pagesize": {
+                "type": "integer",
+                "description": "Number of records per page, default is 10, maximum is 1000",
+                "default": 10,
+                "maximum": 1000
+              },
+              "fields": {
+                "type": "string",
+                "description": "The fields to return, separated by commas. Default: ip, port, domain, update_time"
+              },
+              "sub_type": {
+                "type": "string",
+                "description": "Data type, supports v4, v6, and web. Default is v4",
+                "enum": [
+                  "v4",
+                  "v6",
+                  "web"
+                ]
+              },
+              "facets": {
+                "type": "string",
+                "description": "Statistical items, separated by commas if there are multiple. Supports country, subdivisions, city, product, service, device, OS, and port"
+              },
+              "ignore_cache": {
+                "type": "boolean",
+                "description": "Whether to ignore the cache. Supported by Business plan and above"
+              }
+            },
+            "required": [
+              "qbase64"
+            ]
+          }
+        },
+        {
+          "name": "zoomeye_vuldb_by_id",
+          "description": "Search for detailed vulnerability information by vulnerability ID and return formatted results.\n\n    Use this tool to retrieve comprehensive security vulnerability details from the vulnerability\n    database using a vulnerability identifier (CVE, CNVD, CNNVD). Results include:",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "cve_id": {
+                "type": "string",
+                "description": "A valid vulnerability identifier, eg: CVE-XXXX-XXXX,CNVD-XXXX-XXXX,CNNVD-XXXX-XXXX"
+              }
+            },
+            "required": [
+              "cve_id"
+            ]
+          }
+        },
+        {
+          "name": "zoomeye_vuldb_by_keyword",
+          "description": "Search ZoomEye's vulnerability database for security vulnerabilities based on a specified keyword.\n\n    This function queries the ZoomEye vulnerability database to retrieve information about known\n    security vulnerabilities associated with specific products, vendors.\n    Results include vulnerability details such as CVE IDs, severity ratings, affected versions,\n    and vulnerability descriptions.",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "keyword": {
+                "type": "string",
+                "description": "Search term to query the vulnerability database. This can be a product name,\n                      vendor name (e.g., \"nginx\", \"mysql\", \"tomcat\",\n                      \"WordPress\", \"hikvision\", \"huawei\")."
+              },
+              "page_size": {
+                "type": "integer",
+                "description": "Number of records per page, default is 10, maximum is 100.",
+                "default": 10,
+                "maximum": 100
+              }
+            },
+            "required": [
+              "keyword"
+            ]
+          }
+        }
+      ],
+      "discoveredAt": "2026-07-24T15:10:07.063125Z"
+    },
+    "gitleaks": {
+      "configHash": "bdcbf5b5407ce312ec43bf6ede2e0d53a826bd620268b546159a894c12d55c66",
+      "serverInfo": {
+        "name": "gitleaks-mcp",
+        "version": "1.28.1"
+      },
+      "protocolVersion": "2024-11-05",
+      "tools": [
+        {
+          "name": "gitleaks_scan_repo",
+          "description": "Scan a git repository for secrets and credentials. Analyzes commit history for leaked API keys, passwords, tokens, etc.",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "repo_path": {
+                "type": "string",
+                "description": "Path to the git repository to scan"
+              },
+              "timeout": {
+                "type": "integer",
+                "description": "Scan timeout in seconds",
+                "default": 300
+              }
+            },
+            "required": [
+              "repo_path"
+            ]
+          }
+        },
+        {
+          "name": "gitleaks_scan_dir",
+          "description": "Scan a directory for secrets without git history analysis. Useful for scanning non-git directories or specific folders.",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "dir_path": {
+                "type": "string",
+                "description": "Directory path to scan"
+              },
+              "timeout": {
+                "type": "integer",
+                "description": "Scan timeout in seconds",
+                "default": 300
+              }
+            },
+            "required": [
+              "dir_path"
+            ]
+          }
+        },
+        {
+          "name": "gitleaks_detect",
+          "description": "Quick scan provided content (text/code) for secrets. Useful for checking config files, environment variables, etc.",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "content": {
+                "type": "string",
+                "description": "Text content to scan for secrets"
+              },
+              "timeout": {
+                "type": "integer",
+                "description": "Scan timeout in seconds",
+                "default": 60
+              }
+            },
+            "required": [
+              "content"
+            ]
+          }
+        },
+        {
+          "name": "get_scan_results",
+          "description": "Retrieve results from a previous scan by scan ID.",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "scan_id": {
+                "type": "string",
+                "description": "Scan ID returned from a previous scan"
+              },
+              "include_raw": {
+                "type": "boolean",
+                "description": "Include raw gitleaks JSON output",
+                "default": false
+              }
+            },
+            "required": [
+              "scan_id"
+            ]
+          }
+        },
+        {
+          "name": "list_active_scans",
+          "description": "List currently running scans.",
+          "input_schema": {
+            "type": "object",
+            "properties": {}
+          }
+        }
+      ],
+      "discoveredAt": "2026-07-24T15:10:07.831897Z"
+    },
+    "otx": {
+      "configHash": "bdcbf5b5407ce312ec43bf6ede2e0d53a826bd620268b546159a894c12d55c66",
+      "serverInfo": {
+        "name": "otx",
+        "version": "1.28.1"
+      },
+      "protocolVersion": "2024-11-05",
+      "tools": [
+        {
+          "name": "search_indicators",
+          "description": "Search OTX for pulses matching the keyword (paginated).\n\n    This tool searches the OTX platform for pulses matching the provided keyword,\n    allowing direct control over pagination via `page` and `limit` parameters.\n    It makes a single API call for the requested page.\n\n    Args:\n        keyword: The search term to look for in pulses.\n        page: The page number of results to retrieve (default: 1).\n        limit: The maximum number of results per page (default: 10).\n\n    Returns:\n        The raw API response dictionary for the requested page, including 'results',\n        'count', 'next', and 'previous' fields, allowing the client to handle further pagination.\n    ",
+          "input_schema": {
+            "properties": {
+              "keyword": {
+                "title": "Keyword",
+                "type": "string"
+              },
+              "page": {
+                "default": 1,
+                "title": "Page",
+                "type": "integer"
+              },
+              "limit": {
+                "default": 10,
+                "title": "Limit",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "keyword"
+            ],
+            "title": "search_indicatorsArguments",
+            "type": "object"
+          }
+        },
+        {
+          "name": "get_pulse",
+          "description": "Get full details of a Pulse using its ID, minus indicators.\n    \n    This tool retrieves comprehensive information about a specific pulse by its ID.\n    It returns all metadata about the pulse but excludes the indicators to keep the response size manageable.\n    \n    Use this tool when:\n    - You have a pulse ID and want to get detailed information about it\n    - You need to understand the context and metadata of a specific threat intelligence report\n    - You want to verify the details of a pulse before working with it\n    \n    Args:\n        pulse_id: The unique identifier of the pulse (24-character hex string)\n    \n    Returns:\n        A dictionary containing the pulse details including name, description, author,\n        creation date, tags, and other metadata (but not the indicators themselves).\n    ",
+          "input_schema": {
+            "properties": {
+              "pulse_id": {
+                "title": "Pulse Id",
+                "type": "string"
+              }
+            },
+            "required": [
+              "pulse_id"
+            ],
+            "title": "get_pulseArguments",
+            "type": "object"
+          }
+        },
+        {
+          "name": "extract_indicators_from_pulse",
+          "description": "Extract a paginated list of indicators from a given Pulse ID.\n\n    This tool retrieves indicators (IOCs) contained within a specific pulse,\n    allowing direct control over pagination via `page` and `limit` parameters.\n\n    Use this tool when:\n    - You need to extract specific indicators from a pulse for analysis\n    - You want to identify the IOCs associated with a particular threat\n    - You're building a collection of indicators for threat hunting or detection\n    - A pulse contains too many indicators to retrieve all at once\n\n    Args:\n        pulse_id: The unique identifier of the pulse (24-character hex string).\n        page: The page number of indicators to retrieve (default: 1).\n        limit: The maximum number of indicators per page (default: 20).\n\n    Returns:\n        The raw API response dictionary for the requested page of indicators,\n        including 'results', 'count', 'next', and 'previous' fields.\n    ",
+          "input_schema": {
+            "properties": {
+              "pulse_id": {
+                "title": "Pulse Id",
+                "type": "string"
+              },
+              "page": {
+                "default": 1,
+                "title": "Page",
+                "type": "integer"
+              },
+              "limit": {
+                "default": 20,
+                "title": "Limit",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "pulse_id"
+            ],
+            "title": "extract_indicators_from_pulseArguments",
+            "type": "object"
+          }
+        },
+        {
+          "name": "get_indicator_details",
+          "description": "Get detailed information about a specific indicator.\n    \n    This tool retrieves detailed information about a specific indicator from OTX.\n    It can focus on a particular section of information (e.g., general, reputation, geo, etc.)\n    depending on the indicator type.\n    \n    Use this tool when:\n    - You need detailed information about a specific indicator (IP, domain, URL, etc.)\n    - You want to understand the reputation or characteristics of an indicator\n    - You're investigating a potential threat and need context about specific IOCs\n    \n    Args:\n        indicator_type: Type of indicator (e.g., 'IPv4', 'domain', 'url', 'email', 'hash')\n        indicator: The indicator value (e.g., '8.8.8.8', 'example.com', 'https://malicious.com')\n        section: Section of details to retrieve (default: 'general')\n                 Other sections may include 'reputation', 'geo', 'passive_dns', etc.\n                 Available sections depend on the indicator type.\n    \n    Returns:\n        A dictionary containing detailed information about the indicator,\n        focused on the requested section.\n    ",
+          "input_schema": {
+            "properties": {
+              "indicator_type": {
+                "title": "Indicator Type",
+                "type": "string"
+              },
+              "indicator": {
+                "title": "Indicator",
+                "type": "string"
+              },
+              "section": {
+                "default": "general",
+                "title": "Section",
+                "type": "string"
+              }
+            },
+            "required": [
+              "indicator_type",
+              "indicator"
+            ],
+            "title": "get_indicator_detailsArguments",
+            "type": "object"
+          }
+        },
+        {
+          "name": "get_indicator_details_full",
+          "description": "Get all available details about a specific indicator.\n    \n    This tool retrieves comprehensive information about a specific indicator from OTX,\n    including all available sections of data. This provides the most complete picture\n    of an indicator's characteristics, reputation, and associated threats.\n    \n    Use this tool when:\n    - You need a complete analysis of a specific indicator\n    - You want to gather all available intelligence about a potential threat\n    - You're performing detailed threat research on a specific IOC\n    \n    Args:\n        indicator_type: Type of indicator (e.g., 'IPv4', 'domain', 'url', 'email', 'hash')\n        indicator: The indicator value (e.g., '8.8.8.8', 'example.com', 'https://malicious.com')\n    \n    Returns:\n        A dictionary with sections as keys and the corresponding detailed information\n        for each section as values. This provides a complete picture of the indicator.\n    ",
+          "input_schema": {
+            "properties": {
+              "indicator_type": {
+                "title": "Indicator Type",
+                "type": "string"
+              },
+              "indicator": {
+                "title": "Indicator",
+                "type": "string"
+              }
+            },
+            "required": [
+              "indicator_type",
+              "indicator"
+            ],
+            "title": "get_indicator_details_fullArguments",
+            "type": "object"
+          }
+        },
+        {
+          "name": "search_users",
+          "description": "Search for users in OTX.\n    \n    This tool searches the OTX platform for users matching the provided query.\n    It's useful for finding researchers, analysts, or organizations that publish\n    threat intelligence on OTX.\n    \n    Use this tool when:\n    - You want to find specific users or organizations on OTX\n    - You're looking for researchers who publish on particular threat topics\n    - You want to discover new sources of threat intelligence\n    \n    Args:\n        query: Search query to find users (e.g., \"AlienVault\", \"researcher name\")\n        max_results: Maximum number of results to return (default: 25)\n    \n    Returns:\n        A dictionary containing search results with users matching the query.\n        Each user entry includes username, full name, and other profile information.\n    ",
+          "input_schema": {
+            "properties": {
+              "query": {
+                "title": "Query",
+                "type": "string"
+              },
+              "max_results": {
+                "default": 25,
+                "title": "Max Results",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "query"
+            ],
+            "title": "search_usersArguments",
+            "type": "object"
+          }
+        },
+        {
+          "name": "get_user",
+          "description": "Get information about a specific user.\n    \n    This tool retrieves detailed information about a specific OTX user,\n    including their profile, statistics, and recent activity.\n    \n    Use this tool when:\n    - You want to learn more about a specific user or organization\n    - You need to verify a user's identity or credentials\n    - You're evaluating a user as a potential source of threat intelligence\n    \n    Args:\n        username: Username to look up (e.g., \"AlienVault\", \"researcher_name\")\n        detailed: Whether to return detailed information (default: True)\n                 If False, returns only basic profile information.\n    \n    Returns:\n        A dictionary containing user information, including profile details,\n        statistics, and recent activity if detailed=True.\n    ",
+          "input_schema": {
+            "properties": {
+              "username": {
+                "title": "Username",
+                "type": "string"
+              },
+              "detailed": {
+                "default": true,
+                "title": "Detailed",
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "username"
+            ],
+            "title": "get_userArguments",
+            "type": "object"
+          }
+        },
+        {
+          "name": "get_user_pulses",
+          "description": "Get pulses created by a specific user.\n    \n    This tool retrieves all pulses created by a specific user, optionally filtered\n    by a search query. It's useful for exploring a user's threat intelligence contributions.\n    \n    Use this tool when:\n    - You want to explore all threat intelligence published by a specific user\n    - You're researching a particular threat and know a user who has published on it\n    - You want to discover new threat intelligence from trusted sources\n    \n    Args:\n        username: Username to get pulses for (e.g., \"AlienVault\", \"researcher_name\")\n        query: Optional search query to filter pulses (e.g., \"ransomware\", \"APT\")\n        max_items: Maximum number of items to return (default: 200)\n    \n    Returns:\n        A list of pulses created by the specified user, optionally filtered by the query.\n        Each pulse includes metadata like name, description, and creation date.\n    ",
+          "input_schema": {
+            "properties": {
+              "username": {
+                "title": "Username",
+                "type": "string"
+              },
+              "query": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Query"
+              },
+              "max_items": {
+                "default": 200,
+                "title": "Max Items",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "username"
+            ],
+            "title": "get_user_pulsesArguments",
+            "type": "object"
+          }
+        },
+        {
+          "name": "get_my_pulses",
+          "description": "Get pulses created by the authenticated user.\n    \n    This tool retrieves all pulses created by the currently authenticated user,\n    optionally filtered by a search query. It's useful for managing your own\n    threat intelligence contributions.\n    \n    Use this tool when:\n    - You want to review your own published threat intelligence\n    - You need to find a specific pulse you created\n    - You're managing your threat intelligence library\n    \n    Args:\n        query: Optional search query to filter pulses (e.g., \"ransomware\", \"APT\")\n        max_items: Maximum number of items to return (default: 200)\n    \n    Returns:\n        A list of pulses created by the authenticated user, optionally filtered by the query.\n        Each pulse includes metadata like name, description, and creation date.\n    ",
+          "input_schema": {
+            "properties": {
+              "query": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Query"
+              },
+              "max_items": {
+                "default": 200,
+                "title": "Max Items",
+                "type": "integer"
+              }
+            },
+            "title": "get_my_pulsesArguments",
+            "type": "object"
+          }
+        },
+        {
+          "name": "follow_user",
+          "description": "Follow a user to receive notifications about their activities.\n    \n    This tool allows you to follow a specific user on OTX, which will notify you\n    when they publish new pulses or make other significant activities.\n    \n    Use this tool when:\n    - You want to stay updated on a specific user's threat intelligence\n    - You've identified a valuable source of threat intelligence\n    - You want to build a network of trusted intelligence sources\n    \n    Args:\n        username: Username to follow (e.g., \"AlienVault\", \"researcher_name\")\n    \n    Returns:\n        A dictionary indicating the success or failure of the follow operation.\n    ",
+          "input_schema": {
+            "properties": {
+              "username": {
+                "title": "Username",
+                "type": "string"
+              }
+            },
+            "required": [
+              "username"
+            ],
+            "title": "follow_userArguments",
+            "type": "object"
+          }
+        },
+        {
+          "name": "unfollow_user",
+          "description": "Unfollow a user to stop receiving notifications about their activities.\n    \n    This tool allows you to unfollow a user on OTX, which will stop notifications\n    about their activities.\n    \n    Use this tool when:\n    - You no longer want to receive notifications from a specific user\n    - You're cleaning up your notification preferences\n    - You want to reduce notification noise\n    \n    Args:\n        username: Username to unfollow (e.g., \"AlienVault\", \"researcher_name\")\n    \n    Returns:\n        A dictionary indicating the success or failure of the unfollow operation.\n    ",
+          "input_schema": {
+            "properties": {
+              "username": {
+                "title": "Username",
+                "type": "string"
+              }
+            },
+            "required": [
+              "username"
+            ],
+            "title": "unfollow_userArguments",
+            "type": "object"
+          }
+        },
+        {
+          "name": "subscribe_to_pulse",
+          "description": "Subscribe to a pulse to receive updates.\n    \n    This tool allows you to subscribe to a specific pulse, which will notify you\n    when the pulse is updated or when new related information becomes available.\n    \n    Use this tool when:\n    - You want to stay updated on a specific threat intelligence report\n    - You're tracking a particular threat or campaign\n    - You want to ensure you don't miss updates to important intelligence\n    \n    Args:\n        pulse_id: ID of the pulse to subscribe to (24-character hex string)\n    \n    Returns:\n        A dictionary indicating the success or failure of the subscription operation.\n    ",
+          "input_schema": {
+            "properties": {
+              "pulse_id": {
+                "title": "Pulse Id",
+                "type": "string"
+              }
+            },
+            "required": [
+              "pulse_id"
+            ],
+            "title": "subscribe_to_pulseArguments",
+            "type": "object"
+          }
+        },
+        {
+          "name": "unsubscribe_from_pulse",
+          "description": "Unsubscribe from a pulse to stop receiving updates.\n    \n    This tool allows you to unsubscribe from a pulse, which will stop notifications\n    about updates to that pulse.\n    \n    Use this tool when:\n    - You no longer want to receive updates about a specific pulse\n    - You're cleaning up your subscription list\n    - You want to reduce notification noise\n    \n    Args:\n        pulse_id: ID of the pulse to unsubscribe from (24-character hex string)\n    \n    Returns:\n        A dictionary indicating the success or failure of the unsubscription operation.\n    ",
+          "input_schema": {
+            "properties": {
+              "pulse_id": {
+                "title": "Pulse Id",
+                "type": "string"
+              }
+            },
+            "required": [
+              "pulse_id"
+            ],
+            "title": "unsubscribe_from_pulseArguments",
+            "type": "object"
+          }
+        },
+        {
+          "name": "create_pulse",
+          "description": "Create a new pulse with threat intelligence information.\n    \n    This tool allows you to create a new pulse (threat intelligence report) on OTX,\n    which can include indicators, descriptions, tags, and other metadata.\n    \n    Use this tool when:\n    - You want to share threat intelligence with the OTX community\n    - You've discovered new indicators or threats that should be documented\n    - You're creating a structured report about a security incident\n    \n    Args:\n        name: Name of the pulse (required, 5-64 characters)\n        description: Detailed description of the threat (optional)\n        public: Whether the pulse is public (default: True)\n               If False, only you and users you explicitly share with can see it\n        tlp: Traffic Light Protocol level (default: \"green\")\n             Options: \"red\", \"amber\", \"green\", \"white\"\n             Note: \"red\" and \"amber\" require public=False\n        tags: List of tags to categorize the pulse (optional)\n        references: List of references (URLs, documents) (optional)\n        indicators: List of indicator dictionaries (optional)\n                   Each indicator should have \"indicator\" and \"type\" fields\n                   Example: [{\"indicator\": \"8.8.8.8\", \"type\": \"IPv4\"}]\n        group_ids: List of group IDs to add the pulse to (optional)\n        adversary: Name of adversary related to the pulse (optional)\n        targeted_countries: List of targeted countries (optional)\n                           Can use country names or ISO 3166 codes\n        industries: List of industries related to the pulse (optional)\n        malware_families: List of malware families related to the pulse (optional)\n        attack_ids: List of MITRE ATT&CK IDs related to the pulse (optional)\n    \n    Returns:\n        A dictionary containing the created pulse information, including its ID.\n    ",
+          "input_schema": {
+            "properties": {
+              "name": {
+                "title": "Name",
+                "type": "string"
+              },
+              "description": {
+                "default": "",
+                "title": "Description",
+                "type": "string"
+              },
+              "public": {
+                "default": true,
+                "title": "Public",
+                "type": "boolean"
+              },
+              "tlp": {
+                "default": "green",
+                "title": "Tlp",
+                "type": "string"
+              },
+              "tags": {
+                "default": null,
+                "items": {
+                  "type": "string"
+                },
+                "title": "Tags",
+                "type": "array"
+              },
+              "references": {
+                "default": null,
+                "items": {
+                  "type": "string"
+                },
+                "title": "References",
+                "type": "array"
+              },
+              "indicators": {
+                "default": null,
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "title": "Indicators",
+                "type": "array"
+              },
+              "group_ids": {
+                "default": null,
+                "items": {
+                  "type": "integer"
+                },
+                "title": "Group Ids",
+                "type": "array"
+              },
+              "adversary": {
+                "default": null,
+                "title": "Adversary",
+                "type": "string"
+              },
+              "targeted_countries": {
+                "default": null,
+                "items": {
+                  "type": "string"
+                },
+                "title": "Targeted Countries",
+                "type": "array"
+              },
+              "industries": {
+                "default": null,
+                "items": {
+                  "type": "string"
+                },
+                "title": "Industries",
+                "type": "array"
+              },
+              "malware_families": {
+                "default": null,
+                "items": {
+                  "type": "string"
+                },
+                "title": "Malware Families",
+                "type": "array"
+              },
+              "attack_ids": {
+                "default": null,
+                "items": {
+                  "type": "string"
+                },
+                "title": "Attack Ids",
+                "type": "array"
+              }
+            },
+            "required": [
+              "name"
+            ],
+            "title": "create_pulseArguments",
+            "type": "object"
+          }
+        },
+        {
+          "name": "validate_indicator",
+          "description": "Validate an indicator before adding it to a pulse.\n    \n    This tool validates an indicator to ensure it meets OTX's requirements before\n    adding it to a pulse. It's a good practice to validate indicators before\n    creating a pulse to avoid errors.\n    \n    Use this tool when:\n    - You're preparing to create a pulse with indicators\n    - You want to ensure an indicator is properly formatted\n    - You need to verify that an indicator type is supported\n    \n    Args:\n        indicator_type: Type of indicator (e.g., 'IPv4', 'domain', 'url', 'email', 'hash')\n        indicator: The indicator value (e.g., '8.8.8.8', 'example.com', 'https://malicious.com')\n        description: Optional description of the indicator\n    \n    Returns:\n        A dictionary containing validation results, indicating whether the indicator\n        is valid and any issues that were found.\n    ",
+          "input_schema": {
+            "properties": {
+              "indicator_type": {
+                "title": "Indicator Type",
+                "type": "string"
+              },
+              "indicator": {
+                "title": "Indicator",
+                "type": "string"
+              },
+              "description": {
+                "default": "",
+                "title": "Description",
+                "type": "string"
+              }
+            },
+            "required": [
+              "indicator_type",
+              "indicator"
+            ],
+            "title": "validate_indicatorArguments",
+            "type": "object"
+          }
+        },
+        {
+          "name": "submit_url",
+          "description": "Submit a URL for analysis.\n    \n    This tool submits a URL to OTX for analysis, which can help identify\n    malicious websites, phishing attempts, or other threats.\n    \n    Use this tool when:\n    - You've discovered a suspicious URL and want it analyzed\n    - You're investigating a potential phishing campaign\n    - You need to verify if a website is malicious\n    \n    Args:\n        url: URL to submit for analysis (e.g., \"https://malicious-example.com\")\n    \n    Returns:\n        A dictionary containing the submission status and analysis results.\n        Note that analysis may take some time to complete.\n    ",
+          "input_schema": {
+            "properties": {
+              "url": {
+                "title": "Url",
+                "type": "string"
+              }
+            },
+            "required": [
+              "url"
+            ],
+            "title": "submit_urlArguments",
+            "type": "object"
+          }
+        },
+        {
+          "name": "submit_urls",
+          "description": "Submit multiple URLs for analysis.\n    \n    This tool submits multiple URLs to OTX for batch analysis, which is more\n    efficient than submitting them one by one.\n    \n    Use this tool when:\n    - You have multiple suspicious URLs to analyze\n    - You're investigating a campaign with multiple related URLs\n    - You need to verify multiple websites at once\n    \n    Args:\n        urls: List of URLs to submit for analysis\n              Example: [\"https://malicious1.com\", \"https://malicious2.com\"]\n    \n    Returns:\n        A dictionary containing the submission status and analysis results.\n        Note that analysis may take some time to complete.\n    ",
+          "input_schema": {
+            "properties": {
+              "urls": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Urls",
+                "type": "array"
+              }
+            },
+            "required": [
+              "urls"
+            ],
+            "title": "submit_urlsArguments",
+            "type": "object"
+          }
+        },
+        {
+          "name": "get_recent_events",
+          "description": "Get recent events/activities from OTX.\n    \n    This tool retrieves recent events and activities from OTX, such as new pulses,\n    subscriptions, and other user actions. It's useful for staying updated on\n    the latest threat intelligence.\n    \n    Use this tool when:\n    - You want to see the latest activity on OTX\n    - You're monitoring for new threat intelligence\n    - You need to track changes to pulses you're interested in\n    \n    Args:\n        timestamp: ISO formatted datetime string to restrict results\n                  (not older than timestamp). If not provided, defaults to 24 hours ago.\n        limit: Maximum number of results to return (default: 50)\n    \n    Returns:\n        A list of event dictionaries, each describing an activity on OTX,\n        including the type of event, timestamp, and related objects.\n    ",
+          "input_schema": {
+            "properties": {
+              "timestamp": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Timestamp"
+              },
+              "limit": {
+                "default": 50,
+                "title": "Limit",
+                "type": "integer"
+              }
+            },
+            "title": "get_recent_eventsArguments",
+            "type": "object"
+          }
+        },
+        {
+          "name": "get_subscribed_pulses",
+          "description": "Get pulses the user is subscribed to.\n    \n    This tool retrieves pulses that the authenticated user is subscribed to,\n    optionally filtered by modification date or author.\n    \n    Use this tool when:\n    - You want to see all pulses you're subscribed to\n    - You're checking for updates to pulses you follow\n    - You need to find pulses from specific authors you subscribe to\n    \n    Args:\n        modified_since: ISO formatted datetime string to restrict results\n                       (not older than timestamp)\n        author_name: Filter by author name (e.g., \"AlienVault\", \"researcher_name\")\n        limit: Maximum number of results to return (default: 50)\n    \n    Returns:\n        A list of pulse dictionaries, each containing metadata about a pulse\n        the user is subscribed to, optionally filtered by the provided criteria.\n    ",
+          "input_schema": {
+            "properties": {
+              "modified_since": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Modified Since"
+              },
+              "author_name": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Author Name"
+              },
+              "limit": {
+                "default": 50,
+                "title": "Limit",
+                "type": "integer"
+              }
+            },
+            "title": "get_subscribed_pulsesArguments",
+            "type": "object"
+          }
+        }
+      ],
+      "discoveredAt": "2026-07-24T15:10:08.612353Z"
+    },
+    "ffuf": {
+      "configHash": "bdcbf5b5407ce312ec43bf6ede2e0d53a826bd620268b546159a894c12d55c66",
+      "serverInfo": {
+        "name": "ffuf-mcp",
+        "version": "1.28.1"
+      },
+      "protocolVersion": "2024-11-05",
+      "tools": [
+        {
+          "name": "ffuf_dir",
+          "description": "Directory and file discovery fuzzing. Discovers hidden directories, files, and endpoints on web servers.",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "url": {
+                "type": "string",
+                "description": "Target URL with FUZZ keyword (e.g., https://example.com/FUZZ)"
+              },
+              "wordlist": {
+                "type": "string",
+                "description": "Wordlist to use (common, dirb-common, dirbuster-medium, raft-large-dirs, or path)",
+                "default": "common"
+              },
+              "extensions": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "File extensions to append (e.g., php, html, txt)"
+              },
+              "filter_codes": {
+                "type": "array",
+                "items": {
+                  "type": "integer"
+                },
+                "description": "HTTP status codes to filter out (e.g., 404, 403)"
+              },
+              "threads": {
+                "type": "integer",
+                "description": "Number of concurrent threads",
+                "default": 40
+              },
+              "timeout": {
+                "type": "integer",
+                "description": "Timeout in seconds",
+                "default": 600
+              }
+            },
+            "required": [
+              "url"
+            ]
+          }
+        },
+        {
+          "name": "ffuf_vhost",
+          "description": "Virtual host discovery. Discovers subdomains and virtual hosts by fuzzing the Host header.",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "url": {
+                "type": "string",
+                "description": "Target URL (e.g., https://10.10.10.10)"
+              },
+              "domain": {
+                "type": "string",
+                "description": "Base domain for vhost discovery (e.g., example.com)"
+              },
+              "wordlist": {
+                "type": "string",
+                "description": "Subdomain wordlist to use",
+                "default": "subdomains-top1mil"
+              },
+              "filter_size": {
+                "type": "integer",
+                "description": "Filter responses by size (to remove default page)"
+              },
+              "threads": {
+                "type": "integer",
+                "description": "Number of concurrent threads",
+                "default": 40
+              },
+              "timeout": {
+                "type": "integer",
+                "description": "Timeout in seconds",
+                "default": 600
+              }
+            },
+            "required": [
+              "url",
+              "domain"
+            ]
+          }
+        },
+        {
+          "name": "ffuf_param",
+          "description": "Parameter fuzzing. Discovers hidden GET or POST parameters.",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "url": {
+                "type": "string",
+                "description": "Target URL with FUZZ keyword (e.g., https://example.com/page?FUZZ=test)"
+              },
+              "wordlist": {
+                "type": "string",
+                "description": "Parameter wordlist to use",
+                "default": "params-top"
+              },
+              "method": {
+                "type": "string",
+                "enum": [
+                  "GET",
+                  "POST"
+                ],
+                "description": "HTTP method",
+                "default": "GET"
+              },
+              "data": {
+                "type": "string",
+                "description": "POST data with FUZZ keyword (e.g., FUZZ=test)"
+              },
+              "filter_size": {
+                "type": "integer",
+                "description": "Filter responses by size"
+              },
+              "threads": {
+                "type": "integer",
+                "description": "Number of concurrent threads",
+                "default": 40
+              },
+              "timeout": {
+                "type": "integer",
+                "description": "Timeout in seconds",
+                "default": 600
+              }
+            },
+            "required": [
+              "url"
+            ]
+          }
+        },
+        {
+          "name": "ffuf_custom",
+          "description": "Custom fuzzing with full control over all options. Use FUZZ keyword in URL, headers, or data.",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "url": {
+                "type": "string",
+                "description": "Target URL (use FUZZ keyword where needed)"
+              },
+              "wordlist": {
+                "type": "string",
+                "description": "Wordlist path or name"
+              },
+              "method": {
+                "type": "string",
+                "description": "HTTP method (GET, POST, PUT, etc.)",
+                "default": "GET"
+              },
+              "headers": {
+                "type": "object",
+                "description": "Custom headers as key-value pairs"
+              },
+              "data": {
+                "type": "string",
+                "description": "Request body data"
+              },
+              "match_codes": {
+                "type": "array",
+                "items": {
+                  "type": "integer"
+                },
+                "description": "Only show these HTTP status codes"
+              },
+              "filter_codes": {
+                "type": "array",
+                "items": {
+                  "type": "integer"
+                },
+                "description": "Hide these HTTP status codes"
+              },
+              "filter_size": {
+                "type": "integer",
+                "description": "Filter by response size"
+              },
+              "filter_words": {
+                "type": "integer",
+                "description": "Filter by word count"
+              },
+              "threads": {
+                "type": "integer",
+                "description": "Concurrent threads",
+                "default": 40
+              },
+              "rate": {
+                "type": "integer",
+                "description": "Rate limit (requests per second)"
+              },
+              "timeout": {
+                "type": "integer",
+                "description": "Timeout in seconds",
+                "default": 600
+              }
+            },
+            "required": [
+              "url",
+              "wordlist"
+            ]
+          }
+        },
+        {
+          "name": "list_wordlists",
+          "description": "List available wordlists for fuzzing.",
+          "input_schema": {
+            "type": "object",
+            "properties": {}
+          }
+        },
+        {
+          "name": "get_fuzz_results",
+          "description": "Retrieve results from a previous fuzzing session by scan ID.",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "scan_id": {
+                "type": "string",
+                "description": "Scan ID returned from a previous scan"
+              }
+            },
+            "required": [
+              "scan_id"
+            ]
+          }
+        },
+        {
+          "name": "list_active_scans",
+          "description": "List currently running fuzzing sessions.",
+          "input_schema": {
+            "type": "object",
+            "properties": {}
+          }
+        }
+      ],
+      "discoveredAt": "2026-07-24T15:10:10.655519Z"
+    },
+    "nikto": {
+      "configHash": "bdcbf5b5407ce312ec43bf6ede2e0d53a826bd620268b546159a894c12d55c66",
+      "serverInfo": {
+        "name": "nikto-mcp",
+        "version": "0.4.0"
+      },
+      "protocolVersion": "2024-11-05",
+      "tools": [
+        {
+          "name": "scan",
+          "description": "Run a Nikto scan against a target",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "target": {
+                "type": "string",
+                "description": "Target URL or IP address to scan"
+              },
+              "port": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 65535,
+                "default": 80,
+                "description": "Port number (default: 80)"
+              },
+              "ssl": {
+                "type": "boolean",
+                "default": false,
+                "description": "Use SSL/HTTPS (default: false)"
+              },
+              "nossl": {
+                "type": "boolean",
+                "default": false,
+                "description": "Disable SSL (default: false)"
+              },
+              "nolookup": {
+                "type": "boolean",
+                "default": false,
+                "description": "Disable DNS lookups (default: false)"
+              },
+              "timeout": {
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "default": 3600,
+                "description": "Scan timeout in seconds (default: 3600)"
+              },
+              "vhost": {
+                "type": "string",
+                "description": "Virtual host for the Host header"
+              },
+              "outputFormat": {
+                "type": "string",
+                "enum": [
+                  "json",
+                  "text"
+                ],
+                "default": "json",
+                "description": "Output format (default: json)"
+              },
+              "dryRun": {
+                "type": "boolean",
+                "default": false,
+                "description": "Test command generation without execution (default: false)"
+              }
+            },
+            "required": [
+              "target"
+            ],
+            "additionalProperties": false,
+            "$schema": "http://json-schema.org/draft-07/schema#"
+          }
+        },
+        {
+          "name": "scan_status",
+          "description": "Get the status of a running scan",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "scanId": {
+                "type": "string",
+                "description": "ID of the scan to check"
+              }
+            },
+            "required": [
+              "scanId"
+            ],
+            "additionalProperties": false,
+            "$schema": "http://json-schema.org/draft-07/schema#"
+          }
+        },
+        {
+          "name": "stop_scan",
+          "description": "Stop a running scan",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "scanId": {
+                "type": "string",
+                "description": "ID of the scan to stop"
+              }
+            },
+            "required": [
+              "scanId"
+            ],
+            "additionalProperties": false,
+            "$schema": "http://json-schema.org/draft-07/schema#"
+          }
+        }
+      ],
+      "discoveredAt": "2026-07-24T15:10:11.108578Z"
+    },
+    "nuclei": {
+      "configHash": "bdcbf5b5407ce312ec43bf6ede2e0d53a826bd620268b546159a894c12d55c66",
+      "serverInfo": {
+        "name": "nuclei-mcp",
+        "version": "1.28.1"
+      },
+      "protocolVersion": "2024-11-05",
+      "tools": [
+        {
+          "name": "nuclei_scan",
+          "description": "Comprehensive vulnerability scan using Nuclei templates. Scans for CVEs, misconfigurations, exposures, and more.",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "target": {
+                "type": "string",
+                "description": "Target URL or host (e.g., https://example.com, 192.168.1.1)"
+              },
+              "severity": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "info",
+                    "low",
+                    "medium",
+                    "high",
+                    "critical"
+                  ]
+                },
+                "description": "Filter by severity levels (info, low, medium, high, critical)"
+              },
+              "tags": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Filter by template tags (e.g., cve, rce, xss, sqli)"
+              },
+              "rate_limit": {
+                "type": "integer",
+                "description": "Maximum requests per second",
+                "default": 150
+              },
+              "timeout": {
+                "type": "integer",
+                "description": "Scan timeout in seconds",
+                "default": 600
+              }
+            },
+            "required": [
+              "target"
+            ]
+          }
+        },
+        {
+          "name": "quick_scan",
+          "description": "Fast vulnerability scan focusing on high/critical severity issues. Good for initial reconnaissance.",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "target": {
+                "type": "string",
+                "description": "Target URL or host"
+              },
+              "timeout": {
+                "type": "integer",
+                "description": "Scan timeout in seconds",
+                "default": 300
+              }
+            },
+            "required": [
+              "target"
+            ]
+          }
+        },
+        {
+          "name": "template_scan",
+          "description": "Scan with specific template categories. Available categories: cves, vulnerabilities, exposures, misconfiguration, technologies, default-logins, takeovers, file, fuzzing, network, ssl, dns.",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "target": {
+                "type": "string",
+                "description": "Target URL or host"
+              },
+              "templates": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "cves",
+                    "vulnerabilities",
+                    "exposures",
+                    "misconfiguration",
+                    "technologies",
+                    "default-logins",
+                    "takeovers",
+                    "file",
+                    "fuzzing",
+                    "headless",
+                    "iot",
+                    "network",
+                    "ssl",
+                    "dns"
+                  ]
+                },
+                "description": "Template categories to use"
+              },
+              "severity": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "info",
+                    "low",
+                    "medium",
+                    "high",
+                    "critical"
+                  ]
+                },
+                "description": "Filter by severity levels"
+              },
+              "timeout": {
+                "type": "integer",
+                "description": "Scan timeout in seconds",
+                "default": 600
+              }
+            },
+            "required": [
+              "target",
+              "templates"
+            ]
+          }
+        },
+        {
+          "name": "list_templates",
+          "description": "List available Nuclei template categories and common tags.",
+          "input_schema": {
+            "type": "object",
+            "properties": {}
+          }
+        },
+        {
+          "name": "get_scan_results",
+          "description": "Retrieve results from a previous scan by scan ID.",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "scan_id": {
+                "type": "string",
+                "description": "Scan ID returned from a previous scan"
+              },
+              "include_raw": {
+                "type": "boolean",
+                "description": "Include raw nuclei output",
+                "default": false
+              }
+            },
+            "required": [
+              "scan_id"
+            ]
+          }
+        },
+        {
+          "name": "list_active_scans",
+          "description": "List currently running scans.",
+          "input_schema": {
+            "type": "object",
+            "properties": {}
+          }
+        }
+      ],
+      "discoveredAt": "2026-07-24T15:10:11.861004Z"
+    },
+    "sqlmap": {
+      "configHash": "bdcbf5b5407ce312ec43bf6ede2e0d53a826bd620268b546159a894c12d55c66",
+      "serverInfo": {
+        "name": "sqlmap-mcp",
+        "version": "1.28.1"
+      },
+      "protocolVersion": "2024-11-05",
+      "tools": [
+        {
+          "name": "sql_scan",
+          "description": "Scan a URL for SQL injection vulnerabilities. Automatically tests all parameters for injection points.",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "target": {
+                "type": "string",
+                "description": "Target URL with parameters (e.g., http://example.com/page?id=1)"
+              },
+              "params": {
+                "type": "string",
+                "description": "Specific parameter(s) to test (comma-separated)"
+              },
+              "data": {
+                "type": "string",
+                "description": "POST data string (e.g., 'user=admin&pass=test')"
+              },
+              "cookie": {
+                "type": "string",
+                "description": "HTTP Cookie header value"
+              },
+              "level": {
+                "type": "integer",
+                "description": "Level of tests (1-5, higher = more tests)",
+                "default": 1,
+                "minimum": 1,
+                "maximum": 5
+              },
+              "risk": {
+                "type": "integer",
+                "description": "Risk of tests (1-3, higher = more aggressive)",
+                "default": 1,
+                "minimum": 1,
+                "maximum": 3
+              },
+              "timeout": {
+                "type": "integer",
+                "description": "Scan timeout in seconds",
+                "default": 300
+              }
+            },
+            "required": [
+              "target"
+            ]
+          }
+        },
+        {
+          "name": "sql_enumerate",
+          "description": "Enumerate databases, tables, or columns from a vulnerable target. Requires a confirmed injectable parameter.",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "target": {
+                "type": "string",
+                "description": "Target URL with injectable parameter"
+              },
+              "database": {
+                "type": "string",
+                "description": "Database name (omit to list databases)"
+              },
+              "table": {
+                "type": "string",
+                "description": "Table name (omit to list tables)"
+              },
+              "dbms": {
+                "type": "string",
+                "description": "Force DBMS type (mysql, postgresql, mssql, oracle, sqlite)"
+              },
+              "timeout": {
+                "type": "integer",
+                "description": "Scan timeout in seconds",
+                "default": 300
+              }
+            },
+            "required": [
+              "target"
+            ]
+          }
+        },
+        {
+          "name": "sql_dump",
+          "description": "Dump data from database tables. Use responsibly and only on authorized targets.",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "target": {
+                "type": "string",
+                "description": "Target URL with injectable parameter"
+              },
+              "database": {
+                "type": "string",
+                "description": "Database name"
+              },
+              "table": {
+                "type": "string",
+                "description": "Table name"
+              },
+              "columns": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Specific columns to dump"
+              },
+              "dbms": {
+                "type": "string",
+                "description": "Force DBMS type"
+              },
+              "timeout": {
+                "type": "integer",
+                "description": "Scan timeout in seconds",
+                "default": 300
+              }
+            },
+            "required": [
+              "target",
+              "database",
+              "table"
+            ]
+          }
+        },
+        {
+          "name": "sql_test",
+          "description": "Quick test to check if a parameter is injectable.",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "target": {
+                "type": "string",
+                "description": "Target URL with parameter to test"
+              },
+              "param": {
+                "type": "string",
+                "description": "Parameter name to test"
+              }
+            },
+            "required": [
+              "target",
+              "param"
+            ]
+          }
+        },
+        {
+          "name": "get_scan_results",
+          "description": "Retrieve results from a previous scan by scan ID.",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "scan_id": {
+                "type": "string",
+                "description": "Scan ID returned from a previous scan"
+              },
+              "include_raw": {
+                "type": "boolean",
+                "description": "Include raw sqlmap output",
+                "default": false
+              }
+            },
+            "required": [
+              "scan_id"
+            ]
+          }
+        },
+        {
+          "name": "list_active_scans",
+          "description": "List currently running scans.",
+          "input_schema": {
+            "type": "object",
+            "properties": {}
+          }
+        }
+      ],
+      "discoveredAt": "2026-07-24T15:10:12.642235Z"
+    },
+    "waybackurls": {
+      "configHash": "bdcbf5b5407ce312ec43bf6ede2e0d53a826bd620268b546159a894c12d55c66",
+      "serverInfo": {
+        "name": "waybackurls-mcp",
+        "version": "1.28.1"
+      },
+      "protocolVersion": "2024-11-05",
+      "tools": [
+        {
+          "name": "fetch_wayback_urls",
+          "description": "Fetch all URLs from the Wayback Machine for a given domain. Returns historical URLs that were archived for the domain.",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "domain": {
+                "type": "string",
+                "description": "Domain to fetch URLs for (e.g., example.com)"
+              },
+              "get_subs": {
+                "type": "boolean",
+                "description": "Also fetch subdomains (e.g., *.example.com)",
+                "default": false
+              },
+              "no_subs": {
+                "type": "boolean",
+                "description": "Don't include subdomains, only the exact domain",
+                "default": false
+              },
+              "dates": {
+                "type": "boolean",
+                "description": "Show timestamps for when URLs were archived",
+                "default": false
+              },
+              "include_urls": {
+                "type": "boolean",
+                "description": "Include the actual URLs in the response (default: true)",
+                "default": true
+              },
+              "limit": {
+                "type": "integer",
+                "description": "Maximum number of URLs to return in response (default: 100)",
+                "default": 100
+              },
+              "timeout": {
+                "type": "integer",
+                "description": "Timeout in seconds",
+                "default": 300
+              }
+            },
+            "required": [
+              "domain"
+            ]
+          }
+        },
+        {
+          "name": "get_fetch_results",
+          "description": "Retrieve results from a previous waybackurls fetch by fetch ID.",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "fetch_id": {
+                "type": "string",
+                "description": "Fetch ID returned from a previous fetch"
+              },
+              "include_urls": {
+                "type": "boolean",
+                "description": "Include the actual URLs in the response",
+                "default": true
+              },
+              "limit": {
+                "type": "integer",
+                "description": "Maximum number of URLs to return",
+                "default": 100
+              }
+            },
+            "required": [
+              "fetch_id"
+            ]
+          }
+        },
+        {
+          "name": "list_active_fetches",
+          "description": "List currently running waybackurls fetches.",
+          "input_schema": {
+            "type": "object",
+            "properties": {}
+          }
+        }
+      ],
+      "discoveredAt": "2026-07-24T15:10:13.415596Z"
+    }
+  }
+}

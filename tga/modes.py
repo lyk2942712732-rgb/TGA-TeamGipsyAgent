@@ -1,4 +1,4 @@
-"""Authoritative task-mode registry and legacy migration boundary."""
+"""Authoritative task-mode registry."""
 
 from __future__ import annotations
 
@@ -25,15 +25,6 @@ TASK_MODES: tuple[TaskMode, ...] = (
     "reverse_engineering",
 )
 
-LEGACY_MODE_MAP: dict[str, TaskMode] = {
-    "ctf": "ctf",
-    "web_audit": "penetration_test",
-    "code_audit": "vulnerability_research",
-    "binary_ctf": "reverse_engineering",
-    **{mode: mode for mode in TASK_MODES},
-}
-
-
 @dataclass(frozen=True)
 class ModeProfile:
     id: TaskMode
@@ -44,7 +35,7 @@ class ModeProfile:
     observer_focus: str
     default_goal: str
     allowed_input_kinds: tuple[str, ...] = ("file", "archive", "image")
-    required_conditions: tuple[str, ...] = ("goal", "task_files_or_hint")
+    required_conditions: tuple[str, ...] = ("goal", "prompt_or_files")
     recommended_capabilities: tuple[str, ...] = ()
     completion_validator: str = ""
     report_sections: tuple[str, ...] = ()
@@ -83,7 +74,7 @@ MODE_PROFILES: dict[TaskMode, ModeProfile] = {
         recommended_capabilities=("http.request", "artifact.inspect", "mcp"),
         completion_validator="penetration_test",
         report_sections=("scope", "coverage", "findings", "evidence", "limitations", "remediation"),
-        advanced_settings=("depth", "included_scopes", "exclusions", "rules_of_engagement", "testing_window", "rate_limit", "state_change"),
+        advanced_settings=("depth", "included_scopes", "exclusions", "rules_of_engagement", "testing_window", "rate_limit", "state_change_requested"),
     ),
     "incident_response": ModeProfile(
         id="incident_response", label="应急响应",
@@ -107,7 +98,7 @@ MODE_PROFILES: dict[TaskMode, ModeProfile] = {
         recommended_capabilities=("workspace.read", "workspace.python", "artifact.inspect", "mcp"),
         completion_validator="vulnerability_research",
         report_sections=("target_version", "coverage", "findings", "reproduction", "root_cause", "impact", "artifacts", "limitations"),
-        advanced_settings=("depth", "build_environment", "process_execution", "fuzzing", "poc", "disclosure_constraints"),
+        advanced_settings=("depth", "build_environment", "allow_target_execution", "require_sandbox", "allow_fuzzing", "require_poc", "disclosure_constraints"),
     ),
     "reverse_engineering": ModeProfile(
         id="reverse_engineering", label="逆向分析",
@@ -120,17 +111,16 @@ MODE_PROFILES: dict[TaskMode, ModeProfile] = {
         recommended_capabilities=("workspace.read", "artifact.inspect", "workspace.python", "mcp"),
         completion_validator="reverse_engineering",
         report_sections=("samples", "platform", "analysis", "key_functions", "behavior", "iocs", "outputs", "uncertainties"),
-        advanced_settings=("analysis_method", "platform", "architecture", "sandbox", "process_execution", "network", "instrumentation"),
+        advanced_settings=("analysis_method", "platform", "architecture", "require_sandbox", "allow_dynamic_execution", "allow_network", "allow_instrumentation"),
     ),
 }
 
 
 def normalize_mode(value: object) -> TaskMode:
     raw = str(value or "").strip()
-    try:
-        return LEGACY_MODE_MAP[raw]
-    except KeyError as exc:
-        raise ValueError(f"unsupported task mode: {raw}") from exc
+    if raw not in TASK_MODES:
+        raise ValueError(f"unsupported task mode: {raw}")
+    return raw  # type: ignore[return-value]
 
 
 def normalize_modes(values: list[str] | tuple[str, ...] | None) -> list[TaskMode]:
@@ -150,41 +140,24 @@ def validate_task_profile(task: "TGATask") -> None:
     """Backend-authoritative cross-field checks shared by every transport."""
 
     profile = mode_profile(task.mode)
-    if task.schema_version >= 4:
-        has_context = bool(task.session_input.task_files or task.session_input.hint.text or task.session_input.hint.files)
-        if not has_context:
-            raise ValueError("at least one task file, Hint text, or Hint attachment is required")
-        invalid = []
-    else:
-        invalid = [item.kind for item in [*task.targets, *task.hints] if item.kind not in profile.allowed_input_kinds]
-    if invalid and task.schema_version >= 3:
-        raise ValueError(f"{task.mode} does not accept input kinds: {', '.join(sorted(set(invalid)))}")
-    has_mcp = bool(task.schema_version < 4 and task.execution_policy and task.execution_policy.mcp.enabled_servers)
-    if task.schema_version < 4 and not task.targets and not task.hints and not has_mcp:
-        raise ValueError("at least one target, hint, or authorized MCP data source is required")
-    if task.schema_version < 4 and task.mode in {"ctf", "penetration_test", "vulnerability_research", "reverse_engineering"} and not task.targets:
-        raise ValueError(f"{task.mode} requires at least one target resource")
+    has_context = bool(task.session_input.files or task.session_input.prompt)
+    if not has_context:
+        raise ValueError("at least one task input file or prompt is required")
 
     policy = task.execution_policy
     config = task.mode_config
     if policy is None or config is None:
         raise ValueError("mode_config and execution_policy are required")
-    if task.mode == "reverse_engineering":
-        if getattr(config, "analysis_method", "") == "static_only" and policy.process_execution.mode != "forbidden":
-            raise ValueError("reverse static_only requires process_execution=forbidden")
-        if policy.process_execution.mode == "authorized_host" and getattr(config, "require_sandbox", True):
-            raise ValueError("sandbox-required reverse analysis cannot authorize host execution")
-    if task.mode == "vulnerability_research":
-        if policy.fuzzing.mode != "disabled" and not getattr(config, "allow_fuzzing", False):
-            raise ValueError("fuzzing policy cannot be enabled when mode_config disallows fuzzing")
-        if policy.fuzzing.mode != "disabled" and (
-            policy.fuzzing.max_cases <= 0 or policy.fuzzing.max_duration_seconds <= 0 or policy.fuzzing.concurrency <= 0
-        ):
-            raise ValueError("enabled fuzzing requires positive case, duration, and concurrency budgets")
-    if policy.state_change.mode == "authorized" and not policy.state_change.allowed_actions:
-        raise ValueError("authorized state changes require an explicit action allowlist")
-    if policy.containment.mode == "authorized" and not policy.containment.allowed_actions:
-        raise ValueError("authorized containment requires an explicit action allowlist")
+    if policy.high_impact.mode == "allowlisted" and not policy.high_impact.allowed_actions:
+        raise ValueError("allowlisted high-impact actions require an explicit action allowlist")
+    if policy.network.access == "task_sources" and not policy.network.seed_origins:
+        raise ValueError("task_sources network access requires a URL in the initial task input")
+    if policy.network.access == "custom" and not (
+        policy.network.custom_origins
+        or policy.network.custom_domains
+        or policy.network.custom_cidrs
+    ):
+        raise ValueError("custom network access requires an origin, domain, or CIDR rule")
 
 
 def mode_profiles_payload() -> list[dict[str, Any]]:
@@ -193,11 +166,13 @@ def mode_profiles_payload() -> list[dict[str, Any]]:
     from tga.contracts import (
         CtfModeConfig,
         ExecutionPolicy,
+        HighImpactExecutionPolicy,
         IncidentResponseModeConfig,
+        LocalComputeExecutionPolicy,
+        NetworkExecutionPolicy,
         PenetrationTestModeConfig,
         ReverseAnalysisModeConfig,
         VulnerabilityResearchModeConfig,
-        default_execution_policy,
     )
 
     config_types = {
@@ -219,9 +194,7 @@ def mode_profiles_payload() -> list[dict[str, Any]]:
             "mode_config_schema": config_type.model_json_schema(),
             "default_mode_config": config_type().model_dump(mode="json"),
             "execution_policy_schema": ExecutionPolicy.model_json_schema(),
-            "default_execution_policy": default_execution_policy(
-                mode, targets=[], legacy_scope=[], intensity="passive",
-            ).model_copy(update={"source": "default"}).model_dump(mode="json"),
+            "default_execution_policy": default_execution_policy(mode).model_dump(mode="json"),
             "allowed_input_kinds": list(profile.allowed_input_kinds),
             "required_conditions": list(profile.required_conditions),
             "recommended_capabilities": list(profile.recommended_capabilities),
@@ -232,3 +205,26 @@ def mode_profiles_payload() -> list[dict[str, Any]]:
             "advanced_settings": list(profile.advanced_settings),
         })
     return values
+
+
+def default_execution_policy(mode: TaskMode) -> "ExecutionPolicy":
+    from tga.contracts import ExecutionPolicy, HighImpactExecutionPolicy, LocalComputeExecutionPolicy, NetworkExecutionPolicy
+
+    if mode == "ctf":
+        return ExecutionPolicy(
+            preset="autonomous_ctf",
+            network=NetworkExecutionPolicy(access="public_internet", interaction="interact"),
+            local_compute=LocalComputeExecutionPolicy(mode="isolated"),
+            high_impact=HighImpactExecutionPolicy(mode="approval_required"),
+        )
+    if mode == "penetration_test":
+        return ExecutionPolicy(
+            preset="safe_observation",
+            network=NetworkExecutionPolicy(access="task_sources", interaction="observe"),
+            local_compute=LocalComputeExecutionPolicy(mode="isolated"),
+        )
+    return ExecutionPolicy(
+        preset="offline_analysis",
+        network=NetworkExecutionPolicy(access="disabled", interaction="observe"),
+        local_compute=LocalComputeExecutionPolicy(mode="isolated"),
+    )

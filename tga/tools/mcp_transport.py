@@ -66,6 +66,7 @@ class StdioTransport:
         self._stderr_bytes = 0
         self._stdout_lock = threading.Lock()
         self._stderr_lock = threading.Lock()
+        self._reader_threads: list[threading.Thread] = []
         self.output_truncated = False
 
     def connect(self) -> None:
@@ -127,8 +128,7 @@ class StdioTransport:
     def close(self) -> None:
         process = self.process
         if process is None:
-            self._stdout_capture.close()
-            self._stderr_capture.close()
+            self._close_captures()
             return
         if process.stdin is not None:
             try:
@@ -145,11 +145,11 @@ class StdioTransport:
                     process.wait(timeout=5)
                 except (OSError, subprocess.TimeoutExpired):
                     pass
+        self._join_readers()
         self._drain(self._stderr)
         self.process = None
         self.connected = False
-        self._stdout_capture.close()
-        self._stderr_capture.close()
+        self._close_captures()
 
     def finish(self, timeout: float = 2.0) -> int | None:
         """Close stdin after a one-shot call and let the server flush output."""
@@ -195,7 +195,24 @@ class StdioTransport:
                     destination.put(line)
             destination.put(None)
 
-        threading.Thread(target=read, daemon=True).start()
+        thread = threading.Thread(target=read, daemon=True)
+        self._reader_threads.append(thread)
+        thread.start()
+
+    def _join_readers(self) -> None:
+        deadline = time.monotonic() + 1.0
+        for thread in self._reader_threads:
+            thread.join(timeout=max(0.0, deadline - time.monotonic()))
+        self._reader_threads.clear()
+
+    def _close_captures(self) -> None:
+        for output, lock in (
+            (self._stdout_capture, self._stdout_lock),
+            (self._stderr_capture, self._stderr_lock),
+        ):
+            with lock:
+                if not output.closed:
+                    output.close()
 
     def _capture(self, name: str, value: str) -> None:
         encoded = value.encode("utf-8", errors="replace")
@@ -205,7 +222,7 @@ class StdioTransport:
             output, lock, count = self._stderr_capture, self._stderr_lock, self._stderr_bytes
         remaining = self.max_capture_bytes - count
         with lock:
-            if remaining > 0:
+            if remaining > 0 and not output.closed:
                 output.write(encoded[:remaining])
                 output.flush()
         saved = max(0, min(len(encoded), remaining))
@@ -243,8 +260,8 @@ class DockerStdioTransport(StdioTransport):
     def __init__(self, server: MCPServerConfig, *, workspace: Path | None = None) -> None:
         command = build_stdio_command(server, workspace=workspace)
         super().__init__(
-            command,
-            environment=build_subprocess_environment(server.environment, server.stdio.secret_refs if server.stdio else {}),
+        command,
+            environment=build_subprocess_environment(server.stdio.environment, server.stdio.secret_refs),
             max_capture_bytes=min(server.max_output_bytes, server.max_artifact_bytes),
         )
 
@@ -418,13 +435,14 @@ class StreamableHTTPTransport:
 def build_transport(server: MCPServerConfig, *, workspace: Path | None = None) -> MCPTransport:
     if server.transport == "streamable_http":
         return StreamableHTTPTransport(server)
+    if server.stdio is None:
+        raise MCPTransportError("stdio transport is missing stdio configuration", code="CONFIG_ERROR")
     command = build_stdio_command(server, workspace=workspace)
-    cls = DockerStdioTransport if Path(server.command).name.casefold() in {"docker", "docker.exe"} else StdioTransport
-    if cls is DockerStdioTransport:
+    if server.stdio.source == "docker_image":
         return DockerStdioTransport(server, workspace=workspace)
     return StdioTransport(
         command,
-        environment=build_subprocess_environment(server.environment, server.stdio.secret_refs if server.stdio else {}),
+        environment=build_subprocess_environment(server.stdio.environment, server.stdio.secret_refs),
         max_capture_bytes=min(server.max_output_bytes, server.max_artifact_bytes),
     )
 
@@ -432,11 +450,12 @@ def build_transport(server: MCPServerConfig, *, workspace: Path | None = None) -
 def build_stdio_command(server: MCPServerConfig, *, workspace: Path | None = None) -> list[str]:
     if server.transport != "stdio" or server.stdio is None:
         raise MCPTransportError("build_stdio_command requires a stdio server", code="CONFIG_ERROR")
-    if workspace is None and any("{workspace}" in item for item in server.args):
-        raise MCPTransportError("MCP args use {workspace} but no Solver workspace was supplied")
-    args = [item.replace("{workspace}", str(workspace)) if workspace else item for item in server.args]
-    is_docker = server.stdio.source == "docker_image"
-    command = ["docker", "run", "--rm", "-i", str(server.stdio.image)] if is_docker else [server.command, *args]
+    stdio = server.stdio
+    if workspace is None and any("{workspace}" in item for item in stdio.args):
+        raise MCPTransportError("MCP args use {workspace} but no session workspace was supplied")
+    args = [item.replace("{workspace}", str(workspace)) if workspace else item for item in stdio.args]
+    is_docker = stdio.source == "docker_image"
+    command = ["docker", "run", "--rm", "-i", str(stdio.image)] if is_docker else [str(stdio.command), *args]
     if not is_docker:
         return command
     try:
@@ -444,7 +463,7 @@ def build_stdio_command(server: MCPServerConfig, *, workspace: Path | None = Non
     except StopIteration as exc:
         raise MCPTransportError("docker MCP command must contain the 'run' subcommand") from exc
     options: list[str] = []
-    security = server.docker
+    security = stdio.docker
     if security is not None:
         if security.memory:
             options.extend(["--memory", security.memory])
@@ -464,9 +483,9 @@ def build_stdio_command(server: MCPServerConfig, *, workspace: Path | None = Non
             options.extend(["--security-opt", "no-new-privileges"])
         for mount, mount_options in security.tmpfs.items():
             options.extend(["--tmpfs", f"{mount}:{mount_options}"])
-    for variable in sorted({*server.environment, *(server.stdio.secret_refs if server.stdio else {})}):
+    for variable in sorted({*stdio.environment, *stdio.secret_refs}):
         options.extend(["--env", variable])
-    # A Docker MCP receives the active Solver workspace automatically for real
+    # A Docker MCP receives the active session workspace automatically for real
     # task calls. Catalog discovery has no task workspace and intentionally
     # starts without a mount. The user cannot widen this boundary through MCP
     # configuration: the complete workspace is read-only and only its dedicated
@@ -474,16 +493,16 @@ def build_stdio_command(server: MCPServerConfig, *, workspace: Path | None = Non
     if workspace is not None:
         resolved = workspace.resolve()
         if not resolved.is_dir():
-            raise MCPTransportError("the Solver workspace does not exist", code="CONFIG_ERROR")
+            raise MCPTransportError("the session workspace does not exist", code="CONFIG_ERROR")
         artifacts = resolved / "artifacts"
         if artifacts.is_symlink():
-            raise MCPTransportError("the Solver artifacts directory may not be a symlink", code="CONFIG_ERROR")
+            raise MCPTransportError("the session artifacts directory may not be a symlink", code="CONFIG_ERROR")
         artifacts.mkdir(parents=True, exist_ok=True)
         resolved_artifacts = artifacts.resolve()
         try:
             resolved_artifacts.relative_to(resolved)
         except ValueError as exc:
-            raise MCPTransportError("the Solver artifacts directory escapes the workspace", code="CONFIG_ERROR") from exc
+            raise MCPTransportError("the session artifacts directory escapes the workspace", code="CONFIG_ERROR") from exc
         options.extend(
             [
                 "--volume",

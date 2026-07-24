@@ -94,8 +94,8 @@ Streamable HTTP example:
 }
 ```
 
-`stdio` and `http` are mutually exclusive. Legacy flat STDIO entries are read
-and normalized for backward compatibility. `enabledTools` is an allowlist; an
+`stdio` and `http` are mutually exclusive. Flat STDIO entries are rejected;
+the discriminated `stdio.source` shape is required. `enabledTools` is an allowlist; an
 empty list means all discovered tools. Sensitive HTTP headers and process
 environment values must use `env:VARIABLE` references. Secret values are
 resolved only when connecting and are never returned by an API.
@@ -171,8 +171,7 @@ GET    /api/v2/mcp/images
 POST   /api/v2/mcp/images/{image}/inspect
 ```
 
-Legacy `/api/v2/tools/mcp/*` refresh/import/enable/delete routes remain during
-migration. Management responses redact URL queries and never contain resolved
+Management responses redact URL queries and never contain resolved
 secrets.
 
 ## Discovery, execution, and failure states
@@ -218,7 +217,7 @@ npm test
 npm run build
 ```
 
-Tests cover legacy/new configuration, schema-v4 creation snapshots and live
+Tests cover explicit configuration, schema-v4 creation snapshots and live
 disable/new-service isolation, STDIO discovery/call/timeout/cleanup,
 Docker archive import and multiple RepoTags, HTTP JSON/SSE/session headers and
 cleanup, credential rules, allowlist filtering, full management CRUD, native

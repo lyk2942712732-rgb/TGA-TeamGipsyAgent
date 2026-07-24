@@ -32,70 +32,48 @@ class MCPPolicy:
         return None
 
     def call_denial(self, *, task: TGATask, server_id: str, server: MCPServerConfig, method: str) -> str | None:
-        if task.schema_version >= 4:
-            if server_id not in task.mcp_capabilities.server_ids:
-                return "MCP server was not in the Session creation capability snapshot"
-            if not any(item.server_id == server_id and item.method == method for item in task.mcp_capabilities.tools):
-                return "MCP method was not in the Session creation capability snapshot"
-            denial = self.catalog_denial(task=task, server=server, method=method)
-            if denial:
-                return denial
-            risk = self.risk_for(server=server, method=method)
-            if risk == "destructive":
-                action = f"mcp:{server_id}.{method}"
-                if task.execution_policy.state_change.mode != "authorized" or action not in task.execution_policy.state_change.allowed_actions:
-                    return f"destructive MCP method requires explicit state_change authorization for {action}"
-            if risk == "active" and not self._active_boundary_allows(task):
-                return "active MCP method is blocked by the Session execution boundaries"
-            return None
-        execution = task.execution_policy.mcp if task.schema_version >= 3 and task.execution_policy else None
-        enabled_servers = execution.enabled_servers if execution is not None else task.mcp_servers
-        if server_id not in task.mcp_servers or server_id not in enabled_servers:
-            return "MCP server is not selected for this task"
+        if server_id not in task.mcp_capabilities.server_ids:
+            return "MCP server was not in the Session creation capability snapshot"
+        if not any(item.server_id == server_id and item.method == method for item in task.mcp_capabilities.tools):
+            return "MCP method was not in the Session creation capability snapshot"
         denial = self.catalog_denial(task=task, server=server, method=method)
         if denial:
             return denial
         risk = self.risk_for(server=server, method=method)
         if risk == "destructive":
-            if execution is None:
-                return "destructive MCP methods are forbidden"
             action = f"mcp:{server_id}.{method}"
-            if task.execution_policy.state_change.mode != "authorized" or action not in task.execution_policy.state_change.allowed_actions:
-                return f"destructive MCP method requires explicit state_change authorization for {action}"
-        if execution is not None:
-            configured_tools = set(execution.enabled_tools)
-            if configured_tools and method not in configured_tools and f"{server_id}.{method}" not in configured_tools and f"mcp__{server_id}__{method}" not in configured_tools:
-                return "MCP method is not in execution_policy enabled_tools"
-            if risk == "active" and not execution.allow_active:
-                return "active MCP method requires execution_policy.mcp.allow_active"
-        elif risk == "active" and not task.allow_active_scan:
-            return "active MCP method requires allow_active_scan"
+            boundary = task.execution_policy.high_impact
+            if boundary.mode == "forbidden":
+                return f"high-impact MCP method is forbidden: {action}"
+            if boundary.mode == "approval_required":
+                return f"APPROVAL_REQUIRED:{action}"
+            if action not in boundary.allowed_actions:
+                return f"high-impact MCP method is not allowlisted: {action}"
+        if risk == "active" and not self._active_boundary_allows(task):
+            return "active MCP method is blocked by the Session execution boundaries"
         return None
 
     def visible(self, *, task: TGATask, server: MCPServerConfig, method: str, server_id: str | None = None) -> bool:
-        # Compatibility helper: catalog visibility intentionally ignores risk;
-        # actual calls must use authorize/call_denial.
-        if task.schema_version >= 4 and server_id is not None:
+        # Catalog visibility intentionally ignores risk; calls use authorize.
+        if server_id is not None:
             if server_id not in task.mcp_capabilities.server_ids:
                 return False
             if not any(item.server_id == server_id and item.method == method for item in task.mcp_capabilities.tools):
                 return False
-        elif server_id is not None and server_id not in task.mcp_servers:
-            return False
         return self.catalog_denial(task=task, server=server, method=method) is None
 
     def filter_snapshot(
         self, *, task: TGATask, snapshot: MCPCatalogSnapshot, servers: dict[str, MCPServerConfig]
     ) -> MCPCatalogSnapshot:
-        allowed_servers = set(task.mcp_capabilities.server_ids if task.schema_version >= 4 else task.mcp_servers)
+        allowed_servers = set(task.mcp_capabilities.server_ids)
         allowed_methods = {
             (item.server_id, item.method) for item in task.mcp_capabilities.tools
-        } if task.schema_version >= 4 else None
+        }
         routes = tuple(
             route
             for route in snapshot.routes
             if route.server_id in allowed_servers
-            and (allowed_methods is None or (route.server_id, route.method) in allowed_methods)
+            and (route.server_id, route.method) in allowed_methods
             and route.server_id in servers
             and servers[route.server_id].enabled
             and self.catalog_denial(task=task, server=servers[route.server_id], method=route.method) is None
@@ -130,10 +108,9 @@ class MCPPolicy:
         return bool(
             policy
             and (
-                policy.network.mode != "none"
-                or policy.process_execution.mode != "forbidden"
-                or policy.state_change.mode in {"approval_required", "authorized"}
-                or policy.containment.mode in {"approval_required", "authorized"}
+                policy.network.access != "disabled"
+                or policy.local_compute.mode != "disabled"
+                or policy.high_impact.mode in {"approval_required", "allowlisted"}
             )
         )
 

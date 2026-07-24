@@ -75,12 +75,13 @@ export const runtimeApi = {
   inspectMCPImage: (image: string) => requestJson<{ image: string; local: boolean; details: Record<string, unknown> }>(`/api/v2/mcp/images/${encodeURIComponent(image)}/inspect`, { method: "POST" }),
   artifact: (taskId: string, artifactId: string) => get<ArtifactPreviewResponse>(`/tasks/${encodeURIComponent(taskId)}/artifacts/${encodeURIComponent(artifactId)}`),
   artifactUrl: (taskId: string, artifactId: string) => url(`/tasks/${encodeURIComponent(taskId)}/artifacts/${encodeURIComponent(artifactId)}`),
+  artifactDownloadUrl: (taskId: string, artifactId: string) => url(`/tasks/${encodeURIComponent(taskId)}/artifacts/${encodeURIComponent(artifactId)}?download=true`),
   reportUrl: (taskId: string) => `${apiBase}/api/v2/tasks/${encodeURIComponent(taskId)}/report`,
-  control: async (taskId: string, action: "pause" | "resume" | "cancel") => {
-    return requestJson<{ accepted?: boolean; status?: string }>(`/api/v2/tasks/${encodeURIComponent(taskId)}/control`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action }) });
+  control: async (taskId: string, action: "pause" | "resume" | "cancel" | "approve_action" | "reject_action", actionId?: string) => {
+    return requestJson<{ accepted?: boolean; status?: string; reason?: string }>(`/api/v2/tasks/${encodeURIComponent(taskId)}/control`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action, ...(actionId ? { action_id: actionId } : {}) }) });
   },
   hint: async (taskId: string, content: string) => {
-    return requestJson<{ accepted?: boolean }>(`/api/v2/tasks/${encodeURIComponent(taskId)}/hints`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ content }) });
+    return requestJson<{ accepted?: boolean; reason?: string }>(`/api/v2/tasks/${encodeURIComponent(taskId)}/hints`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ content }) });
   },
   streamUrl: (taskId: string, afterSeq: number) => url(`/tasks/${encodeURIComponent(taskId)}/events/stream?after_seq=${afterSeq}`),
 };

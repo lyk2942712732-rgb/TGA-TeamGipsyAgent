@@ -23,7 +23,7 @@ def make_intent(
         id=new_intent_id(),
         task_id=task.id,
         kind=kind,  # type: ignore[arg-type]
-        target=task.target,
+        target=task.default_action_target(),
         goal=goal,
         required_tools=required_tools or [],
         risk=risk,  # type: ignore[arg-type]

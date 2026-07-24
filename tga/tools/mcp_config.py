@@ -243,7 +243,7 @@ class MCPVisibilityConfig(BaseModel):
 
     @field_validator("modes", mode="before")
     @classmethod
-    def migrate_modes(cls, value: Any) -> list[TaskMode]:
+    def validate_modes(cls, value: Any) -> list[TaskMode]:
         return normalize_modes(value)
 
 
@@ -257,7 +257,7 @@ class MCPMethodPolicyConfig(BaseModel):
 
     @field_validator("modes", mode="before")
     @classmethod
-    def migrate_modes(cls, value: Any) -> list[TaskMode] | None:
+    def validate_modes(cls, value: Any) -> list[TaskMode] | None:
         return None if value is None else normalize_modes(value)
 
 
@@ -280,44 +280,6 @@ class MCPServerConfig(BaseModel):
     max_concurrency: int = Field(default=1, ge=1, le=32)
     calls_per_minute: float = Field(default=60.0, gt=0, le=60_000)
     burst: int = Field(default=5, ge=1, le=1000)
-
-    @model_validator(mode="before")
-    @classmethod
-    def migrate_legacy_stdio(cls, value: Any) -> Any:
-        if not isinstance(value, dict) or "stdio" in value or value.get("transport", "stdio") != "stdio":
-            return value
-        payload = dict(value)
-        command = payload.pop("command", None)
-        args = list(payload.pop("args", []))
-        environment = payload.pop("environment", {})
-        workspace_mount = payload.pop("workspaceMount", payload.pop("workspace_mount", {}))
-        docker = payload.pop("docker", None)
-        if command is None:
-            return payload
-        is_docker = Path(str(command)).name.casefold() in {"docker", "docker.exe"}
-        if is_docker:
-            image, tmpfs = _legacy_docker_image_and_tmpfs(args)
-            if docker is None:
-                docker = {}
-            else:
-                docker = dict(docker)
-            if tmpfs and "tmpfs" not in docker:
-                docker["tmpfs"] = tmpfs
-            payload["stdio"] = {
-                "source": "docker_image",
-                "image": image,
-                "environment": environment,
-                "workspaceMount": workspace_mount,
-                "docker": docker,
-            }
-        else:
-            payload["stdio"] = {
-                "source": "local_process",
-                "command": command,
-                "args": args,
-                "environment": environment,
-            }
-        return payload
 
     @field_validator("enabled_tools")
     @classmethod
@@ -343,33 +305,6 @@ class MCPServerConfig(BaseModel):
             raise ValueError("streamable_http transport requires http configuration and forbids stdio configuration")
         return self
 
-    # Compatibility accessors keep existing runtime code and legacy tests working
-    # while persisted configuration is normalized to the discriminated shape.
-    @property
-    def command(self) -> str:
-        if self.stdio is None:
-            raise AttributeError("HTTP MCP servers do not have a command")
-        return "docker" if self.stdio.source == "docker_image" else str(self.stdio.command)
-
-    @property
-    def args(self) -> list[str]:
-        if self.stdio is None:
-            return []
-        return ["run", "--rm", "-i", str(self.stdio.image)] if self.stdio.source == "docker_image" else self.stdio.args
-
-    @property
-    def environment(self) -> dict[str, str]:
-        return self.stdio.environment if self.stdio is not None else {}
-
-    @property
-    def workspace_mount(self) -> WorkspaceMountConfig:
-        return self.stdio.workspace_mount if self.stdio is not None else WorkspaceMountConfig()
-
-    @property
-    def docker(self) -> DockerSecurityConfig | None:
-        return self.stdio.docker if self.stdio is not None else None
-
-
 class MCPConfig(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
@@ -393,27 +328,6 @@ class MCPConfig(BaseModel):
             self.model_dump(mode="json", by_alias=True), ensure_ascii=False, sort_keys=True, separators=(",", ":")
         ).encode("utf-8")
         return hashlib.sha256(encoded).hexdigest()
-
-
-def _legacy_docker_image_and_tmpfs(args: list[str]) -> tuple[str, dict[str, str]]:
-    try:
-        run_index = args.index("run")
-    except ValueError as exc:
-        raise ValueError("legacy docker MCP command must contain the run subcommand") from exc
-    image = args[-1].strip() if args else ""
-    if not image or image.startswith("-") or len(args) <= run_index + 1:
-        raise ValueError("legacy docker MCP command must end with an image name")
-    tmpfs: dict[str, str] = {}
-    index = run_index + 1
-    while index < len(args) - 1:
-        if args[index] == "--tmpfs" and index + 1 < len(args) - 1:
-            mount, _, options = args[index + 1].partition(":")
-            if mount and options:
-                tmpfs[mount] = options
-            index += 2
-            continue
-        index += 1
-    return image, tmpfs
 
 
 def load_mcp_config(path: str | Path | None = None) -> tuple[MCPConfig, Path]:

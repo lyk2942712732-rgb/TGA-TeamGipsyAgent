@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+import ipaddress
 from pathlib import Path
 from typing import Annotated, Any, Literal, Union
 from urllib.parse import urlparse
@@ -17,7 +18,6 @@ from pydantic import BaseModel, Field, model_validator
 from tga.modes import TaskMode, normalize_mode
 
 
-Intensity = Literal["passive", "normal", "active"]
 ResourceRole = Literal["target", "hint"]
 ResourceKind = Literal[
     "url", "network", "file", "files", "directory", "repository", "archive",
@@ -31,15 +31,14 @@ ArtifactKind = Literal["stdout", "stderr", "tool_output", "http_response", "http
 WorkerStatus = Literal["ok", "failed", "blocked"]
 RiskLevel = Literal["passive", "active", "destructive"]
 DecisionPhase = Literal["planning", "execution", "adaptation", "gate"]
-SessionStatus = Literal["created", "running", "paused", "blocked", "completed", "failed", "cancelled"]
+SessionStatus = Literal["created", "running", "paused", "awaiting_approval", "blocked", "completed", "failed", "cancelled"]
 SolverStatus = Literal["starting", "running", "waiting", "completed", "failed", "cancelled"]
 SolverRole = Literal["recon", "targeted", "research", "main"]
 ChallengeStatus = Literal["unknown", "active", "solved", "blocked", "expired"]
-HypothesisStatus = Literal["pending", "testing", "verified", "rejected", "inconclusive", "superseded"]
 MemoryKind = Literal["fact", "evidence", "failure_boundary", "hint", "constraint", "decision"]
 ActionKind = Literal["http", "tool", "workspace", "browser"]
-ActionStatus = Literal["proposed", "approved", "running", "succeeded", "failed", "blocked", "cancelled"]
-StrategyStatus = Literal["pending", "testing", "verified", "rejected", "superseded"]
+ActionStatus = Literal["proposed", "pending_approval", "approved", "running", "succeeded", "failed", "blocked", "cancelled", "rejected"]
+StrategyStatus = Literal["pending", "testing", "succeeded", "failed", "blocked"]
 ExtractionStatus = Literal["not_requested", "blocked_out_of_scope", "failed", "extracted"]
 
 
@@ -52,7 +51,7 @@ class TGAError(BaseModel):
 class ResourceProvenance(BaseModel):
     model_config = {"extra": "forbid"}
 
-    source: Literal["user_upload", "manual", "mcp", "generated", "legacy"] = "manual"
+    source: Literal["user_upload", "manual", "mcp", "generated"] = "manual"
     created_at: str | None = None
     original_name: str | None = Field(default=None, max_length=255)
     parent_input_id: str | None = None
@@ -107,7 +106,7 @@ class ResourceRef(BaseModel):
             raise ValueError("artifact resources require artifact_id")
         elif self.kind == "text" and not (self.text or self.uri):
             raise ValueError("text resources require inline text or a persisted uri")
-        if self.kind in {"file", "files", "archive", "image"} and self.provenance.source != "legacy":
+        if self.kind in {"file", "files", "archive", "image"}:
             if not (self.uri or "").startswith(("input://", "upload://")):
                 raise ValueError(f"{self.kind} resources must use task-owned input:// or staged upload:// storage")
         return self
@@ -140,7 +139,7 @@ class ResourceRef(BaseModel):
         }
 
 
-SessionFileKind = Literal["task", "hint"]
+SessionFileKind = Literal["task_input"]
 MediaKind = Literal["image", "text", "document", "archive", "binary", "other"]
 
 
@@ -152,12 +151,13 @@ class SessionFile(BaseModel):
     id: str = Field(pattern=r"^asset_[a-f0-9]{16,64}$")
     original_name: str = Field(alias="originalName", min_length=1, max_length=255)
     stored_name: str = Field(alias="storedName", pattern=r"^[a-f0-9]{32,64}(?:\.[A-Za-z0-9]{1,16})?$")
-    relative_path: str = Field(alias="relativePath", pattern=r"^inputs/(?:task|hints)/[a-f0-9]{32,64}(?:\.[A-Za-z0-9]{1,16})?$")
+    relative_path: str = Field(alias="relativePath", pattern=r"^inputs/files/[a-f0-9]{32,64}(?:\.[A-Za-z0-9]{1,16})?$")
     mime_type: str = Field(alias="mimeType", min_length=1, max_length=255)
     size: int = Field(ge=0)
     sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
     kind: SessionFileKind
     media_kind: MediaKind = Field(alias="mediaKind")
+    provenance: ResourceProvenance
 
     @property
     def container_path(self) -> str:
@@ -167,37 +167,24 @@ class SessionFile(BaseModel):
         return {
             **self.model_dump(mode="json", by_alias=False),
             "container_path": self.container_path,
-            "purpose": "primary task material" if self.kind == "task" else "auxiliary hint material",
+            "purpose": "task input",
         }
 
 
-class SessionHint(BaseModel):
+class SessionInput(BaseModel):
     model_config = {"extra": "forbid"}
 
-    text: str | None = Field(default=None, max_length=16_384)
+    prompt: str = Field(default="", max_length=16_384)
     files: list[SessionFile] = Field(default_factory=list, max_length=64)
 
     @model_validator(mode="after")
-    def files_are_hints(self) -> "SessionHint":
-        if any(item.kind != "hint" for item in self.files):
-            raise ValueError("hint.files may contain only hint attachments")
-        self.text = self.text.strip() if self.text and self.text.strip() else None
-        return self
-
-
-class SessionInput(BaseModel):
-    model_config = {"extra": "forbid", "populate_by_name": True}
-
-    task_files: list[SessionFile] = Field(default_factory=list, alias="taskFiles", max_length=64)
-    hint: SessionHint = Field(default_factory=SessionHint)
-
-    @model_validator(mode="after")
     def validate_files(self) -> "SessionInput":
-        if any(item.kind != "task" for item in self.task_files):
-            raise ValueError("taskFiles may contain only task files")
-        ids = [item.id for item in [*self.task_files, *self.hint.files]]
+        if any(item.kind != "task_input" for item in self.files):
+            raise ValueError("session_input.files may contain only task_input files")
+        ids = [item.id for item in self.files]
         if len(ids) != len(set(ids)):
             raise ValueError("Session input file ids must be unique")
+        self.prompt = self.prompt.strip()
         return self
 
 
@@ -225,71 +212,59 @@ class MCPCapabilitySnapshot(BaseModel):
 class NetworkExecutionPolicy(BaseModel):
     model_config = {"extra": "forbid"}
 
-    mode: Literal["none", "observe", "interact"] = "none"
-    allowed_scopes: list[str] = Field(default_factory=list, max_length=128)
-    rate_limit: int = Field(default=30, ge=0, le=100_000)
-    concurrency: int = Field(default=2, ge=0, le=128)
+    access: Literal["disabled", "task_sources", "public_internet", "custom"] = "disabled"
+    interaction: Literal["observe", "interact"] = "observe"
+    seed_origins: list[str] = Field(default_factory=list, max_length=128)
+    custom_origins: list[str] = Field(default_factory=list, max_length=128)
+    custom_domains: list[str] = Field(default_factory=list, max_length=128)
+    custom_cidrs: list[str] = Field(default_factory=list, max_length=128)
+    deny_private_networks: bool = True
+    deny_loopback: bool = True
+    deny_link_local: bool = True
+    deny_cloud_metadata: bool = True
+    rate_limit_per_minute: int = Field(default=30, ge=1, le=100_000)
+    concurrency: int = Field(default=2, ge=1, le=128)
+    request_timeout_seconds: int = Field(default=30, ge=1, le=300)
 
 
-class FilesystemExecutionPolicy(BaseModel):
+class LocalComputeExecutionPolicy(BaseModel):
     model_config = {"extra": "forbid"}
 
-    mode: Literal["read_only", "workspace_write"] = "read_only"
-    allowed_roots: list[str] = Field(default_factory=list, max_length=64)
+    mode: Literal["disabled", "isolated"] = "disabled"
+    timeout_seconds: int = Field(default=120, ge=1, le=3600)
+    concurrency: int = Field(default=2, ge=1, le=128)
+    network_inheritance: Literal["task_network_policy"] = "task_network_policy"
 
 
-class ProcessExecutionPolicy(BaseModel):
+class HighImpactExecutionPolicy(BaseModel):
     model_config = {"extra": "forbid"}
 
-    mode: Literal["forbidden", "sandbox_only", "authorized_host"] = "forbidden"
-    timeout_seconds: int = Field(default=60, ge=0, le=3600)
-
-
-class FuzzingExecutionPolicy(BaseModel):
-    model_config = {"extra": "forbid"}
-
-    mode: Literal["disabled", "bounded", "extended"] = "disabled"
-    max_cases: int = Field(default=0, ge=0, le=10_000_000)
-    max_duration_seconds: int = Field(default=0, ge=0, le=86_400)
-    concurrency: int = Field(default=0, ge=0, le=128)
-
-
-class StateChangeExecutionPolicy(BaseModel):
-    model_config = {"extra": "forbid"}
-
-    mode: Literal["forbidden", "approval_required", "authorized"] = "forbidden"
+    mode: Literal["forbidden", "approval_required", "allowlisted"] = "forbidden"
     allowed_actions: list[str] = Field(default_factory=list, max_length=64)
-
-
-class ContainmentExecutionPolicy(BaseModel):
-    model_config = {"extra": "forbid"}
-
-    mode: Literal["observe_only", "approval_required", "authorized"] = "observe_only"
-    allowed_actions: list[str] = Field(default_factory=list, max_length=64)
-
-
-class MCPExecutionPolicy(BaseModel):
-    model_config = {"extra": "forbid"}
-
-    enabled_servers: list[str] = Field(default_factory=list, max_length=64)
-    enabled_tools: list[str] = Field(default_factory=list, max_length=128)
-    enabled_resources: list[str] = Field(default_factory=list, max_length=128)
-    allow_active: bool = False
 
 
 class ExecutionPolicy(BaseModel):
     model_config = {"extra": "forbid"}
 
+    preset: Literal["autonomous_ctf", "safe_observation", "offline_analysis", "custom"] = "offline_analysis"
     network: NetworkExecutionPolicy = Field(default_factory=NetworkExecutionPolicy)
-    filesystem: FilesystemExecutionPolicy = Field(default_factory=FilesystemExecutionPolicy)
-    process_execution: ProcessExecutionPolicy = Field(default_factory=ProcessExecutionPolicy)
-    fuzzing: FuzzingExecutionPolicy = Field(default_factory=FuzzingExecutionPolicy)
-    state_change: StateChangeExecutionPolicy = Field(default_factory=StateChangeExecutionPolicy)
-    containment: ContainmentExecutionPolicy = Field(default_factory=ContainmentExecutionPolicy)
-    # Legacy read projection only. Schema-v4 Session creation and runtime MCP
-    # authorization ignore this field and use the global registry instead.
-    mcp: MCPExecutionPolicy = Field(default_factory=MCPExecutionPolicy)
-    source: Literal["default", "user", "legacy_migration"] = "default"
+    local_compute: LocalComputeExecutionPolicy = Field(default_factory=LocalComputeExecutionPolicy)
+    high_impact: HighImpactExecutionPolicy = Field(default_factory=HighImpactExecutionPolicy)
+
+
+class ModelSnapshot(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    provider: str = Field(default="openai-compatible", max_length=128)
+    model: str = Field(min_length=1, max_length=255)
+    capability_fingerprint: str = Field(pattern=r"^[a-f0-9]{64}$")
+    verification_id: str = Field(min_length=1, max_length=100)
+    verified_at: str = Field(min_length=1, max_length=80)
+    capabilities: dict[str, bool | None] = Field(default_factory=dict)
+    max_output_tokens: int = Field(ge=256, le=16_384)
+    timeout_seconds: int = Field(ge=5, le=300)
+    temperature: float = Field(ge=0, le=2)
+    reasoning_mode: Literal["auto", "enabled", "disabled"] = "auto"
 
 
 class CtfVerifier(BaseModel):
@@ -392,212 +367,94 @@ ModeConfig = Annotated[
 ]
 
 
-def _legacy_resource(value: str, *, role: ResourceRole) -> dict[str, Any]:
-    clean = value.strip()
-    digest = hashlib.sha256(clean.encode("utf-8", errors="replace")).hexdigest()[:12]
-    prefix = "input" if role == "target" else "hint"
-    if clean.startswith(("http://", "https://")):
-        kind = "url"
-        return {"id": f"{prefix}_legacy_{digest}", "role": role, "kind": kind, "label": clean, "url": clean, "uri": clean, "provenance": {"source": "legacy"}}
-    try:
-        path = Path(clean)
-        kind = "directory" if path.exists() and path.is_dir() else "file" if path.exists() else "text"
-    except (OSError, ValueError):
-        kind = "text"
-    payload: dict[str, Any] = {
-        "id": f"{prefix}_legacy_{digest}", "role": role, "kind": kind,
-        "label": (Path(clean).name or clean or "Legacy target") if kind in {"file", "directory"} else "Legacy target",
-        "provenance": {"source": "legacy", "original_name": Path(clean).name if kind in {"file", "directory"} else None},
-    }
-    if kind == "text":
-        payload["text"] = clean
-    else:
-        payload["uri"] = clean
-    return payload
-
-
-def default_mode_config(mode: TaskMode, *, intensity: str = "normal", flag_format: str | None = None) -> ModeConfig:
+def default_mode_config(mode: TaskMode, *, flag_format: str | None = None) -> ModeConfig:
     if mode == "ctf":
         return CtfModeConfig(flag_format=flag_format or CtfModeConfig().flag_format)
     if mode == "penetration_test":
-        return PenetrationTestModeConfig(depth={"passive": "reconnaissance", "normal": "validation", "active": "comprehensive"}.get(intensity, "reconnaissance"))
+        return PenetrationTestModeConfig()
     if mode == "incident_response":
         return IncidentResponseModeConfig()
     if mode == "vulnerability_research":
-        return VulnerabilityResearchModeConfig(depth={"passive": "triage", "normal": "focused", "active": "deep"}.get(intensity, "triage"))
-    return ReverseAnalysisModeConfig(analysis_method={"passive": "static_only", "normal": "static_and_dynamic", "active": "deep_instrumentation"}.get(intensity, "static_only"))
-
-
-def default_execution_policy(
-    mode: TaskMode, *, targets: list[ResourceRef], legacy_scope: list[str],
-    intensity: str = "normal", allow_active_scan: bool = False,
-    mcp_servers: list[str] | None = None, mcp_tools: list[str] | None = None,
-) -> ExecutionPolicy:
-    scopes = list(dict.fromkeys(item for item in legacy_scope if item))
-    if not scopes:
-        for item in targets:
-            if item.kind == "url" and item.url:
-                parsed = urlparse(item.url)
-                scopes.append(f"{parsed.scheme}://{parsed.netloc}")
-            elif item.kind == "network" and item.uri:
-                scopes.append(item.uri)
-    network_mode: Literal["none", "observe", "interact"] = "none"
-    if scopes:
-        if mode == "ctf":
-            network_mode = "interact"
-        elif mode in {"penetration_test", "incident_response"}:
-            network_mode = "interact" if allow_active_scan else "observe"
-        elif mode == "vulnerability_research":
-            network_mode = "observe"
-    process_mode: Literal["forbidden", "sandbox_only", "authorized_host"] = "forbidden"
-    if mode == "reverse_engineering" and intensity in {"normal", "active"}:
-        process_mode = "sandbox_only"
-    return ExecutionPolicy(
-        network=NetworkExecutionPolicy(mode=network_mode, allowed_scopes=scopes),
-        process_execution=ProcessExecutionPolicy(mode=process_mode),
-        mcp=MCPExecutionPolicy(
-            enabled_servers=list(mcp_servers or []), enabled_tools=list(mcp_tools or []),
-            allow_active=bool(allow_active_scan),
-        ),
-        source="legacy_migration",
-    )
+        return VulnerabilityResearchModeConfig()
+    return ReverseAnalysisModeConfig()
 
 
 class TGATask(BaseModel):
+    model_config = {"extra": "forbid"}
+
     id: str = Field(pattern=r"^[A-Za-z0-9_-]{1,128}$")
     name: str = Field(min_length=1, max_length=255)
     mode: TaskMode
-    # Compatibility projection only. New runtime authorization and retrieval
-    # use targets/hints and execution_policy, never this display string.
-    target: str = ""
-    targets: list[ResourceRef] = Field(default_factory=list, max_length=256)
-    hints: list[ResourceRef] = Field(default_factory=list, max_length=256)
     session_input: SessionInput = Field(default_factory=SessionInput)
+    task_entry_url: str | None = Field(default=None, max_length=2048)
     mcp_capabilities: MCPCapabilitySnapshot = Field(default_factory=MCPCapabilitySnapshot)
-    # Kept only so existing task files remain readable. Product sessions use
-    # ``target`` as the challenge authorization contract and derive this
-    # compatibility value automatically.
-    scope: list[str] = Field(default_factory=list)
-    target_theme: str = ""
-    target_description: str = ""
-    intensity: Intensity = "normal"
-    allow_active_scan: bool = False
-    # MCP access is deny-by-default.  Old task payloads remain readable and
-    # therefore receive an empty allowlist rather than every configured MCP.
-    mcp_servers: list[str] = Field(default_factory=list, max_length=64)
-    mcp_direct_tools: list[str] = Field(default_factory=list, max_length=128)
     goal: str = Field(min_length=1, max_length=8000)
     flag_format: str | None = None
     mode_config: ModeConfig | None = None
     execution_policy: ExecutionPolicy | None = None
+    model_snapshot: ModelSnapshot | None = None
     execution_budget: dict[str, int] = Field(default_factory=dict)
-    migration_notes: list[str] = Field(default_factory=list, max_length=32)
     # A CTF platform can occasionally use an incomplete/self-signed chain.
     # This is never a global TLS switch: every exception is an exact HTTPS
     # origin that must already be inside this task's authorization scope.
     insecure_tls_origins: list[str] = Field(default_factory=list, max_length=8)
-    # Version 1 payloads omitted this field.  The default keeps them readable;
-    # the runtime only creates a v2 session after an explicit start request.
-    schema_version: int = 4
+    schema_version: int = 5
 
     @model_validator(mode="before")
     @classmethod
-    def migrate_legacy_mode(cls, value: Any) -> Any:
+    def apply_current_defaults(cls, value: Any) -> Any:
         if not isinstance(value, dict):
             return value
-        migrated = dict(value)
-        source_schema = int(migrated.get("schema_version") or 1)
-        if "mode" in migrated:
-            migrated["mode"] = normalize_mode(migrated["mode"])
-        mode = migrated.get("mode") or "ctf"
-        legacy_payload = "targets" not in migrated and "mode_config" not in migrated and "execution_policy" not in migrated
-        if not migrated.get("targets") and str(migrated.get("target") or "").strip():
-            migrated["targets"] = [_legacy_resource(str(migrated["target"]), role="target")]
-            migrated.setdefault("migration_notes", []).append("legacy target migrated to targets[]")
-        if not migrated.get("hints") and str(migrated.get("initial_hint") or "").strip():
-            migrated["hints"] = [_legacy_resource(str(migrated["initial_hint"]), role="hint")]
-            migrated.setdefault("migration_notes", []).append("legacy initial_hint migrated to hints[]")
-        if not migrated.get("mode_config"):
-            migrated["mode_config"] = default_mode_config(
-                mode, intensity=str(migrated.get("intensity") or "normal") if legacy_payload else "passive",
-                flag_format=migrated.get("flag_format"),
+        current = dict(value)
+        if "mode" in current:
+            current["mode"] = normalize_mode(current["mode"])
+        mode = current.get("mode") or "ctf"
+        if not current.get("mode_config"):
+            current["mode_config"] = default_mode_config(
+                mode, flag_format=current.get("flag_format")
             ).model_dump(mode="json")
-            if legacy_payload:
-                migrated.setdefault("migration_notes", []).append("legacy intensity migrated conservatively to mode_config")
-        if not migrated.get("execution_policy"):
-            refs = [ResourceRef.model_validate(item) for item in (migrated.get("targets") or [])]
-            migrated["execution_policy"] = default_execution_policy(
-                mode, targets=refs, legacy_scope=list(migrated.get("scope") or []),
-                intensity=str(migrated.get("intensity") or "normal") if legacy_payload else "passive",
-                allow_active_scan=bool(migrated.get("allow_active_scan")) if legacy_payload else False,
-                mcp_servers=list(migrated.get("mcp_servers") or []),
-                mcp_tools=list(migrated.get("mcp_direct_tools") or []),
-            ).model_dump(mode="json")
-            if not legacy_payload:
-                migrated["execution_policy"]["source"] = "default"
-            if legacy_payload:
-                migrated.setdefault("migration_notes", []).append("legacy authorization migrated with least privilege")
-        if legacy_payload:
-            migrated["schema_version"] = int(migrated.get("schema_version") or 2)
-        elif "schema_version" not in migrated:
-            migrated["schema_version"] = 3
-        if source_schema < 4 and "session_input" not in migrated:
-            # Historical resources remain readable through targets/hints.
-            # They are deliberately not promoted into schema-v4 Session files.
-            migrated["session_input"] = {"taskFiles": [], "hint": {"files": []}}
-        if migrated.get("mode") not in {None, "ctf"}:
-            migrated["flag_format"] = None
-        return migrated
+        if not current.get("execution_policy"):
+            current["execution_policy"] = ExecutionPolicy().model_dump(mode="json")
+        if mode != "ctf":
+            current["flag_format"] = None
+        return current
 
     @model_validator(mode="after")
     def validate_authorized_scope(self) -> "TGATask":
-        self.target = self.target.strip()
-        self.targets = list({item.id: item for item in self.targets}.values())
-        self.hints = list({item.id: item for item in self.hints}.values())
-        if set(item.id for item in self.targets).intersection(item.id for item in self.hints):
-            raise ValueError("target and hint input ids must be unique")
-        if any(item.role != "target" for item in self.targets) or any(item.role != "hint" for item in self.hints):
-            raise ValueError("targets and hints contain a resource with the wrong role")
         if self.mode_config is None or self.mode_config.mode != self.mode:
             raise ValueError("mode_config discriminator must match task mode")
         if self.execution_policy is None:
-            raise ValueError("execution_policy is required after migration")
-        if self.schema_version >= 4:
-            forbidden = [item.kind for item in [*self.targets, *self.hints] if item.kind in {"url", "network", "directory", "repository", "artifact", "mcp_resource", "mcp_tool"}]
-            if forbidden:
-                raise ValueError(f"new Sessions accept only uploaded task and hint files, not: {', '.join(sorted(set(forbidden)))}")
-            # Compatibility fields may still be supplied by old clients, but
-            # they can never become a schema-v4 MCP permission source.
-            self.mcp_servers = []
-            self.mcp_direct_tools = []
-            self.execution_policy.mcp = MCPExecutionPolicy()
-        if not self.target and self.targets:
-            primary = self.targets[0]
-            self.target = primary.url or primary.uri or primary.label
-        self.scope = list(dict.fromkeys(item.strip() for item in self.scope if item.strip()))
-        if not self.scope:
-            self.scope = list(self.execution_policy.network.allowed_scopes)
-        self.mcp_servers = list(dict.fromkeys(item.strip() for item in self.mcp_servers if item.strip()))
-        self.mcp_direct_tools = list(dict.fromkeys(item.strip() for item in self.mcp_direct_tools if item.strip()))
-        if not self.mcp_servers:
-            self.mcp_servers = list(self.execution_policy.mcp.enabled_servers)
-        if not self.mcp_direct_tools:
-            self.mcp_direct_tools = list(self.execution_policy.mcp.enabled_tools)
-        if self.schema_version == 3 and set(self.mcp_servers) != set(self.execution_policy.mcp.enabled_servers):
-            raise ValueError("mcp_servers must match execution_policy.mcp.enabled_servers")
-        if self.schema_version == 3 and set(self.mcp_direct_tools) != set(self.execution_policy.mcp.enabled_tools):
-            raise ValueError("mcp_direct_tools must match execution_policy.mcp.enabled_tools")
-        if any(not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", item) for item in self.mcp_servers):
-            raise ValueError("mcp_servers contains an invalid server id")
-        if any(not re.fullmatch(r"mcp__[A-Za-z0-9_-]{1,59}", item) for item in self.mcp_direct_tools):
-            raise ValueError("mcp_direct_tools must contain discovered provider names")
-        if not self.scope and self.target:
-            # Non-network inputs never become network authorization. Legacy
-            # URL tasks already received exact scopes in migration above.
-            parsed_target = urlparse(self.target)
-            if parsed_target.scheme in {"http", "https"} and parsed_target.netloc:
-                self.scope = [f"{parsed_target.scheme}://{parsed_target.netloc}"]
-                self.execution_policy.network.allowed_scopes = list(self.scope)
+            raise ValueError("execution_policy is required")
+        self.execution_policy.network.seed_origins = _canonical_http_origins(
+            self.execution_policy.network.seed_origins,
+            field_name="seed_origins",
+        )
+        self.execution_policy.network.custom_origins = _canonical_http_origins(
+            self.execution_policy.network.custom_origins,
+            field_name="custom_origins",
+        )
+        domains: list[str] = []
+        for value in self.execution_policy.network.custom_domains:
+            domain = value.strip().casefold().rstrip(".")
+            candidate = domain[2:] if domain.startswith("*.") else domain
+            if not candidate or "://" in domain or "/" in domain or " " in domain:
+                raise ValueError(f"invalid custom domain rule: {value}")
+            if domain not in domains:
+                domains.append(domain)
+        self.execution_policy.network.custom_domains = domains
+        cidrs: list[str] = []
+        for value in self.execution_policy.network.custom_cidrs:
+            try:
+                cidr = str(ipaddress.ip_network(value.strip(), strict=False))
+            except ValueError as exc:
+                raise ValueError(f"invalid custom CIDR rule: {value}") from exc
+            if cidr not in cidrs:
+                cidrs.append(cidr)
+        self.execution_policy.network.custom_cidrs = cidrs
+        if self.task_entry_url:
+            parsed_entry = urlparse(self.task_entry_url)
+            if parsed_entry.scheme not in {"http", "https"} or not parsed_entry.netloc or parsed_entry.username or parsed_entry.password:
+                raise ValueError("task_entry_url must be an absolute HTTP(S) URL without credentials")
         if self.flag_format:
             if len(self.flag_format) > 256:
                 raise ValueError("flag_format exceeds 256 characters")
@@ -607,41 +464,27 @@ class TGATask(BaseModel):
                 raise ValueError(f"invalid flag_format: {exc}") from exc
         if self.mode == "ctf" and isinstance(self.mode_config, CtfModeConfig):
             self.flag_format = self.mode_config.flag_format
-        target_origin = next((_https_origin(item.url or "") for item in self.targets if item.kind == "url" and _https_origin(item.url or "")), None)
-        from tga.core.scope import is_in_scope
-
+        target_origin = _https_origin(self.task_entry_url or "")
         canonical_origins: list[str] = []
         for value in self.insecure_tls_origins:
             origin = _https_origin(value)
             if origin is None or origin != target_origin:
                 raise ValueError("insecure_tls_origins may contain only the exact HTTPS target origin")
-            if not is_in_scope(origin, self.scope):
-                raise ValueError("insecure_tls_origins must be inside task scope")
             if origin not in canonical_origins:
                 canonical_origins.append(origin)
         self.insecure_tls_origins = canonical_origins
         return self
 
     def input_manifest(self) -> dict[str, Any]:
-        if self.schema_version >= 4:
-            return {
-                "task_goal": self.goal,
-                "hint_text": self.session_input.hint.text,
-                "task_files": [item.manifest_item() for item in self.session_input.task_files],
-                "hint_files": [item.manifest_item() for item in self.session_input.hint.files],
-            }
         return {
             "task_goal": self.goal,
-            "inputs": [item.manifest_item() for item in [*self.targets, *self.hints]],
+            "prompt": self.session_input.prompt,
+            "files": [item.manifest_item() for item in self.session_input.files],
+            "task_entry_url": self.task_entry_url,
         }
 
-    def primary_target(self, *, kind: ResourceKind | None = None) -> ResourceRef | None:
-        return next((item for item in self.targets if kind is None or item.kind == kind), None)
-
     def default_action_target(self) -> str:
-        preferred = next((item for item in self.targets if item.kind in {"url", "network"}), None)
-        preferred = preferred or (self.targets[0] if self.targets else None)
-        return (preferred.url or preferred.uri or preferred.id) if preferred else self.id
+        return self.task_entry_url or self.id
 
 
 def _https_origin(value: str) -> str | None:
@@ -653,6 +496,29 @@ def _https_origin(value: str) -> str | None:
     host = parsed.hostname.lower()
     port = parsed.port
     return f"https://{host}" if port in {None, 443} else f"https://{host}:{port}"
+
+
+def _canonical_http_origins(values: list[str], *, field_name: str) -> list[str]:
+    origins: list[str] = []
+    for value in values:
+        parsed = urlparse(value.strip())
+        if (
+            parsed.scheme not in {"http", "https"}
+            or not parsed.hostname
+            or parsed.username
+            or parsed.password
+            or parsed.path not in {"", "/"}
+            or parsed.params
+            or parsed.query
+            or parsed.fragment
+        ):
+            raise ValueError(f"{field_name} must contain absolute HTTP(S) origins without credentials or paths")
+        host = parsed.hostname.lower()
+        default_port = 80 if parsed.scheme == "http" else 443
+        origin = f"{parsed.scheme.lower()}://{host}" if parsed.port in {None, default_port} else f"{parsed.scheme.lower()}://{host}:{parsed.port}"
+        if origin not in origins:
+            origins.append(origin)
+    return origins
 
 
 class Intent(BaseModel):
@@ -740,24 +606,6 @@ class SolverRecord(BaseModel):
     parent_solver_id: str | None = None
     started_at: str | None = None
     finished_at: str | None = None
-
-
-class Hypothesis(BaseModel):
-    id: str
-    task_id: str
-    statement: str
-    attack_class: str
-    entry_point: str
-    rationale: str
-    next_test: str
-    status: HypothesisStatus = "pending"
-    confidence: float = Field(ge=0, le=1)
-    attempt_count: int = 0
-    evidence_artifact_ids: list[str] = Field(default_factory=list)
-    last_result: str = ""
-    owner_solver_id: str | None = None
-    created_at: str
-    updated_at: str
 
 
 class MemoryEntry(BaseModel):
@@ -862,13 +710,27 @@ class ContextMetric(BaseModel):
     created_at: str
 
 
+class ActionEffect(BaseModel):
+    """User-reviewable description of an Action's possible side effect."""
+
+    model_config = {"extra": "forbid"}
+
+    scope: Literal["none", "session", "workspace", "target"] = "none"
+    persistence: Literal["none", "temporary", "persistent"] = "none"
+    reversibility: Literal["not_applicable", "reversible", "uncertain", "irreversible"] = "not_applicable"
+    category: Literal[
+        "authentication", "submission", "file_write", "resource_create",
+        "resource_modify", "resource_delete", "containment", "destructive_scan",
+    ] = "submission"
+    description: str = Field(default="No persistent side effect is declared.", min_length=1, max_length=500)
+
+
 class ActionSpec(BaseModel):
     """The sole request shape accepted by a controlled executor (A -> B)."""
 
     id: str
     task_id: str
     solver_id: str
-    hypothesis_id: str | None = None
     kind: ActionKind
     capability: str
     target: str
@@ -880,7 +742,7 @@ class ActionSpec(BaseModel):
     expected_outcome: str = ""
     retry_reason: str = ""
     alternative_analysis: str = ""
-    expected_side_effects: str = ""
+    effect: ActionEffect = Field(default_factory=ActionEffect)
     input_id: str | None = None
     target_ref: str | None = None
     actual_target: str | None = None
@@ -930,85 +792,3 @@ class ChallengeContract(BaseModel):
     completion_proof_artifact_id: str | None = None
     status_reason: str = ""
     solved_at: str | None = None
-
-
-class HypothesisDraft(BaseModel):
-    model_config = {"extra": "forbid"}
-
-    statement: str = Field(min_length=1)
-    attack_class: str = Field(min_length=1)
-    entry_point: str = Field(min_length=1)
-    rationale: str = Field(min_length=1)
-    next_test: str = Field(min_length=1)
-    confidence: float = Field(default=0.5, ge=0, le=1)
-
-
-class HypothesisUpdate(BaseModel):
-    model_config = {"extra": "forbid"}
-
-    hypothesis_id: str
-    status: HypothesisStatus
-    last_result: str = Field(default="", max_length=800)
-    evidence_artifact_ids: list[str] = Field(default_factory=list)
-    decisive: bool = False
-
-
-class FactDraft(BaseModel):
-    model_config = {"extra": "forbid"}
-
-    content: str = Field(min_length=1, max_length=800)
-    artifact_ids: list[str] = Field(default_factory=list)
-
-
-class FailureBoundaryDraft(BaseModel):
-    model_config = {"extra": "forbid"}
-
-    attack_class: str = Field(min_length=1)
-    entry_point: str = Field(min_length=1)
-    summary: str = Field(min_length=1, max_length=800)
-    artifact_ids: list[str] = Field(default_factory=list)
-
-
-class SubagentRequest(BaseModel):
-    """The only context hand-off accepted when Manager starts a child Solver."""
-
-    model_config = {"extra": "forbid"}
-
-    id: str
-    task_id: str
-    parent_solver_id: str
-    role: SolverRole
-    objective: str = Field(min_length=1, max_length=800)
-    hypothesis_ids: list[str] = Field(default_factory=list)
-    input_artifact_ids: list[str] = Field(default_factory=list)
-    skill_names: list[str] = Field(default_factory=list)
-    max_actions: int = Field(default=32, ge=1, le=256)
-
-    @model_validator(mode="after")
-    def child_role_only(self) -> "SubagentRequest":
-        if self.role == "main":
-            raise ValueError("main is the manager-owned coordinator, not a subagent role")
-        return self
-
-
-class SubagentOutput(BaseModel):
-    """Bounded, schema-validated child Solver hand-off."""
-
-    model_config = {"extra": "forbid"}
-
-    request_id: str
-    solver_id: str
-    status: Literal["completed", "blocked", "failed"]
-    hypotheses: list[HypothesisDraft] = Field(default_factory=list, max_length=5)
-    result_updates: list[HypothesisUpdate] = Field(default_factory=list, max_length=8)
-    facts: list[FactDraft] = Field(default_factory=list, max_length=8)
-    failure_boundaries: list[FailureBoundaryDraft] = Field(default_factory=list, max_length=8)
-    candidate_flags: list[str] = Field(default_factory=list, max_length=8)
-    artifact_ids: list[str] = Field(default_factory=list, max_length=32)
-    coverage_gaps: list[str] = Field(default_factory=list, max_length=8)
-    next_recommendation: str = Field(default="", max_length=800)
-
-
-# Compatibility aliases for early consumers of the advanced contract draft.
-HypothesisDraftContract = HypothesisDraft
-HypothesisUpdateContract = HypothesisUpdate

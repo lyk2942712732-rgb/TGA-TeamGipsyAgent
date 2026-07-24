@@ -1,7 +1,7 @@
 import sqlite3
 
 
-API_KEY = "sk-demo-hardcoded-secret"
+API_KEY = "DEMO_HARDCODED_CREDENTIAL"
 
 
 def find_user(name: str):

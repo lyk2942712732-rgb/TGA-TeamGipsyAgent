@@ -8,8 +8,22 @@ from typing import Any
 
 from tga.contracts import TGATask
 from tga.evidence.store import EvidenceStore
+from tga.evidence.database import DatabaseSchemaVersionError
 from tga.reporting.markdown_report import render_markdown_report
 from tga.runtime.protocol import RUNTIME_SCHEMA_VERSION
+
+
+class UnsupportedTaskSchemaError(ValueError):
+    code = "SCHEMA_VERSION_UNSUPPORTED"
+
+    def __init__(self, schema_version: int):
+        super().__init__(f"task schema {schema_version} is not executable; migrate it to schema 5")
+        self.schema_version = schema_version
+
+
+def require_current_task_schema(task: TGATask) -> None:
+    if task.schema_version != 5:
+        raise UnsupportedTaskSchemaError(task.schema_version)
 
 
 class TaskRuntimeService:
@@ -35,11 +49,41 @@ class TaskRuntimeService:
         return candidate
 
     def create_task(self, task: TGATask, *, initial_hint: str | None = None) -> dict[str, Any]:
+        require_current_task_schema(task)
         store = EvidenceStore(self.task_root(task.id) / "evidence.db")
         try:
-            if store.task_snapshot(task.id).get("task"):
+            if store.get_task(task.id) is not None:
                 raise ValueError("task id already exists")
             store.create_task(task)
+            store.append_agent_event(
+                task.id,
+                "TASK_INPUT_ANALYZED",
+                {
+                    "prompt_present": bool(task.session_input.prompt.strip()),
+                    "file_count": len(task.session_input.files),
+                    "task_entry_url": task.task_entry_url,
+                },
+            )
+            store.append_agent_event(
+                task.id,
+                "NETWORK_SEEDS_EXTRACTED",
+                {
+                    "seed_origins": task.execution_policy.network.seed_origins,
+                    "task_entry_url": task.task_entry_url,
+                    "access": task.execution_policy.network.access,
+                },
+            )
+            if task.model_snapshot is not None:
+                store.append_agent_event(
+                    task.id,
+                    "MODEL_CONFIG_SNAPSHOTTED",
+                    {
+                        "provider": task.model_snapshot.provider,
+                        "model": task.model_snapshot.model,
+                        "verification_id": task.model_snapshot.verification_id,
+                        "capability_fingerprint": task.model_snapshot.capability_fingerprint,
+                    },
+                )
         finally:
             store.close()
         result = self.command("start_session", task.id, initial_hint=initial_hint)
@@ -59,18 +103,23 @@ class TaskRuntimeService:
         db_path = self.task_root(task_id) / "evidence.db"
         if not db_path.is_file():
             raise KeyError(f"task not found: {task_id}")
-        store = EvidenceStore(db_path)
+        try:
+            store = EvidenceStore(db_path)
+        except DatabaseSchemaVersionError as exc:
+            raise UnsupportedTaskSchemaError(exc.schema_version) from exc
         try:
             snapshot = store.get_session_snapshot(task_id)
         finally:
             store.close()
         if not snapshot.get("task") or not snapshot.get("session"):
             raise KeyError(f"runtime session not found: {task_id}")
+        require_current_task_schema(TGATask.model_validate(snapshot["task"]))
         snapshot["schema_version"] = RUNTIME_SCHEMA_VERSION
-        snapshot["latest_seq"] = max(
-            (int(item.get("seq") or 0) for item in snapshot.get("agent_events") or []),
-            default=0,
-        )
+        store = EvidenceStore(db_path)
+        try:
+            snapshot["latest_seq"] = store.latest_agent_event_seq(task_id)
+        finally:
+            store.close()
         return snapshot
 
     def events(self, task_id: str, *, after_seq: int = 0, limit: int = 200) -> list[dict[str, Any]]:
@@ -99,12 +148,9 @@ class TaskRuntimeService:
                 continue
             task = snapshot["task"]
             session = snapshot["session"]
-            schema_version = int(task.get("schema_version") or 0)
             session_input = task.get("session_input") or {}
-            task_files = session_input.get("task_files") or session_input.get("taskFiles") or []
-            hint_payload = session_input.get("hint") or {}
-            hint_files = hint_payload.get("files") or []
-            hint_text = str(hint_payload.get("text") or "").strip()
+            input_files = session_input.get("files") or []
+            prompt = str(session_input.get("prompt") or "").strip()
             events = snapshot.get("agent_events") or []
             solvers = snapshot.get("solvers") or []
             latest = events[-1] if events else None
@@ -113,13 +159,13 @@ class TaskRuntimeService:
                 "task_id": child.name,
                 "name": task.get("name") or child.name,
                 "mode": task.get("mode") or "ctf",
-                "target": task.get("target") or "",
+                "task_entry_url": task.get("task_entry_url"),
                 "target_summary": ", ".join(
                     str(item.get("original_name") or item.get("originalName") or item.get("label") or item.get("id"))
-                    for item in (task_files if schema_version >= 4 else task.get("targets") or [])[:3]
+                    for item in input_files[:3]
                 ),
-                "target_count": len(task_files) if schema_version >= 4 else len(task.get("targets") or []),
-                "hint_count": (len(hint_files) + int(bool(hint_text))) if schema_version >= 4 else len(task.get("hints") or []),
+                "target_count": len(input_files),
+                "hint_count": int(bool(prompt)),
                 "created_at": events[0].get("created_at", "") if events else "",
                 "updated_at": latest.get("created_at", "") if latest else "",
                 "status": session.get("status") or "created",

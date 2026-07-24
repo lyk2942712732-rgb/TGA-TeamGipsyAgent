@@ -1,10 +1,10 @@
-# Schema-v4 Session input migration
+# Schema-v5 Session input and execution-policy migration
 
 ## New write contract
 
-`POST /api/v2/tasks` has one product write path. New Sessions use task schema 4
-and accept only staged task files, optional Hint text, Hint attachments, mode
-configuration, and general execution boundaries.
+`POST /api/v2/tasks` has one product write path. New Sessions use task schema 5
+and accept one initial user prompt, one undifferentiated list of staged input
+files, mode configuration, and the four-part execution policy.
 
 ```json
 {
@@ -14,18 +14,17 @@ configuration, and general execution boundaries.
   "goal": "Recover the requested behavior",
   "modeOptions": {"mode": "reverse_engineering"},
   "input": {
-    "taskFileIds": ["asset_<32 hex>"],
-    "hintText": "optional text",
-    "hintFileIds": ["asset_<32 hex>"]
+    "text": "Optional initial task input, URLs, and code fragments",
+    "fileIds": ["asset_<32 hex>"]
   },
   "executionPolicy": {}
 }
 ```
 
 The old `{ "task": TGATask }` creation envelope is not a parallel write path.
-`targetUrls`, references, MCP Resources/Tools, and task/session MCP grants are
-ignored when sent as extra fields and recorded in
-`workspace/state/deprecations.jsonl`.
+`targetUrls`, references, MCP Resources/Tools, task/session MCP grants, and all
+other removed fields are rejected with HTTP 422. The runtime does not normalize,
+ignore, log, or execute removed request fields.
 
 ## Two-stage file lifecycle
 
@@ -46,8 +45,7 @@ same-name overwrite are impossible.
 
 ```text
 runs/<session-id>/workspace/
-  inputs/task/
-  inputs/hints/
+  inputs/files/
   artifacts/
   evidence/
   tool-results/
@@ -56,28 +54,27 @@ runs/<session-id>/workspace/
 
 Original inputs are immutable. Agent tools verify their saved size and SHA-256
 before read, search, view, or materialization. `input_materialize` returns the
-existing `/workspace/inputs/...` path for schema 4; derived content belongs in
+existing `/workspace/inputs/...` path; derived content belongs in
 `/workspace/artifacts`.
 
 ## Additive SQLite migration
 
-Opening an older database applies additive `ALTER TABLE` migrations:
+Opening an older database applies additive `ALTER TABLE` migrations so its
+metadata can be inspected and migrated without destructive rewrites:
 
 - `sessions.schema_version` defaults to 2;
 - `sessions.workspace_path` defaults to an empty string;
 - `sessions.mcp_catalog_version` defaults to an empty string;
-- existing runtime tables/columns continue to receive prior additive upgrades.
+- existing runtime tables/columns continue to receive required additive upgrades.
 
-New schema-v4 rows persist `workspace_path = "workspace"` and the MCP catalog
-version captured at creation. Existing task payloads, URL/reference inputs, MCP
-Resource/Tool records, artifacts, events, and flags are not rewritten.
+New schema-v5 rows persist `workspace_path = "workspace"`, the MCP catalog
+snapshot, normalized network seed origins, and a credential-free model
+snapshot. The live Runtime API and Manager reject every task schema other than
+5 with `SCHEMA_VERSION_UNSUPPORTED`; there is no legacy UI projection,
+execution fallback, or dual write. An operator must run the explicit offline
+v4-to-v5 migration before an old task can execute.
 
-Artifact and input readers select layout by the persisted task schema:
-
-- schema 2/3: historical `runs/<id>/inputs` and `runs/<id>/artifacts`;
-- schema 4: `runs/<id>/workspace/inputs` and `workspace/artifacts`.
-
-## Model context migration
+## Model context
 
 `SessionContextBuilder` produces the first auditable user message with mode,
 Hint, file paths and metadata, MCP creation snapshot, workspace rules, execution
@@ -86,10 +83,11 @@ real bounded image content blocks. Explicit text-only models receive image paths
 and image-analysis/OCR guidance. Large text, archives, and binary inputs are not
 inlined.
 
-## MCP policy migration
+## MCP policy
 
-Task-level MCP ACL fields remain in old task models only for legacy reads. For
-schema 4:
+Task-level MCP ACL fields may remain as inert JSON in an old database selected
+for offline migration. `TGATask` and the live runtime do not parse or authorize
+them. For current Sessions:
 
 - creation snapshots globally configured/enabled services that are discovered
   or not explicitly unavailable;

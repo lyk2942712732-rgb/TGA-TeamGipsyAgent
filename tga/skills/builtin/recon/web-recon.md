@@ -2,7 +2,7 @@
 name: web-recon
 version: "1"
 modes: [ctf, penetration_test]
-capabilities: [http.request, tool.invoke]
+capabilities: [http.request]
 tags: [recon, links, forms, js]
 ---
 # When to use

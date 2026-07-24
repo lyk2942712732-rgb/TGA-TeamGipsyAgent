@@ -8,7 +8,6 @@ def test_registry_exposes_enabled_runtime_capabilities():
 
     assert {
         "http.request",
-        "tool.invoke",
         "workspace.python",
         "artifact.inspect",
     } <= names

@@ -1,11 +1,8 @@
 export const TASK_MODES = ["ctf", "penetration_test", "incident_response", "vulnerability_research", "reverse_engineering"] as const;
 export type TaskMode = typeof TASK_MODES[number];
 
-export const LEGACY_MODE_MAP: Record<string, TaskMode> = {
+export const TASK_MODE_MAP: Record<string, TaskMode> = {
   ctf: "ctf",
-  web_audit: "penetration_test",
-  code_audit: "vulnerability_research",
-  binary_ctf: "reverse_engineering",
   penetration_test: "penetration_test",
   incident_response: "incident_response",
   vulnerability_research: "vulnerability_research",
@@ -21,5 +18,5 @@ export const MODE_PROFILES: Record<TaskMode, { label: string; description: strin
 };
 
 export function normalizeTaskMode(value: unknown): TaskMode {
-  return LEGACY_MODE_MAP[String(value ?? "")] ?? "ctf";
+  return TASK_MODE_MAP[String(value ?? "")] ?? "ctf";
 }

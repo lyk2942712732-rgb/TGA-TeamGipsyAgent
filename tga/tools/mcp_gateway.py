@@ -48,7 +48,7 @@ class MCPGateway:
     def query(self, *, action: str, server: str = "", tool: str = "", query: str = "") -> dict[str, Any]:
         if action == "status":
             status = self.manager.status_snapshot(task=self.task)
-            allowed = self.task.mcp_capabilities.server_ids if self.task.schema_version >= 4 else self.task.mcp_servers
+            allowed = self.task.mcp_capabilities.server_ids
             records = [item for item in status["records"] if item.get("server") in allowed]
             return {"action": action, "catalog_version": self.snapshot.version, "servers": records}
         if action == "list":

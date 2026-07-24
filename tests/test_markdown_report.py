@@ -95,7 +95,7 @@ def test_markdown_report_renders_v2_session_outcome_and_seq_timeline():
             "findings": [], "flags": [], "events": [],
             "session": {"status": "blocked", "turn_count": 3, "max_turns": 48, "stop_reason": "budget"},
             "solvers": [{"id": "solver_1", "role": "main", "status": "waiting"}],
-            "board": {"hypotheses": [{"statement": "login has a testable route", "status": "inconclusive", "attack_class": "web", "entry_point": "/login", "evidence_artifact_ids": ["artifact_1"], "last_result": "Authorization: Bearer secret-value"}]},
+            "runtime": {"memory": [{"id": "memory_1", "kind": "failure_boundary", "content": "Authorization: Bearer secret-value", "artifact_ids": ["artifact_1"], "source": "agent"}], "strategy_cards": []},
             "actions": [{"id": "action_1", "status": "blocked", "capability": "http.request", "target": "http://target/login", "artifact_ids": ["artifact_1"], "summary": "scope boundary"}],
             "agent_events": [{"seq": 2, "type": "ACTION_FINISHED", "payload": {"summary": "scope boundary"}, "created_at": "2026-01-01T00:00:01Z"}, {"seq": 1, "type": "SESSION_STARTED", "payload": {}, "created_at": "2026-01-01T00:00:00Z"}],
         }

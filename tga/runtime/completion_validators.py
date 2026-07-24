@@ -141,15 +141,37 @@ class CTFCompletionValidator(BaseCompletionValidator):
                 "Flag format, placeholder, Artifact content, or provenance validation failed.",
                 ["valid Artifact-backed flag"], artifacts,
             )
+        evidence_id = decision.evidence_artifact_id or ""
+        if evidence_id:
+            existing_values = {str(item["value"]) for item in context.store.list_flags(context.task.id)}
+            if flag not in existing_values:
+                with context.store.transaction():
+                    context.store.add_flag(context.task.id, flag, evidence_id)
+                    context.store.append_agent_event(
+                        context.task.id,
+                        "FLAG_CONFIRMED",
+                        {
+                            "value": flag,
+                            "evidence_artifact_id": evidence_id,
+                            "verification": decision.reason,
+                            "partial": True,
+                        },
+                        solver_id=context.solver_id,
+                    )
         expected = config.expected_flag_count or 1
-        confirmed_count = len(context.store.task_snapshot(context.task.id).get("flags") or [])
+        confirmed_count = len(context.store.list_flags(context.task.id))
         if confirmed_count < expected:
             return rejected(
                 "CTF_EXPECTED_FLAGS_MISSING", "Not all expected flags have been verified.",
                 [f"{expected - confirmed_count} additional verified flag(s)"], artifacts,
                 details={"expected_flag_count": expected, "confirmed_flag_count": confirmed_count},
             )
-        return accepted("CTF_FLAG_VERIFIED", "Artifact-backed flag verified.", [decision.evidence_artifact_id] if decision.evidence_artifact_id else [])
+        return accepted(
+            "CTF_FLAG_VERIFIED",
+            "Artifact-backed flag verified.",
+            [evidence_id] if evidence_id else [],
+            details={"verification": decision.reason, "flag": flag, "confirmed_flag_count": confirmed_count},
+        )
 
 
 class PenetrationTestCompletionValidator(BaseCompletionValidator):
@@ -162,8 +184,8 @@ class PenetrationTestCompletionValidator(BaseCompletionValidator):
         if unsupported:
             missing.append("evidence for claimed findings/impact: " + ", ".join(unsupported))
         confirmed_without_evidence = [
-            str(item.get("id")) for item in (context.store.task_snapshot(context.task.id).get("findings") or [])
-            if item.get("status") == "confirmed" and not item.get("evidence_artifact_id")
+            item.id for item in context.store.list_findings(context.task.id)
+            if item.status == "confirmed" and not item.evidence_artifact_id
         ]
         if confirmed_without_evidence:
             missing.append("evidence for confirmed Findings")

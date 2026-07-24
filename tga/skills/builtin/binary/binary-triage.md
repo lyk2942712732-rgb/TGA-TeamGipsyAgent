@@ -2,7 +2,7 @@
 name: binary-triage
 version: "1"
 modes: [reverse_engineering, ctf]
-capabilities: [workspace.read, workspace.python, tool.invoke]
+capabilities: [workspace.read, workspace.python]
 tags: [binary, strings, metadata]
 ---
 # When to use

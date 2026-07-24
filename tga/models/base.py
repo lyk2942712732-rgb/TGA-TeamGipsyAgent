@@ -22,8 +22,8 @@ class ModelResponse:
 class ModelClient(Protocol):
     model: str
 
-    def chat(self, messages: list[ModelMessage], *, temperature: float = 0.2) -> ModelResponse:
+    def chat(self, messages: list[ModelMessage], *, temperature: float | None = None) -> ModelResponse:
         """Send chat messages and return a normalized model response."""
 
-    def chat_stream(self, messages: list[ModelMessage], *, temperature: float = 0.2) -> Iterable[str]:
+    def chat_stream(self, messages: list[ModelMessage], *, temperature: float | None = None) -> Iterable[str]:
         """Send chat messages and yield incremental text chunks when supported."""

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import sys
+import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -13,7 +15,8 @@ from tga.tools.mcp_policy import validate_json_schema
 from tga.tools.mcp_registry import provider_tool_name
 from tga.tools.mcp_registry import MCPToolRoute
 from tga.tools.mcp_registry import MCPDiscoveredTool, MCPServerDiscovery, build_catalog_snapshot
-from tga.tools.mcp_transport import build_stdio_command, build_transport
+from tga.tools.mcp_transport import StdioTransport, build_stdio_command, build_transport
+from tests.runtime_fixtures import mcp_policy, mcp_snapshot
 
 
 def _config(tmp_path: Path, *, max_inline: int = 32000, max_artifact: int = 1024 * 1024) -> Path:
@@ -25,8 +28,12 @@ def _config(tmp_path: Path, *, max_inline: int = 32000, max_artifact: int = 1024
                 "version": 1,
                 "servers": {
                     "fixture": {
-                        "command": sys.executable,
-                        "args": [str(fixture)],
+                        "transport": "stdio",
+                        "stdio": {
+                            "source": "local_process",
+                            "command": sys.executable,
+                            "args": [str(fixture)],
+                        },
                         "maxInlineChars": max_inline,
                         "maxArtifactBytes": max_artifact,
                         "visibility": {"risk": "passive"},
@@ -39,15 +46,15 @@ def _config(tmp_path: Path, *, max_inline: int = 32000, max_artifact: int = 1024
     return path
 
 
-def _task(server: str = "fixture") -> TGATask:
+def _task(snapshot, server: str = "fixture", *, mode: str = "ctf") -> TGATask:
     return TGATask(
         id="task_dynamic",
         name="dynamic",
-        mode="ctf",
-        target="http://127.0.0.1",
+        mode=mode,
+        task_entry_url="http://127.0.0.1/",
         goal="test",
-        allow_active_scan=False,
-        mcp_servers=[server],
+        execution_policy=mcp_policy(server),
+        mcp_capabilities=mcp_snapshot(snapshot, server),
     )
 
 
@@ -59,38 +66,41 @@ def _schema_v4_task(snapshot, *, task_id: str = "task_v4") -> TGATask:
         goal="test MCP lifecycle",
         mode_config={"mode": "incident_response"},
         execution_policy=ExecutionPolicy(),
-        session_input={"hint": {"text": "inspect"}},
+        session_input={"prompt": "inspect", "files": []},
         mcp_capabilities=MCPCapabilitySnapshot(
             catalog_version=snapshot.version,
             server_ids=sorted({item.server_id for item in snapshot.servers if item.status == "discovered"}),
             tools=[MCPCapabilityTool(**route.model_dump(mode="json")) for route in snapshot.routes],
         ),
-        schema_version=4,
+        schema_version=5,
     )
 
 
 def test_config_rejects_duplicate_servers_and_invalid_name(tmp_path: Path) -> None:
     duplicate = tmp_path / "duplicate.json"
-    duplicate.write_text('{"version":1,"servers":{"a":{"command":"x"},"a":{"command":"y"}}}', encoding="utf-8")
+    duplicate.write_text('{"version":1,"servers":{"a":{"transport":"stdio","stdio":{"source":"local_process","command":"x"}},"a":{"transport":"stdio","stdio":{"source":"local_process","command":"y"}}}}', encoding="utf-8")
     with pytest.raises(ValueError, match="duplicate JSON key"):
         load_mcp_config(duplicate)
     invalid = tmp_path / "invalid.json"
-    invalid.write_text('{"version":1,"servers":{"bad name":{"command":"x"}}}', encoding="utf-8")
+    invalid.write_text('{"version":1,"servers":{"bad name":{"transport":"stdio","stdio":{"source":"local_process","command":"x"}}}}', encoding="utf-8")
     with pytest.raises(ValueError, match="invalid MCP server name"):
         load_mcp_config(invalid)
 
 
-def test_legacy_mcp_modes_are_normalized_and_filter_current_tasks(tmp_path: Path) -> None:
+def test_mcp_modes_reject_removed_aliases_and_filter_current_tasks(tmp_path: Path) -> None:
     path = _config(tmp_path)
     payload = json.loads(path.read_text(encoding="utf-8"))
     payload["servers"]["fixture"]["visibility"]["modes"] = ["web_audit", "binary_ctf"]
     path.write_text(json.dumps(payload), encoding="utf-8")
-    config, _ = load_mcp_config(path)
-    assert config.servers["fixture"].visibility.modes == ["penetration_test", "reverse_engineering"]
+    with pytest.raises(ValueError, match="unsupported task mode"):
+        load_mcp_config(path)
+
+    payload["servers"]["fixture"]["visibility"]["modes"] = ["penetration_test", "reverse_engineering"]
+    path.write_text(json.dumps(payload), encoding="utf-8")
     manager = MCPManager(config_path=path, cache_path=tmp_path / "cache.json")
     manager.refresh()
-    allowed = _task().model_copy(update={"mode": "penetration_test"})
-    denied = _task().model_copy(update={"mode": "incident_response"})
+    allowed = _task(manager.snapshot, mode="penetration_test")
+    denied = _task(manager.snapshot, mode="incident_response")
     assert manager.snapshot_for_task(allowed).route("mcp__fixture__echo") is not None
     assert manager.snapshot_for_task(denied).route("mcp__fixture__echo") is None
 
@@ -102,11 +112,11 @@ def test_dynamic_initialize_list_and_call(tmp_path: Path) -> None:
         "mcp__fixture__echo",
         "mcp__fixture__large_result",
     ]
-    snapshot = manager.snapshot_for_task(_task())
+    snapshot = manager.snapshot_for_task(_task(discovered))
     route = snapshot.route("mcp__fixture__echo")
     assert route is not None
     outcome = manager.call_tool(
-        task=_task(), route=route, arguments={"text": "done"}, catalog_version=snapshot.version
+        task=_task(discovered), route=route, arguments={"text": "done"}, catalog_version=snapshot.version
     )
     assert outcome.ok
     assert outcome.content == [{"type": "text", "text": "done"}]
@@ -122,7 +132,7 @@ def test_ensure_catalog_reloads_when_mcp_config_changes(tmp_path: Path) -> None:
 
     fixture = Path(__file__).parent / "fixtures" / "fake_mcp_server.py"
     path.write_text(
-        json.dumps({"version": 1, "servers": {"fixture": {"command": sys.executable, "args": [str(fixture)]}}}),
+        json.dumps({"version": 1, "servers": {"fixture": {"transport": "stdio", "stdio": {"source": "local_process", "command": sys.executable, "args": [str(fixture)]}}}}),
         encoding="utf-8",
     )
 
@@ -175,7 +185,7 @@ def test_invalid_arguments_do_not_start_call(tmp_path: Path) -> None:
     snapshot = manager.refresh()
     route = snapshot.route("mcp__fixture__echo")
     assert route is not None
-    outcome = manager.call_tool(task=_task(), route=route, arguments={}, catalog_version=snapshot.version)
+    outcome = manager.call_tool(task=_task(snapshot), route=route, arguments={}, catalog_version=snapshot.version)
     assert not outcome.ok
     assert outcome.error and outcome.error.code == "INVALID_ARGUMENTS"
     assert outcome.timings == {}
@@ -185,7 +195,7 @@ def test_forged_undiscovered_method_is_rejected(tmp_path: Path) -> None:
     manager = MCPManager(config_path=_config(tmp_path), cache_path=tmp_path / "cache.json")
     snapshot = manager.refresh()
     route = MCPToolRoute(provider_name="mcp__fixture__not_real", server_id="fixture", method="not_real", input_schema={"type": "object"})
-    outcome = manager.call_tool(task=_task("fail"), route=route, arguments={}, catalog_version=snapshot.version)
+    outcome = manager.call_tool(task=_task(snapshot, "fail"), route=route, arguments={}, catalog_version=snapshot.version)
     assert not outcome.ok
     assert outcome.error and outcome.error.code == "TOOL_NOT_VISIBLE"
     assert outcome.timings == {}
@@ -194,7 +204,7 @@ def test_forged_undiscovered_method_is_rejected(tmp_path: Path) -> None:
 def test_one_discovery_failure_does_not_hide_healthy_server(tmp_path: Path) -> None:
     path = _config(tmp_path)
     payload = json.loads(path.read_text(encoding="utf-8"))
-    payload["servers"]["broken"] = {"command": str(tmp_path / "definitely-missing"), "visibility": {"risk": "passive"}}
+    payload["servers"]["broken"] = {"transport": "stdio", "stdio": {"source": "local_process", "command": str(tmp_path / "definitely-missing")}, "visibility": {"risk": "passive"}}
     path.write_text(json.dumps(payload), encoding="utf-8")
     manager = MCPManager(config_path=path, cache_path=tmp_path / "cache.json")
     snapshot = manager.refresh()
@@ -225,7 +235,7 @@ def test_method_policy_adds_host_side_argument_constraints(tmp_path: Path) -> No
     snapshot = manager.refresh()
     route = snapshot.route("mcp__fixture__echo")
     assert route is not None
-    outcome = manager.call_tool(task=_task(), route=route, arguments={"text": "too long"}, catalog_version=snapshot.version)
+    outcome = manager.call_tool(task=_task(snapshot), route=route, arguments={"text": "too long"}, catalog_version=snapshot.version)
     assert not outcome.ok
     assert outcome.error and outcome.error.code == "INVALID_ARGUMENTS"
 
@@ -239,8 +249,8 @@ def test_server_rate_limit_is_enforced(tmp_path: Path) -> None:
     snapshot = manager.refresh()
     route = snapshot.route("mcp__fixture__echo")
     assert route is not None
-    first = manager.call_tool(task=_task(), route=route, arguments={"text": "one"}, catalog_version=snapshot.version)
-    second = manager.call_tool(task=_task(), route=route, arguments={"text": "two"}, catalog_version=snapshot.version)
+    first = manager.call_tool(task=_task(snapshot), route=route, arguments={"text": "one"}, catalog_version=snapshot.version)
+    second = manager.call_tool(task=_task(snapshot), route=route, arguments={"text": "two"}, catalog_version=snapshot.version)
     assert first.ok
     assert not second.ok
     assert second.error and second.error.code == "POLICY_DENIED" and second.error.phase == "rate_limit"
@@ -284,7 +294,7 @@ def test_schema_validator_resolves_local_refs_and_composition() -> None:
 def test_docker_command_includes_resource_controls(tmp_path: Path) -> None:
     path = tmp_path / "docker.json"
     path.write_text(
-        json.dumps({"version": 1, "servers": {"safe": {"command": "docker", "args": ["run", "--rm", "-i", "image:latest"]}}}),
+        json.dumps({"version": 1, "servers": {"safe": {"transport": "stdio", "stdio": {"source": "docker_image", "image": "image:latest"}}}}),
         encoding="utf-8",
     )
     config, _ = load_mcp_config(path)
@@ -297,7 +307,7 @@ def test_docker_command_includes_resource_controls(tmp_path: Path) -> None:
 def test_docker_task_call_automatically_mounts_workspace_with_writable_artifacts(tmp_path: Path) -> None:
     path = tmp_path / "docker.json"
     path.write_text(
-        json.dumps({"version": 1, "servers": {"safe": {"command": "docker", "args": ["run", "--rm", "-i", "image:latest"]}}}),
+        json.dumps({"version": 1, "servers": {"safe": {"transport": "stdio", "stdio": {"source": "docker_image", "image": "image:latest"}}}}),
         encoding="utf-8",
     )
     workspace = tmp_path / "solver"
@@ -318,7 +328,7 @@ def test_workspace_status_distinguishes_local_docker_and_remote_http(tmp_path: P
     path.write_text(json.dumps({
         "version": 1,
         "servers": {
-            "docker": {"command": "docker", "args": ["run", "--rm", "-i", "image:latest"], "enabled": False},
+            "docker": {"transport": "stdio", "stdio": {"source": "docker_image", "image": "image:latest"}, "enabled": False},
             "remote": {
                 "enabled": False,
                 "transport": "streamable_http",
@@ -348,7 +358,7 @@ def test_protocol_and_process_failures_are_classified(tmp_path: Path, mode: str,
     fixture = Path(__file__).parent / "fixtures" / "failing_mcp_server.py"
     path = tmp_path / "fail.json"
     path.write_text(
-        json.dumps({"version": 1, "servers": {"fail": {"command": sys.executable, "args": [str(fixture), mode], "timeoutSeconds": 1, "toolTimeoutSeconds": 1, "visibility": {"risk": "passive"}}}}),
+        json.dumps({"version": 1, "servers": {"fail": {"transport": "stdio", "stdio": {"source": "local_process", "command": sys.executable, "args": [str(fixture), mode]}, "timeoutSeconds": 1, "toolTimeoutSeconds": 1, "visibility": {"risk": "passive"}}}}),
         encoding="utf-8",
     )
     manager = MCPManager(config_path=path, cache_path=tmp_path / "cache.json")
@@ -360,7 +370,7 @@ def test_protocol_and_process_failures_are_classified(tmp_path: Path, mode: str,
     manager.config, _ = load_mcp_config(path)
     manager.snapshot = snapshot
     manager._catalog_versions[snapshot.version] = snapshot
-    outcome = manager.call_tool(task=_task("fail"), route=route, arguments={}, catalog_version=snapshot.version)
+    outcome = manager.call_tool(task=_task(snapshot, "fail"), route=route, arguments={}, catalog_version=snapshot.version)
     assert not outcome.ok
     assert outcome.error and outcome.error.code == expected
     assert outcome.error.phase in {"initialize", "transport_start"}
@@ -369,7 +379,7 @@ def test_protocol_and_process_failures_are_classified(tmp_path: Path, mode: str,
 def test_transport_close_leaves_no_child_process(tmp_path: Path) -> None:
     path = tmp_path / "cleanup.json"
     path.write_text(
-        json.dumps({"version": 1, "servers": {"sleep": {"command": sys.executable, "args": ["-c", "import time; time.sleep(30)"], "visibility": {"risk": "passive"}}}}),
+        json.dumps({"version": 1, "servers": {"sleep": {"transport": "stdio", "stdio": {"source": "local_process", "command": sys.executable, "args": ["-c", "import time; time.sleep(30)"]}, "visibility": {"risk": "passive"}}}}),
         encoding="utf-8",
     )
     config, _ = load_mcp_config(path)
@@ -379,3 +389,36 @@ def test_transport_close_leaves_no_child_process(tmp_path: Path) -> None:
     assert process is not None and process.poll() is None
     transport.close()
     assert process.poll() is not None
+
+
+def test_transport_close_tolerates_concurrent_reader_capture() -> None:
+    transport = StdioTransport([sys.executable], environment={}, max_capture_bytes=4096)
+    ready = threading.Barrier(3)
+    stop = threading.Event()
+    failures: list[BaseException] = []
+
+    def capture(name: str) -> None:
+        ready.wait()
+        while not stop.is_set():
+            try:
+                transport._capture(name, "reader output\n")
+            except BaseException as exc:  # pragma: no cover - assertion captures the race
+                failures.append(exc)
+                return
+
+    threads = [
+        threading.Thread(target=capture, args=("stdout",)),
+        threading.Thread(target=capture, args=("stderr",)),
+    ]
+    for thread in threads:
+        thread.start()
+    ready.wait()
+
+    transport.close()
+    time.sleep(0.01)
+    stop.set()
+    for thread in threads:
+        thread.join(timeout=1)
+
+    assert not failures
+    assert all(not thread.is_alive() for thread in threads)

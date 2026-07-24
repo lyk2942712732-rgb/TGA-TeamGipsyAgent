@@ -3,6 +3,7 @@ import json
 import pytest
 
 from tga.contracts import TGATask
+from tests.runtime_fixtures import execution_policy
 from tga.evidence.store import EvidenceStore, utc_now
 
 
@@ -11,19 +12,20 @@ def test_task_model_parses():
         id="task_1",
         name="demo",
         mode="ctf",
-        target="http://127.0.0.1:8080",
-        scope=["127.0.0.1:8080"],
+        task_entry_url="http://127.0.0.1:8080/",
+        execution_policy=execution_policy(["127.0.0.1:8080"]),
         goal="solve",
         flag_format=r"flag\{[^}]+\}",
     )
     assert task.mode == "ctf"
 
 
-def test_legacy_persisted_task_is_read_with_new_mode_and_without_non_ctf_flag(tmp_path):
+def test_current_persisted_task_is_read_without_mutation(tmp_path):
     store = EvidenceStore(tmp_path / "evidence.db")
     payload = {
-        "id": "legacy_db", "name": "legacy", "mode": "code_audit",
-        "target": "./source", "goal": "audit", "flag_format": r"FLAG\{.*\}",
+        "id": "current_db", "name": "current", "mode": "vulnerability_research",
+        "task_entry_url": None, "goal": "audit", "mode_config": {"mode": "vulnerability_research"},
+        "execution_policy": {}, "schema_version": 5,
     }
     store.conn.execute(
         "INSERT INTO tasks(id, payload_json, created_at) VALUES (?, ?, ?)",
@@ -36,46 +38,50 @@ def test_legacy_persisted_task_is_read_with_new_mode_and_without_non_ctf_flag(tm
     store.close()
 
 
-def test_task_model_trims_target_and_scope() -> None:
+def test_task_model_normalizes_network_seeds() -> None:
     task = TGATask(
         id="task_trim", name="trim", mode="ctf",
-        target="  https://challenge.example/path  ",
-        scope=["  https://challenge.example  ", "https://challenge.example"],
+        task_entry_url="https://challenge.example/path",
+        execution_policy=execution_policy(["https://challenge.example", "https://challenge.example"]),
         goal="solve",
     )
 
-    assert task.target == "https://challenge.example/path"
-    assert task.scope == ["https://challenge.example"]
+    assert task.task_entry_url == "https://challenge.example/path"
+    assert task.execution_policy.network.seed_origins == ["https://challenge.example"]
 
 
-def test_penetration_test_derives_compatibility_scope_from_target():
-    task = TGATask(
-        id="task_1",
-        name="audit",
-        mode="penetration_test",
-        target="http://127.0.0.1:8080/path",
-        goal="audit",
-    )
-    assert task.scope == ["http://127.0.0.1:8080"]
+def test_legacy_target_and_scope_are_rejected() -> None:
+    with pytest.raises(ValueError, match="Extra inputs"):
+        TGATask(id="task_1", name="audit", mode="penetration_test", target="http://127.0.0.1:8080/path", goal="audit")
 
 
-def test_ctf_derives_scope_and_tls_exception_is_exact_target_origin():
+def test_custom_origins_must_be_canonical_http_origins() -> None:
+    with pytest.raises(ValueError, match="custom_origins must contain absolute HTTP\(S\) origins"):
+        TGATask(
+            id="custom_origin", name="custom", mode="ctf", goal="solve",
+            execution_policy={"preset": "custom", "network": {
+                "access": "custom", "custom_origins": ["not an origin"],
+            }},
+        )
+
+
+def test_ctf_tls_exception_requires_an_exact_explicit_target_origin():
     derived = TGATask(
-        id="task_1", name="ctf", mode="ctf", target="https://challenge.example",
+        id="task_1", name="ctf", mode="ctf", task_entry_url="https://challenge.example",
         goal="solve",
     )
-    assert derived.scope == ["https://challenge.example"]
+    assert derived.task_entry_url == "https://challenge.example"
     task = TGATask(
-        id="task_2", name="ctf", mode="ctf", target="https://challenge.example/",
-        scope=["challenge.example"], goal="solve",
+        id="task_2", name="ctf", mode="ctf", task_entry_url="https://challenge.example/",
+        goal="solve", execution_policy=execution_policy(["challenge.example"]),
         insecure_tls_origins=["https://challenge.example"],
     )
     assert task.insecure_tls_origins == ["https://challenge.example"]
 
     with pytest.raises(ValueError, match="exact HTTPS target origin"):
         TGATask(
-            id="task_3", name="ctf", mode="ctf", target="https://challenge.example",
-            scope=["challenge.example"], goal="solve",
+            id="task_3", name="ctf", mode="ctf", task_entry_url="https://challenge.example",
+            goal="solve", execution_policy=execution_policy(["challenge.example"]),
             insecure_tls_origins=["https://other.example"],
         )
 

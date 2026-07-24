@@ -3,40 +3,53 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { SessionRuntimePage, redact } from "./SessionRuntimePage";
 import type { RuntimeSnapshot } from "../runtime/event-types";
 
-const sessionRuntime = vi.fn();
 const control = vi.fn();
-vi.mock("../runtime/session-store", () => ({ useSessionRuntime: (...args: unknown[]) => sessionRuntime(...args) }));
-vi.mock("../runtime/api-v2", () => ({ runtimeApi: { control: (...args: unknown[]) => control(...args), hint: vi.fn(), reportUrl: () => "/report", artifactUrl: () => "/artifact" } }));
-vi.mock("../components/runtime/ResizableWorkspace", () => ({ ResizableWorkspace: ({ board, timeline, evidence }: { board: React.ReactNode; timeline: React.ReactNode; evidence: React.ReactNode }) => <>{board}{timeline}{evidence}</> }));
+const useSessionRuntime = vi.fn();
+vi.mock("../api/runtime", () => ({ runtimeApi: { control: (...args: unknown[]) => control(...args), hint: vi.fn(), reportUrl: () => "/report", artifactUrl: (_task: string, id: string) => `/artifact/${id}` } }));
+vi.mock("../runtime/session-store", () => ({ useSessionRuntime: (...args: unknown[]) => useSessionRuntime(...args) }));
 
-function fixture(): RuntimeSnapshot {
-  return { task: { id: "task_1", name: "Web CTF", mode: "ctf", target: "http://target", scope: ["target"] }, session: { status: "running", turn_count: 1, max_turns: 48 }, solvers: [], challenge: { status: "active", status_reason: "" }, subagents: [], board: { hypotheses: [{ id: "hyp_1", statement: "入口可能可达", attack_class: "recon", entry_point: "/", rationale: "观察到入口", next_test: "请求首页", status: "rejected", confidence: 0.4, attempt_count: 1, evidence_artifact_ids: [], last_result: "首页不包含交互入口" }], memory: [] }, actions: [{ id: "act_1", capability: "http.request", target: "http://target", status: "succeeded", rationale: "验证入口", summary: "真实执行结果", artifact_ids: [] }], flags: [], findings: [], artifacts: [], events: [{ id: "evt_1", task_id: "task_1", seq: 1, type: "ACTION_PROPOSED", payload: { action_id: "act_1", capability: "http.request", target: "http://target" }, created_at: "2026-07-13T00:00:00Z" }, { id: "evt_2", task_id: "task_1", seq: 2, type: "ACTION_FINISHED", payload: { action_id: "act_1", status: "succeeded", summary: "真实执行结果" }, created_at: "2026-07-13T00:00:01Z" }, { id: "evt_3", task_id: "task_1", seq: 3, type: "FLAG_CONFIRMED", payload: { value: "flag{unproven}" }, created_at: "2026-07-13T00:00:02Z" }], latest_seq: 3 };
-}
+const snapshot = (): RuntimeSnapshot => ({
+  task: { id: "task", name: "本地证据任务", mode: "ctf", prompt: "读取本地证据", files: [] },
+  session: { status: "completed", turn_count: 2, max_turns: 8, stop_reason: "finish_accepted", started_at: "2026-07-23T00:00:00Z", finished_at: "2026-07-23T00:00:04Z" },
+  solvers: [{ id: "agent", role: "main", status: "completed", model_name: "provider-model" }], challenge: { status: "solved", status_reason: "" },
+  runtime: { memory: [], strategy_cards: [{ id: "card", task_id: "task", title: "读取任务输入", summary: "从输入读取目标值", claims: [], prerequisites: [], target_version_checks: [], status: "succeeded", active_step_id: null, sources: [], steps: [{ id: "step", title: "读取输入", instructions: "", expected_request: "input_read", success_marker: "artifact", failure_conditions: [], risk: "passive", status: "succeeded", action_ids: ["action"], evidence_artifact_ids: ["artifact"], last_result: "读取成功" }] }] },
+  actions: [{ id: "action", capability: "input_read", target: "input", status: "succeeded", risk: "passive", strategy_card_id: "card", strategy_step_id: "step", rationale: "读取用户提供的本地文件", expected_outcome: "生成任务证据", artifact_ids: ["artifact"], authorization: { allowed: true }, summary: "读取成功" }],
+  flags: [{ value: "CTF{verified}", evidence_artifact_id: "artifact" }], findings: [], artifacts: [{ id: "artifact", kind: "tool_output", path: "artifact.txt", sha256: "1234567890abcdef1234", tool: "input_read", target: "input", provenance: { source: "user_upload" } }],
+  events: [
+    { id: "1", task_id: "task", seq: 1, type: "MESSAGE_START", payload: { turn: 1 }, created_at: "2026-07-23T00:00:01Z" },
+    { id: "2", task_id: "task", seq: 2, type: "FINISH_REJECTED", payload: { turn: 1, validator_code: "EVIDENCE_REQUIRED", missing: ["task-owned Artifact"] }, created_at: "2026-07-23T00:00:02Z" },
+    { id: "3", task_id: "task", seq: 3, type: "MESSAGE_START", payload: { turn: 2 }, created_at: "2026-07-23T00:00:03Z" },
+    { id: "4", task_id: "task", seq: 4, type: "TOOL_EXECUTION_START", payload: { turn: 2, action_id: "action", tool_name: "input_read", execution_location: "Input Store" }, created_at: "2026-07-23T00:00:03Z" },
+    { id: "5", task_id: "task", seq: 5, type: "TOOL_EXECUTION_END", payload: { turn: 2, action_id: "action", tool_name: "input_read", status: "succeeded", summary: "读取成功", execution_location: "Input Store", artifact_ids: ["artifact"] }, created_at: "2026-07-23T00:00:04Z" },
+    { id: "6", task_id: "task", seq: 6, type: "FINISH_ACCEPTED", payload: { turn: 2, summary: "已完成", evidence_artifact_ids: ["artifact"], terminal: true }, created_at: "2026-07-23T00:00:04Z" },
+    { id: "7", task_id: "task", seq: 7, type: "AGENT_FINISHED", payload: { turn: 2, summary: "已完成", coverage: ["本地输入"], limitations: ["无网络目标"], evidence_artifact_ids: ["artifact"] }, created_at: "2026-07-23T00:00:04Z" },
+  ], latest_seq: 7,
+});
 
 describe("SessionRuntimePage", () => {
-  beforeEach(() => { control.mockReset(); sessionRuntime.mockReturnValue({ snapshot: fixture(), connection: "live", error: null, refresh: vi.fn() }); });
-  it("keeps a proposed action visibly separate from the finished result", () => { render(<SessionRuntimePage taskId="task_1" mode="runtime" onReplay={vi.fn()} />); expect(screen.getByText("已计划，未执行", { exact: false })).toBeInTheDocument(); expect(screen.getByText("真实执行结果")).toBeInTheDocument(); });
-  it("shows legacy rejected ideas without treating an artifact-less legacy flag as a Session result", () => { render(<SessionRuntimePage taskId="task_1" mode="runtime" onReplay={vi.fn()} />); expect(screen.getByTestId("flow-hypothesis").getAttribute("aria-label")).toContain("失败边界: 首页不包含交互入口"); expect(screen.getByText(/确认缺少证据/)).toBeInTheDocument(); fireEvent.click(screen.getByRole("button", { name: /Evidence 0/ })); expect(screen.getByText("No final result yet.")).toBeInTheDocument(); expect(screen.queryByText("Solver result")).toBeNull(); });
-  it("restores controls and exposes the server error when cancellation is rejected", async () => { control.mockRejectedValueOnce(new Error("manager rejected cancellation")); render(<SessionRuntimePage taskId="task_1" mode="runtime" onReplay={vi.fn()} />); fireEvent.click(screen.getByRole("button", { name: "取消" })); fireEvent.click(screen.getByRole("button", { name: "确认取消" })); await waitFor(() => expect(screen.getByText("manager rejected cancellation")).toBeInTheDocument()); expect(screen.getByRole("button", { name: "取消" })).toBeEnabled(); });
-  it("redacts sensitive artifact preview values", () => { const preview = redact("Authorization: Bearer abc token=xyz api_key=qwe"); expect(preview).not.toContain("abc"); expect(preview).not.toContain("xyz"); expect(preview).not.toContain("qwe"); });
-  it("shows solver state and only promotes an evidence-backed flag", () => {
-    const rich = fixture();
-    rich.session.active_solver_id = "solver_1";
-    rich.solvers = [{ id: "solver_1", role: "recon", status: "running", model_name: "model-a" }];
-    rich.subagents = [{ request: { id: "subreq_1", parent_solver_id: "solver_1", role: "recon", objective: "梳理已授权路由", hypothesis_ids: ["hyp_1"], max_actions: 8 }, solver_id: "solver_1", status: "completed", output: { status: "completed", artifact_ids: [], coverage_gaps: ["认证后路由"], next_recommendation: "转交定向验证" } }];
-    rich.flags = [{ value: "flag{evidence_backed}", evidence_artifact_id: "artifact_1" }];
-    rich.artifacts = [{ id: "artifact_1", kind: "http_response", path: "landing.txt" }];
-    rich.events = [...rich.events, { id: "evt_4", task_id: "task_1", seq: 4, type: "SKILLS_LOADED", payload: { skills: [{ name: "web-recon" }] }, created_at: "2026-07-13T00:00:03Z" }, { id: "evt_5", task_id: "task_1", seq: 5, type: "ACTION_APPROVED", payload: { action_id: "act_1" }, created_at: "2026-07-13T00:00:04Z" }, { id: "evt_6", task_id: "task_1", seq: 6, type: "RESULT_REJECTED", payload: { reason: "unpersisted_artifact_reference" }, created_at: "2026-07-13T00:00:05Z" }];
-    sessionRuntime.mockReturnValue({ snapshot: rich, connection: "live", error: null, refresh: vi.fn() });
-    render(<SessionRuntimePage taskId="task_1" mode="runtime" onReplay={vi.fn()} />);
-    expect(screen.getByTestId("solver-lane")).toHaveTextContent("Recon");
-    expect(screen.getByTestId("challenge-status")).toHaveTextContent("active");
-    fireEvent.click(screen.getByTitle("solver_1"));
-    expect(screen.getByText(/认证后路由/)).toBeInTheDocument();
-    expect(screen.getByText(/转交定向验证/)).toBeInTheDocument();
-    expect(screen.getByTestId("flag-hero")).toHaveTextContent("flag{evidence_backed}");
-    expect(screen.getByText(/为本回合加载技能/)).toBeInTheDocument();
-    expect(screen.getByText(/已通过策略批准/)).toBeInTheDocument();
-    expect(screen.getByText(/执行结果未通过校验/)).toBeInTheDocument();
+  beforeEach(() => { control.mockReset(); useSessionRuntime.mockReturnValue({ snapshot: snapshot(), connection: "live", error: null, refresh: vi.fn() }); });
+  it("shows turn-grouped ReAct facts and governance location", () => { render(<SessionRuntimePage taskId="task" mode="runtime" onReplay={vi.fn()} />); expect(screen.getAllByTestId("react-turn")).toHaveLength(2); fireEvent.click(screen.getByRole("button", { name: /TURN 01/ })); expect(screen.getByText("task-owned Artifact")).toBeInTheDocument(); const locations = screen.getAllByTestId("execution-location"); expect(locations).toHaveLength(2); locations.forEach((item) => expect(item).toHaveTextContent("Input Store")); });
+  it("shows a final result only after accepted and finished events", () => { render(<SessionRuntimePage taskId="task" mode="runtime" onReplay={vi.fn()} />); fireEvent.click(screen.getByRole("button", { name: "最终结果" })); expect(screen.getByTestId("final-result")).toHaveTextContent("已确认最终结果"); expect(screen.getByText("CTF{verified}")).toBeInTheDocument(); });
+  it("restores controls and exposes a rejected cancellation", async () => { const value = snapshot(); value.session.status = "running"; useSessionRuntime.mockReturnValue({ snapshot: value, connection: "live", error: null, refresh: vi.fn() }); control.mockRejectedValueOnce(new Error("manager rejected cancellation")); render(<SessionRuntimePage taskId="task" mode="runtime" onReplay={vi.fn()} />); fireEvent.click(screen.getByRole("button", { name: /取消/ })); fireEvent.click(screen.getByRole("button", { name: "确认取消" })); await waitFor(() => expect(screen.getByText("manager rejected cancellation")).toBeInTheDocument()); });
+  it("shows a rejected control response even when the request returns 200", async () => { const value = snapshot(); value.session.status = "running"; useSessionRuntime.mockReturnValue({ snapshot: value, connection: "live", error: null, refresh: vi.fn() }); control.mockResolvedValueOnce({ accepted: false, reason: "current transition is not allowed" }); render(<SessionRuntimePage taskId="task" mode="runtime" onReplay={vi.fn()} />); fireEvent.click(screen.getByRole("button", { name: /暂停/ })); await waitFor(() => expect(screen.getByText("current transition is not allowed")).toBeInTheDocument()); });
+  it("renders a pending high-impact action and sends the durable approval control", async () => {
+    const value = snapshot();
+    value.session.status = "awaiting_approval";
+    value.actions = [{ id: "approve-me", capability: "http.request", target: "https://example.test/item", status: "pending_approval", risk: "active", rationale: "删除测试资源", expected_outcome: "资源被删除", alternative_analysis: "GET 无法验证删除行为", effect: { scope: "target", persistence: "persistent", reversibility: "irreversible", category: "resource_delete", description: "删除测试资源" }, approval_expires_at: "2099-01-01T00:00:00Z", artifact_ids: [], arguments: { method: "DELETE", body: { redacted: true } } }];
+    useSessionRuntime.mockReturnValue({ snapshot: value, connection: "live", error: null, refresh: vi.fn() });
+    control.mockResolvedValueOnce({ accepted: true, status: "running" });
+    render(<SessionRuntimePage taskId="task" mode="runtime" onReplay={vi.fn()} />);
+    expect(screen.getByRole("heading", { name: "需要审批的操作" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "批准并执行" }));
+    await waitFor(() => expect(control).toHaveBeenCalledWith("task", "approve_action", "approve-me"));
   });
+  it("shows a top-level structured runtime error without dropping its message", () => {
+    const value = snapshot();
+    value.session = { ...value.session, status: "blocked", stop_reason: "ISOLATED_RUNTIME_UNAVAILABLE" };
+    value.events.push({ id: "runtime-error", task_id: "task", seq: 8, type: "RUNTIME_ERROR", payload: { code: "ISOLATED_RUNTIME_UNAVAILABLE", phase: "process", message: "Docker runtime is unavailable", retryable: true }, created_at: "2026-07-23T00:00:05Z" });
+    useSessionRuntime.mockReturnValue({ snapshot: value, connection: "live", error: null, refresh: vi.fn() });
+    render(<SessionRuntimePage taskId="task" mode="runtime" onReplay={vi.fn()} />);
+    expect(screen.getByRole("alert", { name: "运行时错误" })).toHaveTextContent("Docker runtime is unavailable");
+  });
+  it("redacts credential-shaped text", () => { expect(redact("Authorization=secret password=hunter2")).toBe("Authorization=[REDACTED] password=[REDACTED]"); });
 });
