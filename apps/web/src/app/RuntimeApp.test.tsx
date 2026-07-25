@@ -9,6 +9,7 @@ vi.mock("../pages/DashboardPage", () => ({ DashboardPage: () => <div>dashboard</
 vi.mock("../pages/NewTaskPage", () => ({ NewTaskPage: () => <div>new task</div> }));
 vi.mock("../pages/SessionRuntimePage", () => ({ SessionRuntimePage: () => <div>runtime</div> }));
 vi.mock("../pages/SettingsPages", () => ({ CapabilitiesPage: () => null, ModelsPage: () => null, SkillsPage: () => null }));
+vi.mock("../pages/SystemPromptPage", () => ({ SystemPromptPage: () => null }));
 
 import { RuntimeApp } from "./RuntimeApp";
 
@@ -27,6 +28,8 @@ describe("RuntimeApp scene task navigation", () => {
     render(<MemoryRouter initialEntries={["/"]}><RuntimeApp /></MemoryRouter>);
     await waitFor(() => expect(mocks.fetchTasks).toHaveBeenCalled());
     expect(screen.getByRole("button", { name: /新建任务/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Skills/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /System Prompt/ })).toBeInTheDocument();
     const ctfGroup = screen.getByRole("button", { name: /CTF 解题.*8/ });
     const reverseGroup = screen.getByRole("button", { name: /逆向分析.*1/ });
     expect(screen.getByTitle("CTF task 7")).toBeInTheDocument();

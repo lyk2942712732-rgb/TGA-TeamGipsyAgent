@@ -10,12 +10,14 @@ from typing import Any, Callable
 from uuid import uuid4
 
 from tga.contracts import ExecutionPolicy, MCPCapabilitySnapshot, MCPCapabilityTool, TGATask
+from tga.capabilities.registry import build_default_registry
 from tga.inputs import SessionWorkspace
 from tga.models.bootstrap import model_config_status
 from tga.modes import mode_profile, normalize_mode, validate_task_profile
 from tga.network_policy import input_network_seeds
 from tga.runtime.service import TaskRuntimeService
 from tga.runtime.prompt_settings import load_agent_prompt_settings, snapshot_for_mode
+from tga.skills.selection import SkillSelectionRequest, SkillSelector
 from tga.tools.mcp_manager import MCPManager
 
 
@@ -35,6 +37,7 @@ class CreateTaskCommand:
     input_text: str
     file_ids: list[str]
     execution_policy: ExecutionPolicy
+    selected_skill_names: tuple[str, ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -54,12 +57,14 @@ class TaskCreationService:
         schedule: Callable[[str], bool],
         runtime_service: TaskRuntimeService | None = None,
         model_status: Callable[[], dict[str, Any]] = model_config_status,
+        skill_selector: SkillSelector | None = None,
     ) -> None:
         self.run_root = Path(run_root).resolve()
         self.mcp_manager = mcp_manager
         self.schedule = schedule
         self.runtime_service = runtime_service or TaskRuntimeService(run_root=self.run_root)
         self.model_status = model_status
+        self.skill_selector = skill_selector or SkillSelector()
 
     def create(self, command: CreateTaskCommand) -> CreatedTask:
         provider = self.model_status()
@@ -90,17 +95,31 @@ class TaskCreationService:
             policy.network.seed_origins = seed_origins
             capabilities = build_mcp_capability_snapshot(self.mcp_manager)
             prompt_snapshot = snapshot_for_mode(load_agent_prompt_settings(), mode)
+            mode_config = {**command.mode_options, "mode": mode}
+            try:
+                skill_bundle = self.skill_selector.select(SkillSelectionRequest(
+                    mode=mode,
+                    goal=(command.goal or mode_profile(mode).default_goal).strip(),
+                    prompt=session_input.prompt,
+                    file_names=tuple(item.original_name for item in session_input.files),
+                    mode_config=mode_config,
+                    available_capabilities=available_capabilities(mode, capabilities, policy),
+                    selected_skill_names=command.selected_skill_names,
+                ))
+            except ValueError as exc:
+                raise TaskCreationError("SKILL_SELECTION_INVALID", str(exc)) from exc
             task = TGATask(
                 id=task_id,
                 name=command.name.strip(),
                 mode=mode,
                 goal=(command.goal or mode_profile(mode).default_goal).strip(),
-                mode_config={**command.mode_options, "mode": mode},
+                mode_config=mode_config,
                 execution_policy=policy,
                 session_input=session_input,
                 task_entry_url=entry_url,
                 mcp_capabilities=capabilities,
                 agent_prompt_snapshot=prompt_snapshot.model_dump(mode="json"),
+                skill_bundle_snapshot=skill_bundle,
                 model_snapshot={
                     "provider": provider.get("provider") or "openai-compatible",
                     "model": provider.get("model") or "",
@@ -166,3 +185,28 @@ def build_mcp_capability_snapshot(manager: MCPManager) -> MCPCapabilitySnapshot:
         tools=[MCPCapabilityTool(**item.model_dump(mode="json")) for item in routes],
         created_at=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
     )
+
+
+def available_capabilities(
+    mode: str,
+    snapshot: MCPCapabilitySnapshot,
+    policy: ExecutionPolicy,
+) -> tuple[str, ...]:
+    local = {
+        item["name"]
+        for item in build_default_registry().snapshot()["capabilities"]
+        if mode in item["modes"]
+    }
+    if policy.network.access == "disabled":
+        local.discard("http.request")
+    if policy.local_compute.mode == "disabled":
+        local.difference_update({"workspace.python", "workspace.shell"})
+    mcp = {
+        value
+        for tool in snapshot.tools
+        for value in (tool.method, tool.provider_name, f"{tool.server_id}.{tool.method}")
+        if value
+    }
+    if snapshot.tools:
+        mcp.add("mcp")
+    return tuple(sorted(local | mcp))

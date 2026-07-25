@@ -84,6 +84,28 @@ class TaskRuntimeService:
                         "capability_fingerprint": task.model_snapshot.capability_fingerprint,
                     },
                 )
+            bundle = task.skill_bundle_snapshot
+            if bundle is not None:
+                store.append_agent_event(
+                    task.id,
+                    "SKILLS_SNAPSHOTTED",
+                    {
+                        "selector": bundle.selector,
+                        "count": len(bundle.skills),
+                        "fingerprint": bundle.fingerprint,
+                        "total_chars": bundle.total_chars,
+                        "skills": [
+                            {
+                                "name": item.name,
+                                "version": item.version,
+                                "source": item.origin,
+                                "content_sha256": item.content_sha256,
+                                "selection_reasons": item.selection_reasons,
+                            }
+                            for item in bundle.skills
+                        ],
+                    },
+                )
         finally:
             store.close()
         result = self.command("start_session", task.id, initial_hint=initial_hint)

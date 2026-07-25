@@ -16,6 +16,7 @@ from urllib.parse import urlparse
 from pydantic import BaseModel, Field, model_validator
 
 from tga.modes import TaskMode, normalize_mode
+from tga.skills.models import SkillBundleSnapshot
 
 
 ResourceRole = Literal["target", "hint"]
@@ -394,6 +395,7 @@ class TGATask(BaseModel):
     execution_policy: ExecutionPolicy | None = None
     model_snapshot: ModelSnapshot | None = None
     agent_prompt_snapshot: dict[str, Any] | None = None
+    skill_bundle_snapshot: SkillBundleSnapshot | None = None
     execution_budget: dict[str, int] = Field(default_factory=dict)
     # A CTF platform can occasionally use an incomplete/self-signed chain.
     # This is never a global TLS switch: every exception is an exact HTTPS

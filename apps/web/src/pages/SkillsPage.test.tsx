@@ -4,12 +4,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   fetchSkillSettings: vi.fn(),
-  fetchAgentPromptSettings: vi.fn(),
   fetchSkillDetail: vi.fn(),
   importSkill: vi.fn(),
   updateSkill: vi.fn(),
   deleteSkill: vi.fn(),
-  updateAgentPromptSettings: vi.fn(),
 }));
 
 vi.mock("../api/tasks", async (original) => ({ ...await original<typeof import("../api/tasks")>(), ...mocks }));
@@ -24,24 +22,14 @@ const builtin = {
   name: "binary-triage", modes: ["reverse_engineering", "ctf"], capabilities: ["workspace.read"], tags: ["binary"],
   version: "1", source: "builtin", summary: "Inspect binary metadata", editable: true, body: "# Workflow\nInspect metadata.",
 };
-const prompts = {
-  schema_version: 1 as const,
-  common_system_prompt: "Use evidence and controlled tools.",
-  modes: ["ctf", "penetration_test", "incident_response", "vulnerability_research", "reverse_engineering"].map((id) => ({
-    id, label: id === "ctf" ? "CTF 解题" : id, methodology: ["collect evidence"], completion_focus: "Complete with evidence.", observer_focus: "Watch evidence quality.",
-  })),
-};
-
 describe("SkillsPage scene library", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.fetchSkillSettings.mockResolvedValue({ schema_version: 3, skills: [custom, builtin] });
-    mocks.fetchAgentPromptSettings.mockResolvedValue(prompts);
     mocks.fetchSkillDetail.mockImplementation(async (name: string) => ({ skill: name === custom.name ? custom : builtin }));
     mocks.importSkill.mockResolvedValue({ skill: custom });
     mocks.updateSkill.mockResolvedValue({ skill: { ...custom, version: "2" } });
     mocks.deleteSkill.mockResolvedValue({ name: custom.name, deleted: true });
-    mocks.updateAgentPromptSettings.mockImplementation(async (value) => value);
   });
 
   it("groups skills by scene and opens full content", async () => {
@@ -80,18 +68,10 @@ describe("SkillsPage scene library", () => {
     expect(screen.getByLabelText("Skill 正文")).toHaveValue("# Workflow\nInspect metadata.");
   });
 
-  it("edits and saves the prompts used by new sessions", async () => {
-    const user = userEvent.setup();
+  it("does not mix System Prompt controls into the Skill library", async () => {
     render(<SkillsPage />);
-    expect(await screen.findByRole("heading", { name: "模型系统指令" })).toBeInTheDocument();
-    const common = screen.getByLabelText("通用系统约束");
-    await user.clear(common); await user.type(common, "Custom common prompt");
-    const method = screen.getByLabelText("CTF 解题 分析方法");
-    fireEvent.change(method, { target: { value: "step one\nstep two" } });
-    await user.click(screen.getByRole("button", { name: "保存模型指令" }));
-    await waitFor(() => expect(mocks.updateAgentPromptSettings).toHaveBeenCalledWith(expect.objectContaining({
-      common_system_prompt: "Custom common prompt",
-      modes: expect.arrayContaining([expect.objectContaining({ id: "ctf", methodology: ["step one", "step two"] })]),
-    })));
+    expect(await screen.findByRole("heading", { name: "Skills" })).toBeInTheDocument();
+    expect(screen.queryByLabelText("通用系统约束")).toBeNull();
+    expect(screen.queryByRole("heading", { name: "模型系统指令" })).toBeNull();
   });
 });

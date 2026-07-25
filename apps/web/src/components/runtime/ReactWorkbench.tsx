@@ -11,6 +11,7 @@ const eventLabels: Record<string, string> = {
   STRATEGY_STEP_UPDATED: "策略步骤更新", OBSERVER_TRIGGERED: "Observer 已触发", OBSERVER_DIRECTIVE: "Observer 建议",
   FINISH_ATTEMPTED: "完成校验尝试", FINISH_REJECTED: "完成校验拒绝", FINISH_ACCEPTED: "完成校验通过",
   AGENT_TURN_ENDED: "本回合结束", CONTINUATION_TRIGGERED: "继续下一回合", AGENT_ERROR: "运行异常", ARTIFACT_SAVED: "证据产物已保存",
+  SKILLS_SNAPSHOTTED: "任务 Skills 已装配",
 };
 const statusLabels: Record<string, string> = { created: "已创建", running: "运行中", paused: "已暂停", awaiting_approval: "等待审批", completed: "已完成", blocked: "已阻塞", cancelled: "已取消", failed: "失败", pending: "待执行", proposed: "待确认", pending_approval: "等待审批", approved: "已批准", rejected: "已拒绝", testing: "验证中", succeeded: "成功" };
 
@@ -33,6 +34,7 @@ function StrategyPanel({ snapshot }: { snapshot: RuntimeSnapshot }) {
   return <aside className="react-side-panel strategy-panel">
     <header><Sparkles size={20} /><div><span>任务策略</span><h2>策略与记忆</h2></div></header>
     <div className="react-panel-scroll">
+      <SkillManifest snapshot={snapshot} />
       {cards.map((card) => <article className="strategy-card" key={card.id}>
         <div className="strategy-card-title"><b>{localizeStrategyText(card.title)}</b><State value={card.status} /></div>
         <p>{localizeStrategyText(card.summary)}</p>
@@ -47,6 +49,19 @@ function StrategyPanel({ snapshot }: { snapshot: RuntimeSnapshot }) {
       <section className="memory-ledger"><h3>证据记忆</h3>{memory.slice().reverse().slice(0, 12).map((item) => <article key={item.id}><State value={item.kind} /><p>{localizeRuntimeText(item.content)}</p><ArtifactLinks taskId={snapshot.task.id} ids={item.artifact_ids} /></article>)}{!memory.length ? <small>暂无持久记忆。</small> : null}</section>
     </div>
   </aside>;
+}
+
+function SkillManifest({ snapshot }: { snapshot: RuntimeSnapshot }) {
+  const bundle = snapshot.task.skill_bundle_snapshot;
+  return <section className="runtime-skill-manifest">
+    <div><h3>本任务已装配 Skills</h3><span>{bundle?.skills.length ?? 0} 个</span></div>
+    {bundle?.skills.map((skill) => <article key={skill.name}>
+      <header><b>{skill.name}</b><span>{skill.origin === "custom" ? "用户自定义" : "内置"} · v{skill.version}</span></header>
+      <p>{skill.selection_reasons.join("；") || "按当前任务场景装配"}</p>
+      {skill.capabilities.length ? <small>所需能力：{skill.capabilities.join(" · ")}</small> : null}
+    </article>)}
+    {!bundle?.skills.length ? <small>当前任务没有匹配且能力可用的 Skill。</small> : null}
+  </section>;
 }
 
 function TurnCard({ turn, snapshot }: { turn: Turn; snapshot: RuntimeSnapshot }) {

@@ -6,10 +6,18 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException
 
-from tga.modes import mode_profiles_payload
-from tga.runtime.task_creation import CreateTaskCommand, TaskCreationError, TaskCreationService
+from tga.modes import mode_profiles_payload, normalize_mode
+from tga.runtime.task_creation import (
+    CreateTaskCommand,
+    TaskCreationError,
+    TaskCreationService,
+    available_capabilities,
+    build_mcp_capability_snapshot,
+)
+from tga.skills.context import SkillContextAssembler
+from tga.skills.selection import SkillSelectionRequest, SkillSelector
 
-from apps.api.routes.support import CreateTaskRequest, TaskRuntimeService, _catalog_runner, _run_root, _schedule_runtime_runner, _task_root
+from apps.api.routes.support import CreateTaskRequest, SkillPreviewRequest, TaskRuntimeService, _catalog_runner, _run_root, _schedule_runtime_runner, _task_root
 from apps.api.routes import support
 
 router = APIRouter(tags=["tasks"])
@@ -37,6 +45,7 @@ def create_task(payload: CreateTaskRequest) -> dict[str, Any]:
             input_text=payload.input.text,
             file_ids=payload.input.file_ids,
             execution_policy=payload.execution_policy,
+            selected_skill_names=tuple(payload.selected_skills) if payload.selected_skills is not None else None,
         ))
     except TaskCreationError as exc:
         status = 409 if exc.code in {"MODEL_NOT_CONFIGURED", "MODEL_NOT_VERIFIED", "SESSION_EXISTS", "SESSION_START_REJECTED"} else 422
@@ -47,6 +56,31 @@ def create_task(payload: CreateTaskRequest) -> dict[str, Any]:
         "status": result.status,
         "scheduled": result.scheduled,
         "mcp_capabilities": result.mcp_capabilities.model_dump(mode="json"),
+    }
+
+
+@router.post("/tasks/skill-preview")
+def preview_task_skills(payload: SkillPreviewRequest) -> dict[str, Any]:
+    """Preview the same deterministic Skill selection used at task creation."""
+    try:
+        mode = normalize_mode(payload.mode)
+        capabilities = build_mcp_capability_snapshot(_catalog_runner())
+        bundle = SkillSelector().select(SkillSelectionRequest(
+            mode=mode,
+            goal=payload.goal.strip(),
+            prompt=payload.prompt.strip(),
+            file_names=tuple(payload.file_names),
+            mode_config={**payload.mode_options, "mode": mode},
+            available_capabilities=available_capabilities(mode, capabilities, payload.execution_policy),
+            selected_skill_names=tuple(payload.selected_skills) if payload.selected_skills is not None else None,
+        ))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail={"code": "SKILL_PREVIEW_INVALID", "message": str(exc)}) from exc
+    return {
+        "selector": bundle.selector,
+        "fingerprint": bundle.fingerprint,
+        "count": len(bundle.skills),
+        "skills": SkillContextAssembler().manifest(bundle),
     }
 
 

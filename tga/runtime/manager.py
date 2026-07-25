@@ -19,7 +19,6 @@ from tga.runtime.coordinator import SessionCoordinator
 from tga.runtime.errors import RuntimeConfigurationError
 from tga.runtime.service import require_current_task_schema
 from tga.runtime.strategy import StrategyService
-from tga.skills.registry import SkillRegistry
 from tga.tools.mcp_manager import MCPManager
 
 
@@ -52,7 +51,6 @@ class Manager:
         store: EvidenceStore | None = None,
         run_root: str | Path | None = None,
         executor: ActionExecutor | None = None,
-        skills: SkillRegistry | None = None,
         mcp_manager: MCPManager | None = None,
         model_client: Any | None = None,
         remote_flag_verifier: Any | None = None,
@@ -60,7 +58,6 @@ class Manager:
         self.store = store
         self.run_root = Path(run_root or os.environ.get("TGA_RUN_ROOT", "runs"))
         self.executor = executor
-        self.skills = skills or SkillRegistry()
         self.mcp_manager = mcp_manager or MCPManager(cache_path=self.run_root / "mcp-cache.json")
         self.model_client = model_client
         self.remote_flag_verifier = remote_flag_verifier

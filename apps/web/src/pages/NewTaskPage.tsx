@@ -1,8 +1,9 @@
 ﻿import { ChangeEvent, ClipboardEvent, DragEvent, useEffect, useMemo, useRef, useState } from "react";
 import {
   createTask, deleteStagedInput, fetchModeProfiles, stageInput,
+  fetchSkillSettings, previewTaskSkills,
   type CreateSessionRequest, type ExecutionPolicy, type ModeConfig,
-  type ModeProfileContract, type StagedAsset,
+  type ModeProfileContract, type SkillPreview, type SkillSetting, type StagedAsset,
 } from "../api/tasks";
 import { runtimeApi } from "../runtime/api-v2";
 import type { MCPHealth } from "../runtime/event-types";
@@ -61,6 +62,13 @@ export function NewTaskPage({ onCreated }: { onCreated: (id: string) => void }) 
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [health, setHealth] = useState<MCPHealth | null>(null);
+  const [skillPreview, setSkillPreview] = useState<SkillPreview | null>(null);
+  const [skillPreviewLoading, setSkillPreviewLoading] = useState(false);
+  const [skillPreviewError, setSkillPreviewError] = useState("");
+  const [selectedSkills, setSelectedSkills] = useState<string[] | null>(null);
+  const [skillDialogOpen, setSkillDialogOpen] = useState(false);
+  const [skillCatalog, setSkillCatalog] = useState<SkillSetting[]>([]);
+  const [skillCatalogLoading, setSkillCatalogLoading] = useState(false);
   const draftTouched = useRef(false);
   const uploadControllers = useRef(new Map<string, AbortController>());
   const cancelledUploads = useRef(new Set<string>());
@@ -83,6 +91,29 @@ export function NewTaskPage({ onCreated }: { onCreated: (id: string) => void }) 
     filesRef.current.forEach((item) => { if (item.previewUrl) URL.revokeObjectURL(item.previewUrl); });
   }, []);
 
+  useEffect(() => {
+    if (step !== 5 || !draft.goal.trim()) return;
+    let current = true;
+    setSkillPreviewLoading(true);
+    setSkillPreviewError("");
+    void previewTaskSkills({
+      mode: draft.mode,
+      goal: draft.goal.trim(),
+      modeOptions: draft.modeOptions,
+      prompt: prompt.trim(),
+      fileNames: inputFiles.filter((item) => item.status === "uploaded").map((item) => item.originalName),
+      executionPolicy: draft.executionPolicy,
+      selectedSkills,
+    }).then((value) => {
+      if (current) setSkillPreview(value);
+    }).catch((reason: unknown) => {
+      if (!current) return;
+      setSkillPreview(null);
+      setSkillPreviewError(reason instanceof Error ? reason.message : "无法预览自动装配的 Skills");
+    }).finally(() => { if (current) setSkillPreviewLoading(false); });
+    return () => { current = false; };
+  }, [step, draft.mode, draft.goal, draft.modeOptions, draft.executionPolicy, prompt, inputFiles, selectedSkills]);
+
   const availableMcp = useMemo(() => (
     health?.records ?? []
   ).filter((item) => item.server && item.configured && item.enabled && (item.discovered || item.reachable)), [health]);
@@ -98,6 +129,7 @@ export function NewTaskPage({ onCreated }: { onCreated: (id: string) => void }) 
   function selectMode(mode: TaskMode) {
     const next = profiles[mode] ?? fallbackProfiles[mode];
     draftTouched.current = true;
+    setSelectedSkills(null);
     setDraft((current) => ({ ...current, mode, goal: next.default_goal, modeOptions: structuredClone(next.default_mode_config), executionPolicy: copyPolicy(next.default_execution_policy) }));
   }
 
@@ -141,14 +173,14 @@ export function NewTaskPage({ onCreated }: { onCreated: (id: string) => void }) 
       if (item.status === "uploaded") void deleteStagedInput(item.id).catch(() => undefined);
       if (item.previewUrl) URL.revokeObjectURL(item.previewUrl);
     });
-    draftTouched.current = false; setDraft(defaultDraft()); setInputFiles([]); setPrompt(""); setError(null); setStep(1);
+    draftTouched.current = false; setDraft(defaultDraft()); setInputFiles([]); setPrompt(""); setSelectedSkills(null); setSkillDialogOpen(false); setError(null); setStep(1);
   }
 
   async function submit() {
     if (!draft.name.trim() || !draft.goal.trim()) { setError("请填写任务名称和任务目标。"); setStep(2); return; }
     if (inputFiles.some((item) => item.status !== "uploaded")) { setError("请先处理仍在上传或上传失败的文件。"); setStep(3); return; }
     if (!inputFiles.length && !prompt.trim()) { setError("请在提示词中写下任务要求，或添加至少一个附件。"); setStep(3); return; }
-    const request: CreateSessionRequest = { ...draft, name: draft.name.trim(), goal: draft.goal.trim(), input: { text: prompt.trim(), fileIds: inputFiles.map((item) => item.id) } };
+    const request: CreateSessionRequest = { ...draft, name: draft.name.trim(), goal: draft.goal.trim(), input: { text: prompt.trim(), fileIds: inputFiles.map((item) => item.id) }, selectedSkills };
     setBusy(true); setError(null);
     try { const result = await createTask(request); onCreated(result.task_id); }
     catch (reason) { setError(reason instanceof Error ? reason.message : "创建任务失败"); }
@@ -163,11 +195,66 @@ export function NewTaskPage({ onCreated }: { onCreated: (id: string) => void }) 
       {step === 2 ? <><fieldset><legend>第二步：任务配置</legend><label>任务名称<input value={draft.name} onChange={(event) => { draftTouched.current = true; setDraft((current) => ({ ...current, name: event.target.value })); }} /></label><label className="span-2">任务目标与完成标准<textarea value={draft.goal} onChange={(event) => { draftTouched.current = true; setDraft((current) => ({ ...current, goal: event.target.value })); }} /></label></fieldset><ModeFields mode={draft.mode} config={draft.modeOptions} setConfig={setConfig} /></> : null}
       {step === 3 ? <fieldset className="span-2 multimodal-step"><legend>第三步：多模态输入</legend><p className="field-help">把任务要求、网址、代码片段和附件放进同一个提示词窗口。附件会作为任务输入归档到独立 Workspace，图片会在支持视觉的模型中直接参与分析。</p><MultimodalComposer text={prompt} assets={inputFiles} busy={busy} onText={setPrompt} onFiles={upload} onRemove={removeAsset} /></fieldset> : null}
       {step === 4 ? <PolicyFields draft={draft} setPolicy={setPolicy} selectPreset={selectPolicyPreset} /> : null}
-      {step === 5 ? <fieldset className="span-2"><legend>第五步：创建摘要</legend><dl className="creation-summary"><dt>场景</dt><dd>{profile.label}</dd><dt>任务</dt><dd>{draft.name}</dd><dt>提示词</dt><dd>{prompt.trim() || "无文字提示词"}</dd><dt>附件（{inputFiles.length}）</dt><dd>{inputFiles.map((item) => item.originalName).join("；") || "无"}</dd><dt>执行边界</dt><dd>preset={draft.executionPolicy.preset}；network={draft.executionPolicy.network.access}/{draft.executionPolicy.network.interaction}；compute={draft.executionPolicy.local_compute.mode}；high_impact={draft.executionPolicy.high_impact.mode}</dd><dt>自动可用 MCP（{availableMcp.length}）</dt><dd>{availableMcp.map((item) => item.server).join(", ") || "当前无已启用且可达/已发现的 MCP 服务"}</dd><dt>完成条件</dt><dd>{profile.completion_validator}：{profile.report_sections.join("、") || "证据支持的模式专属验证"}</dd></dl></fieldset> : null}
+      {step === 5 ? <fieldset className="span-2"><legend>第五步：创建摘要</legend><dl className="creation-summary"><dt>场景</dt><dd>{profile.label}</dd><dt>任务</dt><dd>{draft.name}</dd><dt>提示词</dt><dd>{prompt.trim() || "无文字提示词"}</dd><dt>附件（{inputFiles.length}）</dt><dd>{inputFiles.map((item) => item.originalName).join("；") || "无"}</dd><dt>执行边界</dt><dd>preset={draft.executionPolicy.preset}；network={draft.executionPolicy.network.access}/{draft.executionPolicy.network.interaction}；compute={draft.executionPolicy.local_compute.mode}；high_impact={draft.executionPolicy.high_impact.mode}</dd><dt><span className="summary-label-action">预计装配 Skills<button type="button" className="text-button" onClick={() => void openSkillDialog()}>手动选择</button></span></dt><dd><SkillPreviewSummary value={skillPreview} loading={skillPreviewLoading} error={skillPreviewError} manual={selectedSkills !== null} onAutomatic={() => setSelectedSkills(null)} /></dd><dt>自动可用 MCP（{availableMcp.length}）</dt><dd>{availableMcp.map((item) => item.server).join(", ") || "当前无已启用且可达/已发现的 MCP 服务"}</dd><dt>完成条件</dt><dd>{profile.completion_validator}：{profile.report_sections.join("、") || "证据支持的模式专属验证"}</dd></dl></fieldset> : null}
       {error ? <p role="alert" className="inline-error span-2">{error}</p> : null}
       <footer className="wizard-actions span-2"><button type="button" className="secondary-button" disabled={busy} onClick={reset}>重置</button><div><button type="button" disabled={step === 1 || busy} onClick={() => setStep((value) => Math.max(1, value - 1))}>上一步</button>{step < 5 ? <button type="button" disabled={busy} onClick={() => setStep((value) => Math.min(5, value + 1))}>下一步</button> : <button type="button" disabled={busy} onClick={() => void submit()}>{busy ? "处理中..." : "创建任务并开始"}</button>}</div></footer>
     </section>
+    {skillDialogOpen ? <SkillSelectionDialog catalog={skillCatalog} loading={skillCatalogLoading} mode={draft.mode} selected={selectedSkills ?? skillPreview?.skills.map((item) => item.name) ?? []} draft={draft} prompt={prompt} files={inputFiles} onClose={() => setSkillDialogOpen(false)} onApply={(names) => { setSelectedSkills(names); setSkillDialogOpen(false); }} /> : null}
   </section>;
+
+  async function openSkillDialog() {
+    setSkillDialogOpen(true);
+    if (skillCatalog.length || skillCatalogLoading) return;
+    setSkillCatalogLoading(true);
+    try {
+      setSkillCatalog((await fetchSkillSettings()).skills);
+    } catch (reason) {
+      setSkillPreviewError(reason instanceof Error ? reason.message : "无法读取 Skill 列表");
+    } finally { setSkillCatalogLoading(false); }
+  }
+}
+
+function SkillPreviewSummary({ value, loading, error, manual, onAutomatic }: { value: SkillPreview | null; loading: boolean; error: string; manual: boolean; onAutomatic: () => void }) {
+  if (loading) return <div className="creation-skill-status">正在根据任务内容和可用能力匹配 Skills…</div>;
+  if (error) return <div className="creation-skill-status error">预览失败：{error}</div>;
+  if (!value?.skills.length && !manual) return <div className="creation-skill-status">当前没有同时满足任务特征和能力要求的 Skill。</div>;
+  if (!value?.skills.length) return <div className="creation-skill-preview">
+    <div className="creation-skill-mode"><b>手动选择</b><button type="button" className="text-button" onClick={onAutomatic}>恢复自动匹配</button></div>
+    <div className="creation-skill-status">已明确选择不装配任何 Skill。</div>
+  </div>;
+  return <div className="creation-skill-preview">{manual ? <div className="creation-skill-mode"><b>手动选择</b><button type="button" className="text-button" onClick={onAutomatic}>恢复自动匹配</button></div> : <div className="creation-skill-mode"><b>自动匹配</b></div>}{value.skills.map((skill) => <article key={skill.name}>
+    <header><b>{skill.name}</b><span>{skill.origin === "custom" ? "用户自定义" : "内置"} · v{skill.version}</span></header>
+    <p>{skill.selection_reasons.join("；")}</p>
+    <small>{skill.capabilities.length ? `所需能力：${skill.capabilities.join(" · ")}` : "无需额外能力"}</small>
+  </article>)}<small>正式创建时会使用同一选择器重新确认并冻结快照。</small></div>;
+}
+
+function SkillSelectionDialog({ catalog, loading, mode, selected, draft, prompt, files, onClose, onApply }: { catalog: SkillSetting[]; loading: boolean; mode: TaskMode; selected: string[]; draft: Draft; prompt: string; files: StagedAsset[]; onClose: () => void; onApply: (names: string[]) => void }) {
+  const [names, setNames] = useState<string[]>(selected.slice(0, 3));
+  const [checking, setChecking] = useState(false);
+  const [error, setError] = useState("");
+  const toggle = (name: string) => setNames((current) => current.includes(name) ? current.filter((item) => item !== name) : current.length < 3 ? [...current, name] : current);
+  const apply = async () => {
+    setChecking(true); setError("");
+    try {
+      await previewTaskSkills({ mode, goal: draft.goal.trim(), modeOptions: draft.modeOptions, prompt: prompt.trim(), fileNames: files.filter((item) => item.status === "uploaded").map((item) => item.originalName), executionPolicy: draft.executionPolicy, selectedSkills: names });
+      onApply(names);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "所选 Skills 无法用于当前任务");
+    } finally { setChecking(false); }
+  };
+  return <div className="dialog-backdrop skill-picker-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section className="skill-picker-dialog" role="dialog" aria-modal="true" aria-labelledby="skill-picker-title">
+    <header><div><span>任务级装配</span><h2 id="skill-picker-title">手动选择 Skills</h2><p>按场景浏览方法手册。当前任务最多装配 3 个，后端会再次校验场景、能力和上下文预算。</p></div><button type="button" className="icon-button" aria-label="关闭 Skill 选择" onClick={onClose}>×</button></header>
+    <div className="skill-picker-count"><b>已选择 {names.length}/3</b><small>{names.length ? names.join(" · ") : "明确不装配任何 Skill"}</small></div>
+    {error ? <div className="inline-error" role="alert">{error}</div> : null}
+    <div className="skill-picker-scenes">{loading ? <div className="skill-loading">正在读取 Skill 注册表…</div> : TASK_MODES.map((scene) => { const skills = catalog.filter((skill) => skill.modes.includes(scene)); return <section key={scene}>
+      <header><div><b>{MODE_PROFILES[scene].label}</b><small>{scene}</small></div><span>{skills.length} 个</span></header>
+      {skills.length ? <div className="skill-picker-grid">{skills.map((skill) => { const compatible = skill.modes.includes(mode); const checked = names.includes(skill.name); const atLimit = names.length >= 3 && !checked; return <label className={`${checked ? "selected" : ""} ${!compatible ? "incompatible" : ""}`} key={`${scene}:${skill.name}`}>
+        <input type="checkbox" aria-label={`${skill.name}（${MODE_PROFILES[scene].label}）`} checked={checked} disabled={!compatible || atLimit || checking} onChange={() => toggle(skill.name)} /><span><strong>{skill.name}</strong><small>{skill.source === "custom" ? "用户自定义" : "内置"} · v{skill.version}</small><p>{skill.summary}</p><em>{compatible ? skill.capabilities.join(" · ") || "无需额外能力" : `不适用于当前${MODE_PROFILES[mode].label}任务`}</em></span>
+      </label>; })}</div> : <small>暂无 Skill</small>}
+    </section>; })}</div>
+    <footer><button type="button" className="secondary-button" disabled={checking} onClick={onClose}>取消</button><button type="button" disabled={checking} onClick={() => void apply()}>{checking ? "正在校验…" : "应用选择"}</button></footer>
+  </section></div>;
 }
 
 function MultimodalComposer({ text, assets, busy, onText, onFiles, onRemove }: { text: string; assets: StagedAsset[]; busy: boolean; onText: (value: string) => void; onFiles: (files: File[]) => void; onRemove: (asset: StagedAsset) => void }) {

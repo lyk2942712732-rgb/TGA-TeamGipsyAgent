@@ -28,4 +28,18 @@ describe("runtime schemas", () => {
     });
     expect(value.task.model_snapshot?.model).toBe("frozen-model");
   });
+  it("preserves the frozen Skill bundle for runtime audit UI", () => {
+    const value = RuntimeSnapshotSchema.parse({
+      task: {
+        id: "task", name: "Task", mode: "ctf", session_input: { prompt: "inspect", files: [] },
+        skill_bundle_snapshot: {
+          schema_version: 1, selector: "task-skill-selector-v1:test", query_summary: "inspect web",
+          total_chars: 11,
+          skills: [{ name: "web-recon", version: "1", origin: "builtin", modes: ["ctf"], capabilities: ["http.request"], tags: ["web"], body: "skill body!", content_sha256: "a".repeat(64), score: 360, selection_reasons: ["任务特征匹配：web"] }],
+        },
+      },
+      session: { status: "running", turn_count: 0, max_turns: 8 }, runtime: { strategy_cards: [], memory: [] }, events: [], latest_seq: 0,
+    });
+    expect(value.task.skill_bundle_snapshot?.skills[0]).toMatchObject({ name: "web-recon", origin: "builtin", selection_reasons: ["任务特征匹配：web"] });
+  });
 });

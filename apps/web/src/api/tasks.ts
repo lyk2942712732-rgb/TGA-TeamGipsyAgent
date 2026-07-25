@@ -60,6 +60,7 @@ export type CreateSessionRequest = {
   modeOptions: ModeConfig;
   input: { text: string; fileIds: string[] };
   executionPolicy: ExecutionPolicy;
+  selectedSkills?: string[] | null;
 };
 
 export type TaskListItem = {
@@ -114,9 +115,22 @@ export const updateLLMSettings = (payload: LLMSettingsUpdate) => requestJson<LLM
 export const verifyLLMSettings = () => requestJson<{ configured: boolean; reachable: boolean; action_tools: boolean; model: string; verification_status: LLMVerification["status"]; capabilities: Record<string, boolean | null>; tool_catalog: { tool_count: number; schema_bytes: number; accepted: boolean } }>("/api/v2/settings/llm/verify", { method: "POST" });
 export type SkillSetting = { name: string; modes: TaskMode[]; capabilities: string[]; tags: string[]; version: string; source: "builtin" | "custom"; summary: string; editable: boolean };
 export type SkillDetail = SkillSetting & { body: string };
+export type SkillPreview = {
+  selector: string;
+  fingerprint: string;
+  count: number;
+  skills: Array<Pick<SkillSetting, "name" | "version" | "capabilities" | "tags"> & {
+    origin: "builtin" | "custom";
+    content_sha256: string;
+    selection_reasons: string[];
+  }>;
+};
 export type ModePromptSettings = { id: TaskMode; label: string; methodology: string[]; completion_focus: string; observer_focus: string };
 export type AgentPromptSettings = { schema_version: 1; common_system_prompt: string; modes: ModePromptSettings[] };
 export const fetchSkillSettings = () => requestJson<{ schema_version: number; skills: SkillSetting[] }>("/api/v2/settings/skills");
+export const previewTaskSkills = (payload: { mode: TaskMode; goal: string; modeOptions: ModeConfig; prompt: string; fileNames: string[]; executionPolicy: ExecutionPolicy; selectedSkills?: string[] | null }) => requestJson<SkillPreview>("/api/v2/tasks/skill-preview", {
+  method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
+});
 export const fetchSkillDetail = (name: string) => requestJson<{ skill: SkillDetail }>(`/api/v2/settings/skills/${encodeURIComponent(name)}`);
 export async function importSkill(file: File, scene?: TaskMode): Promise<{ skill: SkillDetail }> {
   const response = await fetch(`${apiBase}/api/v2/settings/skills/import`, {

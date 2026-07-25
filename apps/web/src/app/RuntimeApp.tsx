@@ -6,6 +6,7 @@ import { SessionRuntimePage } from "../pages/SessionRuntimePage";
 import { DashboardPage } from "../pages/DashboardPage";
 import { NewTaskPage } from "../pages/NewTaskPage";
 import { CapabilitiesPage, ModelsPage, SkillsPage } from "../pages/SettingsPages";
+import { SystemPromptPage } from "../pages/SystemPromptPage";
 import { readRoute } from "./router";
 
 export function RuntimeApp() {
@@ -46,7 +47,8 @@ export function RuntimeApp() {
         {!collapsed ? <div className="nav-caption">配置</div> : null}
         <Nav active={route.page === "models"} icon="◈" label="Provider 与模型" collapsed={collapsed} onClick={() => go("/settings/models")} />
         <Nav active={route.page === "capabilities"} icon="⌘" label="能力与 MCP" collapsed={collapsed} onClick={() => go("/settings/capabilities")} />
-        <Nav active={route.page === "skills"} icon="◇" label="Skills 与模型指令" collapsed={collapsed} onClick={() => go("/settings/skills")} />
+        <Nav active={route.page === "skills"} icon="◇" label="Skills" collapsed={collapsed} onClick={() => go("/settings/skills")} />
+        <Nav active={route.page === "system-prompt"} icon="¶" label="System Prompt" collapsed={collapsed} onClick={() => go("/settings/system-prompt")} />
       </nav>
       <button className="nav-refresh" title="刷新任务列表" onClick={() => void refreshTasks()}>↻{!collapsed ? " 刷新任务" : ""}</button>
     </aside>
@@ -59,6 +61,7 @@ export function RuntimeApp() {
       {route.page === "models" ? <ModelsPage onConfiguredChange={setLLMConfigured} /> : null}
       {route.page === "capabilities" ? <CapabilitiesPage /> : null}
       {route.page === "skills" ? <SkillsPage /> : null}
+      {route.page === "system-prompt" ? <SystemPromptPage /> : null}
     </main>
   </div>;
 }

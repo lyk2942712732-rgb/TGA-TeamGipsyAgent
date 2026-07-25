@@ -9,6 +9,7 @@ from typing import Any
 from tga.contracts import SessionFile, TGATask
 from tga.inputs import MAX_MODEL_IMAGE_BYTES, SessionWorkspace
 from tga.runtime.prompt_settings import prompt_snapshot_for_task
+from tga.skills.context import SkillContextAssembler
 
 
 MAX_RECENT_TURNS = 8
@@ -56,6 +57,12 @@ class SessionContextBuilder:
         else:
             image_note = "Image files are included below as real image content blocks."
         policy = self.task.execution_policy.model_dump(mode="json", exclude={"mcp"}) if self.task.execution_policy else {}
+        skill_manifest = SkillContextAssembler().manifest(self.task.skill_bundle_snapshot)
+        skill_lines = "\n".join(
+            f"- `{item['name']}` v{item['version']} ({item['origin']}): "
+            f"{'; '.join(item['selection_reasons'])}"
+            for item in skill_manifest
+        ) or "- No Skill was selected for this task"
         return (
             f"# Session Context\n\n"
             f"## Task Mode\n\n{self.task.mode}: {mode_prompt.prompt()}\n\n"
@@ -64,6 +71,8 @@ class SessionContextBuilder:
             f"{task_files}\n\n"
             f"## Available MCP Capabilities\n\nCatalog snapshot: `{self.task.mcp_capabilities.catalog_version}`\n\n{mcp}\n\n"
             f"These services were globally enabled and discovered when the Session was created. Global disable is enforced immediately; newly added services are available only to newly created Sessions.\n\n"
+            f"## Selected Skills\n\n{skill_lines}\n\n"
+            f"Skill bodies are frozen in the task snapshot and injected through the system message. This section is an audit manifest only.\n\n"
             f"## Workspace Rules\n\n"
             f"- Original inputs are under `/workspace/inputs` and must not be overwritten.\n"
             f"- Derived files go to `/workspace/artifacts`.\n"

@@ -8,6 +8,7 @@ from tga.contracts import ResourceProvenance, SessionFile, SessionInput, TGATask
 from tga.evidence.store import EvidenceStore
 from tga.runtime.manager import Manager, RuntimeLimits
 from tga.tools.mcp_manager import MCPManager
+from tga.skills.models import SkillBundleSnapshot, SkillSnapshot
 
 
 class FakeModelClient:
@@ -249,6 +250,39 @@ def test_fake_model_drives_real_react_tool_feedback_and_completion(tmp_path: Pat
         assert store.task_snapshot(task.id)["flags"][0]["evidence_artifact_id"] == artifact_id
     finally:
         store.close()
+
+
+def test_first_provider_request_contains_frozen_skill_body_in_system_message(tmp_path: Path) -> None:
+    task, item = _seed_task(tmp_path, task_id="react_skill_prompt")
+    marker = "FROZEN_SKILL_BODY_IN_PROVIDER_REQUEST"
+    task.skill_bundle_snapshot = SkillBundleSnapshot(
+        selector="integration-test-selector",
+        skills=[SkillSnapshot(
+            name="integration-skill",
+            version="1",
+            origin="custom",
+            modes=["ctf"],
+            body=marker,
+            content_sha256="b" * 64,
+            score=100,
+            selection_reasons=["integration test"],
+        )],
+        total_chars=len(marker),
+    )
+    store = EvidenceStore(tmp_path / task.id / "evidence.db")
+    try:
+        store.update_task(task)
+    finally:
+        store.close()
+    client = FakeModelClient(input_id=item.id, flag="CTF{model_independent_runtime}")
+    manager = _manager(tmp_path, client)
+
+    manager.start_session(task_id=task.id)
+    manager.run_session(task.id)
+
+    assert client.requests
+    assert client.requests[0][0]["role"] == "system"
+    assert marker in client.requests[0][0]["content"]
 
 
 def test_finish_rejection_continues_to_real_evidence_and_completion(tmp_path: Path) -> None:

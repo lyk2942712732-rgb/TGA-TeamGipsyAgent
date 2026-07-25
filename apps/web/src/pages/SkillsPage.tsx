@@ -1,13 +1,10 @@
 import { ChangeEvent, DragEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import {
   deleteSkill,
-  fetchAgentPromptSettings,
   fetchSkillDetail,
   fetchSkillSettings,
   importSkill,
   updateSkill,
-  updateAgentPromptSettings,
-  type AgentPromptSettings,
   type SkillDetail,
   type SkillSetting,
 } from "../api/tasks";
@@ -16,13 +13,8 @@ import { MODE_PROFILES, TASK_MODES, type TaskMode } from "../modes";
 
 type SkillDraft = Pick<SkillDetail, "modes" | "capabilities" | "tags" | "version" | "body">;
 
-function clonePromptSettings(value: AgentPromptSettings): AgentPromptSettings {
-  return { ...value, modes: value.modes.map((mode) => ({ ...mode, methodology: [...mode.methodology] })) };
-}
-
 export function SkillsPage() {
   const [skills, setSkills] = useState<SkillSetting[]>([]);
-  const [promptDraft, setPromptDraft] = useState<AgentPromptSettings | null>(null);
   const [selected, setSelected] = useState<SkillDetail | null>(null);
   const [draft, setDraft] = useState<SkillDraft | null>(null);
   const [error, setError] = useState("");
@@ -38,12 +30,11 @@ export function SkillsPage() {
   const load = async () => {
     setLoading(true);
     try {
-      const [skillData, promptData] = await Promise.all([fetchSkillSettings(), fetchAgentPromptSettings()]);
+      const skillData = await fetchSkillSettings();
       setSkills(skillData.skills);
-      setPromptDraft(clonePromptSettings(promptData));
       setError("");
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "无法读取 Skills 与模型系统指令");
+      setError(reason instanceof Error ? reason.message : "无法读取 Skills");
     } finally {
       setLoading(false);
     }
@@ -116,25 +107,8 @@ export function SkillsPage() {
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Skill 删除失败"); }
     finally { setBusy(false); }
   };
-  const savePrompts = async (event: FormEvent) => {
-    event.preventDefault();
-    if (!promptDraft) return;
-    setBusy(true); setError(""); setMessage("");
-    try {
-      const saved = await updateAgentPromptSettings(promptDraft);
-      setPromptDraft(clonePromptSettings(saved));
-      setMessage("模型系统指令已保存，将用于此后创建的新任务。");
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "模型系统指令保存失败");
-    } finally { setBusy(false); }
-  };
-  const updateModePrompt = (mode: TaskMode, patch: Partial<AgentPromptSettings["modes"][number]>) => {
-    if (!promptDraft) return;
-    setPromptDraft({ ...promptDraft, modes: promptDraft.modes.map((item) => item.id === mode ? { ...item, ...patch } : item) });
-  };
-
   return <section className="page-stack skills-page">
-    <header className="page-title"><div><span className="eyebrow">配置 / 方法与指令</span><h1>Skills 与模型指令</h1><p>Skills 按任务场景自动装配方法手册；模型指令用于配置新任务实际收到的通用系统约束和场景初始系统指令。</p></div><details className="skill-format-guide"><summary>Skill 文件格式</summary><pre>{`---\nname: my-scene-playbook\nversion: "1"\nmodes: [penetration_test]\ncapabilities: [http.request, artifact.inspect]\ntags: [web, auth]\n---\n# 使用时机\n说明该 Skill 适用的证据条件。\n\n# 工作流\n给出可验证、可停止的步骤。`}</pre></details></header>
+    <header className="page-title"><div><span className="eyebrow">配置 / 方法库</span><h1>Skills</h1><p>按任务场景管理可自动装配的方法手册。新任务会结合目标、提示、附件、执行边界和可用能力选择并冻结匹配的 Skills。</p></div><details className="skill-format-guide"><summary>Skill 文件格式</summary><pre>{`---\nname: my-scene-playbook\nversion: "1"\nmodes: [penetration_test]\ncapabilities: [http.request, artifact.inspect]\ntags: [web, auth]\n---\n# 使用时机\n说明该 Skill 适用的证据条件。\n\n# 工作流\n给出可验证、可停止的步骤。`}</pre></details></header>
     {error ? <div className="inline-error" role="alert">{error}</div> : null}
     {message ? <div className="skill-message" role="status">{message}</div> : null}
     <input ref={inputRef} hidden type="file" accept=".md,text/markdown" onChange={choose} />
@@ -147,16 +121,6 @@ export function SkillsPage() {
         <div><span className={`skill-origin ${skill.source}`}>{skill.source === "custom" ? "用户自定义" : "内置"}</span><small>v{skill.version}</small></div><h3>{skill.name}</h3><p>{skill.summary}</p><footer>{skill.tags.slice(0, 4).map((tag) => <span key={tag}>#{tag}</span>)}<em>查看详情 ›</em></footer>
       </button>)}</div> : <EmptyState label="此场景暂无 Skill，可上传自定义 Markdown。" />}
     </section>)}</div>
-    <form className="surface prompt-library prompt-editor" onSubmit={savePrompts}><div className="surface-head"><div><h2>模型系统指令</h2><p>这里保存的内容会进入新任务的 System Prompt。已创建任务保留创建时的指令快照，不受后续修改影响。</p></div><span className="schema-chip">新任务生效 · 可编辑</span></div>{promptDraft ? <>
-      <label className="common-prompt-field"><span>通用系统约束</span><small>所有任务共用，位于场景指令之前。</small><textarea aria-label="通用系统约束" required value={promptDraft.common_system_prompt} onChange={(event) => setPromptDraft({ ...promptDraft, common_system_prompt: event.target.value })} /></label>
-      <div className="mode-prompt-stack">{promptDraft.modes.map((mode, index) => <details className="mode-prompt-editor" key={mode.id} open={index === 0}><summary><span>0{index + 1}</span><div><strong>{mode.label}</strong><small>{mode.id}</small></div><b>{mode.methodology.length} 个方法步骤</b></summary><div className="mode-prompt-fields">
-        <label>场景名称<input required value={mode.label} onChange={(event) => updateModePrompt(mode.id, { label: event.target.value })} /></label>
-        <label>分析方法<small>每行一个步骤，保存时保持有序列表。</small><textarea aria-label={`${mode.label} 分析方法`} required value={mode.methodology.join("\n")} onChange={(event) => updateModePrompt(mode.id, { methodology: promptLines(event.target.value) })} /></label>
-        <label>完成重点<textarea aria-label={`${mode.label} 完成重点`} required value={mode.completion_focus} onChange={(event) => updateModePrompt(mode.id, { completion_focus: event.target.value })} /></label>
-        <label>观察重点<textarea aria-label={`${mode.label} 观察重点`} required value={mode.observer_focus} onChange={(event) => updateModePrompt(mode.id, { observer_focus: event.target.value })} /></label>
-      </div></details>)}</div>
-      <div className="prompt-save-row"><p>场景 ID 和配置结构由系统固定，文本内容均可修改。</p><button disabled={busy}>{busy ? "保存中…" : "保存模型指令"}</button></div>
-    </> : !loading ? <EmptyState label="当前后端未返回模型系统指令。" /> : null}</form>
     {selected ? <div className="dialog-backdrop skill-dialog-backdrop" role="presentation"><section className="skill-dialog" role="dialog" aria-modal="true" aria-labelledby="skill-dialog-title">
       <header><div><span className={`skill-origin ${selected.source}`}>{selected.source === "custom" ? "用户自定义" : "内置"}</span><h2 id="skill-dialog-title">{selected.name}</h2><p>{selected.modes.map((mode) => MODE_PROFILES[mode].label).join(" · ")}</p></div><button className="icon-button" aria-label="关闭 Skill" onClick={() => { setSelected(null); setDraft(null); }}>×</button></header>
       {draft ? <SkillEditor draft={draft} setDraft={setDraft} busy={busy} onSubmit={save} onCancel={() => setDraft(null)} /> : <><div className="skill-detail-meta"><span>版本 <b>{selected.version}</b></span><span>能力 <b>{selected.capabilities.join(" · ") || "无"}</b></span><span>标签 <b>{selected.tags.join(" · ") || "无"}</b></span></div><article className="skill-markdown"><pre>{selected.body}</pre></article><footer><button className="secondary-button" onClick={() => { setSelected(null); setDraft(null); }}>关闭</button><button className="secondary-button" onClick={beginEdit}>修改</button><button className="danger-button" onClick={() => setConfirmDelete(true)}>删除</button></footer></>}
@@ -172,4 +136,3 @@ function SkillEditor({ draft, setDraft, busy, onSubmit, onCancel }: { draft: Ski
 }
 
 function tokens(value: string): string[] { return value.split(/[,\n]/).map((item) => item.trim()).filter(Boolean); }
-function promptLines(value: string): string[] { return value.split("\n").map((item) => item.trim()).filter(Boolean); }

@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 
 from apps.api.main import app
 from tga.skills.registry import SkillRegistry
+from tga.skills.selection import SkillSelectionRequest, SkillSelector
 
 
 CUSTOM_SKILL = b"""---
@@ -40,8 +41,14 @@ def test_custom_skill_crud_is_scene_aware_and_runtime_visible(tmp_path: Path, mo
     detail = client.get("/api/v2/settings/skills/custom-web-proof")
     assert detail.status_code == 200
     assert "authorization boundary" in detail.json()["skill"]["body"]
-    assert {skill.name for skill in SkillRegistry().query(mode="penetration_test", tags=["auth"])} >= {"custom-web-proof"}
-    assert "custom-web-proof" not in {skill.name for skill in SkillRegistry().query(mode="reverse_engineering")}
+    selected = SkillSelector().select(SkillSelectionRequest(
+        mode="penetration_test", goal="test an auth boundary", available_capabilities=("http.request", "artifact.inspect"),
+    ))
+    assert {skill.name for skill in selected.skills} >= {"custom-web-proof"}
+    incompatible = SkillSelector().select(SkillSelectionRequest(
+        mode="reverse_engineering", goal="test an auth boundary", available_capabilities=("http.request", "artifact.inspect"),
+    ))
+    assert "custom-web-proof" not in {skill.name for skill in incompatible.skills}
 
     updated = client.put("/api/v2/settings/skills/custom-web-proof", json={
         "modes": ["penetration_test", "ctf"],
@@ -52,7 +59,10 @@ def test_custom_skill_crud_is_scene_aware_and_runtime_visible(tmp_path: Path, mo
     })
     assert updated.status_code == 200, updated.text
     assert updated.json()["skill"]["version"] == "2"
-    assert "custom-web-proof" in {skill.name for skill in SkillRegistry().query(mode="ctf", tags=["web"])}
+    selected = SkillSelector().select(SkillSelectionRequest(
+        mode="ctf", goal="inspect a web target", available_capabilities=("http.request",),
+    ))
+    assert "custom-web-proof" in {skill.name for skill in selected.skills}
 
     deleted = client.delete("/api/v2/settings/skills/custom-web-proof")
     assert deleted.status_code == 200 and deleted.json()["deleted"] is True

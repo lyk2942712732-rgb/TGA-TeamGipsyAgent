@@ -68,6 +68,21 @@ class CreateTaskRequest(BaseModel):
     mode_options: dict[str, Any] = Field(default_factory=dict, alias="modeOptions")
     input: CreateSessionInputRequest
     execution_policy: ExecutionPolicy = Field(alias="executionPolicy")
+    selected_skills: list[str] | None = Field(default=None, alias="selectedSkills", max_length=3)
+
+
+class SkillPreviewRequest(BaseModel):
+    """Draft task fields needed by the authoritative Skill selector."""
+
+    model_config = {"extra": "forbid", "populate_by_name": True}
+
+    mode: str
+    goal: str = Field(min_length=1, max_length=8000)
+    mode_options: dict[str, Any] = Field(default_factory=dict, alias="modeOptions")
+    prompt: str = Field(default="", max_length=16_384)
+    file_names: list[str] = Field(default_factory=list, alias="fileNames", max_length=64)
+    execution_policy: ExecutionPolicy = Field(alias="executionPolicy")
+    selected_skills: list[str] | None = Field(default=None, alias="selectedSkills", max_length=3)
 
 
 class LLMSettingsRequest(BaseModel):

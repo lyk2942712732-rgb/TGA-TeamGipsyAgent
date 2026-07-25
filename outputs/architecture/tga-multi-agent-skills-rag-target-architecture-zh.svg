@@ -1,0 +1,212 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="4000" height="2600" viewBox="0 0 4000 2600" role="img" aria-labelledby="title desc">
+  <title id="title">TGA 引入子智能体、Skills 与 RAG 后的多智能体目标架构</title>
+  <desc id="desc">主 Agent 通过受治理的子任务协议委派并行子 Agent；每个子 Agent 拥有独立对话、预算和工作区，共享只读 Skills 与 RAG，并将带证据来源的结构化结果汇总回主 Agent。</desc>
+  <defs>
+    <linearGradient id="page" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#f8fbfd"/><stop offset="1" stop-color="#f2f7f5"/></linearGradient>
+    <marker id="blueArrow" markerWidth="13" markerHeight="13" refX="11" refY="6.5" orient="auto"><path d="M0 0 L13 6.5 L0 13Z" fill="#2468d9"/></marker>
+    <marker id="greenArrow" markerWidth="13" markerHeight="13" refX="11" refY="6.5" orient="auto"><path d="M0 0 L13 6.5 L0 13Z" fill="#0b8a6c"/></marker>
+    <marker id="orangeArrow" markerWidth="13" markerHeight="13" refX="11" refY="6.5" orient="auto"><path d="M0 0 L13 6.5 L0 13Z" fill="#c4780d"/></marker>
+    <marker id="grayArrow" markerWidth="13" markerHeight="13" refX="11" refY="6.5" orient="auto"><path d="M0 0 L13 6.5 L0 13Z" fill="#6e8192"/></marker>
+    <style>
+      text{font-family:'Microsoft YaHei','Noto Sans CJK SC','PingFang SC','Segoe UI',sans-serif;letter-spacing:0}
+      .title{font-size:61px;font-weight:800;fill:#163452}.subtitle{font-size:24px;font-weight:500;fill:#5a7187}
+      .lane-title{font-size:34px;font-weight:800;fill:#1b4f86}.lane-title-green{font-size:34px;font-weight:800;fill:#12634f}.lane-note{font-size:21px;font-weight:500;fill:#657b8d}
+      .node-title{font-size:31px;font-weight:800;fill:#173f6b}.node-title-green{font-size:31px;font-weight:800;fill:#125c4c}.node-title-orange{font-size:31px;font-weight:800;fill:#875407}.node-title-purple{font-size:31px;font-weight:800;fill:#55408b}
+      .class-name{font-size:18px;font-weight:650;fill:#74879a}.body{font-size:21px;font-weight:500;fill:#34536c}.body-green{font-size:21px;font-weight:500;fill:#315f55}.body-small{font-size:18px;font-weight:500;fill:#597186}
+      .io-label{font-size:18px;font-weight:800;fill:#1e527f}.io-label-green{font-size:18px;font-weight:800;fill:#12725d}.io-label-orange{font-size:18px;font-weight:800;fill:#985b08}
+      .edge{font-size:20px;font-weight:800;fill:#205b9b}.edge-green{font-size:20px;font-weight:800;fill:#0d755e}.edge-orange{font-size:20px;font-weight:800;fill:#9c5c06}.edge-gray{font-size:19px;font-weight:800;fill:#607485}
+      .badge{font-size:18px;font-weight:800;fill:#fff;text-anchor:middle;dominant-baseline:central}.status{font-size:16px;font-weight:800;fill:#fff;text-anchor:middle;dominant-baseline:central}
+      .frame{fill:#f7fbff;stroke:#bfd3e8;stroke-width:3;rx:24}.frame-green{fill:#f5fbf8;stroke:#b8d9cd;stroke-width:3;rx:24}.frame-orange{fill:#fffcf6;stroke:#dfc080;stroke-width:3;rx:24}
+      .card{fill:#fff;stroke:#c6d8e8;stroke-width:2.5;rx:18}.card-blue{fill:#fafdff;stroke:#9fc3e9;stroke-width:3;rx:18}.card-green{fill:#fbfffd;stroke:#9ed1c0;stroke-width:3;rx:18}.card-orange{fill:#fffcf5;stroke:#e4c27f;stroke-width:3;rx:18}.card-purple{fill:#fdfbff;stroke:#cdbde8;stroke-width:3;rx:18}
+      .input-box{fill:#eef5fd;stroke:#c8ddef;stroke-width:1.5;rx:10}.output-box{fill:#eaf8f3;stroke:#b9dfd2;stroke-width:1.5;rx:10}.orange-box{fill:#fff3dc;stroke:#e8cb91;stroke-width:1.5;rx:10}.neutral-box{fill:#f3f6f8;stroke:#cdd8df;stroke-width:1.5;rx:10}.purple-box{fill:#f4f0fb;stroke:#d4c8e9;stroke-width:1.5;rx:10}
+      .flow{fill:none;stroke:#2468d9;stroke-width:5;marker-end:url(#blueArrow)}.flow-green{fill:none;stroke:#0b8a6c;stroke-width:5;marker-end:url(#greenArrow)}.flow-orange{fill:none;stroke:#c4780d;stroke-width:5;marker-end:url(#orangeArrow)}.flow-gray{fill:none;stroke:#6e8192;stroke-width:4;stroke-dasharray:10 8;marker-end:url(#grayArrow)}
+      .divider{stroke:#d7e4ee;stroke-width:2}.chip-existing{fill:#2672c7}.chip-new{fill:#0b8a6c}.chip-boundary{fill:#c4780d}
+    </style>
+  </defs>
+
+  <rect width="4000" height="2600" fill="url(#page)"/>
+  <text x="120" y="92" class="title">TGA：Skills + RAG + 子智能体的多智能体目标架构</text>
+  <text x="124" y="139" class="subtitle">规划态架构 · 主 Agent 负责全局目标与最终完成 · 子 Agent 负责有界子任务 · 所有 Agent 共用同一治理与证据边界</text>
+  <g transform="translate(2980 58)"><rect width="860" height="82" rx="16" fill="#fff" stroke="#d2dfe7" stroke-width="2"/><rect x="22" y="20" width="92" height="34" rx="9" class="chip-existing"/><text x="68" y="37" class="status">已有基础</text><rect x="190" y="20" width="92" height="34" rx="9" class="chip-new"/><text x="236" y="37" class="status">建议新增</text><rect x="358" y="20" width="92" height="34" rx="9" class="chip-boundary"/><text x="404" y="37" class="status">治理边界</text><text x="490" y="43" class="body-small">蓝：委派　绿：结果/证据　橙：治理</text></g>
+
+  <!-- A 共享服务层 -->
+  <rect x="100" y="190" width="3800" height="430" class="frame-green"/>
+  <text x="145" y="248" class="lane-title-green">A. 所有 Agent 共享的只读上下文与统一执行边界</text>
+  <text x="145" y="283" class="lane-note">共享的是经过版本冻结、权限过滤的服务；不是共享模型对话，也不是让子 Agent 获得主 Agent 的全部权限。</text>
+
+  <rect x="150" y="330" width="850" height="220" class="card-green"/>
+  <rect x="185" y="354" width="92" height="32" rx="8" class="chip-new"/><text x="231" y="370" class="status">建议新增</text>
+  <text x="300" y="380" class="node-title-green">Skills 方法服务</text><text x="185" y="420" class="class-name">SkillRegistry · SkillSelector · 版本快照</text>
+  <text x="185" y="465" class="body-green">按角色、场景、子任务阶段选择方法步骤</text>
+  <text x="185" y="502" class="body-green">只指导怎么做，不授予工具权限</text>
+
+  <rect x="1070" y="330" width="850" height="220" class="card-green"/>
+  <rect x="1105" y="354" width="92" height="32" rx="8" class="chip-new"/><text x="1151" y="370" class="status">建议新增</text>
+  <text x="1220" y="380" class="node-title-green">RAG 检索服务</text><text x="1105" y="420" class="class-name">任务私有索引 + 全局只读知识索引</text>
+  <text x="1105" y="465" class="body-green">先按 task_id / Agent 授权过滤，再混合召回与重排</text>
+  <text x="1105" y="502" class="body-green">返回带 artifact_id / segment_ref 的引用片段</text>
+
+  <rect x="1990" y="330" width="850" height="220" class="card-purple"/>
+  <rect x="2025" y="354" width="92" height="32" rx="8" class="chip-existing"/><text x="2071" y="370" class="status">已有基础</text>
+  <text x="2140" y="380" class="node-title-purple">LLM Provider</text><text x="2025" y="420" class="class-name">主 Agent 与子 Agent 可配置不同模型</text>
+  <text x="2025" y="465" class="body">输入：各自上下文和工具定义</text>
+  <text x="2025" y="502" class="body">输出：文字判断与工具调用意图</text>
+
+  <rect x="2910" y="330" width="840" height="220" class="card-orange"/>
+  <rect x="2945" y="354" width="92" height="32" rx="8" class="chip-boundary"/><text x="2991" y="370" class="status">治理边界</text>
+  <text x="3060" y="380" class="node-title-orange">统一工具治理服务</text><text x="2945" y="420" class="class-name">Dispatcher · Policy · Approval · Completion Gate</text>
+  <text x="2945" y="465" class="body">每个 Agent 的每次工具调用都单独校验</text>
+  <text x="2945" y="502" class="body">子 Agent 不能绕过审批或扩大任务授权</text>
+
+  <!-- B 多智能体控制与执行 -->
+  <rect x="100" y="660" width="3800" height="1260" class="frame"/>
+  <text x="145" y="718" class="lane-title">B. 多智能体控制与执行：主 Agent → 委派控制面 → 子 Agent 池</text>
+  <text x="145" y="753" class="lane-note">委派请求只向右流动，子 Agent 结果只沿下方返回；主 Agent 始终是唯一任务所有者和最终完成提交者。</text>
+
+  <!-- 左列：主 Agent -->
+  <rect x="150" y="810" width="1050" height="990" class="card-blue"/>
+  <rect x="185" y="836" width="92" height="32" rx="8" class="chip-existing"/><text x="231" y="852" class="status">已有主链</text>
+  <circle cx="220" cy="914" r="26" fill="#2468d9"/><text x="220" y="914" class="badge">1</text>
+  <text x="270" y="925" class="node-title">主 Agent：全局任务所有者</text>
+  <text x="190" y="963" class="class-name">Main Solver · 独立 Transcript · 主 ReAct 循环</text>
+
+  <rect x="190" y="1000" width="970" height="128" class="input-box"/>
+  <text x="215" y="1035" class="io-label">输入</text>
+  <text x="285" y="1035" class="body-small">用户目标、任务策略、主 Agent Skill、RAG 片段</text>
+  <text x="285" y="1067" class="body-small">子 Agent 汇总结果、全局证据状态、完成缺失条件</text>
+  <text x="285" y="1099" class="body-small">用户控制：暂停、恢复、取消、审批</text>
+
+  <rect x="190" y="1150" width="970" height="205" class="purple-box"/>
+  <text x="215" y="1186" class="io-label">每轮决策</text>
+  <text x="215" y="1227" class="body">A. 自己调用普通工具继续执行</text>
+  <text x="215" y="1265" class="body">B. 调用“委派子任务”能力并行探索</text>
+  <text x="215" y="1303" class="body">C. 证据充分时提交最终完成校验</text>
+  <text x="215" y="1333" class="body-small">默认禁止把整个用户目标无边界地转交给子 Agent</text>
+
+  <rect x="190" y="1380" width="970" height="164" class="orange-box"/>
+  <text x="215" y="1416" class="io-label-orange">唯一完成权</text>
+  <text x="215" y="1457" class="body">只有主 Agent 可以调用任务级 finish_session</text>
+  <text x="215" y="1495" class="body">最终结论必须引用当前任务的真实 Artifact</text>
+  <text x="215" y="1527" class="body-small">子 Agent 的“成功”只代表子任务交付，不代表整个任务完成</text>
+
+  <rect x="190" y="1570" width="970" height="190" class="output-box"/>
+  <text x="215" y="1606" class="io-label-green">输出</text>
+  <text x="285" y="1606" class="body-small">普通工具意图 → 统一治理服务</text>
+  <text x="285" y="1641" class="body-small">委派请求 → SubTaskContract（子任务契约）</text>
+  <text x="285" y="1676" class="body-small">最终完成 → Completion Gate</text>
+  <text x="285" y="1711" class="body-small">状态与事件 → EvidenceStore / 前端</text>
+
+  <!-- 中列：控制面 -->
+  <rect x="1400" y="810" width="1050" height="990" class="card-orange"/>
+  <rect x="1435" y="836" width="92" height="32" rx="8" class="chip-new"/><text x="1481" y="852" class="status">建议新增</text>
+  <circle cx="1470" cy="914" r="26" fill="#c4780d"/><text x="1470" y="914" class="badge">2</text>
+  <text x="1520" y="925" class="node-title-orange">子 Agent 委派控制面</text>
+  <text x="1440" y="963" class="class-name">Delegation Coordinator · Scheduler · Result Gate</text>
+
+  <rect x="1440" y="1000" width="970" height="170" class="input-box"/>
+  <text x="1465" y="1036" class="io-label">子任务契约输入</text>
+  <text x="1465" y="1077" class="body-small">目标、范围、输入 Artifact 引用、期望证据、截止条件</text>
+  <text x="1465" y="1111" class="body-small">允许能力、风险上限、Token/回合/时间预算、优先级</text>
+  <text x="1465" y="1145" class="body-small">parent_solver_id、取消传播策略、是否允许再委派</text>
+
+  <rect x="1440" y="1195" width="970" height="220" class="orange-box"/>
+  <text x="1465" y="1231" class="io-label-orange">调度与隔离</text>
+  <text x="1465" y="1272" class="body">创建 child SolverRecord 与独立 Transcript</text>
+  <text x="1465" y="1310" class="body">控制并发、深度、总预算、超时与重复委派</text>
+  <text x="1465" y="1348" class="body">只下放最小必要工具权限和可见 Artifact</text>
+  <text x="1465" y="1382" class="body-small">建议默认最大深度 = 1：子 Agent 不再创建孙 Agent</text>
+
+  <rect x="1440" y="1440" width="970" height="210" class="output-box"/>
+  <text x="1465" y="1476" class="io-label-green">结果门与汇总</text>
+  <text x="1465" y="1517" class="body">校验 ChildResult 结构、Artifact 归属和来源</text>
+  <text x="1465" y="1555" class="body">去重事实、合并冲突、保留不同 Agent 的结论分歧</text>
+  <text x="1465" y="1593" class="body">输出 parent tool result：摘要、证据、未解决问题</text>
+  <text x="1465" y="1625" class="body-small">不把子 Agent 的完整上下文直接塞回主 Agent</text>
+
+  <rect x="1440" y="1675" width="970" height="85" class="neutral-box"/>
+  <text x="1465" y="1710" class="io-label">生命周期</text>
+  <text x="1565" y="1710" class="body-small">queued → running → succeeded / blocked / failed / cancelled</text>
+  <text x="1465" y="1742" class="body-small">主任务取消会级联取消所有活动子 Agent；子 Agent 失败不会自动终止主任务</text>
+
+  <!-- 右列：子 Agent 池 -->
+  <rect x="2650" y="810" width="1100" height="990" class="card-green"/>
+  <rect x="2685" y="836" width="92" height="32" rx="8" class="chip-new"/><text x="2731" y="852" class="status">建议新增</text>
+  <circle cx="2720" cy="914" r="26" fill="#0b8a6c"/><text x="2720" y="914" class="badge">3</text>
+  <text x="2770" y="925" class="node-title-green">并行子 Agent 池</text>
+  <text x="2690" y="963" class="class-name">每个子 Agent 都是受限、可恢复的独立 ReAct Session</text>
+
+  <rect x="2690" y="1000" width="1020" height="205" class="card"/>
+  <text x="2725" y="1045" class="node-title">子 Agent A：信息收集</text>
+  <text x="2725" y="1080" class="class-name">独立 solver_id / transcript / skill / RAG 查询</text>
+  <text x="2725" y="1120" class="body">示例：读取材料、检索背景、形成带来源的候选线索</text>
+  <text x="2725" y="1157" class="body-small">输出：ChildResult + Artifact IDs + 未解决问题</text>
+
+  <rect x="2690" y="1230" width="1020" height="205" class="card"/>
+  <text x="2725" y="1275" class="node-title">子 Agent B：专项分析</text>
+  <text x="2725" y="1310" class="class-name">独立 solver_id / transcript / workspace / 预算</text>
+  <text x="2725" y="1350" class="body">示例：逆向、代码审计、协议分析或特定攻击面验证</text>
+  <text x="2725" y="1387" class="body-small">工具调用仍逐次进入统一治理服务</text>
+
+  <rect x="2690" y="1460" width="1020" height="205" class="card"/>
+  <text x="2725" y="1505" class="node-title">子 Agent C：交叉验证</text>
+  <text x="2725" y="1540" class="class-name">与 A/B 隔离上下文，避免互相强化错误假设</text>
+  <text x="2725" y="1580" class="body">示例：复核证据、反证候选结论、验证可复现性</text>
+  <text x="2725" y="1617" class="body-small">不能调用任务级 finish_session</text>
+
+  <rect x="2690" y="1690" width="1020" height="70" class="orange-box"/>
+  <text x="2720" y="1733" class="io-label-orange">共同边界</text>
+  <text x="2835" y="1733" class="body-small">只读任务输入 + 私有工作区 + 有界工具 + 证据必须带 solver_id</text>
+
+  <!-- 清晰的委派与结果双通道 -->
+  <path d="M1200 1090 H1400" class="flow"/><text x="1223" y="1065" class="edge">委派子任务</text>
+  <path d="M2450 1090 H2650" class="flow"/><text x="2468" y="1065" class="edge">子任务契约</text>
+  <path d="M2650 1570 H2520 V1550 H2450" class="flow-green"/><text x="2470" y="1595" class="edge-green">ChildResult</text>
+  <path d="M1400 1570 H1200" class="flow-green"/><text x="1222" y="1545" class="edge-green">回填主对话</text>
+
+  <!-- 共享服务依赖 -->
+  <path d="M575 550 V640 H620 V810" class="flow-gray"/><text x="640" y="645" class="edge-gray">主 Agent Skills</text>
+  <path d="M1495 550 V640 H740 V810" class="flow-gray"/><text x="1120" y="630" class="edge-gray">主 Agent RAG</text>
+  <path d="M1495 550 V625 H3200 V810" class="flow-gray"/><text x="2650" y="615" class="edge-gray">子 Agent 按契约检索</text>
+  <path d="M3330 550 V650 H3420 V810" class="flow-orange"/><text x="3440" y="680" class="edge-orange">所有工具调用</text>
+
+  <!-- C 数据与可观测 -->
+  <rect x="100" y="1960" width="3800" height="500" class="frame-green"/>
+  <text x="145" y="2018" class="lane-title-green">C. 数据隔离、证据汇聚与前端展示</text>
+  <text x="145" y="2053" class="lane-note">任务输入可以共享只读；工作过程按 solver 隔离；最终证据在任务级统一存储，但始终保留生产者和完整来源链。</text>
+
+  <rect x="150" y="2100" width="850" height="285" class="card-blue"/>
+  <text x="190" y="2150" class="node-title">输入与工作区隔离</text>
+  <text x="190" y="2192" class="body">共享只读：/workspace/inputs</text>
+  <text x="190" y="2230" class="body">主 Agent：/solvers/main/workspace</text>
+  <text x="190" y="2268" class="body">子 Agent：/solvers/&lt;child-id&gt;/workspace</text>
+  <text x="190" y="2306" class="body-small">禁止子 Agent 直接覆盖其他 Agent 的派生文件</text>
+  <rect x="190" y="2330" width="760" height="34" class="orange-box"/><text x="210" y="2353" class="io-label-orange">当前共享 workspace 实现需要改为显式隔离模型</text>
+
+  <rect x="1070" y="2100" width="850" height="285" class="card-green"/>
+  <text x="1110" y="2150" class="node-title-green">任务级 Artifact 与 RAG</text>
+  <text x="1110" y="2192" class="body-green">统一保存 Artifact，但记录 producer_solver_id</text>
+  <text x="1110" y="2230" class="body-green">子 Agent 新证据异步进入任务私有 RAG 索引</text>
+  <text x="1110" y="2268" class="body-green">主 Agent 通过引用或检索读取，不复制原始文件</text>
+  <text x="1110" y="2306" class="body-small">最终结论仍由 Artifact 证明，而不是由 Agent 共识证明</text>
+
+  <rect x="1990" y="2100" width="850" height="285" class="card"/>
+  <text x="2030" y="2150" class="node-title">顺序事件与预算账本</text>
+  <text x="2030" y="2192" class="body">每个事件携带 solver_id / parent_solver_id</text>
+  <text x="2030" y="2230" class="body">记录委派、排队、启动、工具、结果、取消和失败</text>
+  <text x="2030" y="2268" class="body">聚合总 Token、模型成本、工具耗时和并发峰值</text>
+  <text x="2030" y="2306" class="body-small">回放可恢复每个 Agent 的独立时间线</text>
+
+  <rect x="2910" y="2100" width="840" height="285" class="card-green"/>
+  <text x="2950" y="2150" class="node-title-green">前端多智能体工作台</text>
+  <text x="2950" y="2192" class="body-green">顶部：活动 Agent 数、总预算、总 Token</text>
+  <text x="2950" y="2230" class="body-green">左栏：主/子 Agent 树、Skill、状态与子任务</text>
+  <text x="2950" y="2268" class="body-green">中栏：按 Agent 分组或合并的顺序时间线</text>
+  <text x="2950" y="2306" class="body-green">右栏：证据及生产者、最终结果与冲突说明</text>
+
+  <path d="M650 1800 V1960" class="flow-green"/><text x="670" y="1890" class="edge-green">主 Agent 事件</text>
+  <path d="M1925 1800 V1960" class="flow-green"/><text x="1945" y="1890" class="edge-green">委派与汇总事件</text>
+  <path d="M3200 1800 V1960" class="flow-green"/><text x="3220" y="1890" class="edge-green">子 Agent 证据与事件</text>
+
+  <line x1="100" y1="2510" x2="3900" y2="2510" stroke="#d5e2e8" stroke-width="2"/>
+  <text x="120" y="2550" class="body-small">关键原则：主 Agent 拥有任务，子 Agent 拥有子任务；共享 Skills/RAG，不共享 Transcript；共享治理规则，不共享无限权限；汇总结果，不汇总未经验证的“共识”。</text>
+</svg>

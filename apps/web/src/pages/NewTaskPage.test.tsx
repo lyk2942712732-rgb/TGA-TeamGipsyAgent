@@ -1,5 +1,6 @@
 ﻿import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -7,6 +8,14 @@ const mocks = vi.hoisted(() => ({
   stageInput: vi.fn(async (file: File) => ({ id: `asset_${(file.type.startsWith("image/") ? "b" : "a").repeat(32)}`, originalName: file.name, mimeType: file.type || "text/plain", mediaKind: file.type.startsWith("image/") ? "image" : "text", size: file.size, sha256: "b".repeat(64), status: "uploaded" as const })),
   deleteStagedInput: vi.fn(async () => ({ asset_id: `asset_${"a".repeat(32)}`, deleted: true })),
   fetchModeProfiles: vi.fn(() => new Promise(() => undefined)),
+  previewTaskSkills: vi.fn(async () => ({
+    selector: "task-skill-selector-v1:test", fingerprint: "abc", count: 1,
+    skills: [{ name: "web-recon", version: "1", origin: "builtin", capabilities: ["http.request"], tags: ["web"], content_sha256: "a".repeat(64), selection_reasons: ["任务特征匹配：web"] }],
+  })),
+  fetchSkillSettings: vi.fn(async () => ({ schema_version: 3, skills: [
+    { name: "web-recon", modes: ["ctf", "penetration_test"], capabilities: ["http.request"], tags: ["web"], version: "1", source: "builtin", summary: "Map web endpoints", editable: true },
+    { name: "binary-triage", modes: ["reverse_engineering"], capabilities: ["workspace.read"], tags: ["binary"], version: "1", source: "builtin", summary: "Inspect binary metadata", editable: true },
+  ] })),
 }));
 
 const backendPolicy = {
@@ -85,6 +94,11 @@ describe("NewTaskPage multimodal input flow", () => {
     await user.type(screen.getByLabelText("任务提示词"), "Analyze carefully");
     await user.click(screen.getByRole("button", { name: /创建摘要/ }));
     expect(await screen.findByText("binwalk")).toBeInTheDocument();
+    expect(await screen.findByText("web-recon")).toBeInTheDocument();
+    expect(screen.getByText("任务特征匹配：web")).toBeInTheDocument();
+    expect(mocks.previewTaskSkills).toHaveBeenCalledWith(expect.objectContaining({
+      mode: "ctf", prompt: "Analyze carefully", fileNames: ["task.txt"], executionPolicy: expect.any(Object),
+    }));
     expect(screen.queryByText("disabled")).toBeNull();
     await user.click(screen.getByRole("button", { name: "创建任务并开始" }));
     await waitFor(() => expect(mocks.createTask).toHaveBeenCalledWith(expect.objectContaining({
@@ -94,6 +108,30 @@ describe("NewTaskPage multimodal input flow", () => {
     expect(submitted).not.toHaveProperty("mcp_servers");
     expect(submitted).not.toHaveProperty("targets");
     expect(onCreated).toHaveBeenCalledWith("task_created");
+  });
+
+  it("manually selects Skills from scene groups and sends the selection to the backend", async () => {
+    const user = userEvent.setup();
+    render(<NewTaskPage onCreated={vi.fn()} />);
+    await user.click(screen.getByRole("button", { name: /任务提示与材料/ }));
+    await user.type(screen.getByLabelText("任务提示词"), "Inspect the web target");
+    await user.click(screen.getByRole("button", { name: /创建摘要/ }));
+    await screen.findByText("web-recon");
+    await user.click(screen.getByRole("button", { name: "手动选择" }));
+    const dialog = await screen.findByRole("dialog", { name: "手动选择 Skills" });
+    expect(within(dialog).getByText("CTF 解题")).toBeInTheDocument();
+    expect(within(dialog).getByText("逆向分析")).toBeInTheDocument();
+    expect(within(dialog).getByText("binary-triage")).toBeInTheDocument();
+    const web = within(dialog).getByRole("checkbox", { name: "web-recon（CTF 解题）" });
+    if (web.checked) await user.click(web);
+    await user.click(web);
+    expect(within(dialog).getByRole("checkbox", { name: "binary-triage（逆向分析）" })).toBeDisabled();
+    await user.click(within(dialog).getByRole("button", { name: "应用选择" }));
+    await waitFor(() => expect(mocks.previewTaskSkills).toHaveBeenCalledWith(expect.objectContaining({ selectedSkills: ["web-recon"] })));
+    expect(await screen.findByRole("button", { name: "恢复自动匹配" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "创建任务并开始" }));
+    await waitFor(() => expect(mocks.createTask).toHaveBeenCalledWith(expect.objectContaining({ selectedSkills: ["web-recon"] })));
   });
 
   it("allows a prompt without requiring an attachment", async () => {

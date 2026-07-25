@@ -19,7 +19,8 @@ from tga.runtime.completion_validators import (
 )
 from tga.runtime.coordinator import SessionCoordinator
 from tga.runtime.prompts import build_agent_system_prompt
-from tga.skills.registry import SkillRegistry
+from tga.capabilities.registry import build_default_registry
+from tga.skills.selection import SkillSelectionRequest, SkillSelector
 from tga.tools.mcp_config import MCPVisibilityConfig, load_mcp_config
 
 
@@ -100,14 +101,22 @@ def test_finish_schema_is_strict_and_exposes_flag_only_for_ctf():
 
 def test_each_mode_drives_prompt_capabilities_and_skills():
     capabilities = build_default_registry().snapshot()["capabilities"]
-    skills = SkillRegistry()
+    capabilities = build_default_registry().snapshot()["capabilities"]
     for mode in TASK_MODES:
         task = _task(f"profile_{mode}", mode)
         prompt = build_agent_system_prompt(task)
         assert MODE_PROFILES[mode].label in prompt
         assert MODE_PROFILES[mode].completion_focus in prompt
         assert any(mode in item["modes"] for item in capabilities)
-        assert skills.query(mode=mode, limit=3)
+        available = tuple(item["name"] for item in capabilities if mode in item["modes"])
+        selection = SkillSelector().select(SkillSelectionRequest(
+            mode=mode,
+            goal=task.goal,
+            prompt=task.session_input.prompt,
+            mode_config=task.mode_config.model_dump(mode="json") if task.mode_config else {},
+            available_capabilities=available,
+        ))
+        assert selection.selector.startswith("task-skill-selector-v1:")
 
 
 def test_ctf_requires_an_artifact_backed_non_placeholder_flag(tmp_path):
