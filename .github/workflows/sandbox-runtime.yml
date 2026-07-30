@@ -87,7 +87,9 @@ jobs:
           for image in tga-kali-offline:pr tga-kali-web:pr tga-kali-network:pr tga-nmap-mcp:pr; do
             test -z "$(docker run --rm --entrypoint sh "$image" -c 'find /var/lib/apt/lists -mindepth 1 -print -quit')"
           done
-      - uses: aquasecurity/setup-trivy@v0.2.3
+      - uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
+        with:
+          version: v0.71.0
       - uses: anchore/sbom-action/download-syft@v0
       - name: Scan images and generate SBOMs
         shell: bash

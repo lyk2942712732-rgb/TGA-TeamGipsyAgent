@@ -14,7 +14,8 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-    "grpcio-tools>=1.74",
+    "grpcio-tools==1.74.0",
+    "httpx2==2.7.0",
     "pytest>=8.0",
 ]
 
