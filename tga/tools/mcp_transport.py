@@ -5,13 +5,14 @@ from __future__ import annotations
 import json
 import os
 import queue
+import re
 import ssl
 import subprocess
 import tempfile
 import threading
 import time
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Callable, Protocol
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import HTTPRedirectHandler, HTTPSHandler, ProxyHandler, Request, build_opener
@@ -266,6 +267,79 @@ class DockerStdioTransport(StdioTransport):
         )
 
 
+class SandboxStdioTransport:
+    """MCP JSON-RPC over a provider-owned long-running sandbox process."""
+
+    def __init__(self, process_factory: Callable[[], Any], *, max_capture_bytes: int) -> None:
+        self._process_factory = process_factory
+        self._process = None
+        self._max_capture_bytes = max_capture_bytes
+        self._stdout = bytearray()
+        self._stderr = bytearray()
+        self.connected = False
+        self.output_truncated = False
+        self._returncode: int | None = None
+
+    def connect(self) -> None:
+        if self._process is None:
+            self._process = self._process_factory()
+        self.connected = True
+
+    def send(self, message: dict[str, Any]) -> None:
+        if not self.connected or self._process is None:
+            raise MCPTransportError("sandbox MCP process is not connected")
+        payload = json.dumps(message, ensure_ascii=False, separators=(",", ":")).encode() + b"\n"
+        self._process.send(payload)
+
+    def receive(self, timeout: float) -> dict[str, Any]:
+        if self._process is None:
+            raise MCPTransportError("sandbox MCP process is not connected")
+        while True:
+            frame = self._process.receive(timeout)
+            target = self._stderr if frame.stream == "stderr" else self._stdout
+            remaining = self._max_capture_bytes - len(target)
+            target.extend(frame.data[: max(0, remaining)])
+            if len(frame.data) > remaining:
+                self.output_truncated = True
+            if frame.stream == "stderr":
+                continue
+            line = frame.data.decode("utf-8", errors="replace").strip()
+            try:
+                value = json.loads(line)
+            except json.JSONDecodeError as exc:
+                raise MCPTransportError(f"invalid sandbox MCP JSON-RPC stdout: {exc.msg}") from exc
+            if not isinstance(value, dict):
+                raise MCPTransportError("MCP JSON-RPC message must be an object")
+            return value
+
+    def close(self) -> None:
+        if self._process is not None:
+            self._process.close()
+            self._process = None
+        self.connected = False
+
+    def finish(self, timeout: float = 2.0) -> int | None:
+        if self._process is None:
+            return self._returncode
+        self._process.close_stdin()
+        result = self._process.wait(timeout)
+        self._returncode = result.exit_code
+        self.output_truncated = self.output_truncated or result.truncated
+        return self._returncode
+
+    @property
+    def stdout_text(self) -> str:
+        return bytes(self._stdout).decode("utf-8", errors="replace")
+
+    @property
+    def stderr_text(self) -> str:
+        return bytes(self._stderr).decode("utf-8", errors="replace")
+
+    @property
+    def returncode(self) -> int | None:
+        return self._returncode
+
+
 class _ControlledRedirectHandler(HTTPRedirectHandler):
     def __init__(self, endpoint: str, allow_same_origin: bool) -> None:
         self._origin = _origin(endpoint)
@@ -432,11 +506,43 @@ class StreamableHTTPTransport:
             self._messages.put(message)
 
 
-def build_transport(server: MCPServerConfig, *, workspace: Path | None = None) -> MCPTransport:
+def build_transport(
+    server: MCPServerConfig,
+    *,
+    workspace: Path | None = None,
+    sandbox_process_factory: Callable[[], Any] | None = None,
+) -> MCPTransport:
     if server.transport == "streamable_http":
         return StreamableHTTPTransport(server)
     if server.stdio is None:
         raise MCPTransportError("stdio transport is missing stdio configuration", code="CONFIG_ERROR")
+    if os.environ.get("TGA_SANDBOX_RUNTIME") == "enforced":
+        if server.execution_profile_id is None:
+            raise MCPTransportError(
+                "enforced mode requires executionProfileId for local MCP",
+                code="POLICY_DENIED",
+            )
+        if server.stdio.source == "local_process":
+            raise MCPTransportError(
+                "local_process MCP is forbidden in enforced mode",
+                code="POLICY_DENIED",
+            )
+        if not re.search(r"@sha256:[a-f0-9]{64}$", server.stdio.image or ""):
+            raise MCPTransportError(
+                "enforced mode requires a digest-pinned MCP image",
+                code="POLICY_DENIED",
+            )
+        if sandbox_process_factory is None:
+            raise MCPTransportError(
+                "enforced mode requires a sandbox process provider",
+                code="PROVIDER_UNAVAILABLE",
+                retryable=True,
+            )
+    if sandbox_process_factory is not None:
+        return SandboxStdioTransport(
+            sandbox_process_factory,
+            max_capture_bytes=min(server.max_output_bytes, server.max_artifact_bytes),
+        )
     command = build_stdio_command(server, workspace=workspace)
     if server.stdio.source == "docker_image":
         return DockerStdioTransport(server, workspace=workspace)

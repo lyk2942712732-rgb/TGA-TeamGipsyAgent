@@ -1,9 +1,9 @@
 {
-  "version": 1,
+  "version": 2,
   "maxConcurrency": 4,
   "servers": {
     "nmap": {
-      "enabled": true,
+      "enabled": false,
       "transport": "stdio",
       "stdio": {
         "source": "docker_image",
@@ -26,7 +26,7 @@
         }
       },
       "enabledTools": [
-        "quick_scan"
+        "nmap_connect"
       ],
       "timeoutSeconds": 120,
       "toolTimeoutSeconds": 300,
@@ -39,7 +39,36 @@
           "reverse_engineering"
         ],
         "risk": "active"
-      }
+      },
+      "executionProfileId": "tcp-assessment"
+    },
+    "nmap-raw": {
+      "enabled": false,
+      "transport": "stdio",
+      "stdio": {
+        "source": "docker_image",
+        "image": "nmap-mcp:latest",
+        "environment": {},
+        "secretRefs": {}
+      },
+      "enabledTools": [
+        "nmap_syn",
+        "ping",
+        "capture"
+      ],
+      "timeoutSeconds": 120,
+      "toolTimeoutSeconds": 300,
+      "visibility": {
+        "modes": [
+          "ctf",
+          "penetration_test",
+          "incident_response",
+          "vulnerability_research",
+          "reverse_engineering"
+        ],
+        "risk": "active"
+      },
+      "executionProfileId": "raw-network"
     },
     "remote-scanner": {
       "enabled": false,
