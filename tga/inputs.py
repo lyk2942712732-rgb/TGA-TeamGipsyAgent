@@ -122,7 +122,12 @@ def media_kind_for(mime_type: str, original_name: str) -> MediaKind:
 
 
 def task_artifact_root(task_root: str | Path, task: Any) -> Path:
-    """Return the durable ArtifactStore root for a Session workspace."""
+    """Return the compatibility ArtifactStore root used by legacy adapters.
+
+    Schema-v6 Solver publication uses ``workspace/shared/artifacts`` through
+    ``SolverWorkspaceService``; existing adapters keep this path until their
+    dedicated migration so persisted Sessions remain readable.
+    """
 
     root = Path(task_root).resolve()
     return (root / "workspace" / "artifacts").resolve()
@@ -171,7 +176,10 @@ class SessionWorkspace:
         self.limits = limits or InputLimits.from_environment()
 
     def ensure(self) -> Path:
-        for relative in ("inputs/files", "work", "artifacts", "evidence", "tool-results", "state"):
+        for relative in (
+            "inputs/files", "shared/artifacts", "solvers", "work", "artifacts",
+            "evidence", "tool-results", "state",
+        ):
             path = (self.root / relative).resolve()
             self._inside(path, self.root)
             path.mkdir(parents=True, exist_ok=True)

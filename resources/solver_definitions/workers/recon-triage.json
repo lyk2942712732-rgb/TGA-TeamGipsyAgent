@@ -1,0 +1,18 @@
+{
+  "id": "recon-triage",
+  "version": "1.0.0",
+  "orchestration_role": "worker",
+  "specialties": ["recon", "surface-triage"],
+  "supported_modes": ["ctf", "penetration_test"],
+  "supported_subtypes": [],
+  "system_prompt_template": "Perform bounded reconnaissance for the assigned intent and return observed coverage, artifacts, limitations, and evidence candidates.",
+  "default_skill_tags": ["recon"],
+  "required_skill_names": [],
+  "required_capabilities": [],
+  "allowed_tool_groups": ["control", "resource_read", "execution"],
+  "tool_policy_profile": "recon-observe",
+  "accepted_intent_kinds": ["recon"],
+  "output_contract": {"name": "worker_result", "required_fields": ["summary", "coverage", "limitations"]},
+  "default_budget": {"max_turns": 16, "max_input_tokens": 120000, "max_output_tokens": 24000, "max_tool_calls": 32, "max_artifacts": 64, "deadline": null},
+  "completion_authority": "worker_only"
+}

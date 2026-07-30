@@ -8,10 +8,16 @@ from typing import Protocol, Sequence
 
 @dataclass(frozen=True)
 class RAGQuery:
-    task_id: str
-    mode: str
-    text: str
+    # Compatibility facade only. New code uses tga.domain.retrieval; keep
+    # task_id optional so global/workspace retrieval is not task-owned.
+    task_id: str | None = None
+    mode: str = ""
+    text: str = ""
     limit: int = 6
+    scope: str = "task"
+    workspace_id: str | None = None
+    solver_id: str | None = None
+    knowledge_base_ids: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -37,4 +43,3 @@ class NullRAGRetriever:
     def retrieve(self, query: RAGQuery) -> Sequence[RAGChunk]:
         del query
         return ()
-

@@ -6,9 +6,11 @@ from pathlib import Path
 
 from tga.contracts import ResourceProvenance, SessionFile, SessionInput, TGATask
 from tga.evidence.store import EvidenceStore
+from tga.infrastructure.persistence import PersistenceBundle
 from tga.runtime.manager import Manager, RuntimeLimits
 from tga.tools.mcp_manager import MCPManager
 from tga.skills.models import SkillBundleSnapshot, SkillSnapshot
+from tga.domain.retrieval import OwnerScope
 
 
 class FakeModelClient:
@@ -26,7 +28,8 @@ class FakeModelClient:
     def chat_tools(self, messages: list[dict], *, tools: list[dict], temperature: float) -> dict:
         self.requests.append(json.loads(json.dumps(messages)))
         names = {item["function"]["name"] for item in tools}
-        assert {"input_read", "finish_session"} <= names
+        assert {"input_read", "propose_task_completion"} <= names
+        assert "finish_session" not in names
         tool_results = [item for item in messages if item.get("role") == "tool"]
         if not tool_results:
             return self._call(
@@ -44,7 +47,7 @@ class FakeModelClient:
         artifact_id = read_result["artifact_id"]
         return self._call(
             "call_finish",
-            "finish_session",
+            "propose_task_completion",
             {
                 "summary": "Recovered the flag from immutable input evidence.",
                 "flag": self.flag,
@@ -75,7 +78,7 @@ class FinishRejectedModelClient(FakeModelClient):
         self.requests.append(json.loads(json.dumps(messages)))
         tool_results = [item for item in messages if item.get("role") == "tool"]
         if not tool_results:
-            return self._call("call_early_finish", "finish_session", {
+            return self._call("call_early_finish", "propose_task_completion", {
                 "summary": "Premature finish without evidence.",
                 "flag": self.flag,
                 "evidence_artifact_ids": [],
@@ -93,7 +96,7 @@ class FinishRejectedModelClient(FakeModelClient):
                     "expected_outcome": "Task-owned Artifact containing the flag",
                 },
             })
-        return self._call("call_finish_after_evidence", "finish_session", {
+        return self._call("call_finish_after_evidence", "propose_task_completion", {
             "summary": "Recovered the flag after satisfying the evidence gate.",
             "flag": self.flag,
             "evidence_artifact_ids": [latest["artifact_id"]],
@@ -164,7 +167,7 @@ class ResumeFromTranscriptModelClient(FakeModelClient):
             })
         assert len(tool_results) == 1
         result = json.loads(tool_results[-1]["content"])
-        return self._call("call_finish_after_restart", "finish_session", {
+        return self._call("call_finish_after_restart", "propose_task_completion", {
             "summary": "Completed after restoring the durable transcript.",
             "flag": self.flag,
             "evidence_artifact_ids": [result["artifact_id"]],
@@ -193,7 +196,7 @@ def _seed_task(tmp_path: Path, *, task_id: str, flag: str = "CTF{model_independe
         goal="Read the input and submit its flag with evidence.",
         flag_format=r"CTF\{[^}]+\}",
         session_input=SessionInput(files=[item]),
-        schema_version=5,
+        schema_version=6,
     )
     task_root = tmp_path / task_id
     source = task_root / "workspace" / item.relative_path
@@ -243,11 +246,49 @@ def test_fake_model_drives_real_react_tool_feedback_and_completion(tmp_path: Pat
         assert len(actions) == 1
         assert actions[0]["status"] == "succeeded"
         assert actions[0]["result"]["artifact_ids"] == [artifact_id]
+        assert actions[0]["intent_id"] == f"intent_initial_{task.id}"
+        assert actions[0]["local_plan_step_id"] == f"local_step_{actions[0]['solver_id']}_1"
+        assert actions[0]["execution_policy_snapshot_id"].startswith("execution:")
+        assert actions[0]["solver_tool_policy_snapshot_id"].startswith("tool:")
+        assert actions[0]["governed_action_id"].startswith("governed_")
+        assert actions[0]["strategy_card_id"] is None
+        assert actions[0]["strategy_step_id"] is None
         event_types = [event.type for event in store.list_agent_events(task.id)]
         assert "ARTIFACT_SAVED" in event_types
         assert "TOOL_EXECUTION_END" in event_types
         assert event_types[-3:] == ["FINISH_ACCEPTED", "AGENT_FINISHED", "SESSION_STOPPED"]
         assert store.task_snapshot(task.id)["flags"][0]["evidence_artifact_id"] == artifact_id
+        durable_solvers = PersistenceBundle(store).solvers.list_solvers(task.id)
+        assert len(durable_solvers) == 1
+        assert durable_solvers[0].status == "completed"
+        assert durable_solvers[0].timestamps.started_at is not None
+        assert durable_solvers[0].timestamps.finished_at is not None
+        bundle = PersistenceBundle(store)
+        claims = bundle.evidence.list_evidence_claims(task.id)
+        assert len(claims) == 1
+        assert claims[0].status == "confirmed"
+        assert claims[0].artifact_id == artifact_id
+        verified = [
+            item for item in bundle.knowledge.list_knowledge(task.id)
+            if item.status == "verified"
+        ]
+        assert len(verified) == 1
+        assert verified[0].evidence_claim_ids == [claims[0].id]
+        retrieval_sources = bundle.retrieval.list_sources()
+        assert any(
+            item.channel == "task_artifact"
+            and item.metadata.get("artifact_id") == artifact_id
+            for item in retrieval_sources
+        )
+        snapshots = bundle.retrieval.list_snapshots()
+        assert snapshots and any(
+            bundle.retrieval.get_chunk(chunk_id).metadata.get("artifact_id") == artifact_id
+            for chunk_id in snapshots[-1].chunk_ids
+        )
+        binding = bundle.retrieval.get_snapshot_binding(
+            OwnerScope(scope="task", task_id=task.id), "context"
+        )
+        assert binding and binding.index_snapshot_id == snapshots[-1].id
     finally:
         store.close()
 
@@ -263,7 +304,7 @@ def test_first_provider_request_contains_frozen_skill_body_in_system_message(tmp
             origin="custom",
             modes=["ctf"],
             body=marker,
-            content_sha256="b" * 64,
+            content_sha256=hashlib.sha256(marker.encode()).hexdigest(),
             score=100,
             selection_reasons=["integration test"],
         )],
@@ -282,7 +323,11 @@ def test_first_provider_request_contains_frozen_skill_body_in_system_message(tmp
 
     assert client.requests
     assert client.requests[0][0]["role"] == "system"
-    assert marker in client.requests[0][0]["content"]
+    system_prompt = client.requests[0][0]["content"]
+    assert "## TASK COMMON SKILLS" in system_prompt
+    assert "## SOLVER SPECIALIZED SKILLS" in system_prompt
+    assert "cannot grant tools" in system_prompt
+    assert marker in system_prompt
 
 
 def test_finish_rejection_continues_to_real_evidence_and_completion(tmp_path: Path) -> None:
@@ -341,14 +386,15 @@ def test_policy_rejection_is_returned_as_tool_message_without_execution(tmp_path
 
     assert snapshot["session"]["status"] == "blocked"
     assert snapshot["session"]["stop_reason"] == "session_turn_limit"
-    assert len(snapshot["actions"]) == 1
-    assert snapshot["actions"][0]["status"] == "blocked"
-    assert snapshot["actions"][0]["result"]["error"]["code"] == "LOCAL_COMPUTE_DISABLED"
+    # The manifest is the first authorization boundary: a disabled execution
+    # tool is not advertised and a forged call never reaches the legacy
+    # executor/action table.
+    assert snapshot["actions"] == []
     transcript_path = tmp_path / task.id / "solvers" / snapshot["session"]["active_solver_id"] / "session" / "messages.json"
     transcript = json.loads(transcript_path.read_text(encoding="utf-8"))
     tool_result = json.loads(next(item["content"] for item in transcript if item.get("role") == "tool"))
     assert tool_result["status"] == "blocked"
-    assert tool_result["error"]["code"] == "LOCAL_COMPUTE_DISABLED"
+    assert tool_result["error"]["code"] == "TOOL_NOT_IN_MANIFEST"
     assert not any(event["type"] == "TOOL_EXECUTION_START" for event in snapshot["agent_events"])
 
 

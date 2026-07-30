@@ -10,3 +10,7 @@ export function readRoute(pathname = window.location.pathname): AppRoute {
   if (parts[0] === "settings" && ["models", "capabilities", "skills", "system-prompt"].includes(parts[1] ?? "")) return { page: parts[1] as AppRoute["page"] };
   return { page: "dashboard" };
 }
+
+export function runtimePageVariant(value = import.meta.env.VITE_RUNTIME_PAGE): "task" | "legacy" {
+  return value === "legacy" ? "legacy" : "task";
+}

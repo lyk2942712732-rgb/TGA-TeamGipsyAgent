@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "servers": {
+    "remote": {
+      "configHash": "c47b9483db8f101d2a70f81cbd13f584418b82c9e99efe9d44db11521d40f954",
+      "serverInfo": {
+        "name": "test-http",
+        "version": "1"
+      },
+      "protocolVersion": "2024-11-05",
+      "tools": [
+        {
+          "name": "echo",
+          "description": "Echo text",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "text": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "text"
+            ]
+          }
+        }
+      ],
+      "discoveredAt": "2026-07-30T03:41:18.627151Z"
+    }
+  }
+}

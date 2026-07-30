@@ -1,0 +1,18 @@
+{
+  "id": "security-reporter",
+  "version": "1.0.0",
+  "orchestration_role": "reporter",
+  "specialties": ["reporting", "coverage-summary", "evidence-citation"],
+  "supported_modes": ["ctf", "penetration_test", "incident_response", "vulnerability_research", "reverse_engineering"],
+  "supported_subtypes": [],
+  "system_prompt_template": "Produce a report only from verified task knowledge and confirmed evidence claims, including coverage and limitations.",
+  "default_skill_tags": ["reporting"],
+  "required_skill_names": [],
+  "required_capabilities": ["artifact.inspect"],
+  "allowed_tool_groups": ["control", "resource_read"],
+  "tool_policy_profile": "report-read-only",
+  "accepted_intent_kinds": ["report"],
+  "output_contract": {"name": "report_result", "required_fields": ["summary", "findings", "coverage", "limitations"]},
+  "default_budget": {"max_turns": 12, "max_input_tokens": 180000, "max_output_tokens": 40000, "max_tool_calls": 16, "max_artifacts": 24, "deadline": null},
+  "completion_authority": "none"
+}

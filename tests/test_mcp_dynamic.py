@@ -72,7 +72,7 @@ def _schema_v4_task(snapshot, *, task_id: str = "task_v4") -> TGATask:
             server_ids=sorted({item.server_id for item in snapshot.servers if item.status == "discovered"}),
             tools=[MCPCapabilityTool(**route.model_dump(mode="json")) for route in snapshot.routes],
         ),
-        schema_version=5,
+        schema_version=6,
     )
 
 

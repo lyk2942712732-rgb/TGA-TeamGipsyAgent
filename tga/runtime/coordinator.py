@@ -339,6 +339,8 @@ class SessionCoordinator:
                     ), "")
                     if not statement:
                         continue
+                    task = self.store.get_task(task_id)
+                    may_confirm_legacy = bool(task and task.schema_version < 6)
                     digest = hashlib.sha256(f"{task_id}\0{claim.get('kind')}\0{statement}".encode("utf-8")).hexdigest()[:16]
                     finding = Finding(
                         id=f"finding_{digest}",
@@ -350,17 +352,17 @@ class SessionCoordinator:
                         evidence_excerpt=statement[:500],
                     )
                     self.store.add_candidate_finding(finding)
-                    if evidence_id:
+                    if evidence_id and may_confirm_legacy:
                         self.store.confirm_finding(finding.id, evidence_id)
                     self.store.append_agent_event(
                         task_id,
-                        "FINDING_CONFIRMED" if evidence_id else "FINDING_CANDIDATE",
+                        "FINDING_CONFIRMED" if evidence_id and may_confirm_legacy else "FINDING_CANDIDATE",
                         {
                             "finding_id": finding.id,
                             "title": finding.title,
                             "target": finding.target,
                             "severity": finding.severity,
-                            "status": "confirmed" if evidence_id else "candidate",
+                            "status": "confirmed" if evidence_id and may_confirm_legacy else "candidate",
                             "evidence_artifact_id": evidence_id or None,
                         },
                         solver_id=solver_id,

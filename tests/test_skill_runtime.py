@@ -12,6 +12,7 @@ from apps.api.routes import tasks as task_routes
 
 from tga.contracts import ExecutionPolicy, TGATask
 from tga.evidence.store import EvidenceStore
+from tga.infrastructure.persistence import PersistenceBundle
 from tga.rag import NullRAGRetriever
 from tga.rag.retrieval import RAGQuery
 from tga.runtime.prompts import build_agent_system_prompt
@@ -169,12 +170,14 @@ def test_task_creation_freezes_custom_skill_and_injects_body_into_system_prompt(
     store = EvidenceStore(tmp_path / "runs" / created.task_id / "evidence.db")
     try:
         task = store.get_task(created.task_id)
-        assert task is not None and task.skill_bundle_snapshot is not None
-        selected = next(item for item in task.skill_bundle_snapshot.skills if item.name == "custom-runtime-skill")
+        assert task is not None and task.skill_bundle_snapshot is None
+        common = PersistenceBundle(store).tasks.get_task_common_skill_snapshot(created.task_id)
+        assert common is not None and common.legacy_import is False
+        selected = next(item for item in common.skills if item.name == "custom-runtime-skill")
         assert selected.body == original_body
-        assert task.skill_bundle_snapshot.selector.endswith(":manual")
+        assert common.selector.startswith("task-common:")
         event = next(item for item in store.list_agent_events(created.task_id) if item.type == "SKILLS_SNAPSHOTTED")
-        assert event.payload["fingerprint"] == task.skill_bundle_snapshot.fingerprint
+        assert event.payload["scope"] == "task_common"
         assert any(item["name"] == "custom-runtime-skill" for item in event.payload["skills"])
     finally:
         store.close()
@@ -191,7 +194,8 @@ def test_task_creation_freezes_custom_skill_and_injects_body_into_system_prompt(
     try:
         frozen = store.get_task(created.task_id)
         assert frozen is not None
-        prompt = build_agent_system_prompt(frozen)
+        common = PersistenceBundle(store).tasks.get_task_common_skill_snapshot(created.task_id)
+        prompt = build_agent_system_prompt(frozen, task_common=common)
         assert "CUSTOM_SKILL_RUNTIME_MARKER" in prompt
         assert "NEW_BODY_MUST_NOT_REPLACE_TASK_SNAPSHOT" not in prompt
     finally:

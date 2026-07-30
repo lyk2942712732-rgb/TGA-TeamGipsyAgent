@@ -8,8 +8,8 @@ import sys
 import time
 from pathlib import Path
 
+from tga.bootstrap.container import Container
 from tga.cli.config_loader import TaskConfigError, load_task_config
-from tga.runtime.manager import Manager
 from tga.runtime.service import TaskRuntimeService
 
 
@@ -22,7 +22,7 @@ def run_from_config(config: str, *, run_root: str, report_out: str | None = None
 
 
 def _service(run_root: str) -> TaskRuntimeService:
-    return TaskRuntimeService(run_root=run_root, manager=Manager(run_root=run_root))
+    return Container(run_root).runtime_service()
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -169,4 +169,3 @@ def _observe(service: TaskRuntimeService, task_id: str, *, after_seq: int, follo
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

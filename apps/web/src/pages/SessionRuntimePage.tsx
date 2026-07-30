@@ -23,7 +23,7 @@ export function SessionRuntimePage({ taskId, mode, onReplay }: Props) {
   if (!snapshot) return <section className="runtime-workspace"><RuntimeLoading error={error} onRetry={() => void refresh()} /></section>;
 
   const profile = MODE_PROFILES[snapshot.task.mode];
-  const model = snapshot.task.model_snapshot?.model || snapshot.solvers[0]?.model_name || "未记录模型";
+  const model = snapshot.task.model_snapshot?.model || snapshot.solvers.find((solver) => solver.id === snapshot.session.active_solver_id)?.model_name || "未记录模型";
   const elapsed = elapsedLabel(snapshot.session.started_at, snapshot.session.finished_at);
   const runtimeError = latestRuntimeError(snapshot);
   const pendingApproval = snapshot.session.status === "awaiting_approval"

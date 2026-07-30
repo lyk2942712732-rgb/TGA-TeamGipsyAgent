@@ -1,0 +1,26 @@
+{
+  "schema_version": 2,
+  "base_url": "https://provider.example/v1/chat/completions",
+  "model": "reasoner",
+  "supports_vision": null,
+  "max_output_tokens": 4096,
+  "timeout_seconds": 90,
+  "temperature": 0.65,
+  "reasoning_mode": "enabled",
+  "verification": {
+    "status": "unverified",
+    "id": null,
+    "verified_at": null,
+    "capability_fingerprint": null,
+    "capabilities": {
+      "chat_completions": false,
+      "tool_calling": false,
+      "forced_tool_choice": false,
+      "auto_tool_choice": false,
+      "vision": null,
+      "reasoning_content": false
+    },
+    "last_error": null
+  },
+  "api_key_dpapi": "AQAAANCMnd8BFdERjHoAwE/Cl+sBAAAAlQkgFz9xPE223JYnW/mxwgAAAAAkAAAAVABHAEEAIABtAG8AZABlAGwAIABBAFAASQAgAGsAZQB5AAAAEGYAAAABAAAgAAAAgcQnBV4A8IPzHxk8QYJNV9BySj82eQxv1ZxERoaKhAYAAAAADoAAAAACAAAgAAAA3fzpTb82uKqM238QCPGL+A7+HHcCXOSxirc8l4bdfeQQAAAAMIeFG2p9+5OJYoyvRCkiYEAAAABtKrAE27RQzG4OelHPI78qze4Ate6XhiubCZgalaCASV+AcV/IpzVpglGVsWzNbKgVU3nb4419/0n+wh1vFoPP"
+}

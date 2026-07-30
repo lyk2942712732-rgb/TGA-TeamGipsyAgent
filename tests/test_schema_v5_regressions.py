@@ -18,6 +18,7 @@ from tga.contracts import (
 )
 from tga.evidence.artifacts import ArtifactStore
 from tga.evidence.store import EvidenceStore
+from tga.infrastructure.persistence import PersistenceBundle
 from tga.runtime.completion_validators import CompletionValidationContext, FinishSubmission, validator_for
 from tga.runtime.coordinator import SessionCoordinator
 from tga.runtime.approvals import expire_pending_approvals
@@ -57,7 +58,7 @@ def _task(task_id: str, *, policy: ExecutionPolicy | None = None) -> TGATask:
         goal="test the runtime boundary",
         session_input=SessionInput(prompt="Use the supplied task context."),
         execution_policy=policy or ExecutionPolicy(),
-        schema_version=5,
+        schema_version=6,
     )
 
 
@@ -110,7 +111,7 @@ def test_approval_requires_task_owned_pending_action(tmp_path: Path) -> None:
     task = _task("approval_owner")
     store = EvidenceStore(tmp_path / task.id / "evidence.db")
     store.create_task(task)
-    store.create_session(SessionRecord(task_id=task.id, schema_version=5, status="running"))
+    store.create_session(SessionRecord(task_id=task.id, schema_version=6, status="running"))
     action = ActionSpec(
         id="act_pending",
         task_id=task.id,
@@ -141,7 +142,7 @@ def test_expired_approval_rejects_persisted_action_and_resumes_session(tmp_path:
     task = _task("approval_expiry")
     store = EvidenceStore(tmp_path / task.id / "evidence.db")
     store.create_task(task)
-    store.create_session(SessionRecord(task_id=task.id, schema_version=5, status="running"))
+    store.create_session(SessionRecord(task_id=task.id, schema_version=6, status="running"))
     action = ActionSpec(
         id="act_expired",
         task_id=task.id,
@@ -171,7 +172,7 @@ def test_cancel_terminates_pending_approval_action(tmp_path: Path) -> None:
     task = _task("approval_cancel")
     store = EvidenceStore(tmp_path / task.id / "evidence.db")
     store.create_task(task)
-    store.create_session(SessionRecord(task_id=task.id, schema_version=5, status="running"))
+    store.create_session(SessionRecord(task_id=task.id, schema_version=6, status="running"))
     action = ActionSpec(
         id="act_cancelled", task_id=task.id, solver_id="agent_main",
         kind="http", capability="http.request", target="https://example.test",
@@ -360,7 +361,13 @@ def test_approved_action_executes_persisted_spec_once(tmp_path: Path) -> None:
 
     manager.start_session(task_id=task.id)
     pending = manager.run_session(task.id)
-    assert pending["session"]["status"] == "awaiting_approval"
+    assert pending["session"]["status"] == "running"
+    scoped = PersistenceBundle.open(tmp_path / task.id / "evidence.db")
+    try:
+        assert scoped.solvers.list_solvers(task.id)[0].status == "awaiting_approval"
+        assert scoped.plans.get_global_plan(task.id).intents[0].status == "awaiting_approval"
+    finally:
+        scoped.close()
     action_id = pending["actions"][0]["id"]
     assert pending["actions"][0]["status"] == "pending_approval"
     assert executor.actions == []
@@ -438,7 +445,7 @@ def test_approved_mcp_action_executes_persisted_route_and_arguments_once(tmp_pat
     manager.start_session(task_id=task.id)
     pending = manager.run_session(task.id)
     action = pending["actions"][0]
-    assert pending["session"]["status"] == "awaiting_approval"
+    assert pending["session"]["status"] == "running"
     assert action["status"] == "pending_approval"
     assert action["arguments"] == {"text": "persisted approval arguments"}
 

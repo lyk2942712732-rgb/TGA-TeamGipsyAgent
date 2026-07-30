@@ -26,6 +26,7 @@ from tga.contracts import (
     TGATask,
 )
 from tga.evidence.database import utc_now
+from tga.infrastructure.persistence.errors import ArtifactImmutableError, PersistenceConflict
 class TaskRepository:
     def get_task(self, task_id: str) -> TGATask | None:
         row = self.conn.execute("SELECT payload_json FROM tasks WHERE id=?", (task_id,)).fetchone()
@@ -239,11 +240,46 @@ class SessionRepository:
 
 class ArtifactRepository:
     def add_artifact(self, artifact: ArtifactRecord) -> None:
-        self.conn.execute(
-            "INSERT OR REPLACE INTO artifacts(id, task_id, intent_id, payload_json, created_at) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (artifact.id, artifact.task_id, artifact.intent_id, artifact.model_dump_json(), artifact.created_at),
+        task_row = self.conn.execute(
+            "SELECT payload_json FROM tasks WHERE id=?", (artifact.task_id,)
+        ).fetchone()
+        schema_version = (
+            int(json.loads(task_row["payload_json"]).get("schema_version") or 0)
+            if task_row else 0
         )
+        payload = artifact.model_dump_json()
+        if schema_version == 6:
+            existing = self.conn.execute(
+                "SELECT task_id,payload_json,schema_version FROM artifacts WHERE id=?",
+                (artifact.id,),
+            ).fetchone()
+            if existing is not None:
+                if (
+                    existing["task_id"] == artifact.task_id
+                    and existing["payload_json"] == payload
+                    and int(existing["schema_version"]) == 6
+                ):
+                    return
+                raise ArtifactImmutableError(
+                    f"artifact id is immutable: {artifact.id}"
+                )
+            self.conn.execute(
+                "INSERT INTO artifacts(id,task_id,intent_id,payload_json,created_at,schema_version) "
+                "VALUES (?,?,?,?,?,6)",
+                (
+                    artifact.id, artifact.task_id, artifact.intent_id,
+                    payload, artifact.created_at,
+                ),
+            )
+        else:
+            self.conn.execute(
+                "INSERT OR REPLACE INTO artifacts(id, task_id, intent_id, payload_json, created_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (
+                    artifact.id, artifact.task_id, artifact.intent_id,
+                    payload, artifact.created_at,
+                ),
+            )
         self._commit()
 
     def upsert_artifact_index(self, index: ArtifactIndex) -> ArtifactIndex:
@@ -313,10 +349,12 @@ class ActionRepository:
     ) -> None:
         now = utc_now()
         self.conn.execute(
-            "INSERT INTO actions(id,task_id,solver_id,kind,capability,target,arguments_json,rationale,risk,strategy_card_id,strategy_step_id,expected_outcome,retry_reason,alternative_analysis,effect_json,approval_expires_at,input_id,target_ref,actual_target,authorization_json,provenance_json,status,created_at,updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO actions(id,task_id,solver_id,intent_id,local_plan_step_id,execution_policy_snapshot_id,solver_tool_policy_snapshot_id,governed_action_id,kind,capability,target,arguments_json,rationale,risk,strategy_card_id,strategy_step_id,expected_outcome,retry_reason,alternative_analysis,effect_json,approval_expires_at,input_id,target_ref,actual_target,authorization_json,provenance_json,status,created_at,updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
-                action.id, action.task_id, action.solver_id, action.kind,
+                action.id, action.task_id, action.solver_id, action.intent_id,
+                action.local_plan_step_id, action.execution_policy_snapshot_id,
+                action.solver_tool_policy_snapshot_id, action.governed_action_id, action.kind,
                 action.capability, action.target, json.dumps(action.arguments), action.rationale,
                 action.risk, action.strategy_card_id, action.strategy_step_id,
                 action.expected_outcome, action.retry_reason, action.alternative_analysis,
@@ -376,13 +414,42 @@ class ActionRepository:
         ]
 
     def add_action_result(self, result: ActionResult) -> None:
+        values = {
+            "action_id": result.action_id,
+            "summary": result.summary,
+            "artifact_ids": result.artifact_ids,
+            "facts": result.facts,
+            "leads": result.leads,
+            "candidate_flags": result.candidate_flags,
+            "candidate_findings": [
+                finding.model_dump(mode="json") for finding in result.candidate_findings
+            ],
+            "error": result.error.model_dump(mode="json") if result.error else None,
+        }
+        action_row = self.conn.execute(
+            "SELECT task_id FROM actions WHERE id=?", (result.action_id,)
+        ).fetchone()
+        task_row = self.conn.execute(
+            "SELECT payload_json FROM tasks WHERE id=?",
+            (action_row["task_id"],),
+        ).fetchone() if action_row else None
+        schema_version = int(json.loads(task_row["payload_json"]).get("schema_version") or 0) if task_row else 0
+        existing = self.get_action_result(result.action_id)
+        if schema_version >= 6 and existing is not None:
+            persisted = {key: existing[key] for key in values}
+            if persisted == values:
+                return
+            raise PersistenceConflict(
+                f"schema-v6 ActionResult is immutable: {result.action_id}"
+            )
+        verb = "INSERT" if schema_version >= 6 else "INSERT OR REPLACE"
         self.conn.execute(
-            "INSERT OR REPLACE INTO action_results(action_id,summary,artifact_ids_json,facts_json,leads_json,flags_json,findings_json,error_json,created_at) "
+            f"{verb} INTO action_results(action_id,summary,artifact_ids_json,facts_json,leads_json,flags_json,findings_json,error_json,created_at) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 result.action_id, result.summary, json.dumps(result.artifact_ids), json.dumps(result.facts),
                 json.dumps(result.leads), json.dumps(result.candidate_flags),
-                json.dumps([finding.model_dump(mode="json") for finding in result.candidate_findings]),
+                json.dumps(values["candidate_findings"]),
                 result.error.model_dump_json() if result.error else None, utc_now(),
             ),
         )
@@ -439,12 +506,17 @@ class ContextMetricRepository:
 
 
 class EventRepository:
-    def append_agent_event(self, task_id: str, type: str, payload: dict[str, Any], *, solver_id: str | None = None) -> AgentEvent:
+    def append_agent_event(
+        self, task_id: str, type: str, payload: dict[str, Any], *,
+        solver_id: str | None = None, intent_id: str | None = None,
+    ) -> AgentEvent:
         # Event payloads are an evolvable audit envelope.  Persisting optional
         # fields as JSON null made older clients reject an entire snapshot when
         # a control event had no action_id.  Omit absent values at the write
         # boundary instead; concrete false/zero values remain intact.
-        payload = _compact_event_payload(payload)
+        from tga.domain.events import normalize_event_payload
+
+        payload = normalize_event_payload(type, _compact_event_payload(payload))
         event_id = f"evt_{datetime.now(UTC).strftime('%Y%m%d%H%M%S%f')}_{uuid4().hex[:8]}"
         now = utc_now()
         seq = int(self.conn.execute(
@@ -454,11 +526,19 @@ class EventRepository:
             (task_id,),
         ).fetchone()[0])
         self.conn.execute(
-            "INSERT INTO agent_events(id,schema_version,task_id,solver_id,seq,type,payload_json,created_at) VALUES (?, 2, ?, ?, ?, ?, ?, ?)",
-            (event_id, task_id, solver_id, seq, type, json.dumps(payload, ensure_ascii=False), now),
+            "INSERT INTO agent_events(id,schema_version,task_id,solver_id,intent_id,seq,type,payload_json,created_at) VALUES (?, 6, ?, ?, ?, ?, ?, ?, ?)",
+            (event_id, task_id, solver_id, intent_id, seq, type, json.dumps(payload, ensure_ascii=False), now),
         )
         self._commit()
-        return AgentEvent(schema_version=2, id=event_id, task_id=task_id, solver_id=solver_id, seq=seq, type=type, payload=payload, created_at=now)
+        event = AgentEvent(
+            schema_version=6, id=event_id, task_id=task_id,
+            solver_id=solver_id, intent_id=intent_id, seq=seq, type=type,
+            payload=payload, created_at=now,
+        )
+        from tga.infrastructure.events import runtime_event_bus
+
+        runtime_event_bus.publish(event)
+        return event
 
     def list_agent_events(self, task_id: str, *, after_seq: int = 0, limit: int | None = 200) -> list[AgentEvent]:
         if limit is None:
@@ -471,7 +551,12 @@ class EventRepository:
                 (task_id, after_seq, max(1, min(limit, 1000))),
             ).fetchall()
         return [
-            AgentEvent(schema_version=row["schema_version"], id=row["id"], task_id=row["task_id"], solver_id=row["solver_id"], seq=row["seq"], type=row["type"], payload=json.loads(row["payload_json"]), created_at=row["created_at"])
+            AgentEvent(
+                schema_version=row["schema_version"], id=row["id"],
+                task_id=row["task_id"], solver_id=row["solver_id"],
+                intent_id=row["intent_id"], seq=row["seq"], type=row["type"],
+                payload=json.loads(row["payload_json"]), created_at=row["created_at"],
+            )
             for row in rows
         ]
 

@@ -1,0 +1,22 @@
+{
+  "backup": "C:\\Users\\lyk\\Desktop\\tga\\TGA-TeamGipsyAgent\\.phase12_release_backend_serial\\test_migration_cli_defaults_to0\\evidence.db.v5-backup-20260730T033804223285Z-1d8ab10d",
+  "database": "C:\\Users\\lyk\\Desktop\\tga\\TGA-TeamGipsyAgent\\.phase12_release_backend_serial\\test_migration_cli_defaults_to0\\evidence.db",
+  "dry_run": false,
+  "evidence_policy": "legacy evidence and findings remain candidate/legacy; confirmation is never inferred",
+  "legacy_counts": {
+    "agent_events": 1,
+    "artifacts": 0,
+    "findings": 0,
+    "memory_entries": 0,
+    "strategy_cards": 0
+  },
+  "migrated": true,
+  "report": "C:\\Users\\lyk\\Desktop\\tga\\TGA-TeamGipsyAgent\\.phase12_release_backend_serial\\test_migration_cli_defaults_to0\\migration-report.json",
+  "rollback": "source is atomically replaced only after validation; backups are retained",
+  "source_schema": 5,
+  "status": "applied",
+  "target_schema": 6,
+  "task_id": "legacy_1",
+  "task_json_backup": "C:\\Users\\lyk\\Desktop\\tga\\TGA-TeamGipsyAgent\\.phase12_release_backend_serial\\test_migration_cli_defaults_to0\\evidence.db.task-json-v5-backup-20260730T033804223285Z-3d4f6672.json",
+  "would_migrate": true
+}

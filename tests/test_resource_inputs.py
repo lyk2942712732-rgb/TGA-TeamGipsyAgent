@@ -78,7 +78,7 @@ def _mcp_manager(tmp_path: Path) -> MCPManager:
     return manager
 
 
-def test_schema_v5_uploads_are_archived_with_structured_metadata_and_survive_restart(tmp_path, monkeypatch):
+def test_schema_v6_uploads_are_archived_with_structured_metadata_and_survive_restart(tmp_path, monkeypatch):
     client = _configured_api(monkeypatch, tmp_path)
     task_asset = _upload(client, "sample.bin", b"\x00\x01sample-binary", "text/plain")
     hint_asset = _upload(client, "topology.png", PNG, "text/plain")
@@ -110,14 +110,14 @@ def test_schema_v5_uploads_are_archived_with_structured_metadata_and_survive_res
     try:
         restarted = TGATask.model_validate(store.task_snapshot("binary_only")["task"])
         session = store.get_session("binary_only")
-        assert restarted.schema_version == 5
+        assert restarted.schema_version == 6
         assert restarted.session_input.files[0].sha256 == task_file["sha256"]
         assert session and session.workspace_path == "workspace"
     finally:
         store.close()
 
 
-def test_schema_v5_api_lists_reads_and_searches_workspace_inputs(tmp_path, monkeypatch):
+def test_schema_v6_api_lists_reads_and_searches_workspace_inputs(tmp_path, monkeypatch):
     client = _configured_api(monkeypatch, tmp_path)
     asset = _upload(client, "notes.txt", b"first\nneedle\nlast", "application/octet-stream")
     assert client.post("/api/v2/tasks", json=_create_payload("readable", task_ids=[asset["id"]])).status_code == 200
@@ -290,9 +290,9 @@ def test_pre_v4_sessions_are_rejected_without_mutating_the_database(tmp_path, mo
         assert response.status_code == 409
         assert response.json()["detail"] == {
             "code": "SCHEMA_VERSION_UNSUPPORTED",
-            "message": "task schema 3 is not executable; migrate it to schema 5",
+            "message": "task schema 3 is not executable; migrate it to schema 6",
             "schema_version": 3,
-            "required_schema_version": 5,
+            "required_schema_version": 6,
         }
 
     # Opening a legacy database through the current store is itself rejected;

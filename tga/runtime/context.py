@@ -19,16 +19,25 @@ MAX_TOOL_CONTENT_CHARS = 6000
 class SessionContextBuilder:
     """Build the deterministic, auditable initial model context."""
 
-    def __init__(self, *, task: TGATask, workspace: Path, supports_vision: bool | None):
+    def __init__(
+        self, *, task: TGATask, workspace: Path, supports_vision: bool | None,
+        allowed_resource_ids: tuple[str, ...] | None = None,
+        task_root: Path | None = None,
+    ):
         self.task = task
         self.workspace = workspace.resolve()
+        self.task_root = task_root.resolve() if task_root is not None else self.workspace.parent
         self.supports_vision = supports_vision
+        self.files = [
+            item for item in task.session_input.files
+            if allowed_resource_ids is None or item.id in allowed_resource_ids
+        ]
 
     def build(self) -> list[dict[str, Any]]:
         content: list[dict[str, Any]] = [{"type": "text", "text": self.markdown()}]
         if self.supports_vision is True:
-            store = SessionWorkspace(self.workspace.parent)
-            for item in self.task.session_input.files:
+            store = SessionWorkspace(self.task_root)
+            for item in self.files:
                 if item.media_kind != "image":
                     continue
                 if item.size <= MAX_MODEL_IMAGE_BYTES:
@@ -37,14 +46,14 @@ class SessionContextBuilder:
 
     def markdown(self) -> str:
         mode_prompt = prompt_snapshot_for_task(self.task).mode
-        task_files = self._file_section("Task Input Files", self.task.session_input.files)
+        task_files = self._file_section("Assigned Input Files", self.files)
         mcp = "\n".join(
             f"- {server}: {sum(1 for item in self.task.mcp_capabilities.tools if item.server_id == server)} discovered tools"
             for server in self.task.mcp_capabilities.server_ids
         ) or "- None available at Session creation"
         oversized_images = [
             item.container_path
-            for item in self.task.session_input.files
+            for item in self.files
             if item.media_kind == "image" and item.size > MAX_MODEL_IMAGE_BYTES
         ]
         if self.supports_vision is not True:
@@ -75,9 +84,9 @@ class SessionContextBuilder:
             f"Skill bodies are frozen in the task snapshot and injected through the system message. This section is an audit manifest only.\n\n"
             f"## Workspace Rules\n\n"
             f"- Original inputs are under `/workspace/inputs` and must not be overwritten.\n"
-            f"- Derived files go to `/workspace/artifacts`.\n"
-            f"- Evidence goes to `/workspace/evidence`.\n"
-            f"- Tool results go to `/workspace/tool-results`.\n"
+            f"- Writable scratch files stay in this Solver's `/workspace/scratch`.\n"
+            f"- Final Solver outputs stay in this Solver's `/workspace/outputs`.\n"
+            f"- Shared Artifacts are append-only and must be published through `publish_artifact`.\n"
             f"- Never pass a Windows host path to a Docker MCP.\n"
             f"- Remote HTTP/SSE MCP services do not have local workspace access unless their protocol explicitly transfers content.\n"
             f"- {image_note}\n\n"

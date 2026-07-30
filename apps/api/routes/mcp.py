@@ -219,7 +219,7 @@ def test_mcp_method(server_id: str, tool_name: str, payload: MCPMethodTestReques
             local_compute=LocalComputeExecutionPolicy(mode="isolated"),
         ),
         session_input={"prompt": "Explicit operator-authorized MCP method test"},
-        schema_version=5,
+        schema_version=6,
         mcp_capabilities=MCPCapabilitySnapshot(
             catalog_version=snapshot.version,
             server_ids=[server_id],

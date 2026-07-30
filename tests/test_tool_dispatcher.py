@@ -4,7 +4,8 @@ import json
 from pathlib import Path
 
 from tga.capabilities.registry import build_default_registry
-from tga.contracts import ActionResult, ActionSpec, ExecutionPolicy, ResourceProvenance, SessionFile, SessionInput, TGATask
+from tga.contracts import ActionResult, ActionSpec, ArtifactRecord, ExecutionPolicy, Finding, ResourceProvenance, SessionFile, SessionInput, TGATask
+from tga.evidence.database import utc_now
 from tga.evidence.store import EvidenceStore
 from tga.inputs import SessionWorkspace
 from tga.runtime.handlers import ActionRecorder, HandlerState, build_tool_handlers
@@ -205,6 +206,70 @@ def test_capability_result_event_failure_rolls_back_post_execution_state(tmp_pat
     handlers.close()
 
 
+def test_schema_v6_artifact_does_not_auto_confirm_tool_finding(tmp_path: Path) -> None:
+    task = _task()
+    store = EvidenceStore(tmp_path / "evidence.db")
+    store.create_task(task)
+    artifact = ArtifactRecord(
+        id="artifact_candidate_proof",
+        task_id=task.id,
+        kind="tool_output",
+        path="proof.txt",
+        sha256="a" * 64,
+        created_at=utc_now(),
+    )
+    store.add_artifact(artifact)
+    manager = MCPManager(cache_path=tmp_path / "mcp-cache.json")
+
+    class Executor:
+        def execute(self, *, action, **_kwargs):
+            return ActionResult(
+                action_id=action.id,
+                task_id=task.id,
+                solver_id="solver_main",
+                status="succeeded",
+                summary="candidate observed",
+                candidate_findings=[Finding(
+                    id="finding_candidate",
+                    task_id=task.id,
+                    title="Unreviewed finding",
+                    target="workspace",
+                    severity="medium",
+                    status="confirmed",
+                    evidence_artifact_id=artifact.id,
+                )],
+            )
+
+    handlers = build_tool_handlers(
+        task=task,
+        store=store,
+        run_root=tmp_path,
+        client=object(),
+        executor=Executor(),
+        solver_id="solver_main",
+        workspace=tmp_path / "workspace",
+        mcp_manager=manager,
+        mcp_snapshot=manager.snapshot_for_task(task, workspace=tmp_path / "workspace"),
+        registry=build_default_registry(),
+        tool_by_name={"tga_workspace_read": "workspace.read"},
+    )
+    try:
+        result = handlers.capability.handle(
+            call={"id": "call_candidate"},
+            tool_name="tga_workspace_read",
+            arguments={"relative_path": "input.txt"},
+            governance={"rationale": "inspect"},
+        )
+
+        assert result["ok"] is True
+        assert store.list_findings(task.id)[0].status == "candidate"
+        assert "FINDING_CONFIRMED" not in {
+            event.type for event in store.list_agent_events(task.id)
+        }
+    finally:
+        handlers.close()
+
+
 def _input_runtime(tmp_path: Path, *, task_id: str = "input_evidence"):
     raw = b"challenge result: CTF{input_artifact_provenance}\n"
     digest = __import__("hashlib").sha256(raw).hexdigest()
@@ -230,7 +295,7 @@ def _input_runtime(tmp_path: Path, *, task_id: str = "input_evidence"):
         mode="ctf",
         goal="read and verify the supplied flag",
         flag_format=r"CTF\{[^}]+\}",
-        schema_version=5,
+        schema_version=6,
         mode_config={"mode": "ctf", "flag_format": r"CTF\{[^}]+\}"},
         execution_policy=ExecutionPolicy(),
         session_input=SessionInput(files=[item]),

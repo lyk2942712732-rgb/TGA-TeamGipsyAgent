@@ -1,0 +1,18 @@
+{
+  "id": "binary-analysis",
+  "version": "1.0.0",
+  "orchestration_role": "worker",
+  "specialties": ["binary", "reverse", "static-analysis"],
+  "supported_modes": ["ctf", "reverse_engineering"],
+  "supported_subtypes": ["pwn", "reverse", "forensics", "auto", "unknown"],
+  "system_prompt_template": "Perform bounded binary analysis in the private workspace and return reproducible observations, candidate claims, coverage, and limitations.",
+  "default_skill_tags": ["binary", "metadata"],
+  "required_skill_names": ["binary-triage"],
+  "required_capabilities": ["workspace.read", "workspace.python"],
+  "allowed_tool_groups": ["control", "resource_read", "execution"],
+  "tool_policy_profile": "isolated-binary-analysis",
+  "accepted_intent_kinds": ["binary_analysis", "validation"],
+  "output_contract": {"name": "worker_result", "required_fields": ["summary", "coverage", "artifact_ids"]},
+  "default_budget": {"max_turns": 28, "max_input_tokens": 240000, "max_output_tokens": 48000, "max_tool_calls": 48, "max_artifacts": 128, "deadline": null},
+  "completion_authority": "worker_only"
+}

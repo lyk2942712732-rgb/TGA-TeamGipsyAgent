@@ -1,5 +1,8 @@
 import { apiBase, ApiError, requestJson } from "../api/client";
 import { AgentEventSchema, RuntimeSnapshotSchema } from "../api/schemas";
+import { normalizeRuntimeEvent, normalizeRuntimeSnapshot } from "../features/runtime/models/normalize";
+import { projectLegacyRuntimeView } from "../features/runtime/models/legacy-view";
+import type { RuntimeStore } from "../features/runtime/models/types";
 import type { CapabilityCatalog, MCPDeleteResult, MCPEnabledResult, MCPHealth, MCPImportResult, MCPManagedServer, MCPServerConfig, MCPServerTools, RuntimeEvent, RuntimeSnapshot } from "./event-types";
 
 export type ArtifactPreviewResponse = {
@@ -49,8 +52,17 @@ function uploadMCP(file: File, onProgress?: (percent: number) => void, signal?: 
 }
 
 export const runtimeApi = {
-  session: async (taskId: string) => RuntimeSnapshotSchema.parse(await get<unknown>(`/tasks/${encodeURIComponent(taskId)}/session`)) as RuntimeSnapshot,
+  session: async (taskId: string) => {
+    const payload = await get<unknown>(`/tasks/${encodeURIComponent(taskId)}/session`);
+    const legacy = RuntimeSnapshotSchema.safeParse(payload);
+    return legacy.success ? legacy.data as RuntimeSnapshot : projectLegacyRuntimeView(normalizeRuntimeSnapshot(payload));
+  },
   events: async (taskId: string, afterSeq: number) => { const value = await get<{ events: unknown[]; latest_seq: number }>(`/tasks/${encodeURIComponent(taskId)}/events?after_seq=${afterSeq}`); return { events: value.events.map((event) => AgentEventSchema.parse(event) as RuntimeEvent), latest_seq: value.latest_seq }; },
+  taskRuntime: async (taskId: string): Promise<RuntimeStore> => normalizeRuntimeSnapshot(await get<unknown>(`/tasks/${encodeURIComponent(taskId)}/session`)),
+  runtimeEvents: async (taskId: string, afterSeq: number) => {
+    const value = await get<{ events: unknown[]; latest_seq: number; has_more?: boolean }>(`/tasks/${encodeURIComponent(taskId)}/events?after_seq=${afterSeq}`);
+    return { events: value.events.map(normalizeRuntimeEvent), latestSeq: value.latest_seq, hasMore: Boolean(value.has_more) };
+  },
   capabilities: () => get<CapabilityCatalog>("/capabilities"),
   toolHealth: () => get<MCPHealth>("/tools/health"),
   refreshMCP: () => requestJson<MCPHealth>("/api/v2/tools/mcp/refresh", { method: "POST" }),
@@ -83,5 +95,9 @@ export const runtimeApi = {
   hint: async (taskId: string, content: string) => {
     return requestJson<{ accepted?: boolean; reason?: string }>(`/api/v2/tasks/${encodeURIComponent(taskId)}/hints`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ content }) });
   },
+  intervention: async (taskId: string, payload: { kind: "hint" | "instruction" | "constraint" | "priority_change" | "answer"; content: string; scope: "task" | "solver" | "intent"; target_id?: string }) => requestJson<{ accepted?: boolean; status?: string; intervention?: { id?: string } }>(`/api/v2/tasks/${encodeURIComponent(taskId)}/interventions`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }),
+  approvalDecision: async (taskId: string, actionId: string, decision: "approve" | "reject") => requestJson<{ accepted?: boolean; status?: string }>(`/api/v2/tasks/${encodeURIComponent(taskId)}/approvals/${encodeURIComponent(actionId)}/decision`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ decision }) }),
+  solverControl: async (taskId: string, solverId: string, action: "pause" | "resume" | "cancel") => requestJson<{ accepted?: boolean; status?: string }>(`/api/v2/tasks/${encodeURIComponent(taskId)}/solvers/${encodeURIComponent(solverId)}/control`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action }) }),
+  retryIntent: async (taskId: string, intentId: string) => requestJson<{ accepted?: boolean; status?: string }>(`/api/v2/tasks/${encodeURIComponent(taskId)}/intents/${encodeURIComponent(intentId)}/retry`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) }),
   streamUrl: (taskId: string, afterSeq: number) => url(`/tasks/${encodeURIComponent(taskId)}/events/stream?after_seq=${afterSeq}`),
 };

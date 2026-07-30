@@ -5,8 +5,8 @@ Streamable HTTP servers. The runtime never scans Docker or implicitly pulls an
 image. Every discovered method becomes a native AgentSession function named
 `mcp__<server>__<method>`.
 
-New Session creation never selects MCP services or methods. The global registry
-is the only MCP management/enablement source. A schema-v4 Session records the
+New Task creation never selects MCP services or methods. The global registry
+is the only MCP management/enablement source. A schema-v6 Task records the
 globally enabled catalog and discovered methods visible at creation for audit;
 this snapshot is not a user ACL.
 
@@ -192,13 +192,13 @@ saved/original byte counts and truncation state.
 Schema-v4 lifecycle behavior is deliberate:
 
 - configured, globally enabled services that are discovered or at least not
-  explicitly unavailable are listed in a new Session's creation snapshot;
+  explicitly unavailable are listed in a new Task's creation snapshot;
 - only methods with discovered routes are callable;
-- services added after creation do not enter an existing Session's snapshot;
+- services added after creation do not enter an existing Task's snapshot;
 - a global disable/removal is reloaded before `tools/call` and immediately
   rejects calls from existing Sessions;
-- no per-task service/tool grant, MCP Resource grant, or Session MCP checkbox
-  participates in schema-v4 authorization;
+- no model-controlled service/tool grant, MCP Resource grant, or Task MCP checkbox
+  participates in schema-v6 authorization;
 - passive/active/destructive calls still obey general execution boundaries;
   destructive calls require exact `mcp:<server>.<method>` state-change
   authorization.
@@ -217,7 +217,7 @@ npm test
 npm run build
 ```
 
-Tests cover explicit configuration, schema-v4 creation snapshots and live
+Tests cover explicit configuration, schema-v6 creation snapshots and live
 disable/new-service isolation, STDIO discovery/call/timeout/cleanup,
 Docker archive import and multiple RepoTags, HTTP JSON/SSE/session headers and
 cleanup, credential rules, allowlist filtering, full management CRUD, native

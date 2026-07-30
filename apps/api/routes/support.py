@@ -10,12 +10,11 @@ from fastapi import HTTPException
 from pydantic import BaseModel, Field, SecretStr, field_validator
 from urllib.parse import urlsplit
 
-from tga.contracts import ExecutionPolicy, TGATask
-from tga.evidence.store import EvidenceStore
-from tga.evidence.database import DatabaseSchemaVersionError
-from tga.runtime.coordinator import SessionTransitionError
+from tga.contracts import ExecutionPolicy
+from tga.application.commands import RuntimeCommands
+from tga.application.queries import RuntimeQueries
 from tga.runtime.scheduler import RuntimeScheduler
-from tga.runtime.service import TaskRuntimeService, UnsupportedTaskSchemaError, require_current_task_schema
+from tga.runtime.service import TaskRuntimeService, UnsupportedTaskSchemaError
 from tga.tools.mcp_manager import MCPManager
 
 
@@ -32,7 +31,7 @@ def _unsupported_schema_detail(exc: UnsupportedTaskSchemaError) -> dict[str, Any
         "code": exc.code,
         "message": str(exc),
         "schema_version": exc.schema_version,
-        "required_schema_version": 5,
+        "required_schema_version": 6,
     }
 
 
@@ -57,7 +56,7 @@ class CreateSessionInputRequest(BaseModel):
 
 
 class CreateTaskRequest(BaseModel):
-    """Schema-v5 product request."""
+    """Schema-v6 product request."""
 
     model_config = {"extra": "forbid", "populate_by_name": True}
 
@@ -140,43 +139,38 @@ def _run_root() -> Path:
     return Path(os.environ.get("TGA_RUN_ROOT", "runs"))
 
 
+def _runtime_queries() -> RuntimeQueries:
+    return RuntimeQueries(run_root=_run_root())
+
+
+def _application_commands() -> RuntimeCommands:
+    return RuntimeCommands(run_root=_run_root(), service_type=TaskRuntimeService)
+
+
 def _task_root(task_id: str) -> Path:
     try:
-        return TaskRuntimeService(run_root=_run_root()).task_root(task_id)
+        return RuntimeQueries(run_root=_run_root()).task_root(task_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="invalid task id") from exc
 
 
 def _snapshot(task_id: str) -> dict[str, Any]:
     try:
-        snapshot = TaskRuntimeService(run_root=_run_root()).snapshot(task_id)
+        projection = RuntimeQueries(run_root=_run_root()).snapshot(task_id)
     except UnsupportedTaskSchemaError as exc:
         raise HTTPException(status_code=409, detail=_unsupported_schema_detail(exc)) from exc
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="session not found") from exc
-    return _normalize_snapshot(snapshot)
+    return projection.model_dump(mode="json")
 
 
 def _require_current_task(task_id: str) -> None:
     try:
-        store = EvidenceStore(_task_root(task_id) / "evidence.db")
-    except DatabaseSchemaVersionError as exc:
-        raise HTTPException(status_code=409, detail={
-            "code": "SCHEMA_VERSION_UNSUPPORTED",
-            "message": f"task schema {exc.schema_version} is not executable; migrate it to schema 5",
-            "schema_version": exc.schema_version,
-            "required_schema_version": 5,
-        }) from exc
-    try:
-        task = store.get_task(task_id)
-    finally:
-        store.close()
-    if task is None:
-        raise HTTPException(status_code=404, detail="session not found")
-    try:
-        require_current_task_schema(task)
+        RuntimeQueries(run_root=_run_root()).task_schema_version(task_id)
     except UnsupportedTaskSchemaError as exc:
         raise HTTPException(status_code=409, detail=_unsupported_schema_detail(exc)) from exc
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="session not found") from exc
 
 
 def _normalize_event(event: dict[str, Any], fallback_seq: int) -> dict[str, Any]:
@@ -354,25 +348,6 @@ def _runtime_events(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
         for index, event in enumerate(source_events)
     ]
     return sorted(normalized, key=lambda event: event["seq"])
-
-
-def _runtime_command(method_name: str, task_id: str, payload: dict[str, Any]) -> dict[str, Any]:
-    """Delegate all lifecycle mutations to the Manager, never directly to SQLite."""
-    try:
-        service = TaskRuntimeService(run_root=_run_root())
-        result = service.command(method_name, task_id, **payload)
-    except UnsupportedTaskSchemaError as exc:
-        raise HTTPException(status_code=409, detail=_unsupported_schema_detail(exc)) from exc
-    except SessionTransitionError as exc:
-        raise HTTPException(
-            status_code=409,
-            detail={"code": exc.code, "from_status": exc.from_status, "to_status": exc.to_status, "message": str(exc)},
-        ) from exc
-    except (ImportError, AttributeError) as exc:
-        raise HTTPException(status_code=503, detail="v2 runtime manager is not available yet") from exc
-    except (KeyError, ValueError) as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    return result if isinstance(result, dict) else {"status": "accepted"}
 
 
 def _schedule_runtime_runner(task_id: str) -> bool:

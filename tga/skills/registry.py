@@ -9,7 +9,7 @@ from tga.modes import TaskMode
 
 class SkillRegistry:
     def __init__(self, root: Path | None = None, custom_root: Path | None = None) -> None:
-        self.root = root or Path(__file__).with_name("builtin")
+        self.root = root or Path(__file__).parents[2] / "resources" / "skills"
         self.custom_store = SkillStore(custom_root)
         self._skills: dict[str, Skill] = {}
         self._origins: dict[str, str] = {}

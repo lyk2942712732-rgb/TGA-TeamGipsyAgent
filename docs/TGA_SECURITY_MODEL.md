@@ -1,5 +1,9 @@
 # TGA governed AgentSession safety model
 
+> Historical single-Agent notes retained for compatibility archaeology. The
+> authoritative schema-v6 document is
+> [architecture/SECURITY_MODEL.md](architecture/SECURITY_MODEL.md).
+
 ## Input trust boundary
 
 Schema-v5 Session input is one initial user prompt plus staged task files. The
@@ -39,7 +43,7 @@ enforced boundaries remain:
 - high-impact forbidden/approval-required/allowlist policy;
 - per-server MCP rate, concurrency, timeout, output, and transport controls.
 
-Manager creates a candidate StrategyCard before Agent execution and binds
+The legacy Manager created a candidate StrategyCard before Agent execution and bound
 actions to a strategy step, rationale, and expected outcome. The controlled
 executor validates capability input and scope; AgentSession cannot widen it.
 

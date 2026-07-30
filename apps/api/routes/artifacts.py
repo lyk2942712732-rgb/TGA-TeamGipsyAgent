@@ -11,10 +11,9 @@ from fastapi.responses import FileResponse, JSONResponse
 
 from tga.contracts import TGATask
 from tga.evidence.indexing import build_artifact_index, retrieve_segments
-from tga.evidence.store import EvidenceStore
 from tga.inputs import task_artifact_root
 
-from apps.api.routes.support import _snapshot, _task_root
+from apps.api.routes.support import _runtime_queries, _snapshot, _task_root
 
 router = APIRouter(tags=["artifacts"])
 
@@ -36,26 +35,31 @@ def artifact(
     list or report.
     """
     snapshot = _snapshot(task_id)
-    item = next((value for value in snapshot["artifacts"] if value.get("id") == artifact_id), None)
-    if item is None:
+    try:
+        item = _runtime_queries().artifact(task_id, artifact_id)
+    except KeyError:
         raise HTTPException(status_code=404, detail="artifact not found")
     task = TGATask.model_validate(snapshot["task"])
-    root = task_artifact_root(_task_root(task_id), task)
-    path = (root / str(item.get("path") or "")).resolve()
-    try:
-        path.relative_to(root)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail="invalid artifact path") from exc
-    if not path.is_file():
+    task_root = _task_root(task_id)
+    roots = (
+        task_artifact_root(task_root, task),
+        (task_root / "workspace" / "shared" / "artifacts").resolve(),
+    )
+    candidates = []
+    for root in roots:
+        candidate = (root / str(item.get("path") or "")).resolve()
+        try:
+            candidate.relative_to(root)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="invalid artifact path") from exc
+        candidates.append(candidate)
+    path = next((candidate for candidate in candidates if candidate.is_file()), None)
+    if path is None:
         raise HTTPException(status_code=404, detail="artifact file not found")
     if download:
         return FileResponse(path, filename=path.name)
     if query or section or offset:
-        store = EvidenceStore(_task_root(task_id) / "evidence.db")
-        try:
-            index = store.get_artifact_index(artifact_id)
-        finally:
-            store.close()
+        index = _runtime_queries().artifact_index(task_id, artifact_id)
         if index is None:
             index = build_artifact_index(
                 task_id=task_id,

@@ -1,0 +1,1 @@
+{"version":1,"servers":{"bad name":{"transport":"stdio","stdio":{"source":"local_process","command":"x"}}}}

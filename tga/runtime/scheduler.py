@@ -85,14 +85,19 @@ class RuntimeScheduler:
                 try:
                     task = store.get_task(task_id)
                     session = store.get_session(task_id)
+                    pending = next((
+                        item for item in store.list_actions(task_id)
+                        if item.get("status") == "pending_approval"
+                    ), None)
                 finally:
                     store.close()
             except Exception:
                 continue
-            if task is None or task.schema_version != 5 or session is None:
+            if task is None or task.schema_version != 6 or session is None:
                 continue
-            if session.status == "awaiting_approval":
+            if session.status == "awaiting_approval" or pending is not None:
                 self._arm_approval_expiry(task_id)
+            if session.status == "awaiting_approval":
                 continue
             if not schedule_runnable:
                 continue
@@ -142,7 +147,12 @@ class RuntimeScheduler:
             pending = next((item for item in store.list_actions(task_id) if item.get("status") == "pending_approval"), None)
         finally:
             store.close()
-        if session is None or session.status != "awaiting_approval" or pending is None:
+        scoped_v6 = bool(pending and pending.get("governed_action_id"))
+        if (
+            session is None
+            or pending is None
+            or (session.status != "awaiting_approval" and not scoped_v6)
+        ):
             return
         action_id = str(pending.get("id") or "")
         raw_expiry = str(pending.get("approval_expires_at") or "")

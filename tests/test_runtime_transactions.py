@@ -10,6 +10,7 @@ from tga.evidence.artifacts import ArtifactStore
 from tga.evidence.store import EvidenceStore, utc_now
 from tga.runtime.coordinator import SessionCoordinator, SessionTransitionError
 from tga.runtime.handlers import ActionRecorder, HandlerState
+from tga.infrastructure.persistence.errors import PersistenceConflict
 from tga.tools.mcp_manager import MCPManager
 
 
@@ -179,6 +180,42 @@ def test_action_result_failure_rolls_back_action_and_events(tmp_path: Path, monk
     assert store.list_agent_events(task.id) == []
     state.close()
     store.close()
+
+
+def test_schema_v6_action_result_is_idempotent_and_immutable(tmp_path: Path) -> None:
+    task = _task("immutable_action_result")
+    store = _store(tmp_path, task)
+    action = ActionSpec(
+        id="act_immutable",
+        task_id=task.id,
+        solver_id="solver_main",
+        intent_id=f"intent_initial_{task.id}",
+        kind="workspace",
+        capability="workspace.read",
+        target="input.txt",
+        arguments={"relative_path": "input.txt"},
+        rationale="read task evidence",
+        risk="passive",
+    )
+    first = ActionResult(
+        action_id=action.id,
+        task_id=task.id,
+        solver_id=action.solver_id,
+        status="succeeded",
+        summary="original result",
+    )
+    conflicting = first.model_copy(update={"summary": "different result"})
+    try:
+        store.add_action(action, status="running")
+        store.add_action_result(first)
+        store.add_action_result(first)
+
+        with pytest.raises(PersistenceConflict, match="immutable"):
+            store.add_action_result(conflicting)
+
+        assert store.get_action_result(action.id)["summary"] == "original result"
+    finally:
+        store.close()
 
 
 def test_artifact_replace_failure_leaves_no_partial_or_temporary_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

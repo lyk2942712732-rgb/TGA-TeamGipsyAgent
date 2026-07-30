@@ -16,8 +16,8 @@ from tga.runtime.scheduler import RuntimeScheduler
 def _seed(tmp_path: Path, task_id: str) -> EvidenceStore:
     root = tmp_path / task_id
     store = EvidenceStore(root / "evidence.db")
-    store.create_task(TGATask(id=task_id, name=task_id, mode="ctf", goal="test", schema_version=5))
-    store.create_session(SessionRecord(task_id=task_id, status="created", schema_version=5))
+    store.create_task(TGATask(id=task_id, name=task_id, mode="ctf", goal="test", schema_version=6))
+    store.create_session(SessionRecord(task_id=task_id, status="created", schema_version=6))
     store.add_solver(SolverRecord(id="solver_main", task_id=task_id, role="main", status="starting"))
     return store
 

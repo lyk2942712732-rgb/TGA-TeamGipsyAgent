@@ -56,11 +56,11 @@ def _create_request(task_id: str, *, mode: str = "ctf", task_ids: list[str] | No
 
 def _seed_session(tmp_path, monkeypatch) -> str:
     monkeypatch.setenv("TGA_RUN_ROOT", str(tmp_path / "runs"))
-    task = TGATask(id="runtime_v2", name="runtime", mode="ctf", goal="solve", schema_version=5)
+    task = TGATask(id="runtime_v2", name="runtime", mode="ctf", goal="solve", schema_version=6)
     store = EvidenceStore(tmp_path / "runs" / task.id / "evidence.db")
     try:
         store.create_task(task)
-        store.create_session(SessionRecord(task_id=task.id, status="running", schema_version=5, workspace_path="workspace"))
+        store.create_session(SessionRecord(task_id=task.id, status="running", schema_version=6, workspace_path="workspace"))
         store.append_agent_event(task_id=task.id, type="SOLVER_STARTED", payload={"summary": "solver started"})
         store.append_agent_event(task_id=task.id, type="ACTION_PROPOSED", payload={"summary": "inspect login"})
     finally:
@@ -152,14 +152,19 @@ def test_v2_task_creation_initializes_a_runtime_session(tmp_path, monkeypatch):
     snapshot = client.get("/api/v2/tasks/task_api/session").json()
     assert snapshot["session"]["status"] == "created"
     assert snapshot["task"]["session_input"]["prompt"] == "Inspect https://challenge.example/login before analyzing the supplied task."
-    assert snapshot["task"]["schema_version"] == 5
+    assert snapshot["task"]["schema_version"] == 6
+    assert snapshot["task"]["skill_bundle_snapshot"] is None
+    assert snapshot["task_common_skill_snapshot"]["selector"].startswith("task-common:")
+    assert all(
+        {"name", "version", "content_sha256", "selection_reasons"} <= set(item)
+        for item in snapshot["task_common_skill_snapshot"]["skills"]
+    )
     assert snapshot["task"]["task_entry_url"] == "https://challenge.example/login"
     assert snapshot["task"]["execution_policy"]["network"]["seed_origins"] == ["https://challenge.example"]
     assert {event["type"] for event in snapshot["events"]} >= {
-        "TASK_INPUT_ANALYZED", "NETWORK_SEEDS_EXTRACTED", "MODEL_CONFIG_SNAPSHOTTED", "STRATEGY_CARD_CREATED",
+        "TASK_INPUT_ANALYZED", "NETWORK_SEEDS_EXTRACTED", "MODEL_CONFIG_SNAPSHOTTED", "SOLVER_INSTANCE_CREATED",
     }
-    card = snapshot["runtime"]["strategy_cards"][0]
-    assert card["sources"][0]["url"] == "https://challenge.example/login"
+    assert snapshot["runtime"]["strategy_cards"] == []
     assert "test-key" not in json.dumps(snapshot)
     assert "runtime_ready" not in snapshot
     assert client.get("/api/tasks").status_code == 404
@@ -189,7 +194,7 @@ def test_v2_api_accepts_and_outputs_each_current_mode(tmp_path, monkeypatch, mod
     assert response.status_code == 200
     task = client.get(f"/api/v2/tasks/{task_id}/session").json()["task"]
     assert task["mode"] == mode
-    assert task["schema_version"] == 5
+    assert task["schema_version"] == 6
     if mode != "ctf":
         assert task["flag_format"] is None
 
@@ -389,11 +394,11 @@ def test_v2_sse_disconnect_closes_transport_without_mutating_session(tmp_path, m
 def test_v2_start_recovers_a_created_session(tmp_path, monkeypatch):
     monkeypatch.setenv("TGA_RUN_ROOT", str(tmp_path / "runs"))
     configure_verified_model(monkeypatch)
-    task = TGATask(id="recover", name="recover", mode="ctf", goal="solve", schema_version=5)
+    task = TGATask(id="recover", name="recover", mode="ctf", goal="solve", schema_version=6)
     store = EvidenceStore(tmp_path / "runs" / task.id / "evidence.db")
     try:
         store.create_task(task)
-        store.create_session(SessionRecord(task_id=task.id, status="created", schema_version=5, workspace_path="workspace"))
+        store.create_session(SessionRecord(task_id=task.id, status="created", schema_version=6, workspace_path="workspace"))
     finally:
         store.close()
     monkeypatch.setattr(session_routes, "_schedule_runtime_runner", lambda value: value == task.id)

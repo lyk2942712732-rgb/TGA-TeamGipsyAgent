@@ -15,7 +15,7 @@ def _task(task_id: str) -> TGATask:
         mode_config={"mode": "ctf"},
         execution_policy=ExecutionPolicy(),
         session_input=SessionInput(),
-        schema_version=5,
+        schema_version=6,
     )
 
 
@@ -26,7 +26,7 @@ def test_artifact_endpoint_returns_bounded_redacted_preview(tmp_path, monkeypatc
     store = EvidenceStore(root / "evidence.db")
     artifact = ArtifactStore(root / "workspace" / "artifacts").save_text(task_id=task.id, intent_id=None, kind="http_response", text="Authorization: Bearer very-secret-token\nCookie: sid=abc123\nbody=ok", tool="http.request", suffix=".txt")
     try:
-        store.create_task(task); store.create_session(SessionRecord(task_id=task.id, schema_version=5, workspace_path="workspace")); store.add_artifact(artifact)
+        store.create_task(task); store.create_session(SessionRecord(task_id=task.id, schema_version=6, workspace_path="workspace")); store.add_artifact(artifact)
     finally:
         store.close()
 
@@ -48,7 +48,7 @@ def test_artifact_endpoint_is_scoped_to_a_v2_session(tmp_path, monkeypatch):
         root = tmp_path / "runs" / task.id
         store = EvidenceStore(root / "evidence.db")
         try:
-            store.create_task(task); store.create_session(SessionRecord(task_id=task.id, schema_version=5, workspace_path="workspace"))
+            store.create_task(task); store.create_session(SessionRecord(task_id=task.id, schema_version=6, workspace_path="workspace"))
             artifact = ArtifactStore(root / "workspace" / "artifacts").save_text(task_id=task.id, intent_id=None, kind="file", text="same payload", tool="test")
             store.add_artifact(artifact)
             artifact_id = artifact.id
@@ -71,7 +71,7 @@ def test_schema_v4_artifact_endpoint_reads_workspace_artifacts(tmp_path, monkeyp
     task = TGATask(
         id="preview_v4", name="preview v4", mode="reverse_engineering", goal="inspect",
         mode_config={"mode": "reverse_engineering"}, execution_policy=ExecutionPolicy(),
-        session_input=SessionInput(files=[task_file]), schema_version=5,
+        session_input=SessionInput(files=[task_file]), schema_version=6,
     )
     root = tmp_path / "runs" / task.id
     store = EvidenceStore(root / "evidence.db")
@@ -80,7 +80,7 @@ def test_schema_v4_artifact_endpoint_reads_workspace_artifacts(tmp_path, monkeyp
     )
     try:
         store.create_task(task)
-        store.create_session(SessionRecord(task_id=task.id, schema_version=5, workspace_path="workspace"))
+        store.create_session(SessionRecord(task_id=task.id, schema_version=6, workspace_path="workspace"))
         store.add_artifact(artifact)
     finally:
         store.close()

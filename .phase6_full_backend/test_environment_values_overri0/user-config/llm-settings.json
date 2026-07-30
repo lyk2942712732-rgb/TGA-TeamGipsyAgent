@@ -1,0 +1,26 @@
+{
+  "schema_version": 2,
+  "base_url": "https://browser.example/v1",
+  "model": "browser-model",
+  "supports_vision": false,
+  "max_output_tokens": 1024,
+  "timeout_seconds": 60,
+  "temperature": 0.2,
+  "reasoning_mode": "auto",
+  "verification": {
+    "status": "unverified",
+    "id": null,
+    "verified_at": null,
+    "capability_fingerprint": null,
+    "capabilities": {
+      "chat_completions": false,
+      "tool_calling": false,
+      "forced_tool_choice": false,
+      "auto_tool_choice": false,
+      "vision": null,
+      "reasoning_content": false
+    },
+    "last_error": null
+  },
+  "api_key_dpapi": "AQAAANCMnd8BFdERjHoAwE/Cl+sBAAAAlQkgFz9xPE223JYnW/mxwgAAAAAkAAAAVABHAEEAIABtAG8AZABlAGwAIABBAFAASQAgAGsAZQB5AAAAEGYAAAABAAAgAAAAuGIG99E2ICRWN3Vt6+bELmfKspWRkD38nxy91mbFqooAAAAADoAAAAACAAAgAAAAhwnlqhGzfCnxwatgC2xvEZWQr6zUV+leSYuVV+5VbB8QAAAA+x8bsMx/5ll/zBAp+ik8ZkAAAAC9FTjpIxPcpefMvnHJGRa5v5MezBu9bpaDbE+SI4tGOnvCQJOgKYIg9mviGwhPNZeA6IpwSB2HrEKDvX2KR/KY"
+}

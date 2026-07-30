@@ -3,16 +3,18 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { deleteTask, fetchTasks, getLLMSettings, type TaskListItem } from "../api/tasks";
 import { MODE_PROFILES, TASK_MODES, type TaskMode } from "../modes";
 import { SessionRuntimePage } from "../pages/SessionRuntimePage";
+import { TaskRuntimePage } from "../features/runtime/TaskRuntimePage";
 import { DashboardPage } from "../pages/DashboardPage";
 import { NewTaskPage } from "../pages/NewTaskPage";
 import { CapabilitiesPage, ModelsPage, SkillsPage } from "../pages/SettingsPages";
 import { SystemPromptPage } from "../pages/SystemPromptPage";
-import { readRoute } from "./router";
+import { readRoute, runtimePageVariant } from "./router";
 
 export function RuntimeApp() {
   const location = useLocation();
   const navigate = useNavigate();
   const route = readRoute(location.pathname);
+  const runtimeVariant = runtimePageVariant();
   const [tasks, setTasks] = useState<TaskListItem[]>([]);
   const [llmConfigured, setLLMConfigured] = useState<boolean | null>(null);
   const [collapsed, setCollapsed] = useState(false);
@@ -56,8 +58,8 @@ export function RuntimeApp() {
       {llmConfigured === false && route.page !== "models" ? <div className="model-config-banner" role="alert"><div><strong>尚未配置模型</strong><span>任务需要可用模型才能启动或恢复，请先完成 Provider 配置。</span></div><button onClick={() => go("/settings/models")}>去配置模型</button></div> : null}
       {route.page === "dashboard" ? <DashboardPage tasks={tasks} onNew={() => go("/tasks/new")} onOpen={(id) => go(`/tasks/${encodeURIComponent(id)}/runtime`)} onDelete={removeTask} /> : null}
       {route.page === "new" ? <NewTaskPage onCreated={(id) => { void refreshTasks(); go(`/tasks/${encodeURIComponent(id)}/runtime`); }} /> : null}
-      {route.page === "runtime" && route.taskId ? <SessionRuntimePage taskId={route.taskId} mode="runtime" onReplay={() => go(`/tasks/${encodeURIComponent(route.taskId!)}/replay`)} /> : null}
-      {route.page === "replay" && route.taskId ? <SessionRuntimePage taskId={route.taskId} mode="replay" onReplay={() => undefined} /> : null}
+      {route.page === "runtime" && route.taskId ? runtimeVariant === "legacy" ? <SessionRuntimePage taskId={route.taskId} mode="runtime" onReplay={() => go(`/tasks/${encodeURIComponent(route.taskId!)}/replay`)} /> : <TaskRuntimePage taskId={route.taskId} mode="runtime" /> : null}
+      {route.page === "replay" && route.taskId ? runtimeVariant === "legacy" ? <SessionRuntimePage taskId={route.taskId} mode="replay" onReplay={() => undefined} /> : <TaskRuntimePage taskId={route.taskId} mode="replay" /> : null}
       {route.page === "models" ? <ModelsPage onConfiguredChange={setLLMConfigured} /> : null}
       {route.page === "capabilities" ? <CapabilitiesPage /> : null}
       {route.page === "skills" ? <SkillsPage /> : null}

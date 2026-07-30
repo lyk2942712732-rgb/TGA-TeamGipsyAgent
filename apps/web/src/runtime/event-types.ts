@@ -41,7 +41,7 @@ export type EventPayload = Record<string, unknown> & {
   strategy_card?: StrategyCard;
 };
 export type AgentEventType = string;
-export type RuntimeEvent = { schema_version?: number; id: string; task_id: string; seq: number; type: AgentEventType; solver_id?: string | null; payload: EventPayload; created_at: string };
+export type RuntimeEvent = { schema_version?: number; id: string; task_id: string; seq: number; type: AgentEventType; solver_id?: string | null; intent_id?: string | null; payload: EventPayload; created_at: string };
 export type RuntimeSnapshot = {
   schema_version?: number;
   task: RuntimeTask;
@@ -73,3 +73,17 @@ export type MCPServerConfig = { enabled: boolean; transport: "stdio" | "streamab
 export type MCPManagedServer = { id: string; config: MCPServerConfig; status?: MCPHealthRecord | null };
 export type MCPServerTools = { server_id: string; status: string; protocol_version?: string; server_info?: Record<string, unknown>; error?: { code?: string; message?: string } | null; tools: Array<{ name: string; description?: string; input_schema?: Record<string, unknown>; enabled: boolean }> };
 export type CapabilityCatalog = { capabilities: Capability[]; tools: MCPCatalog };
+
+// Phase-10 feature types are re-exported under explicit names while the old
+// RuntimeSnapshot surface remains available to the feature-flagged page.
+export type {
+  RuntimeApproval,
+  RuntimeBudgetUsage,
+  RuntimeEvidenceClaim,
+  RuntimeGlobalPlan,
+  RuntimeIntent,
+  RuntimeKnowledgeItem,
+  RuntimeRetrievalSummary,
+  RuntimeSolver as TaskRuntimeSolver,
+  RuntimeWorkerResult,
+} from "../features/runtime/models/types";

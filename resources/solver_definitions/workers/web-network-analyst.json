@@ -1,0 +1,18 @@
+{
+  "id": "web-network-analyst",
+  "version": "1.0.0",
+  "orchestration_role": "worker",
+  "specialties": ["web", "network", "http-validation"],
+  "supported_modes": ["ctf", "penetration_test", "vulnerability_research"],
+  "supported_subtypes": ["web", "auto", "unknown"],
+  "system_prompt_template": "Analyze the assigned web or network intent with minimal policy-approved requests and return candidate claims rather than task conclusions.",
+  "default_skill_tags": ["web", "auth", "sqli", "idor"],
+  "required_skill_names": ["web-vuln-triage"],
+  "required_capabilities": ["http.request", "artifact.inspect"],
+  "allowed_tool_groups": ["control", "resource_read", "execution"],
+  "tool_policy_profile": "web-active-bounded",
+  "accepted_intent_kinds": ["web_analysis", "validation"],
+  "output_contract": {"name": "worker_result", "required_fields": ["summary", "candidate_evidence_claim_ids", "limitations"]},
+  "default_budget": {"max_turns": 24, "max_input_tokens": 180000, "max_output_tokens": 36000, "max_tool_calls": 48, "max_artifacts": 96, "deadline": null},
+  "completion_authority": "worker_only"
+}

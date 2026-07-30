@@ -1,0 +1,26 @@
+{
+  "schema_version": 2,
+  "base_url": "https://two.example/v1",
+  "model": "two",
+  "supports_vision": false,
+  "max_output_tokens": 1024,
+  "timeout_seconds": 60,
+  "temperature": 0.2,
+  "reasoning_mode": "auto",
+  "verification": {
+    "status": "unverified",
+    "id": null,
+    "verified_at": null,
+    "capability_fingerprint": null,
+    "capabilities": {
+      "chat_completions": false,
+      "tool_calling": false,
+      "forced_tool_choice": false,
+      "auto_tool_choice": false,
+      "vision": null,
+      "reasoning_content": false
+    },
+    "last_error": null
+  },
+  "api_key_dpapi": "AQAAANCMnd8BFdERjHoAwE/Cl+sBAAAAlQkgFz9xPE223JYnW/mxwgAAAAAkAAAAVABHAEEAIABtAG8AZABlAGwAIABBAFAASQAgAGsAZQB5AAAAEGYAAAABAAAgAAAAEMCf4h2Oi9VMnA3NsLdvUXMj4NMUeR9mkhud8FbviPUAAAAADoAAAAACAAAgAAAAjS/upQnZlVcbVDxjWG4oOt6Qus7vKcplugTzSzfF/eIQAAAAuMb4AFjI2lsgbBcc/M6y70AAAABX8S4zf8hKTkEJD9hxfvsZVTe9N4yf6FujPs7wgkxxG6krA7vuXoH45vXhAJRJJVRT+qTgDeo3eKBSd+FV9W/c"
+}

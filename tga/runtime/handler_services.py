@@ -23,6 +23,8 @@ class StrategyResolver:
         self.store = state.store
 
     def resolve(self, governance: dict[str, Any]):
+        if self.task.schema_version == 6:
+            return None, None
         return self._resolve_strategy_step(governance)
 
     def _resolve_strategy_step(self, governance: dict[str, Any]):
@@ -240,6 +242,8 @@ class ArtifactService:
         )
         return self.store.upsert_artifact_index(index)
     def _attach_strategy_source(self, *, action: ActionSpec, artifact: ArtifactRecord, index) -> None:
+        if self.task.schema_version >= 6:
+            return
         if action.capability != "http.request" or artifact.kind != "http_body":
             return
         requested = str(action.arguments.get("url") or "")
@@ -295,6 +299,8 @@ class ArtifactService:
     ) -> ArtifactRecord | None:
         known = self.store.get_artifact(artifact_id)
         if known is not None:
+            if self.task.schema_version == 6:
+                return known
             if known.input_id == input_id and known.provenance == (provenance or {}):
                 return known
             enriched = known.model_copy(update={"input_id": input_id or known.input_id, "provenance": provenance or known.provenance})
@@ -406,14 +412,18 @@ class ObserverExecutionCoordinator:
             return
         session = self.store.get_session(self.task.id)
         challenge = self.store.get_challenge(self.task.id)
+        legacy_runtime = (
+            {
+                "memory": [item.model_dump(mode="json") for item in self.store.list_memory(self.task.id)],
+                "strategy_cards": [item.model_dump(mode="json") for item in self.store.list_strategy_cards(self.task.id)],
+            }
+            if self.task.schema_version < 6 else {"memory": [], "strategy_cards": []}
+        )
         snapshot = {
             "task": self.task.model_dump(mode="json"),
             "session": session.model_dump(mode="json") if session else {},
             "actions": actions,
-            "runtime": {
-                "memory": [item.model_dump(mode="json") for item in self.store.list_memory(self.task.id)],
-                "strategy_cards": [item.model_dump(mode="json") for item in self.store.list_strategy_cards(self.task.id)],
-            },
+            "runtime": legacy_runtime,
             "challenge": challenge.model_dump(mode="json") if challenge else {},
         }
         context = build_observer_context(snapshot)
@@ -430,7 +440,8 @@ class ObserverExecutionCoordinator:
             patch = self.observer.drain(wait=True)
             if patch is None:
                 return
-            self.observer.apply(task_id=self.task.id, suggestion=patch)
+            if self.task.schema_version < 6:
+                self.observer.apply(task_id=self.task.id, suggestion=patch)
             self.observer_directive = patch.strategy_advice
             self.store.append_agent_event(
                 self.task.id,
@@ -441,7 +452,13 @@ class ObserverExecutionCoordinator:
             self.store.append_agent_event(
                 self.task.id,
                 "OBSERVER_PATCH_APPLIED",
-                {"memory_suggestions": len(patch.memory_suggestions)},
+                {
+                    "candidate_suggestions": len(patch.memory_suggestions),
+                    "legacy_memory_writes": (
+                        len(patch.memory_suggestions)
+                        if self.task.schema_version < 6 else 0
+                    ),
+                },
                 solver_id=self.solver_id,
             )
         except Exception as exc:

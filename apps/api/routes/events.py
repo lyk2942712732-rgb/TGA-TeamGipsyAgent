@@ -2,35 +2,43 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 from collections.abc import AsyncIterator
 from typing import Any
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Query, Request
 from fastapi.responses import StreamingResponse
 
-from tga.evidence.store import EvidenceStore
+from tga.application.projections.models import EventPage
 
-from apps.api.routes.support import _normalize_event, _require_current_task, _task_root
+from apps.api.routes.support import _require_current_task, _runtime_queries
 
 router = APIRouter(tags=["events"])
 
 
-@router.get("/tasks/{task_id}/events")
-def list_events(task_id: str, after_seq: int = 0, limit: int = 200) -> dict[str, Any]:
+@router.get("/tasks/{task_id}/events", response_model=EventPage)
+def list_events(
+    task_id: str,
+    after_seq: int = Query(default=0, ge=0),
+    limit: int = Query(default=200, ge=1, le=200),
+):
     _require_current_task(task_id)
-    store = EvidenceStore(_task_root(task_id) / "evidence.db")
-    try:
-        bounded_limit = max(1, min(limit, 200))
-        events = [
-            _normalize_event(event.model_dump(mode="json"), after_seq + index + 1)
-            for index, event in enumerate(store.list_events(task_id, after_seq=after_seq, limit=bounded_limit))
-        ]
-        latest_seq = store.latest_agent_event_seq(task_id)
-        return {"events": events, "latest_seq": latest_seq}
-    finally:
-        store.close()
+    return _runtime_queries().events(
+        task_id, after_seq=after_seq, limit=limit
+    )
+
+
+@router.get("/tasks/{task_id}/timeline", response_model=EventPage)
+def get_timeline(
+    task_id: str,
+    after_seq: int = Query(default=0, ge=0),
+    limit: int = Query(default=200, ge=1, le=200),
+):
+    """Return the paginated task timeline using the canonical event envelope."""
+    _require_current_task(task_id)
+    return _runtime_queries().events(
+        task_id, after_seq=after_seq, limit=limit
+    )
 
 
 @router.get("/tasks/{task_id}/events/stream")
@@ -45,27 +53,27 @@ async def stream_events(task_id: str, request: Request, after_seq: int = 0) -> S
 
 
 async def _event_stream(task_id: str, request: Request, cursor: int) -> AsyncIterator[str]:
-    """Poll the repository so the transport works before the manager owns a bus."""
-    heartbeat_at = 0.0
+    """Catch up from SQLite, then wait on the process bus between DB reads."""
+    queries = _runtime_queries()
     while not await request.is_disconnected():
-        now = asyncio.get_running_loop().time()
-        heartbeat_due = now - heartbeat_at >= 15
-        store = EvidenceStore(_task_root(task_id) / "evidence.db")
-        try:
-            events = [
-                _normalize_event(event.model_dump(mode="json"), cursor + index + 1)
-                for index, event in enumerate(store.list_events(task_id, after_seq=cursor, limit=200))
-            ]
-            latest_seq = store.latest_agent_event_seq(task_id) if heartbeat_due else None
-        finally:
-            store.close()
-        for event in events:
-            cursor = event["seq"]
-            yield _sse("event", event)
-        if heartbeat_due:
-            heartbeat_at = now
-            yield _sse("heartbeat", {"latest_seq": latest_seq})
-        await asyncio.sleep(1)
+        page = queries.events(task_id, after_seq=max(0, cursor), limit=200)
+        for event in page.events:
+            cursor = event.seq
+            yield _sse("event", event.model_dump(mode="json"))
+        if page.has_more:
+            continue
+        if await request.is_disconnected():
+            return
+        signalled = await queries.wait_for_events(
+            task_id, after_seq=cursor, timeout=15.0
+        )
+        if not signalled:
+            # Periodic authoritative fallback repairs missed process-local
+            # notifications and doubles as the heartbeat cursor.
+            fallback = queries.events(task_id, after_seq=cursor, limit=1)
+            if fallback.events:
+                continue
+            yield _sse("heartbeat", {"latest_seq": fallback.latest_seq})
 
 
 def _sse(event_type: str, payload: dict[str, Any]) -> str:

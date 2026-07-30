@@ -1,0 +1,52 @@
+{
+  "capability": "http.request",
+  "semantic_fingerprint": "e5e1253d68babc789b5705b6",
+  "method": "GET",
+  "final_method": "GET",
+  "requested_url": "http://pin.test:52994/",
+  "final_url": "http://pin.test:52994/",
+  "redirect_chain": [],
+  "request_headers": {
+    "User-Agent": "TGA-Capability-Runtime/2"
+  },
+  "preflight": {
+    "body_format": null,
+    "parameter_count": 0,
+    "encoded_length": 0
+  },
+  "http_session": {
+    "profile": "persistent",
+    "origin": "http://pin.test:52994",
+    "reused": false,
+    "request_count": 1,
+    "origin_count": 1,
+    "generation": 1,
+    "rebuild_count": 0,
+    "cross_process_recovery": false
+  },
+  "status": 200,
+  "response_headers": {
+    "Server": "BaseHTTP/0.6 Python/3.13.12",
+    "Date": "Thu, 30 Jul 2026 00:43:15 GMT"
+  },
+  "content_type": "",
+  "body_excerpt": "pinned",
+  "body_bytes": 6,
+  "truncated": false,
+  "duration_ms": 32,
+  "page": {},
+  "challenge_availability": null,
+  "tls": {
+    "mode": "verified"
+  },
+  "error": null,
+  "body_artifact_id": "artifact_3fab5c181bd2",
+  "document": {
+    "extraction_status": "extracted",
+    "document_type": "text",
+    "summary": "pinned",
+    "segment_refs": [
+      "artifact_3fab5c181bd2#segment-1"
+    ]
+  }
+}

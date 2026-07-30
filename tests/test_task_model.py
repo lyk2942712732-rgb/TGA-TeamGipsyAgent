@@ -25,7 +25,7 @@ def test_current_persisted_task_is_read_without_mutation(tmp_path):
     payload = {
         "id": "current_db", "name": "current", "mode": "vulnerability_research",
         "task_entry_url": None, "goal": "audit", "mode_config": {"mode": "vulnerability_research"},
-        "execution_policy": {}, "schema_version": 5,
+        "execution_policy": {}, "schema_version": 6,
     }
     store.conn.execute(
         "INSERT INTO tasks(id, payload_json, created_at) VALUES (?, ?, ?)",

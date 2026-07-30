@@ -17,6 +17,7 @@ from tga.modes import mode_profile, normalize_mode, validate_task_profile
 from tga.network_policy import input_network_seeds
 from tga.runtime.service import TaskRuntimeService
 from tga.runtime.prompt_settings import load_agent_prompt_settings, snapshot_for_mode
+from tga.domain.skills.compatibility import current_skill_bundle_to_task_common
 from tga.skills.selection import SkillSelectionRequest, SkillSelector
 from tga.tools.mcp_manager import MCPManager
 
@@ -108,6 +109,10 @@ class TaskCreationService:
                 ))
             except ValueError as exc:
                 raise TaskCreationError("SKILL_SELECTION_INVALID", str(exc)) from exc
+            created_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+            task_common_skills = current_skill_bundle_to_task_common(
+                skill_bundle, task_id=task_id, created_at=created_at
+            )
             task = TGATask(
                 id=task_id,
                 name=command.name.strip(),
@@ -119,7 +124,9 @@ class TaskCreationService:
                 task_entry_url=entry_url,
                 mcp_capabilities=capabilities,
                 agent_prompt_snapshot=prompt_snapshot.model_dump(mode="json"),
-                skill_bundle_snapshot=skill_bundle,
+                # Schema-v6 Skills live in explicit Task Common and Solver
+                # Specialized snapshots, not on the legacy task field.
+                skill_bundle_snapshot=None,
                 model_snapshot={
                     "provider": provider.get("provider") or "openai-compatible",
                     "model": provider.get("model") or "",
@@ -132,10 +139,12 @@ class TaskCreationService:
                     "temperature": provider.get("temperature"),
                     "reasoning_mode": provider.get("reasoning_mode") or "auto",
                 },
-                schema_version=5,
+                schema_version=6,
             )
             validate_task_profile(task)
-            result = self.runtime_service.create_task(task)
+            result = self.runtime_service.create_task(
+                task, task_common_skill_snapshot=task_common_skills
+            )
             if not result.get("accepted"):
                 raise TaskCreationError(
                     "SESSION_START_REJECTED",

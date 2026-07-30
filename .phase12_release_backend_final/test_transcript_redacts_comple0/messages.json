@@ -1,0 +1,9 @@
+[
+  {
+    "role": "tool",
+    "content": "Authorization: [REDACTED]\nCookie: [REDACTED]\napi_key=[REDACTED] password=[REDACTED]",
+    "metadata": {
+      "safe": "retained"
+    }
+  }
+]

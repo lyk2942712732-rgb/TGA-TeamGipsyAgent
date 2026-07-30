@@ -1,0 +1,81 @@
+{
+  "paths": {
+    "/api/v2/tasks": ["get", "post"],
+    "/api/v2/tasks/{task_id}/approvals": ["get"],
+    "/api/v2/tasks/{task_id}/approvals/{action_id}/decision": ["post"],
+    "/api/v2/tasks/{task_id}/control": ["post"],
+    "/api/v2/tasks/{task_id}/events": ["get"],
+    "/api/v2/tasks/{task_id}/events/stream": ["get"],
+    "/api/v2/tasks/{task_id}/evidence": ["get"],
+    "/api/v2/tasks/{task_id}/intents": ["get"],
+    "/api/v2/tasks/{task_id}/intents/{intent_id}/retry": ["post"],
+    "/api/v2/tasks/{task_id}/interventions": ["post"],
+    "/api/v2/tasks/{task_id}/session": ["get"],
+    "/api/v2/tasks/{task_id}/solvers/{solver_id}": ["get"],
+    "/api/v2/tasks/{task_id}/solvers/{solver_id}/control": ["post"],
+    "/api/v2/tasks/{task_id}/team": ["get"],
+    "/api/v2/tasks/{task_id}/timeline": ["get"]
+  },
+  "schemas": {
+    "ApprovalDecisionRequest": {
+      "additionalProperties": false,
+      "properties": ["decision", "reason"],
+      "required": ["decision"]
+    },
+    "ApprovalPage": {
+      "additionalProperties": false,
+      "properties": ["items", "limit", "next_offset", "offset", "schema_version", "task_id", "total"],
+      "required": ["offset", "limit", "total", "task_id", "items"]
+    },
+    "EventEnvelope": {
+      "additionalProperties": false,
+      "properties": ["created_at", "id", "intent_id", "payload", "schema_version", "seq", "solver_id", "task_id", "type"],
+      "required": ["schema_version", "id", "task_id", "seq", "type", "payload", "created_at"]
+    },
+    "EventPage": {
+      "additionalProperties": false,
+      "properties": ["after_seq", "events", "has_more", "latest_seq", "next_after_seq", "schema_version", "task_id"],
+      "required": ["task_id"]
+    },
+    "EvidencePageResponse": {
+      "additionalProperties": false,
+      "properties": ["artifacts", "evidence_claims", "findings", "schema_version", "task_id"],
+      "required": ["task_id", "artifacts", "evidence_claims", "findings"]
+    },
+    "IntentPage": {
+      "additionalProperties": false,
+      "properties": ["items", "limit", "next_offset", "offset", "schema_version", "task_id", "total"],
+      "required": ["offset", "limit", "total", "task_id", "items"]
+    },
+    "IntentRetryRequest": {
+      "additionalProperties": false,
+      "properties": ["reason"],
+      "required": []
+    },
+    "InterventionRequest": {
+      "additionalProperties": false,
+      "properties": ["content", "kind", "scope", "target_id"],
+      "required": ["kind", "content"]
+    },
+    "RuntimeSnapshotResponse": {
+      "additionalProperties": false,
+      "properties": ["actions", "approvals", "artifact_indexes", "artifacts", "challenge", "context_metrics", "events", "events_page", "evidence_claims", "findings", "flags", "global_plan", "http_sessions", "intents", "knowledge", "latest_seq", "observer", "retrieval_runs", "runtime", "schema_version", "session", "solvers", "task", "task_common_skill_snapshot", "team", "worker_results"],
+      "required": ["task", "session", "team", "events_page", "latest_seq"]
+    },
+    "SolverControlRequest": {
+      "additionalProperties": false,
+      "properties": ["action", "reason"],
+      "required": ["action"]
+    },
+    "SolverResponse": {
+      "additionalProperties": false,
+      "properties": ["schema_version", "solver", "task_id"],
+      "required": ["task_id", "solver"]
+    },
+    "TeamResponse": {
+      "additionalProperties": false,
+      "properties": ["schema_version", "solvers", "task_id", "team"],
+      "required": ["task_id", "team", "solvers"]
+    }
+  }
+}

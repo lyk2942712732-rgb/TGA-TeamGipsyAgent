@@ -1,0 +1,56 @@
+{
+  "version": 1,
+  "servers": {
+    "fixture": {
+      "configHash": "d44061f91106c3382a730044f378349809c0c83f8f9c63e912456a46d716d18b",
+      "serverInfo": {
+        "name": "tga-test-mcp",
+        "version": "1.0"
+      },
+      "protocolVersion": "2024-11-05",
+      "tools": [
+        {
+          "name": "echo",
+          "description": "Echo a required text value.",
+          "input_schema": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "text": {
+                "type": "string"
+              },
+              "repeat": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "token": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "text"
+            ]
+          }
+        },
+        {
+          "name": "large_result",
+          "description": "Return a deterministic large text result.",
+          "input_schema": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "chars": {
+                "type": "integer",
+                "minimum": 1
+              }
+            },
+            "required": [
+              "chars"
+            ]
+          }
+        }
+      ],
+      "discoveredAt": "2026-07-29T23:58:45.247633Z"
+    }
+  }
+}

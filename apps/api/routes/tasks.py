@@ -10,14 +10,13 @@ from tga.modes import mode_profiles_payload, normalize_mode
 from tga.runtime.task_creation import (
     CreateTaskCommand,
     TaskCreationError,
-    TaskCreationService,
     available_capabilities,
     build_mcp_capability_snapshot,
 )
 from tga.skills.context import SkillContextAssembler
 from tga.skills.selection import SkillSelectionRequest, SkillSelector
 
-from apps.api.routes.support import CreateTaskRequest, SkillPreviewRequest, TaskRuntimeService, _catalog_runner, _run_root, _schedule_runtime_runner, _task_root
+from apps.api.routes.support import CreateTaskRequest, SkillPreviewRequest, TaskRuntimeService, _application_commands, _catalog_runner, _runtime_queries, _schedule_runtime_runner, _task_root
 from apps.api.routes import support
 
 router = APIRouter(tags=["tasks"])
@@ -32,11 +31,7 @@ def mode_profiles() -> dict[str, Any]:
 def create_task(payload: CreateTaskRequest) -> dict[str, Any]:
     """Translate an HTTP request into one task-creation command."""
     try:
-        result = TaskCreationService(
-            run_root=_run_root(),
-            mcp_manager=_catalog_runner(),
-            schedule=_schedule_runtime_runner,
-        ).create(CreateTaskCommand(
+        result = _application_commands().create_task(CreateTaskCommand(
             task_id=payload.id,
             name=payload.name,
             mode=payload.mode,
@@ -46,7 +41,7 @@ def create_task(payload: CreateTaskRequest) -> dict[str, Any]:
             file_ids=payload.input.file_ids,
             execution_policy=payload.execution_policy,
             selected_skill_names=tuple(payload.selected_skills) if payload.selected_skills is not None else None,
-        ))
+        ), mcp_manager=_catalog_runner(), schedule=_schedule_runtime_runner)
     except TaskCreationError as exc:
         status = 409 if exc.code in {"MODEL_NOT_CONFIGURED", "MODEL_NOT_VERIFIED", "SESSION_EXISTS", "SESSION_START_REJECTED"} else 422
         detail: Any = {"code": exc.code, "message": str(exc)}
@@ -86,7 +81,7 @@ def preview_task_skills(payload: SkillPreviewRequest) -> dict[str, Any]:
 
 @router.get("/tasks")
 def list_tasks() -> dict[str, list[dict[str, Any]]]:
-    return {"tasks": TaskRuntimeService(run_root=_run_root()).list_tasks()}
+    return {"tasks": _runtime_queries().tasks()}
 
 
 @router.delete("/tasks/{task_id}")
@@ -95,7 +90,7 @@ def delete_task(task_id: str) -> dict[str, Any]:
     if support._runtime_scheduler().is_running(task_id):
         raise HTTPException(status_code=409, detail="running session cannot be deleted")
     try:
-        TaskRuntimeService(run_root=_run_root()).delete_task(task_id)
+        _application_commands().delete_task(task_id)
     except (KeyError, ValueError) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return {"task_id": task_id, "deleted": True}

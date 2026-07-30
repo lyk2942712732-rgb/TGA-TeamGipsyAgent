@@ -1,0 +1,42 @@
+{
+  "artifact_lookup": {
+    "iterations": 100.0,
+    "median_ms": 0.006,
+    "p95_ms": 0.007
+  },
+  "environment": {
+    "event_fixture_count": 1000,
+    "external_network": false,
+    "storage": "temporary local SQLite",
+    "transcript_message_count": 2001
+  },
+  "event_page_200": {
+    "iterations": 50.0,
+    "median_ms": 8.494,
+    "p95_ms": 11.012
+  },
+  "long_transcript_context": {
+    "iterations": 20.0,
+    "median_ms": 0.657,
+    "p95_ms": 0.821
+  },
+  "rag_retrieval": {
+    "iterations": 10,
+    "median_ms": 0.223,
+    "p95_ms": 0.475
+  },
+  "snapshot_query": {
+    "iterations": 20.0,
+    "median_ms": 7.987,
+    "p95_ms": 9.758
+  },
+  "sse_bus_wake": {
+    "iterations": 20.0,
+    "median_ms": 0.107,
+    "p95_ms": 0.363
+  },
+  "two_worker_dispatch": {
+    "elapsed_ms": 14.98,
+    "workers": 2
+  }
+}

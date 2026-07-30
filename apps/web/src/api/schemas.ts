@@ -9,6 +9,7 @@ export const AgentEventSchema = z.object({
   id: z.string().or(z.number()).transform(String),
   task_id: z.string().optional().default(""),
   solver_id: z.string().nullable().optional(),
+  intent_id: z.string().nullable().optional(),
   seq: z.number().int().positive(),
   type: z.string(),
   payload: z.record(z.string(), z.unknown()).default({}),

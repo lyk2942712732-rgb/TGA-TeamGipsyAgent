@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "input_id": "asset_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "operation": "input_read",
+  "source_sha256": "9fe68513e894c31ca5eef3dcc31b557dc024f9d746835a5bb6210d934a9e440d",
+  "offset": 0,
+  "next_offset": 42,
+  "eof": true,
+  "content": "Evidence: CTF{finish_rejection_continues}\n"
+}

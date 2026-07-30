@@ -20,6 +20,9 @@ from tga.inputs import SessionWorkspace, task_artifact_root
 from tga.runtime.completion_validators import CompletionValidationContext, FinishSubmission, validator_for
 from tga.runtime.coordinator import SessionCoordinator, SessionOutcome
 from tga.runtime.handler_services import ActionRecorder, ArtifactService, ObserverExecutionCoordinator, StrategyResolver
+from tga.runtime.tool_handlers.plan_knowledge import PlanKnowledgeHandler
+from tga.runtime.tool_handlers.task_completion import TaskCompletionHandler
+from tga.runtime.tooling.governance.approvals import SolverApprovalCoordinator
 from tga.runtime.observer import DeterministicObserver, ObserverCoordinator
 from tga.runtime.strategy import StrategyService
 from tga.tools.mcp_gateway import MCPGateway, TGA_MCP_TOOL
@@ -79,6 +82,18 @@ def _effect_from_governance(governance: dict[str, Any]) -> ActionEffect:
     return ActionEffect.model_validate(raw)
 
 
+def _host_action_fields(governance: dict[str, Any]) -> dict[str, Any]:
+    raw = governance.get("_host_action_context")
+    context = raw if isinstance(raw, dict) else {}
+    return {
+        "intent_id": context.get("intent_id"),
+        "local_plan_step_id": context.get("local_plan_step_id"),
+        "execution_policy_snapshot_id": context.get("execution_policy_snapshot_id"),
+        "solver_tool_policy_snapshot_id": context.get("solver_tool_policy_snapshot_id"),
+        "governed_action_id": governance.get("_governed_action_id"),
+    }
+
+
 def safe_tool_call_arguments(value: Any) -> dict[str, Any]:
     if isinstance(value, dict):
         parsed = value
@@ -108,6 +123,7 @@ class HandlerState:
         self, *, task: TGATask, store: EvidenceStore, run_root: Path, client: Any, executor: Any,
         solver_id: str, workspace: Path, mcp_manager: MCPManager, mcp_snapshot: MCPCatalogSnapshot,
         registry: Any, tool_by_name: dict[str, str], remote_flag_verifier: Any | None = None,
+        allowed_resource_ids: tuple[str, ...] | None = None,
     ) -> None:
         self.task = task
         self.store = store
@@ -121,6 +137,7 @@ class HandlerState:
         self.registry = registry
         self.tool_by_name = tool_by_name
         self.remote_flag_verifier = remote_flag_verifier
+        self.allowed_resource_ids = allowed_resource_ids
         self.strategies = StrategyService(store)
         self.observer = ObserverCoordinator(observer=DeterministicObserver(), store=store, cooldown_seconds=0)
         self.observer_directive = ""
@@ -128,6 +145,7 @@ class HandlerState:
         self.last_finish_rejection: dict[str, Any] | None = None
         self.terminal_outcome: SessionOutcome | None = None
         self.last_artifact_id = self._latest_artifact_id()
+        self.plan_knowledge = PlanKnowledgeHandler(self)
 
     def _latest_artifact_id(self) -> str | None:
         artifacts = self.store.list_artifacts(self.task.id)
@@ -155,6 +173,7 @@ class HandlerRuntime:
             "task", "store", "run_root", "client", "executor", "solver_id", "workspace",
             "mcp_manager", "registry", "tool_by_name", "remote_flag_verifier",
             "strategies", "observer",
+            "plan_knowledge",
         ):
             setattr(self, name, getattr(state, name))
 
@@ -220,7 +239,7 @@ class HandlerRuntime:
         return "TGA Process"
 
 
-class CompletionService(HandlerRuntime):
+class LegacyCompletionService(HandlerRuntime):
     def __init__(self, state: HandlerState, artifacts: ArtifactService) -> None:
         super().__init__(state)
         self.artifacts = artifacts
@@ -316,6 +335,10 @@ class CompletionService(HandlerRuntime):
         return {"ok": True, "terminal": True, "status": "completed", "validation": result, **result}
 
 
+# Import compatibility only. New handler composition uses TaskCompletionHandler.
+CompletionService = LegacyCompletionService
+
+
 class CapabilityToolHandler(HandlerRuntime):
     def __init__(
         self,
@@ -399,6 +422,7 @@ class CapabilityToolHandler(HandlerRuntime):
             id=action_id,
             task_id=self.task.id,
             solver_id=self.solver_id,
+            **_host_action_fields(governance),
             kind=registered.spec.kind,
             capability=capability,
             target=action_target,
@@ -441,10 +465,16 @@ class CapabilityToolHandler(HandlerRuntime):
                         },
                         solver_id=self.solver_id,
                     )
-                    SessionCoordinator(self.store).await_approval(
-                        task_id=self.task.id,
-                        action_id=action.id,
-                    )
+                    if self.task.schema_version == 6 and action.governed_action_id:
+                        SolverApprovalCoordinator(self.store).await_approval(
+                            solver_id=self.solver_id,
+                            intent_id=action.intent_id,
+                        )
+                    else:
+                        SessionCoordinator(self.store).await_approval(
+                            task_id=self.task.id,
+                            action_id=action.id,
+                        )
                 return {
                     "ok": False,
                     "status": "pending_approval",
@@ -589,7 +619,7 @@ class CapabilityToolHandler(HandlerRuntime):
                 succeeded=result.status == "succeeded",
                 summary=result.summary,
                 expected_marker_found=expected_marker_found,
-            )
+            ) if self.task.schema_version < 6 else None
             if updated_card is not None:
                 step_status = next(
                     (item.status for item in updated_card.steps if item.id == action.strategy_step_id), "pending"
@@ -620,8 +650,13 @@ class CapabilityToolHandler(HandlerRuntime):
                     continue
                 evidence_id = str(finding.evidence_artifact_id or "")
                 evidence = self.store.get_artifact(evidence_id) if evidence_id else None
+                may_confirm_legacy = self.task.schema_version < 6
                 persisted = finding.model_copy(update={
-                    "status": "confirmed" if evidence is not None and evidence.task_id == self.task.id else "candidate",
+                    "status": "confirmed" if (
+                        may_confirm_legacy
+                        and evidence is not None
+                        and evidence.task_id == self.task.id
+                    ) else "candidate",
                     "evidence_artifact_id": evidence_id or None,
                 })
                 self.store.add_candidate_finding(persisted)
@@ -688,6 +723,7 @@ class CapabilityToolHandler(HandlerRuntime):
                     solver_id=self.solver_id,
                 )
         self.observer_service.review(action=action, result=result)
+        self.plan_knowledge.record_action_result(result)
         return payload
     def _execution_task(self, arguments: dict[str, Any]) -> TGATask:
         # Capabilities enforce scope, risk, TLS, and rate limits against this task.
@@ -740,7 +776,11 @@ class InputToolHandler(HandlerRuntime):
         arguments: dict[str, Any],
         governance: dict[str, Any],
     ) -> dict[str, Any]:
-        files = self.task.session_input.files
+        files = [
+            item for item in self.task.session_input.files
+            if self.state.allowed_resource_ids is None
+            or item.id in self.state.allowed_resource_ids
+        ]
         input_id = str(arguments.get("input_id") or "")
         item = next((candidate for candidate in files if candidate.id == input_id), None) if input_id else None
         card, step = self.strategy.resolve(governance)
@@ -748,6 +788,7 @@ class InputToolHandler(HandlerRuntime):
             id=f"act_{uuid4().hex[:12]}",
             task_id=self.task.id,
             solver_id=self.solver_id,
+            **_host_action_fields(governance),
             kind="tool",
             capability=name,
             target=item.container_path if item else self.task.id,
@@ -1263,6 +1304,7 @@ class MCPToolHandler(HandlerRuntime):
                 }
                 denied_action = ActionSpec(
                     id=action_id, task_id=self.task.id, solver_id=self.solver_id,
+                    **_host_action_fields(governance),
                     kind="tool", capability=route.provider_name,
                     target=mcp_target, actual_target=mcp_target, arguments=arguments,
                     rationale=rationale, risk=risk, input_id=mcp_ref.id if mcp_ref else None,
@@ -1307,10 +1349,16 @@ class MCPToolHandler(HandlerRuntime):
                             },
                             solver_id=self.solver_id,
                         )
-                        SessionCoordinator(self.store).await_approval(
-                            task_id=self.task.id,
-                            action_id=denied_action.id,
-                        )
+                        if self.task.schema_version == 6 and denied_action.governed_action_id:
+                            SolverApprovalCoordinator(self.store).await_approval(
+                                solver_id=self.solver_id,
+                                intent_id=denied_action.intent_id,
+                            )
+                        else:
+                            SessionCoordinator(self.store).await_approval(
+                                task_id=self.task.id,
+                                action_id=denied_action.id,
+                            )
                     return {
                         "ok": False,
                         "status": "pending_approval",
@@ -1335,6 +1383,7 @@ class MCPToolHandler(HandlerRuntime):
             id=action_id,
             task_id=self.task.id,
             solver_id=self.solver_id,
+            **_host_action_fields(governance),
             kind="tool",
             capability=route.provider_name,
             target=mcp_target,
@@ -1507,7 +1556,7 @@ class MCPToolHandler(HandlerRuntime):
                         solver_id=self.solver_id,
                     )
             self.recorder.finish(action, result)
-            if card is not None:
+            if card is not None and self.task.schema_version < 6:
                 updated_card = self.strategies.record_action(
                     card_id=action.strategy_card_id,
                     step_id=action.strategy_step_id,
@@ -1802,7 +1851,7 @@ class ToolHandlers:
     capability: CapabilityToolHandler
     inputs: InputToolHandler
     mcp: MCPToolHandler
-    completion: CompletionService
+    completion: TaskCompletionHandler
     recorder: ActionRecorder
     artifacts: ArtifactService
     observer: ObserverExecutionCoordinator
@@ -1831,7 +1880,7 @@ def build_tool_handlers(**kwargs: Any) -> ToolHandlers:
         capability=capability,
         inputs=InputToolHandler(state, recorder=recorder, artifacts=artifacts, strategy=strategy),
         mcp=mcp,
-        completion=CompletionService(state, artifacts),
+        completion=TaskCompletionHandler(state, artifacts),
         recorder=recorder,
         artifacts=artifacts,
         observer=observer,

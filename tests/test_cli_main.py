@@ -20,7 +20,7 @@ def test_cli_run_fails_clearly_without_a_configured_model(tmp_path: Path, monkey
                 "mode_config": {"mode": "vulnerability_research"},
                 "execution_policy": {},
                 "session_input": {"prompt": "", "files": []},
-                "schema_version": 5,
+                "schema_version": 6,
             }
         ),
         encoding="utf-8",
