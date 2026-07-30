@@ -1,0 +1,103 @@
+name: sandbox-runtime
+
+on:
+  pull_request:
+    paths:
+      - "tga/sandbox/**"
+      - "apps/api/main.py"
+      - "sandboxd/**"
+      - "config/sandbox.json"
+      - "sandboxd/api/**"
+      - "scripts/generate_sandbox_proto.py"
+      - "tests/test_nmap_mcp.py"
+  push:
+    branches: [main]
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python -m pip install -e ".[dev]"
+      - run: pytest -q
+      - run: python scripts/generate_sandbox_proto.py
+      - run: git diff --exit-code -- tga/sandbox/api
+
+  go:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sandboxd
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.5"
+          cache-dependency-path: sandboxd/go.sum
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python -m pip install grpcio-tools==1.74.0
+      - run: go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.6
+      - run: go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.5.1
+      - run: python -m grpc_tools.protoc -Iapi --go_out=api --go_opt=paths=source_relative --go-grpc_out=api --go-grpc_opt=paths=source_relative api/sandbox/v1/sandbox.proto
+      - run: git diff --exit-code -- api
+      - run: go test -race ./...
+      - run: go vet ./...
+      - run: go build ./cmd/tga-sandboxd
+
+  images:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Resolve immutable upstream images
+        id: bases
+        shell: bash
+        run: |
+          docker pull kalilinux/kali-rolling
+          docker pull docker.io/docker/sandbox-templates:shell-docker
+          echo "kali=$(docker image inspect kalilinux/kali-rolling --format '{{index .RepoDigests 0}}')" >> "$GITHUB_OUTPUT"
+          echo "sbx=$(docker image inspect docker.io/docker/sandbox-templates:shell-docker --format '{{index .RepoDigests 0}}')" >> "$GITHUB_OUTPUT"
+      - name: Build sandbox images
+        shell: bash
+        run: |
+          for target in offline web network; do
+            docker build \
+              --build-arg KALI_BASE="${{ steps.bases.outputs.kali }}" \
+              --target "$target" \
+              --tag "tga-kali-$target:pr" \
+              --file sandboxd/Dockerfile sandboxd
+          done
+          docker build \
+            --build-arg KALI_BASE="${{ steps.bases.outputs.kali }}" \
+            --tag tga-nmap-mcp:pr \
+            --file sandboxd/images/nmap-mcp/Dockerfile sandboxd/images/nmap-mcp
+          docker build \
+            --build-arg SBX_BASE="${{ steps.bases.outputs.sbx }}" \
+            --tag tga-sbx-template:pr \
+            --file sandboxd/images/sbx-template/Dockerfile sandboxd/images/sbx-template
+      - name: Verify image users and package-manager cleanup
+        shell: bash
+        run: |
+          test "$(docker image inspect tga-nmap-mcp:pr --format '{{.Config.User}}')" = "10001:10001"
+          for image in tga-kali-offline:pr tga-kali-web:pr tga-kali-network:pr tga-nmap-mcp:pr; do
+            test -z "$(docker run --rm --entrypoint sh "$image" -c 'find /var/lib/apt/lists -mindepth 1 -print -quit')"
+          done
+      - uses: aquasecurity/setup-trivy@v0.2.3
+      - uses: anchore/sbom-action/download-syft@v0
+      - name: Scan images and generate SBOMs
+        shell: bash
+        run: |
+          for image in tga-kali-offline:pr tga-kali-web:pr tga-kali-network:pr tga-nmap-mcp:pr tga-sbx-template:pr; do
+            name="${image%%:*}"
+            trivy image --exit-code 1 --ignore-unfixed --severity CRITICAL "$image"
+            syft "$image" -o "spdx-json=$name.spdx.json"
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sandbox-image-sboms
+          path: "*.spdx.json"
