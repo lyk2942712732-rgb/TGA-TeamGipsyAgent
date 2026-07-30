@@ -1,0 +1,159 @@
+syntax = "proto3";
+
+package tga.sandbox.v1;
+
+option go_package = "github.com/team-gipsy/tga-sandboxd/api/sandbox/v1;sandboxv1";
+
+service SandboxService {
+  rpc Health(HealthRequest) returns (HealthResponse);
+  rpc Acquire(AcquireRequest) returns (AcquireResponse);
+  rpc Exec(ExecRequest) returns (stream ExecEvent);
+  rpc OpenProcess(stream ProcessMessage) returns (stream ProcessMessage);
+  rpc StopProcess(StopProcessRequest) returns (Empty);
+  rpc Inspect(InspectRequest) returns (InspectResponse);
+  rpc Destroy(DestroyRequest) returns (Empty);
+  rpc Reconcile(ReconcileRequest) returns (ReconcileResponse);
+}
+
+message Empty {}
+
+message HealthRequest {
+  uint32 protocol_major = 1;
+  string config_digest = 2;
+}
+
+message HealthResponse {
+  uint32 protocol_major = 1;
+  string daemon_version = 2;
+  bool docker_available = 3;
+  bool runsc_available = 4;
+  bool nftables_available = 5;
+  bool cgroup_v2_available = 6;
+  string config_digest = 7;
+  string docker_api_version = 8;
+  bool runsc_runtime_registered = 9;
+  bool client_uid_policy_active = 10;
+}
+
+message NetworkGrant {
+  string cidr = 1;
+  repeated uint32 ports = 2;
+}
+
+message AcquireRequest {
+  string task_id = 1;
+  string solver_id = 2;
+  string profile_id = 3;
+  string config_digest = 4;
+  uint64 fencing_token = 5;
+  string idempotency_key = 6;
+}
+
+message AcquireResponse {
+  string instance_id = 1;
+  string config_digest = 2;
+  uint64 fencing_token = 3;
+  bool reused = 4;
+}
+
+message ProcessSpec {
+  repeated string argv = 1;
+  map<string, string> environment = 2;
+  string logical_workspace = 3;
+  uint32 timeout_seconds = 4;
+  repeated NetworkGrant network_grants = 5;
+  string tool_id = 6;
+}
+
+message ExecRequest {
+  string instance_id = 1;
+  uint64 fencing_token = 2;
+  ProcessSpec process = 3;
+  string idempotency_key = 4;
+  string solver_id = 5;
+}
+
+message ExecFrame {
+  uint64 sequence = 1;
+  int64 timestamp_unix_ms = 2;
+  enum Stream {
+    STREAM_UNSPECIFIED = 0;
+    STDOUT = 1;
+    STDERR = 2;
+  }
+  Stream stream = 3;
+  bytes data = 4;
+}
+
+message ExecResult {
+  optional int32 exit_code = 1;
+  string signal = 2;
+  bool timed_out = 3;
+  bool truncated = 4;
+}
+
+message ExecEvent {
+  oneof event {
+    ExecFrame frame = 1;
+    ExecResult result = 2;
+  }
+}
+
+message ProcessStart {
+  string instance_id = 1;
+  uint64 fencing_token = 2;
+  ProcessSpec process = 3;
+  string idempotency_key = 4;
+  string solver_id = 5;
+}
+
+message ProcessInput {
+  bytes data = 1;
+  bool close_stdin = 2;
+}
+
+message ProcessOpened {
+  string process_id = 1;
+}
+
+message ProcessMessage {
+  oneof message {
+    ProcessStart start = 1;
+    ProcessInput input = 2;
+    ProcessOpened opened = 3;
+    ExecFrame frame = 4;
+    ExecResult result = 5;
+  }
+}
+
+message StopProcessRequest {
+  string process_id = 1;
+  uint64 fencing_token = 2;
+}
+
+message InspectRequest {
+  string instance_id = 1;
+  uint64 fencing_token = 2;
+}
+
+message InspectResponse {
+  string state = 1;
+  string runtime = 2;
+  uint32 active_processes = 3;
+  string created_at = 4;
+}
+
+message DestroyRequest {
+  string instance_id = 1;
+  uint64 fencing_token = 2;
+}
+
+message ReconcileRequest {
+  repeated string valid_instance_ids = 1;
+  int64 grace_before_unix_ms = 2;
+}
+
+message ReconcileResponse {
+  repeated string destroyed_instance_ids = 1;
+  repeated string errors = 2;
+}

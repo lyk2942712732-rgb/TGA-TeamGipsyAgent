@@ -1,0 +1,26 @@
+[Unit]
+Description=TGA privileged gVisor sandbox runtime
+After=docker.service network-online.target
+Requires=docker.service
+
+[Service]
+Type=simple
+User=root
+Group=tga-sandbox
+RuntimeDirectory=tga-sandboxd
+RuntimeDirectoryMode=0750
+ExecStart=/usr/local/libexec/tga-sandboxd --config /etc/tga/sandbox.json
+Restart=on-failure
+RestartSec=2
+TimeoutStopSec=15
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
+ReadWritePaths=/run/tga-sandboxd /var/lib/tga/runs
+RestrictAddressFamilies=AF_UNIX AF_NETLINK AF_INET AF_INET6
+LockPersonality=yes
+RestrictRealtime=yes
+
+[Install]
+WantedBy=multi-user.target
