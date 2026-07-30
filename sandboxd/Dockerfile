@@ -30,7 +30,6 @@ USER tga:tga
 FROM common AS network
 USER root
 RUN apt-get update \
-    && apt-get install --yes --no-install-recommends iputils-ping libcap2-bin nmap tcpdump \
-    && setcap cap_net_raw=eip /usr/bin/ping /usr/bin/nmap /usr/bin/tcpdump \
+    && apt-get install --yes --no-install-recommends iputils-ping nmap tcpdump \
     && rm -rf /var/lib/apt/lists/*
 USER tga:tga

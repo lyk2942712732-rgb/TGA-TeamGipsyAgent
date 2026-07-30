@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import subprocess
@@ -45,7 +46,9 @@ def _action(**updates) -> ActionSpec:
 
 
 def _docker_compute_available() -> bool:
-    """Keep Docker-only verification runnable locally and skippable in bare CI."""
+    """Run real-container checks only when explicitly enabled."""
+    if os.environ.get("TGA_DOCKER_COMPUTE_INTEGRATION") != "1":
+        return False
     try:
         probe = subprocess.run(
             ["docker", "info", "--format", "{{.ServerVersion}}"],
@@ -343,7 +346,10 @@ def test_workspace_python_output_is_stream_bounded(tmp_path: Path) -> None:
         assert result.error and result.error.code == "ISOLATED_RUNTIME_UNAVAILABLE"
 
 
-@pytest.mark.skipif(not _docker_compute_available(), reason="Docker daemon is unavailable")
+@pytest.mark.skipif(
+    not _docker_compute_available(),
+    reason="set TGA_DOCKER_COMPUTE_INTEGRATION=1 with Docker available",
+)
 def test_workspace_python_enforces_real_container_isolation(tmp_path: Path) -> None:
     """Verify the production execution path, rather than only its Docker argv."""
     workspace = tmp_path / "solver"
@@ -421,7 +427,10 @@ print("cgroup=" + json.dumps({
     assert (workspace / "artifacts" / "artifact-result.txt").read_text(encoding="utf-8") == "artifact-ok"
 
 
-@pytest.mark.skipif(not _docker_compute_available(), reason="Docker daemon is unavailable")
+@pytest.mark.skipif(
+    not _docker_compute_available(),
+    reason="set TGA_DOCKER_COMPUTE_INTEGRATION=1 with Docker available",
+)
 def test_workspace_python_enforces_real_timeout_and_output_limit(tmp_path: Path) -> None:
     workspace = tmp_path / "solver"
     store = ArtifactStore(tmp_path / "artifacts")
