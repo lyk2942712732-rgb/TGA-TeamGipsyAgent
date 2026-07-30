@@ -17,6 +17,8 @@ from tga.infrastructure.team_templates.registry import TeamTemplateRegistry
 from tga.runtime.manager import Manager
 from tga.runtime.scheduler import RuntimeScheduler
 from tga.runtime.service import TaskRuntimeService
+from tga.sandbox import DockerSandboxProvider, SandboxManager, SandboxdProvider, load_sandbox_config
+from tga.sandbox.repository import SandboxInstanceRepository
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,6 +50,20 @@ class Container:
 
     def team_templates(self) -> TeamTemplateRegistry:
         return TeamTemplateRegistry.builtin(definitions=self.solver_definitions())
+
+    def sandbox_manager(self, task_id: str) -> SandboxManager:
+        config, _ = load_sandbox_config()
+        providers = {
+            "docker_sandbox": DockerSandboxProvider(config),
+            "sandboxd": SandboxdProvider(config),
+        }
+        store = self.evidence_store(task_id)
+        return SandboxManager(
+            config=config,
+            providers=providers,
+            repository=SandboxInstanceRepository(store),
+            event_repository=store,
+        )
 
     def task_root(self, task_id: str) -> Path:
         return TaskRuntimeService(run_root=self.run_root).task_root(task_id)

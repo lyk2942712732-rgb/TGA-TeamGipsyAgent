@@ -26,6 +26,7 @@ class ToolCatalogEntry(BaseModel):
     max_read_chars: int | None = None
     mcp_server_id: str | None = None
     mcp_method: str | None = None
+    execution_profile_id: str | None = None
 
 
 class RuntimeToolCatalog(BaseModel):
@@ -64,6 +65,11 @@ class RuntimeToolCatalog(BaseModel):
                 parameters=json.loads(json.dumps(item["input_schema"])),
                 risk=item.get("risk") or "active",
                 specialties=specialty_map.get(capability, ()),
+                execution_profile_id=(
+                    "offline-analysis"
+                    if capability in {"workspace.python", "workspace.shell"}
+                    else "web-assessment" if capability == "http.request" else None
+                ),
                 max_read_chars=262_144 if tool_class == "resource_read" else None,
             ))
 
@@ -246,6 +252,7 @@ class RuntimeToolCatalog(BaseModel):
                 specialties=("web", "network", "binary", "source", "forensics", "validation", "recon"),
                 mcp_server_id=route.server_id,
                 mcp_method=route.method,
+                execution_profile_id=getattr(route, "execution_profile_id", None),
             ))
         return cls(entries=tuple(values))
 

@@ -1,0 +1,77 @@
+{
+  "version": 1,
+  "runtime": "disabled",
+  "terminal_grace_seconds": 900,
+  "reconcile_interval_seconds": 60,
+  "docker_sandbox": {
+    "executable": "sbx",
+    "task_root": "runs",
+    "template": "docker.io/docker/sandbox-templates:shell-docker@sha256:REPLACE_WITH_RELEASE_DIGEST",
+    "min_version": "0.34.0",
+    "max_version_exclusive": "0.35.0"
+  },
+  "sandboxd": {
+    "socket_path": "/run/tga-sandboxd/sandboxd.sock",
+    "rpc_timeout_seconds": 10,
+    "protocol_major": 1,
+    "run_root": "/var/lib/tga/runs",
+    "allowed_client_uids": []
+  },
+  "tools": {
+    "binwalk": {
+      "profile_id": "offline-analysis",
+      "image": "binwalk-mcp@sha256:REPLACE_WITH_RELEASE_DIGEST"
+    },
+    "ffuf": {
+      "profile_id": "web-assessment",
+      "image": "ffuf-mcp@sha256:REPLACE_WITH_RELEASE_DIGEST"
+    },
+    "nuclei": {
+      "profile_id": "web-assessment",
+      "image": "nuclei-mcp@sha256:REPLACE_WITH_RELEASE_DIGEST"
+    },
+    "nmap": {
+      "profile_id": "tcp-assessment",
+      "image": "nmap-mcp@sha256:REPLACE_WITH_RELEASE_DIGEST",
+      "args": ["--mode", "connect"]
+    },
+    "nmap-raw": {
+      "profile_id": "raw-network",
+      "image": "nmap-mcp@sha256:REPLACE_WITH_RELEASE_DIGEST",
+      "args": ["--mode", "raw"]
+    }
+  },
+  "profiles": {
+    "offline-analysis": {
+      "id": "offline-analysis",
+      "provider": "docker_sandbox",
+      "image": "ghcr.io/team-gipsy/tga-kali-offline@sha256:REPLACE_WITH_RELEASE_DIGEST",
+      "network_mode": "none"
+    },
+    "web-assessment": {
+      "id": "web-assessment",
+      "provider": "docker_sandbox",
+      "image": "ghcr.io/team-gipsy/tga-kali-web@sha256:REPLACE_WITH_RELEASE_DIGEST",
+      "network_mode": "public_http",
+      "web_allow_hosts": []
+    },
+    "tcp-assessment": {
+      "id": "tcp-assessment",
+      "provider": "sandboxd",
+      "image": "ghcr.io/team-gipsy/tga-kali-network@sha256:REPLACE_WITH_RELEASE_DIGEST",
+      "network_mode": "target_allowlist"
+    },
+    "raw-network": {
+      "id": "raw-network",
+      "provider": "sandboxd",
+      "image": "ghcr.io/team-gipsy/tga-kali-network@sha256:REPLACE_WITH_RELEASE_DIGEST",
+      "network_mode": "target_allowlist",
+      "allow_net_raw": true
+    },
+    "remote-http": {
+      "id": "remote-http",
+      "provider": "remote_http",
+      "network_mode": "remote"
+    }
+  }
+}

@@ -66,6 +66,7 @@ class ToolGovernanceGateway:
         allowed_resource_ids: tuple[str, ...] | None = None,
         lease_validator: Callable[[], bool] | None = None,
         artifact_result_handler: Callable[[RawExecutionResult], None] | None = None,
+        sandbox_config_digest: str | None = None,
     ) -> None:
         self.task = task
         self.manifest = manifest
@@ -75,6 +76,7 @@ class ToolGovernanceGateway:
         self.allowed_resource_ids = allowed_resource_ids
         self.lease_validator = lease_validator
         self.artifact_result_handler = artifact_result_handler
+        self.sandbox_config_digest = sandbox_config_digest
         self.actions = GovernedActionService(repository)
         self.semantic_repeat = SemanticRepeatGuard(repository)
         self.idempotency = IdempotencyService(repository)
@@ -232,6 +234,10 @@ class ToolGovernanceGateway:
             tool_call_id=request.tool_call_id,
             tool_class=definition.tool_class,
             capability=definition.capability,
+            execution_profile_id=definition.execution_profile_id,
+            sandbox_config_digest=(
+                self.sandbox_config_digest if definition.execution_profile_id else None
+            ),
             normalized_arguments=request.arguments,
             resolved_target=target,
             rationale=request.model_intent.rationale,

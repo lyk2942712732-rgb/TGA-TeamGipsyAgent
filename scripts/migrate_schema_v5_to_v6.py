@@ -13,6 +13,10 @@ from pathlib import Path
 from typing import Any, Callable
 from uuid import uuid4
 
+REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+if str(REPOSITORY_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPOSITORY_ROOT))
+
 from tga.domain.task.models import TGATask
 from tga.domain.task.spec import TaskSpec
 from tga.infrastructure.persistence import PersistenceBundle

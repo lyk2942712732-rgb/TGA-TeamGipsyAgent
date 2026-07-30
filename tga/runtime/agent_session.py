@@ -41,6 +41,7 @@ from tga.runtime.retrieval import RetrievalService
 from tga.tools.mcp_manager import MCPManager
 from tga.tools.mcp_registry import MCPCatalogSnapshot
 from tga.modes import mode_profile
+from tga.sandbox.config import load_sandbox_config
 
 
 COMPLETION_TOOLS = {"finish_session", "propose_task_completion"}
@@ -78,6 +79,7 @@ class AgentSessionRunner:
         ).workspace
         self.workspace.mkdir(parents=True, exist_ok=True)
         self.mcp_manager = mcp_manager or MCPManager(cache_path=run_root / "mcp-cache.json")
+        self.sandbox_config, _ = load_sandbox_config()
         self.mcp_snapshot: MCPCatalogSnapshot = self.mcp_manager.snapshot_for_task(
             task, workspace=self.workspace
         )
@@ -650,6 +652,7 @@ class AgentSessionRunner:
                 )
             ),
             artifact_result_handler=self.handlers.state.plan_knowledge.index_artifacts,
+            sandbox_config_digest=self.sandbox_config.digest,
         )
         self.dispatcher = GatewayToolDispatcher(
             gateway=self.tool_gateway,

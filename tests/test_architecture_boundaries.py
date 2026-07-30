@@ -55,7 +55,8 @@ def test_task_json_shape_remains_stable_through_compatibility_export() -> None:
         "preset": "offline_analysis",
         "network": {
             "access": "disabled", "interaction": "observe", "seed_origins": [],
-            "custom_origins": [], "custom_domains": [], "custom_cidrs": [],
+                "custom_origins": [], "custom_domains": [], "custom_cidrs": [],
+                "custom_ports": [],
             "deny_private_networks": True, "deny_loopback": True,
             "deny_link_local": True, "deny_cloud_metadata": True,
             "rate_limit_per_minute": 30, "concurrency": 2,

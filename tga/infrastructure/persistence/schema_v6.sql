@@ -325,6 +325,8 @@ CREATE TABLE IF NOT EXISTS governed_actions (
     tool_call_id TEXT NOT NULL,
     tool_class TEXT NOT NULL,
     capability TEXT NOT NULL,
+    execution_profile_id TEXT,
+    sandbox_config_digest TEXT,
     attempt INTEGER NOT NULL DEFAULT 1 CHECK(attempt >= 1),
     status TEXT NOT NULL,
     version INTEGER NOT NULL DEFAULT 1 CHECK(version >= 1),
@@ -345,6 +347,22 @@ CREATE TABLE IF NOT EXISTS governed_action_transitions (
     to_status TEXT NOT NULL,
     created_at TEXT NOT NULL,
     PRIMARY KEY(action_id, seq)
+);
+
+CREATE TABLE IF NOT EXISTS sandbox_instances (
+    instance_id TEXT PRIMARY KEY,
+    task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    solver_id TEXT NOT NULL,
+    profile_id TEXT NOT NULL,
+    provider TEXT NOT NULL CHECK(provider IN ('docker_sandbox','sandboxd')),
+    config_digest TEXT NOT NULL,
+    fencing_token INTEGER NOT NULL CHECK(fencing_token >= 1),
+    state TEXT NOT NULL CHECK(state IN (
+        'acquiring','ready','released','destroying','destroyed','failed'
+    )),
+    destroy_after TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS tool_idempotency_keys (
@@ -568,7 +586,13 @@ CREATE INDEX IF NOT EXISTS idx_v6_findings_task_status ON findings(task_id, stat
 CREATE INDEX IF NOT EXISTS idx_v6_agent_events_task_seq ON agent_events(task_id, seq);
 CREATE INDEX IF NOT EXISTS idx_v6_approvals_task_status ON approvals(task_id, status, created_at);
 CREATE INDEX IF NOT EXISTS idx_v6_governed_actions_owner ON governed_actions(task_id, solver_id, intent_id, status);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_v6_sandbox_active_task
+ON sandbox_instances(task_id)
+WHERE state IN ('acquiring','ready','released','destroying');
+CREATE INDEX IF NOT EXISTS idx_v6_sandbox_cleanup
+ON sandbox_instances(state,destroy_after);
 CREATE INDEX IF NOT EXISTS idx_v6_governed_actions_semantic ON governed_actions(task_id, solver_id, semantic_fingerprint, status);
+CREATE INDEX IF NOT EXISTS idx_v6_governed_actions_profile ON governed_actions(task_id, execution_profile_id, status);
 CREATE INDEX IF NOT EXISTS idx_v6_governed_actions_idempotency ON governed_actions(idempotency_key) WHERE idempotency_key IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_v6_budget_reservations_owner ON tool_budget_reservations(task_id, solver_id, intent_id, status);
 CREATE INDEX IF NOT EXISTS idx_v6_runtime_budget_usage_task ON runtime_budget_usage(task_id, created_at);

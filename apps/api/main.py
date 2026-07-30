@@ -10,14 +10,20 @@ from fastapi.middleware.cors import CORSMiddleware
 from apps.api.routes import router as runtime_v2_router
 from apps.api.routes.support import _runtime_scheduler
 from tga.models.bootstrap import model_config_status
+from tga.sandbox.lifecycle import SandboxLifecycleService
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    sandbox_lifecycle = SandboxLifecycleService("runs")
+    sandbox_lifecycle.start()
     status = model_config_status()
     _runtime_scheduler().recover(
         schedule_runnable=status.get("verification_status") == "verified"
     )
-    yield
+    try:
+        yield
+    finally:
+        sandbox_lifecycle.close()
 
 
 app = FastAPI(title="TGA API", version="0.1.0", lifespan=lifespan)
