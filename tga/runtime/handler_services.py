@@ -10,6 +10,8 @@ from pathlib import Path
 from typing import Any
 
 from tga.contracts import ActionResult, ActionSpec, ArtifactRecord
+from tga.application.services import ArtifactIndexingCoordinator
+from tga.domain.evidence import Artifact
 from tga.evidence.artifacts import ArtifactStore
 from tga.evidence.indexing import build_artifact_index, retrieve_segments
 from tga.inputs import task_artifact_root
@@ -129,6 +131,7 @@ class ArtifactService:
         return artifact, created
 
     def _index_artifact(self, artifact: ArtifactRecord):
+        self._index_artifact_for_retrieval(artifact)
         existing = self.store.get_artifact_index(artifact.id)
         if existing is not None:
             return existing
@@ -146,6 +149,34 @@ class ArtifactService:
             document_type="html" if path.suffix.casefold() in {".html", ".htm"} else None,
         )
         return self.store.upsert_artifact_index(index)
+
+    def _index_artifact_for_retrieval(self, artifact: ArtifactRecord):
+        repositories = PersistenceBundle(self.store)
+        return ArtifactIndexingCoordinator(
+            repositories=repositories.retrieval,
+            raw_loader=lambda item: self._artifact_path(item).read_bytes(),
+            event_repository=repositories.events,
+        ).index(
+            Artifact.model_validate(artifact.model_dump(mode="json")),
+            task_name=self.task.name,
+            solver_id=self.solver_id,
+        )
+
+    def _artifact_path(self, artifact) -> Path:
+        root = task_artifact_root(self.run_root / self.task.id, self.task)
+        candidates = (
+            root,
+            (self.run_root / self.task.id / "workspace" / "shared" / "artifacts").resolve(),
+        )
+        for base in candidates:
+            path = (base / artifact.path).resolve()
+            try:
+                path.relative_to(base.resolve())
+            except ValueError as exc:
+                raise PermissionError("Artifact path escapes its immutable store") from exc
+            if path.is_file():
+                return path
+        raise FileNotFoundError(f"Artifact bytes are unavailable: {artifact.id}")
     def _http_session_metadata(self, result: ActionResult) -> dict | None:
         for artifact_id in result.artifact_ids:
             artifact = self.store.get_artifact(artifact_id)

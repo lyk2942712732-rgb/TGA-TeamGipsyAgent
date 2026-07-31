@@ -5,14 +5,12 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 
+from tga.application.services import ArtifactIndexingCoordinator
 from tga.domain.knowledge.items import KnowledgeItem
 from tga.domain.planning.global_plan import GlobalPlan
 from tga.domain.planning.proposals import IntentProposal
 from tga.evidence.database import utc_now
-from tga.infrastructure.persistence import PersistenceBundle, PersistenceConflict
-from tga.domain.retrieval import KnowledgeBase, OwnerScope
-from tga.infrastructure.retrieval import StructuredDocumentParser
-from tga.runtime.retrieval import RetrievalIndexService
+from tga.infrastructure.persistence import PersistenceBundle
 from tga.inputs import task_artifact_root
 
 
@@ -110,109 +108,30 @@ class PlanKnowledgeHandler:
         artifact_ids = tuple(dict.fromkeys(str(item) for item in result.artifact_ids))
         if not artifact_ids:
             return
-        owner = OwnerScope(scope="task", task_id=self.task.id)
-        knowledge_base_id = f"kb_task_artifacts_{self.task.id}"
-        knowledge_base = (
-            self.repositories.retrieval.get_knowledge_base(knowledge_base_id)
-            or KnowledgeBase(
-                id=knowledge_base_id,
-                name=f"Task Artifacts: {self.task.name}",
-                owner=owner,
-                description="Immutable tool outputs indexed as candidate evidence only.",
-                created_at=utc_now(),
-            )
+        coordinator = ArtifactIndexingCoordinator(
+            repositories=self.repositories.retrieval,
+            raw_loader=lambda artifact: self._artifact_path(artifact).read_bytes(),
+            event_repository=self.repositories.events,
         )
-        indexer = RetrievalIndexService(
-            self.repositories.retrieval,
-            parser=StructuredDocumentParser(),
-        )
-        indexed = 0
         for artifact_id in artifact_ids:
             artifact = self.repositories.evidence.get_artifact(artifact_id)
             if artifact is None:
+                self.repositories.events.append_agent_event(
+                    self.task.id,
+                    "ARTIFACT_INDEXING_FAILED",
+                    {
+                        "artifact_id": artifact_id,
+                        "error_code": "ARTIFACT_NOT_FOUND",
+                        "error_type": "KeyError",
+                        "message": "Artifact record is unavailable",
+                        "retryable": True,
+                    },
+                    solver_id=self.solver_id,
+                )
                 continue
-            try:
-                raw = self._artifact_path(artifact).read_bytes()
-                revision, chunks = indexer.ingest_task_artifact(
-                    knowledge_base=knowledge_base,
-                    artifact=artifact,
-                    raw=raw,
-                )
-                indexed += len(chunks)
-                self.repositories.events.append_agent_event(
-                    self.task.id,
-                    "RETRIEVAL_DOCUMENT_INDEXED",
-                    {
-                        "artifact_id": artifact.id,
-                        "document_revision_id": revision.id,
-                        "extraction_status": revision.extraction_status,
-                        "chunk_count": len(chunks),
-                        "semantics": "candidate_evidence_only",
-                    },
-                    solver_id=self.solver_id,
-                )
-            except Exception as exc:
-                self.repositories.events.append_agent_event(
-                    self.task.id,
-                    "RETRIEVAL_INDEX_FAILED",
-                    {
-                        "artifact_id": artifact.id,
-                        "error": str(exc)[:1_000],
-                    },
-                    solver_id=self.solver_id,
-                )
-        if indexed:
-            visible_knowledge_bases = [
-                item for item in self.repositories.retrieval.list_knowledge_bases()
-                if item.status == "active"
-                and (
-                    item.owner.scope == "global"
-                    or item.owner.scope == "task" and item.owner.task_id == self.task.id
-                )
-            ]
-            knowledge_base_ids = tuple(sorted(
-                {item.id for item in visible_knowledge_bases} | {knowledge_base.id}
-            ))
-            versions = [
-                item.index_version
-                for item in self.repositories.retrieval.list_snapshots()
-                if item.owner == owner
-                and knowledge_base.id in item.knowledge_base_ids
-            ]
-            snapshot = indexer.create_snapshot(
-                owner=owner,
-                knowledge_base_ids=knowledge_base_ids,
-                index_version=max(versions, default=0) + 1,
-            )
-            for attempt in range(4):
-                binding = self.repositories.retrieval.get_snapshot_binding(owner, "context")
-                try:
-                    updated_binding = self.repositories.retrieval.bind_snapshot(
-                        owner=owner,
-                        purpose="context",
-                        snapshot_id=snapshot.id,
-                        expected_snapshot_id=(
-                            binding.index_snapshot_id if binding is not None else None
-                        ),
-                        updated_at=utc_now(),
-                    )
-                    break
-                except PersistenceConflict:
-                    if attempt == 3:
-                        raise
-            self.repositories.events.append_agent_event(
-                self.task.id,
-                "INDEX_SNAPSHOT_CREATED",
-                {
-                    "index_snapshot_id": snapshot.id,
-                    "index_version": snapshot.index_version,
-                    "knowledge_base_ids": list(snapshot.knowledge_base_ids),
-                    "chunk_count": len(snapshot.chunk_ids),
-                    "binding_version": updated_binding.version,
-                    "previous_index_snapshot_id": (
-                        binding.index_snapshot_id if binding is not None else None
-                    ),
-                },
+            coordinator.index(
+                artifact,
+                task_name=self.task.name,
                 solver_id=self.solver_id,
             )
 

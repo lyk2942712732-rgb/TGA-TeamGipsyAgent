@@ -1,6 +1,6 @@
 import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { Search, Upload } from "lucide-react";
-import { deleteSkill, fetchSkillDetail, fetchSkillSettings, importSkill, updateSkill, type SkillDetail, type SkillSetting } from "../api/tasks";
+import { deleteSkill, fetchSkillCorpus, fetchSkillDetail, fetchSkillSettings, importSkill, updateSkill, type SkillDetail, type SkillPublication, type SkillSetting } from "../api/tasks";
 import { CapabilityNotice, Chip, DefinitionList, ProductEmpty, ProductPageHeader, ProductTable, ProductTabs } from "../components/ui/ProductPrimitives";
 import { MODE_PROFILES, TASK_MODES, type TaskMode } from "../modes";
 
@@ -18,13 +18,20 @@ export function SkillsPage() {
   const [mode, setMode] = useState("");
   const [tab, setTab] = useState("概览");
   const [draft, setDraft] = useState<SkillDraft | null>(null);
+  const [publications, setPublications] = useState<SkillPublication[]>([]);
   const [error, setError] = useState(""); const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(true); const [busy, setBusy] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const load = async () => {
     setLoading(true);
-    try { const value = await fetchSkillSettings(); setSkills(value.skills); setError(""); }
+    try {
+      const corpusRequest = typeof fetchSkillCorpus === "function"
+        ? fetchSkillCorpus()
+        : Promise.resolve({ schema_version: 1, publications: [] as SkillPublication[] });
+      const [value, corpus] = await Promise.all([fetchSkillSettings(), corpusRequest]);
+      setSkills(value.skills); setPublications(corpus.publications); setError("");
+    }
     catch (reason) { setError(reason instanceof Error ? reason.message : "无法读取 Skills"); }
     finally { setLoading(false); }
   };
@@ -72,7 +79,17 @@ export function SkillsPage() {
     finally { setBusy(false); }
   };
 
+  const publicationCounts = publications.reduce<Record<string, number>>((counts, item) => {
+    counts[item.status] = (counts[item.status] ?? 0) + 1;
+    return counts;
+  }, {});
+
   return <section className="product-page skills-catalog-page">
+    <section className="skill-message" aria-label="RAG Skill publication status">
+      <b>RAG Skill Corpus</b>
+      <span>{["published", "reviewed", "draft", "deprecated", "revoked"].map((status) => `${status}: ${publicationCounts[status] ?? 0}`).join(" | ")}</span>
+      <small>Published means eligible for governed selection. Active is recorded only after Solver validation and snapshot freezing.</small>
+    </section>
     <ProductPageHeader title="Skills" description="按分类浏览方法能力，查看 Instructions、适用 Mode 和所需 Capabilities。" action={<><input ref={inputRef} hidden type="file" accept=".md,text/markdown" onChange={choose} /><button disabled={busy} onClick={() => inputRef.current?.click()}><Upload size={15} />导入 Skill</button></>} />
     {error ? <div className="inline-error" role="alert">{error}</div> : null}
     {message ? <div className="skill-message" role="status">{message}</div> : null}

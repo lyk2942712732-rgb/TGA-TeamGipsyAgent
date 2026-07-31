@@ -248,6 +248,65 @@ class RetrievalService:
             )
         return pack
 
+    def retrieve_skill_candidates(
+        self,
+        *,
+        task_id: str,
+        solver_id: str,
+        intent_id: str | None,
+        query: str,
+        policy: RetrievalPolicy,
+        workspace_id: str | None = None,
+    ) -> RetrievedContextPack | None:
+        """Discover Skill references without mixing them into model context."""
+        principal = OwnerScope(scope="solver", task_id=task_id, solver_id=solver_id)
+        binding = self.repository.get_snapshot_binding(principal, "skill_selection")
+        snapshot_id = binding.index_snapshot_id if binding else self._latest_skill_snapshot_id(
+            owner=principal, policy=policy, workspace_id=workspace_id
+        )
+        if snapshot_id is None:
+            return None
+        pack = self.retrieve_for_principal(
+            owner=principal,
+            task_id=task_id,
+            solver_id=solver_id,
+            intent_id=intent_id,
+            query=query,
+            policy=policy,
+            channels=("skill",),
+            workspace_id=workspace_id,
+            request_prefix="skill_selection",
+            snapshot_id=snapshot_id,
+        )
+        if pack is not None and binding is None:
+            self.repository.bind_snapshot(
+                owner=principal,
+                purpose="skill_selection",
+                snapshot_id=pack.index_snapshot_id,
+                expected_snapshot_id=None,
+                updated_at=pack.created_at,
+            )
+        return pack
+
+    def _latest_skill_snapshot_id(
+        self,
+        *,
+        owner: OwnerScope,
+        policy: RetrievalPolicy,
+        workspace_id: str | None,
+    ) -> str | None:
+        snapshots = [
+            snapshot for snapshot in self.repository.list_snapshots()
+            if self._owner_visible(
+                snapshot.owner, owner, policy, workspace_id=workspace_id
+            )
+            and any(
+                chunk.channel == "skill"
+                for chunk in self.repository.list_chunks(snapshot.chunk_ids)
+            )
+        ]
+        return snapshots[-1].id if snapshots else None
+
     def refresh_snapshot_binding(
         self, *, owner: OwnerScope, snapshot_id: str, purpose: str
     ):
@@ -307,7 +366,7 @@ class RetrievalService:
             index_snapshot_id=snapshot.id,
             channels=tuple(channels),
             knowledge_base_ids=tuple(requested_kbs),
-            filters=filters or {},
+            filters={**(filters or {}), **({"workspace_id": workspace_id} if workspace_id else {})},
             method=method,
             created_at=_now(),
         ), policy)
@@ -369,7 +428,12 @@ class RetrievalService:
             return False
         if filters.get("trust_levels") and source.trust_level not in filters["trust_levels"]:
             return False
-        return self._owner_visible(chunk.owner, request.owner, policy)
+        return self._owner_visible(
+            chunk.owner,
+            request.owner,
+            policy,
+            workspace_id=str(filters.get("workspace_id") or "") or None,
+        )
 
     @staticmethod
     def _owner_visible(

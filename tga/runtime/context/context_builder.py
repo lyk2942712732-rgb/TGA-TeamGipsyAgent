@@ -7,6 +7,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from tga.domain.retrieval import OwnerScope
 from tga.domain.task.models import TGATask
 
 
@@ -166,9 +167,29 @@ class ContextBuilder:
                     query=active_intent.objective if active_intent else self.task.goal,
                     policy=self.retrieval_policy,
                 )
-            except Exception:
+            except Exception as exc:
                 pack = None
                 retrieval_failures = 1
+                binding = self.repositories.retrieval.get_snapshot_binding(
+                    OwnerScope(scope="task", task_id=self.task.id), "context"
+                )
+                self.repositories.events.append_agent_event(
+                    self.task.id,
+                    "RETRIEVAL_FAILED",
+                    {
+                        "task_id": self.task.id,
+                        "solver_id": self.solver_id,
+                        "intent_id": active_intent.id if active_intent else None,
+                        "snapshot_id": binding.index_snapshot_id if binding else None,
+                        "channels": ["reference", "task_artifact"],
+                        "error_code": self._retrieval_error_code(exc),
+                        "error_type": type(exc).__name__,
+                        "retryable": not isinstance(exc, (PermissionError, ValueError)),
+                        "message": str(exc)[:1_000],
+                    },
+                    solver_id=self.solver_id,
+                    intent_id=active_intent.id if active_intent else None,
+                )
             if pack is not None:
                 retrieved_tokens = pack.total_tokens
                 retrieval_runs = 1
@@ -295,6 +316,19 @@ class ContextBuilder:
                 "retrieval_failures": retrieval_failures,
             },
         )
+
+    @staticmethod
+    def _retrieval_error_code(error: Exception) -> str:
+        code = getattr(error, "code", None)
+        if code:
+            return str(code)
+        if isinstance(error, PermissionError):
+            return "RETRIEVAL_POLICY_DENIED"
+        if isinstance(error, KeyError):
+            return "RETRIEVAL_SNAPSHOT_MISSING"
+        if isinstance(error, ValueError):
+            return "RETRIEVAL_INVALID_REQUEST"
+        return "RETRIEVAL_ERROR"
 
 
 def _compact_plan(plan) -> dict[str, Any]:

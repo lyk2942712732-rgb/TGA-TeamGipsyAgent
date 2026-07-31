@@ -26,7 +26,12 @@ from tga.domain.solver.runs import SolverRun
 from tga.domain.solver.results import ReportResult, ReviewResult, WorkerResult
 from tga.domain.solver.status import SolverInstanceStatus
 from tga.domain.solver.team_runtime import TeamRuntimeState
-from tga.domain.skills.models import SolverSkillSnapshot, TaskCommonSkillSnapshot
+from tga.domain.skills.models import (
+    SkillActivation,
+    SkillSelectionDecision,
+    SolverSkillSnapshot,
+    TaskCommonSkillSnapshot,
+)
 from tga.domain.solver.definitions import SolverDefinition
 from tga.domain.task.models import TGATask
 from tga.domain.task.spec import TaskSpec
@@ -970,6 +975,78 @@ class SqliteSolverRepository:
             (solver_id,),
         ).fetchone()
         return SolverSkillSnapshot.model_validate_json(row["payload_json"]) if row else None
+
+    def save_skill_selection_decision(self, decision: SkillSelectionDecision) -> None:
+        _require_task(self.conn, decision.task_id)
+        current = self.conn.execute(
+            "SELECT payload_json FROM skill_selection_decisions WHERE id=?",
+            (decision.id,),
+        ).fetchone()
+        payload = decision.model_dump_json()
+        if current is not None:
+            if current["payload_json"] != payload:
+                raise PersistenceConflict(f"SkillSelectionDecision is immutable: {decision.id}")
+            return
+        self.conn.execute(
+            "INSERT INTO skill_selection_decisions(id,task_id,solver_id,intent_id,payload_json,created_at) "
+            "VALUES (?,?,?,?,?,?)",
+            (
+                decision.id, decision.task_id, decision.solver_id, decision.intent_id,
+                payload, decision.created_at,
+            ),
+        )
+        self.database._commit()
+
+    def get_skill_selection_decision(
+        self, decision_id: str
+    ) -> SkillSelectionDecision | None:
+        row = self.conn.execute(
+            "SELECT payload_json FROM skill_selection_decisions WHERE id=?",
+            (decision_id,),
+        ).fetchone()
+        return SkillSelectionDecision.model_validate_json(row["payload_json"]) if row else None
+
+    def list_skill_selection_decisions(
+        self, task_id: str, *, solver_id: str | None = None
+    ) -> list[SkillSelectionDecision]:
+        rows = self.conn.execute(
+            "SELECT payload_json FROM skill_selection_decisions "
+            "WHERE task_id=? AND (? IS NULL OR solver_id=?) "
+            "ORDER BY created_at,id",
+            (task_id, solver_id, solver_id),
+        ).fetchall()
+        return [
+            SkillSelectionDecision.model_validate_json(row["payload_json"])
+            for row in rows
+        ]
+
+    def save_skill_activation(self, activation: SkillActivation) -> None:
+        _require_task(self.conn, activation.task_id)
+        current = self.conn.execute(
+            "SELECT payload_json FROM skill_activations WHERE id=?", (activation.id,)
+        ).fetchone()
+        payload = activation.model_dump_json()
+        if current is not None:
+            if current["payload_json"] != payload:
+                raise PersistenceConflict(f"SkillActivation is immutable: {activation.id}")
+            return
+        self.conn.execute(
+            "INSERT INTO skill_activations(id,task_id,solver_id,skill_name,"
+            "selection_decision_id,payload_json,created_at) VALUES (?,?,?,?,?,?,?)",
+            (
+                activation.id, activation.task_id, activation.solver_id,
+                activation.skill_name, activation.selection_decision_id,
+                payload, activation.activated_at,
+            ),
+        )
+        self.database._commit()
+
+    def list_skill_activations(self, solver_id: str) -> list[SkillActivation]:
+        rows = self.conn.execute(
+            "SELECT payload_json FROM skill_activations WHERE solver_id=? "
+            "ORDER BY created_at,id", (solver_id,),
+        ).fetchall()
+        return [SkillActivation.model_validate_json(row["payload_json"]) for row in rows]
 
     def save_worker_result(self, result: WorkerResult, *, version: int = 1) -> str:
         _require_owned(self.conn, "solver_instances", result.solver_id, result.task_id, "worker result solver")

@@ -245,6 +245,36 @@ class TaskRuntimeService:
             )
             challenge = store.get_challenge(task_id)
             artifact_indexes = store.list_artifact_indexes(task_id)[-100:]
+            artifact_indexing = repositories.retrieval.list_artifact_index_projections(
+                task_id
+            )[-100:]
+            legacy_indexes = {
+                item.artifact_id: {
+                    "artifact_id": item.artifact_id,
+                    "document_type": item.document_type,
+                    "extraction_status": item.extraction_status,
+                    "summary": item.summary,
+                    "segment_count": len(item.segments),
+                    "source_refs": [segment.ref for segment in item.segments[:16]],
+                }
+                for item in artifact_indexes
+            }
+            for item in artifact_indexing:
+                legacy_indexes.setdefault(item.artifact_id, {}).update({
+                    "artifact_id": item.artifact_id,
+                    "indexing_status": item.status,
+                    "indexing_attempt": item.attempt,
+                    "indexing_source_id": item.source_id,
+                    "indexing_document_id": item.document_id,
+                    "indexing_revision_id": item.revision_id,
+                    "indexing_chunk_ids": list(item.chunk_ids),
+                    "indexing_snapshot_id": item.snapshot_id,
+                    "indexing_binding_updated": item.binding_updated,
+                    "indexing_error_code": item.error_code,
+                    "indexing_error_message": item.error_message,
+                    "indexing_retryable": item.retryable,
+                    "indexing_updated_at": item.updated_at,
+                })
             events = event_page["events"]
             http_sessions: dict[str, dict[str, Any]] = {}
             observer_directives: list[dict[str, Any]] = []
@@ -374,15 +404,7 @@ class TaskRuntimeService:
                 "challenge": challenge.model_dump(mode="json") if challenge else {},
                 "flags": flags,
                 "artifact_indexes": [
-                    {
-                        "artifact_id": item.artifact_id,
-                        "document_type": item.document_type,
-                        "extraction_status": item.extraction_status,
-                        "summary": item.summary,
-                        "segment_count": len(item.segments),
-                        "source_refs": [segment.ref for segment in item.segments[:16]],
-                    }
-                    for item in artifact_indexes
+                    *legacy_indexes.values()
                 ],
                 "http_sessions": list(http_sessions.values()),
                 "observer": {"directives": observer_directives[-20:]},

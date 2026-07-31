@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import sqlite3
 import hashlib
+import json
 from collections.abc import Iterable
 from typing import Any, TypeVar
 
 from pydantic import BaseModel
 
 from tga.domain.retrieval import (
+    ArtifactIndexProjection,
     CorpusDocument,
     CorpusSource,
     DocumentChunk,
@@ -22,6 +24,7 @@ from tga.domain.retrieval import (
     RetrievalRun,
 )
 from tga.infrastructure.persistence.errors import PersistenceConflict
+from tga.domain.skills import SkillPublication
 
 
 ModelT = TypeVar("ModelT", bound=BaseModel)
@@ -35,6 +38,54 @@ class SqliteRetrievalRepository:
     def __init__(self, database) -> None:
         self.database = database
         self.conn = database.conn
+
+    def save_artifact_index_projection(self, item: ArtifactIndexProjection) -> None:
+        artifact = self.conn.execute(
+            "SELECT task_id,payload_json FROM artifacts WHERE id=?",
+            (item.artifact_id,),
+        ).fetchone()
+        if artifact is None or artifact["task_id"] != item.task_id:
+            raise PersistenceConflict("ArtifactIndexProjection Artifact ownership is invalid")
+        if str(json.loads(artifact["payload_json"])["sha256"]) != item.artifact_sha256:
+            raise PersistenceConflict("ArtifactIndexProjection immutable sha256 changed")
+        cursor = self.conn.execute(
+            "INSERT INTO artifact_index_projections(artifact_id,task_id,artifact_sha256,status,attempt,snapshot_id,binding_updated,retryable,payload_json,created_at,updated_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?) "
+            "ON CONFLICT(artifact_id) DO UPDATE SET "
+            "status=excluded.status,attempt=excluded.attempt,snapshot_id=excluded.snapshot_id,"
+            "binding_updated=excluded.binding_updated,retryable=excluded.retryable,"
+            "payload_json=excluded.payload_json,updated_at=excluded.updated_at "
+            "WHERE artifact_index_projections.task_id=excluded.task_id "
+            "AND artifact_index_projections.artifact_sha256=excluded.artifact_sha256",
+            (
+                item.artifact_id, item.task_id, item.artifact_sha256, item.status,
+                item.attempt, item.snapshot_id, int(item.binding_updated),
+                int(item.retryable), item.model_dump_json(), item.created_at,
+                item.updated_at,
+            ),
+        )
+        if cursor.rowcount != 1:
+            raise PersistenceConflict("ArtifactIndexProjection immutable identity changed")
+        self.database._commit()
+
+    def get_artifact_index_projection(
+        self, artifact_id: str
+    ) -> ArtifactIndexProjection | None:
+        row = self.conn.execute(
+            "SELECT payload_json FROM artifact_index_projections WHERE artifact_id=?",
+            (artifact_id,),
+        ).fetchone()
+        return self._one(row, ArtifactIndexProjection)
+
+    def list_artifact_index_projections(
+        self, task_id: str
+    ) -> list[ArtifactIndexProjection]:
+        rows = self.conn.execute(
+            "SELECT payload_json FROM artifact_index_projections WHERE task_id=? "
+            "ORDER BY created_at,artifact_id",
+            (task_id,),
+        ).fetchall()
+        return [ArtifactIndexProjection.model_validate_json(row["payload_json"]) for row in rows]
 
     def _add_immutable(
         self,
@@ -233,6 +284,14 @@ class SqliteRetrievalRepository:
         return self._one(self.conn.execute(
             "SELECT payload_json FROM document_revisions WHERE id=?", (revision_id,)
         ).fetchone(), DocumentRevision)
+
+    def list_revisions(self, document_id: str) -> list[DocumentRevision]:
+        rows = self.conn.execute(
+            "SELECT payload_json FROM document_revisions WHERE document_id=? "
+            "ORDER BY revision,id",
+            (document_id,),
+        ).fetchall()
+        return [DocumentRevision.model_validate_json(row["payload_json"]) for row in rows]
 
     def add_chunks(self, items: Iterable[DocumentChunk]) -> None:
         with self.database.transaction():
@@ -443,6 +502,42 @@ class SqliteRetrievalRepository:
             "SELECT payload_json FROM retrieval_hits WHERE retrieval_run_id=? ORDER BY rank,id",
             (run_id,),
         ).fetchall()]
+
+    def save_skill_publication(self, item: SkillPublication) -> None:
+        revision = self.get_revision(item.revision_id)
+        if revision is None or revision.document_id != item.document_id:
+            raise PersistenceConflict("SkillPublication revision ancestry is invalid")
+        self._add_immutable(
+            table="skill_publications",
+            identifier=item.id,
+            payload=item.model_dump_json(),
+            sql=(
+                "INSERT INTO skill_publications(id,revision_id,document_id,skill_name,"
+                "skill_version,status,payload_json,created_at) VALUES (?,?,?,?,?,?,?,?)"
+            ),
+            parameters=(
+                item.id, item.revision_id, item.document_id, item.skill_name,
+                item.skill_version, item.status, item.model_dump_json(), item.created_at,
+            ),
+        )
+
+    def get_skill_publication(self, revision_id: str) -> SkillPublication | None:
+        row = self.conn.execute(
+            "SELECT payload_json FROM skill_publications WHERE revision_id=? "
+            "ORDER BY created_at DESC,id DESC LIMIT 1",
+            (revision_id,),
+        ).fetchone()
+        return self._one(row, SkillPublication)
+
+    def list_skill_publications(
+        self, *, skill_name: str | None = None
+    ) -> list[SkillPublication]:
+        rows = self.conn.execute(
+            "SELECT payload_json FROM skill_publications "
+            "WHERE (? IS NULL OR skill_name=?) ORDER BY created_at,id",
+            (skill_name, skill_name),
+        ).fetchall()
+        return [SkillPublication.model_validate_json(row["payload_json"]) for row in rows]
 
     @staticmethod
     def _source_owner_within_knowledge_base(

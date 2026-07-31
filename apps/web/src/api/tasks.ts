@@ -166,6 +166,19 @@ export const updateSkill = (name: string, payload: Pick<SkillDetail, "modes" | "
   method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
 });
 export const deleteSkill = (name: string) => requestJson<{ name: string; deleted: boolean }>(`/api/v2/settings/skills/${encodeURIComponent(name)}`, { method: "DELETE" });
+export type SkillPublicationStatus = "draft" | "reviewed" | "published" | "deprecated" | "revoked";
+export type SkillPublication = {
+  id: string;
+  revision_id: string;
+  document_id: string;
+  skill_name: string;
+  skill_version: string;
+  status: SkillPublicationStatus;
+  priority: number;
+  reason: string;
+  created_at: string;
+};
+export const fetchSkillCorpus = () => requestJson<{ schema_version: number; publications: SkillPublication[] }>("/api/v2/settings/skill-corpus");
 export const fetchAgentPromptSettings = () => requestJson<AgentPromptSettings>("/api/v2/settings/agent-prompts");
 export const updateAgentPromptSettings = (payload: AgentPromptSettings) => requestJson<AgentPromptSettings>("/api/v2/settings/agent-prompts", {
   method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),

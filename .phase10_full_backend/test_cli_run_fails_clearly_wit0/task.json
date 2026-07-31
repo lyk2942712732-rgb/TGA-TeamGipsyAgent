@@ -1,1 +1,0 @@
-{"id": "task_cli", "name": "demo", "mode": "vulnerability_research", "goal": "scan", "mode_config": {"mode": "vulnerability_research"}, "execution_policy": {}, "session_input": {"prompt": "", "files": []}, "schema_version": 6}

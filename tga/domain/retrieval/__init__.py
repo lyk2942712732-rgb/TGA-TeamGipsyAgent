@@ -1,5 +1,10 @@
 """Independent Retrieval Domain public surface."""
 
+from tga.domain.retrieval.artifact_projection import (
+    ArtifactIndexProjection,
+    ArtifactIndexingPolicy,
+    ArtifactIndexingStatus,
+)
 from tga.domain.retrieval.chunks import ChunkLocator, ChunkLocatorKind, DocumentChunk
 from tga.domain.retrieval.context_pack import RetrievedContextItem, RetrievedContextPack
 from tga.domain.retrieval.corpus import (
@@ -22,6 +27,7 @@ from tga.domain.retrieval.runs import (
 )
 
 __all__ = [
+    "ArtifactIndexProjection", "ArtifactIndexingPolicy", "ArtifactIndexingStatus",
     "ChunkLocator", "ChunkLocatorKind", "CorpusDocument", "CorpusSource",
     "CorpusSourceKind", "DocumentChunk", "DocumentRevision", "IndexBinding", "IndexSnapshot",
     "KnowledgeBase", "OwnerScope", "OwnerScopeName", "RetrievalChannel",

@@ -591,6 +591,50 @@ CREATE TABLE IF NOT EXISTS retrieval_hits (
     UNIQUE(retrieval_run_id, chunk_id)
 );
 
+CREATE TABLE IF NOT EXISTS artifact_index_projections (
+    artifact_id TEXT PRIMARY KEY REFERENCES artifacts(id) ON DELETE CASCADE,
+    task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    artifact_sha256 TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('pending','indexing','indexed','failed')),
+    attempt INTEGER NOT NULL CHECK(attempt >= 0),
+    snapshot_id TEXT,
+    binding_updated INTEGER NOT NULL CHECK(binding_updated IN (0,1)),
+    retryable INTEGER NOT NULL CHECK(retryable IN (0,1)),
+    payload_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS skill_publications (
+    id TEXT PRIMARY KEY,
+    revision_id TEXT NOT NULL REFERENCES document_revisions(id) ON DELETE RESTRICT,
+    document_id TEXT NOT NULL REFERENCES corpus_documents(id) ON DELETE RESTRICT,
+    skill_name TEXT NOT NULL,
+    skill_version TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('draft','reviewed','published','deprecated','revoked')),
+    payload_json TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS skill_selection_decisions (
+    id TEXT PRIMARY KEY,
+    task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    solver_id TEXT NOT NULL,
+    intent_id TEXT,
+    payload_json TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS skill_activations (
+    id TEXT PRIMARY KEY,
+    task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    solver_id TEXT NOT NULL,
+    skill_name TEXT NOT NULL,
+    selection_decision_id TEXT,
+    payload_json TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS db_write_lock_metrics (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     wait_ms REAL NOT NULL CHECK(wait_ms >= 0),
@@ -643,3 +687,8 @@ CREATE INDEX IF NOT EXISTS idx_v6_index_snapshots_owner ON index_snapshots(owner
 CREATE INDEX IF NOT EXISTS idx_v6_index_bindings_owner ON index_bindings(owner_scope, workspace_id, task_id, solver_id, purpose);
 CREATE INDEX IF NOT EXISTS idx_v6_retrieval_runs_principal ON retrieval_runs(task_id, solver_id, intent_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_v6_retrieval_hits_run_rank ON retrieval_hits(retrieval_run_id, rank);
+CREATE INDEX IF NOT EXISTS idx_v6_artifact_index_projection_task ON artifact_index_projections(task_id, status, updated_at, artifact_id);
+CREATE INDEX IF NOT EXISTS idx_v6_skill_publications_revision ON skill_publications(revision_id, created_at, id);
+CREATE INDEX IF NOT EXISTS idx_v6_skill_publications_name ON skill_publications(skill_name, skill_version, created_at);
+CREATE INDEX IF NOT EXISTS idx_v6_skill_decisions_solver ON skill_selection_decisions(task_id, solver_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_v6_skill_activations_solver ON skill_activations(task_id, solver_id, created_at);
