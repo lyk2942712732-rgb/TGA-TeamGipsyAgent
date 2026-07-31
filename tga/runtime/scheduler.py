@@ -174,6 +174,7 @@ class RuntimeScheduler:
         except ValueError:
             return
         delay = max(0.0, (expires_at - datetime.now(UTC)).total_seconds())
+        replaced_timer: threading.Timer | None = None
         with self._lock:
             existing = self._approval_timers.get(task_id)
             if existing is not None:
@@ -181,10 +182,16 @@ class RuntimeScheduler:
                 if old_action_id == action_id and old_expiry == raw_expiry and old_timer.is_alive():
                     return
                 old_timer.cancel()
+                replaced_timer = old_timer
             timer = threading.Timer(delay, self._expire_approval, args=(task_id, action_id, raw_expiry))
             timer.daemon = True
             self._approval_timers[task_id] = (action_id, raw_expiry, timer)
             timer.start()
+        # Timer.cancel() only signals the timer's Event. Join after releasing
+        # _lock so a callback that already started can observe the replacement
+        # and exit without deadlocking on this scheduler.
+        if replaced_timer is not None and replaced_timer is not threading.current_thread():
+            replaced_timer.join()
 
     def _expire_approval(self, task_id: str, action_id: str, raw_expiry: str) -> None:
         with self._lock:

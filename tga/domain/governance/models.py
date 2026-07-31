@@ -32,6 +32,7 @@ class NetworkExecutionPolicy(BaseModel):
     custom_origins: list[str] = Field(default_factory=list, max_length=128)
     custom_domains: list[str] = Field(default_factory=list, max_length=128)
     custom_cidrs: list[str] = Field(default_factory=list, max_length=128)
+    custom_ports: list[int] = Field(default_factory=list, max_length=1024)
     deny_private_networks: bool = True
     deny_loopback: bool = True
     deny_link_local: bool = True

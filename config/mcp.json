@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "maxConcurrency": 4,
   "servers": {
     "bloodhound": {
@@ -56,7 +56,7 @@
       "burst": 5
     },
     "binwalk": {
-      "enabled": true,
+      "enabled": false,
       "transport": "stdio",
       "stdio": {
         "source": "docker_image",
@@ -111,10 +111,11 @@
       },
       "maxConcurrency": 1,
       "callsPerMinute": 60.0,
-      "burst": 5
+      "burst": 5,
+      "executionProfileId": "offline-analysis"
     },
     "capa": {
-      "enabled": true,
+      "enabled": false,
       "transport": "stdio",
       "stdio": {
         "source": "docker_image",
@@ -273,7 +274,7 @@
       "burst": 5
     },
     "radare2": {
-      "enabled": true,
+      "enabled": false,
       "transport": "stdio",
       "stdio": {
         "source": "docker_image",
@@ -326,7 +327,7 @@
       "burst": 5
     },
     "yara": {
-      "enabled": true,
+      "enabled": false,
       "transport": "stdio",
       "stdio": {
         "source": "docker_image",
@@ -379,7 +380,7 @@
       "burst": 5
     },
     "daml-viewer": {
-      "enabled": true,
+      "enabled": false,
       "transport": "stdio",
       "stdio": {
         "source": "docker_image",
@@ -432,7 +433,7 @@
       "burst": 5
     },
     "medusa": {
-      "enabled": true,
+      "enabled": false,
       "transport": "stdio",
       "stdio": {
         "source": "docker_image",
@@ -485,7 +486,7 @@
       "burst": 5
     },
     "solazy": {
-      "enabled": true,
+      "enabled": false,
       "transport": "stdio",
       "stdio": {
         "source": "docker_image",
@@ -538,7 +539,7 @@
       "burst": 5
     },
     "prowler": {
-      "enabled": true,
+      "enabled": false,
       "transport": "stdio",
       "stdio": {
         "source": "docker_image",
@@ -591,7 +592,7 @@
       "burst": 5
     },
     "roadrecon": {
-      "enabled": true,
+      "enabled": false,
       "transport": "stdio",
       "stdio": {
         "source": "docker_image",
@@ -644,7 +645,7 @@
       "burst": 5
     },
     "trivy": {
-      "enabled": true,
+      "enabled": false,
       "transport": "stdio",
       "stdio": {
         "source": "docker_image",
@@ -697,7 +698,7 @@
       "burst": 5
     },
     "go-analyzer": {
-      "enabled": true,
+      "enabled": false,
       "transport": "stdio",
       "stdio": {
         "source": "docker_image",
@@ -750,7 +751,7 @@
       "burst": 5
     },
     "go-crash-analyzer": {
-      "enabled": true,
+      "enabled": false,
       "transport": "stdio",
       "stdio": {
         "source": "docker_image",
@@ -803,7 +804,7 @@
       "burst": 5
     },
     "go-fuzzer": {
-      "enabled": true,
+      "enabled": false,
       "transport": "stdio",
       "stdio": {
         "source": "docker_image",
@@ -856,7 +857,7 @@
       "burst": 5
     },
     "go-harness-tester": {
-      "enabled": true,
+      "enabled": false,
       "transport": "stdio",
       "stdio": {
         "source": "docker_image",
@@ -962,7 +963,7 @@
       "burst": 5
     },
     "searchsploit": {
-      "enabled": true,
+      "enabled": false,
       "transport": "stdio",
       "stdio": {
         "source": "docker_image",
@@ -1015,7 +1016,7 @@
       "burst": 5
     },
     "boofuzz": {
-      "enabled": true,
+      "enabled": false,
       "transport": "stdio",
       "stdio": {
         "source": "docker_image",
@@ -1068,7 +1069,7 @@
       "burst": 5
     },
     "dharma": {
-      "enabled": true,
+      "enabled": false,
       "transport": "stdio",
       "stdio": {
         "source": "docker_image",
@@ -1174,7 +1175,7 @@
       "burst": 5
     },
     "dnstwist": {
-      "enabled": true,
+      "enabled": false,
       "transport": "stdio",
       "stdio": {
         "source": "docker_image",
@@ -1227,7 +1228,7 @@
       "burst": 5
     },
     "maigret": {
-      "enabled": true,
+      "enabled": false,
       "transport": "stdio",
       "stdio": {
         "source": "docker_image",
@@ -1386,7 +1387,7 @@
       "burst": 5
     },
     "masscan": {
-      "enabled": true,
+      "enabled": false,
       "transport": "stdio",
       "stdio": {
         "source": "docker_image",
@@ -1492,7 +1493,7 @@
       "burst": 5
     },
     "nmap": {
-      "enabled": true,
+      "enabled": false,
       "transport": "stdio",
       "stdio": {
         "source": "docker_image",
@@ -1520,7 +1521,9 @@
           }
         }
       },
-      "enabledTools": [],
+      "enabledTools": [
+        "nmap_connect"
+      ],
       "timeoutSeconds": 60,
       "toolTimeoutSeconds": 600,
       "maxOutputBytes": 262144,
@@ -1542,10 +1545,40 @@
       "methods": {},
       "maxConcurrency": 1,
       "callsPerMinute": 60.0,
-      "burst": 5
+      "burst": 5,
+      "executionProfileId": "tcp-assessment"
+    },
+    "nmap-raw": {
+      "enabled": false,
+      "transport": "stdio",
+      "stdio": {
+        "source": "docker_image",
+        "image": "nmap-mcp:latest",
+        "environment": {},
+        "secretRefs": {}
+      },
+      "enabledTools": [
+        "nmap_syn",
+        "ping",
+        "capture"
+      ],
+      "timeoutSeconds": 60,
+      "toolTimeoutSeconds": 600,
+      "maxOutputBytes": 262144,
+      "visibility": {
+        "modes": [
+          "ctf",
+          "penetration_test",
+          "incident_response",
+          "vulnerability_research",
+          "reverse_engineering"
+        ],
+        "risk": "active"
+      },
+      "executionProfileId": "raw-network"
     },
     "pd-tools": {
-      "enabled": true,
+      "enabled": false,
       "transport": "stdio",
       "stdio": {
         "source": "docker_image",
@@ -1651,7 +1684,7 @@
       "burst": 5
     },
     "whatweb": {
-      "enabled": true,
+      "enabled": false,
       "transport": "stdio",
       "stdio": {
         "source": "docker_image",
@@ -1704,7 +1737,7 @@
       "burst": 5
     },
     "zoomeye": {
-      "enabled": true,
+      "enabled": false,
       "transport": "stdio",
       "stdio": {
         "source": "docker_image",
@@ -1757,7 +1790,7 @@
       "burst": 5
     },
     "gitleaks": {
-      "enabled": true,
+      "enabled": false,
       "transport": "stdio",
       "stdio": {
         "source": "docker_image",
@@ -1810,7 +1843,7 @@
       "burst": 5
     },
     "otx": {
-      "enabled": true,
+      "enabled": false,
       "transport": "stdio",
       "stdio": {
         "source": "docker_image",
@@ -1916,7 +1949,7 @@
       "burst": 5
     },
     "burp": {
-      "enabled": true,
+      "enabled": false,
       "transport": "stdio",
       "stdio": {
         "source": "docker_image",
@@ -1969,7 +2002,7 @@
       "burst": 5
     },
     "ffuf": {
-      "enabled": true,
+      "enabled": false,
       "transport": "stdio",
       "stdio": {
         "source": "docker_image",
@@ -2019,10 +2052,11 @@
       "methods": {},
       "maxConcurrency": 1,
       "callsPerMinute": 60.0,
-      "burst": 5
+      "burst": 5,
+      "executionProfileId": "web-assessment"
     },
     "nikto": {
-      "enabled": true,
+      "enabled": false,
       "transport": "stdio",
       "stdio": {
         "source": "docker_image",
@@ -2075,7 +2109,7 @@
       "burst": 5
     },
     "nuclei": {
-      "enabled": true,
+      "enabled": false,
       "transport": "stdio",
       "stdio": {
         "source": "docker_image",
@@ -2125,10 +2159,11 @@
       "methods": {},
       "maxConcurrency": 1,
       "callsPerMinute": 60.0,
-      "burst": 5
+      "burst": 5,
+      "executionProfileId": "web-assessment"
     },
     "sqlmap": {
-      "enabled": true,
+      "enabled": false,
       "transport": "stdio",
       "stdio": {
         "source": "docker_image",
@@ -2181,7 +2216,7 @@
       "burst": 5
     },
     "waybackurls": {
-      "enabled": true,
+      "enabled": false,
       "transport": "stdio",
       "stdio": {
         "source": "docker_image",

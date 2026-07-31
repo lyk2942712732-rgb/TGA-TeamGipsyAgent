@@ -35,6 +35,8 @@ class GovernedAction(BaseModel):
     tool_call_id: str
     tool_class: ToolClass
     capability: str
+    execution_profile_id: str | None = None
+    sandbox_config_digest: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
     normalized_arguments: dict[str, Any] = Field(default_factory=dict)
     resolved_target: str | None = None
     execution_metadata: dict[str, Any] = Field(default_factory=dict)

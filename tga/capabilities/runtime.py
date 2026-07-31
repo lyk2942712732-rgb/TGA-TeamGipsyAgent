@@ -134,11 +134,15 @@ class ControlledActionExecutor:
         registry: CapabilityRegistry | None = None,
         budget: ExecutionBudget | None = None,
         http_sessions: HTTPSessionRegistry | None = None,
+        sandbox_manager: Any | None = None,
+        fencing_token_provider: Any | None = None,
     ) -> None:
         self.artifact_store = artifact_store
         self.registry = registry or build_default_registry()
         self.budget = budget or ExecutionBudget()
         self.http_sessions = http_sessions or HTTPSessionRegistry()
+        self.sandbox_manager = sandbox_manager
+        self.fencing_token_provider = fencing_token_provider or (lambda _solver_id: 1)
 
     def close_http_sessions(self, *, task_id: str, solver_id: str | None = None) -> int:
         return self.http_sessions.destroy(task_id=task_id, solver_id=solver_id)
@@ -339,6 +343,11 @@ class ControlledActionExecutor:
                 argv=arguments.argv,
                 timeout=min(arguments.timeout, self.budget.process_timeout_s),
                 output_limit=self.budget.max_output_bytes,
+                sandbox_manager=self.sandbox_manager,
+                task_id=task.id,
+                solver_id=action.solver_id,
+                fencing_token=self.fencing_token_provider(action.solver_id),
+                action_id=action.id,
             )
         except PermissionError as exc:
             return self._reject(action, str(exc), "workspace path escapes the solver workspace")
@@ -361,6 +370,11 @@ class ControlledActionExecutor:
             returncode, stdout, stderr, timed_out, output_truncated = _run_isolated_process(
                 workspace=root, command=["/bin/sh", "-lc", arguments.command], argv=[],
                 timeout=timeout, output_limit=self.budget.max_output_bytes,
+                sandbox_manager=self.sandbox_manager,
+                task_id=task.id,
+                solver_id=action.solver_id,
+                fencing_token=self.fencing_token_provider(action.solver_id),
+                action_id=action.id,
             )
         except OSError as exc:
             if "ISOLATED_RUNTIME_UNAVAILABLE" in str(exc):
@@ -557,7 +571,9 @@ def _run_bounded_python(
 
 
 def _run_isolated_process(
-    *, workspace: Path, command: list[str], argv: list[str], timeout: int, output_limit: int
+    *, workspace: Path, command: list[str], argv: list[str], timeout: int, output_limit: int,
+    sandbox_manager: Any | None = None, task_id: str = "", solver_id: str = "",
+    fencing_token: int = 1, action_id: str = "",
 ) -> tuple[int, str, str, bool, bool]:
     """Run local compute only inside a locked-down, network-isolated Docker worker.
 
@@ -567,6 +583,46 @@ def _run_isolated_process(
     checks, redirect authorization, or per-task rate limits.
     """
     del argv
+    if sandbox_manager is not None and sandbox_manager.config.runtime == "enforced":
+        from tga.sandbox.models import ProcessSpec
+
+        handle = sandbox_manager.acquire(
+            task_id=task_id,
+            solver_id=solver_id,
+            profile_id="offline-analysis",
+            fencing_token=fencing_token,
+            idempotency_key=action_id,
+        )
+        sandbox_command = [
+            value.removeprefix("/workspace/")
+            if value.startswith("/workspace/")
+            else value
+            for value in command
+        ]
+        frames, result = sandbox_manager.exec(
+            handle,
+            ProcessSpec(
+                argv=tuple(sandbox_command),
+                logical_workspace="solver",
+                timeout_seconds=timeout,
+            ),
+        )
+        # Consume the iterator even when a provider also returns bounded
+        # aggregate output; streaming providers may populate only frames.
+        frame_values = tuple(frames)
+        stdout = result.stdout or b"".join(
+            frame.data for frame in frame_values if frame.stream == "stdout"
+        )
+        stderr = result.stderr or b"".join(
+            frame.data for frame in frame_values if frame.stream == "stderr"
+        )
+        return (
+            result.exit_code if result.exit_code is not None else -1,
+            stdout.decode("utf-8", errors="replace"),
+            stderr.decode("utf-8", errors="replace"),
+            result.timed_out,
+            result.truncated,
+        )
     root = workspace.resolve()
     inputs = root / "inputs"
     work = root / "work"

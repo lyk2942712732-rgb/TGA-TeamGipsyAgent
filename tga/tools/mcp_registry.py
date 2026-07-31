@@ -32,6 +32,7 @@ class MCPServerDiscovery(BaseModel):
     discovered_at: str
     status: str = "discovered"
     error: dict[str, Any] | None = None
+    execution_profile_id: str | None = None
 
 
 class MCPToolRoute(BaseModel):
@@ -42,6 +43,7 @@ class MCPToolRoute(BaseModel):
     method: str
     description: str = ""
     input_schema: dict[str, Any] = Field(default_factory=dict)
+    execution_profile_id: str | None = None
 
 
 class MCPCatalogSnapshot(BaseModel):
@@ -92,6 +94,7 @@ def build_catalog_snapshot(discoveries: list[MCPServerDiscovery]) -> MCPCatalogS
                     method=tool.name,
                     description=tool.description,
                     input_schema=normalize_input_schema(tool.input_schema),
+                    execution_profile_id=server.execution_profile_id,
                 )
             )
     digest = hashlib.sha256(

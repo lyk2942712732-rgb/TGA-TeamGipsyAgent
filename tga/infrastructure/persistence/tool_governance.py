@@ -42,12 +42,14 @@ class SqliteToolGovernanceRepository:
         context = payload["context"]
         try:
             self.conn.execute(
-                "INSERT INTO governed_actions(id,task_id,solver_id,intent_id,tool_call_id,tool_class,capability,attempt,status,semantic_fingerprint,idempotency_key,resource_lock_key,payload_json,created_at,updated_at) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO governed_actions(id,task_id,solver_id,intent_id,tool_call_id,tool_class,capability,execution_profile_id,sandbox_config_digest,attempt,status,semantic_fingerprint,idempotency_key,resource_lock_key,payload_json,created_at,updated_at) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     action.id, context["task_id"], context["solver_id"],
                     context.get("intent_id"), action.tool_call_id, action.tool_class,
-                    action.capability, action.attempt, action.status, action.semantic_fingerprint,
+                    action.capability, action.execution_profile_id,
+                    action.sandbox_config_digest, action.attempt, action.status,
+                    action.semantic_fingerprint,
                     action.idempotency_key, action.resource_lock_key,
                     json.dumps(payload, ensure_ascii=False, sort_keys=True),
                     action.created_at, action.updated_at,

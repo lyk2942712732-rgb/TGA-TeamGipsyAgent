@@ -66,6 +66,7 @@ class ToolGovernanceGateway:
         allowed_resource_ids: tuple[str, ...] | None = None,
         lease_validator: Callable[[], bool] | None = None,
         artifact_result_handler: Callable[[RawExecutionResult], None] | None = None,
+        sandbox_config_digest: str | None = None,
         approval_pending_handler: Callable[[GovernedAction], None] | None = None,
         approval_resolved_handler: Callable[[GovernedAction], None] | None = None,
     ) -> None:
@@ -77,6 +78,7 @@ class ToolGovernanceGateway:
         self.allowed_resource_ids = allowed_resource_ids
         self.lease_validator = lease_validator
         self.artifact_result_handler = artifact_result_handler
+        self.sandbox_config_digest = sandbox_config_digest
         self.approval_pending_handler = approval_pending_handler
         self.approval_resolved_handler = approval_resolved_handler
         self.actions = GovernedActionService(repository)
@@ -234,6 +236,10 @@ class ToolGovernanceGateway:
             tool_call_id=request.tool_call_id,
             tool_class=definition.tool_class,
             capability=definition.capability,
+            execution_profile_id=definition.execution_profile_id,
+            sandbox_config_digest=(
+                self.sandbox_config_digest if definition.execution_profile_id else None
+            ),
             normalized_arguments=request.arguments,
             resolved_target=target,
             execution_metadata={

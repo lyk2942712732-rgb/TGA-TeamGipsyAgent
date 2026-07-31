@@ -1,0 +1,275 @@
+package service
+
+import (
+	"context"
+	"errors"
+	"io"
+	"os"
+	"os/exec"
+	"time"
+
+	sandboxv1 "github.com/team-gipsy/tga-sandboxd/api/sandbox/v1"
+	"github.com/team-gipsy/tga-sandboxd/internal/config"
+	"github.com/team-gipsy/tga-sandboxd/internal/network"
+	runtimepkg "github.com/team-gipsy/tga-sandboxd/internal/runtime"
+)
+
+const Version = "0.1.0"
+
+type Service struct {
+	sandboxv1.UnimplementedSandboxServiceServer
+	config  *config.Config
+	runtime *runtimepkg.Runtime
+	network *network.Policy
+}
+
+func New(cfg *config.Config, runtime *runtimepkg.Runtime, policy *network.Policy) *Service {
+	return &Service{config: cfg, runtime: runtime, network: policy}
+}
+
+func (s *Service) Health(ctx context.Context, request *sandboxv1.HealthRequest) (*sandboxv1.HealthResponse, error) {
+	if request.ProtocolMajor != s.config.Sandboxd.ProtocolMajor {
+		return nil, errors.New("protocol major mismatch")
+	}
+	if request.ConfigDigest != s.config.Digest {
+		return nil, errors.New("configuration digest mismatch")
+	}
+	info, healthErr := s.runtime.Health(ctx)
+	return &sandboxv1.HealthResponse{
+		ProtocolMajor: 1, DaemonVersion: Version,
+		DockerAvailable:        healthErr == nil,
+		RunscAvailable:         commandAvailable(ctx, "runsc"),
+		NftablesAvailable:      s.network.Available(ctx),
+		CgroupV2Available:      fileExists("/sys/fs/cgroup/cgroup.controllers"),
+		ConfigDigest:           s.config.Digest,
+		DockerApiVersion:       info.DockerAPIVersion,
+		RunscRuntimeRegistered: info.RunscRuntimeRegistered,
+		ClientUidPolicyActive:  len(s.config.Sandboxd.AllowedClientUIDs) > 0,
+	}, nil
+}
+
+func (s *Service) Acquire(ctx context.Context, request *sandboxv1.AcquireRequest) (*sandboxv1.AcquireResponse, error) {
+	instance, reused, err := s.runtime.Acquire(
+		ctx, request.TaskId, request.SolverId, request.ProfileId,
+		request.ConfigDigest, request.FencingToken,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return &sandboxv1.AcquireResponse{
+		InstanceId: instance.ID, ConfigDigest: instance.ConfigDigest,
+		FencingToken: instance.FencingToken, Reused: reused,
+	}, nil
+}
+
+func (s *Service) Exec(request *sandboxv1.ExecRequest, stream sandboxv1.SandboxService_ExecServer) error {
+	profile, err := s.profileForInstance(stream.Context(), request.InstanceId, request.FencingToken)
+	if err != nil {
+		return err
+	}
+	spec, err := processSpec(request.Process, profile, request.SolverId)
+	if err != nil {
+		return err
+	}
+	if err := s.applyNetwork(stream.Context(), request.InstanceId, request.FencingToken, request.Process.NetworkGrants); err != nil {
+		return err
+	}
+	result, err := s.runtime.Exec(stream.Context(), request.InstanceId, request.FencingToken, spec, func(frame runtimepkg.Frame) error {
+		kind := sandboxv1.ExecFrame_STDOUT
+		if frame.Stderr {
+			kind = sandboxv1.ExecFrame_STDERR
+		}
+		return stream.Send(&sandboxv1.ExecEvent{Event: &sandboxv1.ExecEvent_Frame{Frame: &sandboxv1.ExecFrame{
+			Sequence: frame.Sequence, TimestampUnixMs: frame.Timestamp.UnixMilli(),
+			Stream: kind, Data: frame.Data,
+		}}})
+	})
+	if err != nil {
+		return err
+	}
+	value := &sandboxv1.ExecResult{Signal: result.Signal, TimedOut: result.TimedOut, Truncated: result.Truncated}
+	if result.ExitCode != nil {
+		value.ExitCode = result.ExitCode
+	}
+	return stream.Send(&sandboxv1.ExecEvent{Event: &sandboxv1.ExecEvent_Result{Result: value}})
+}
+
+func (s *Service) OpenProcess(stream sandboxv1.SandboxService_OpenProcessServer) error {
+	first, err := stream.Recv()
+	if err != nil {
+		return err
+	}
+	start := first.GetStart()
+	if start == nil {
+		return errors.New("first process message must be start")
+	}
+	profile, err := s.profileForInstance(stream.Context(), start.InstanceId, start.FencingToken)
+	if err != nil {
+		return err
+	}
+	spec, err := processSpec(start.Process, profile, start.SolverId)
+	if err != nil {
+		return err
+	}
+	if err := s.applyNetwork(stream.Context(), start.InstanceId, start.FencingToken, start.Process.NetworkGrants); err != nil {
+		return err
+	}
+	process, err := s.runtime.OpenProcess(stream.Context(), start.InstanceId, start.FencingToken, spec, func(frame runtimepkg.Frame) error {
+		kind := sandboxv1.ExecFrame_STDOUT
+		if frame.Stderr {
+			kind = sandboxv1.ExecFrame_STDERR
+		}
+		return stream.Send(&sandboxv1.ProcessMessage{Message: &sandboxv1.ProcessMessage_Frame{
+			Frame: &sandboxv1.ExecFrame{Sequence: frame.Sequence, TimestampUnixMs: frame.Timestamp.UnixMilli(), Stream: kind, Data: frame.Data},
+		}})
+	})
+	if err != nil {
+		return err
+	}
+	if err := stream.Send(&sandboxv1.ProcessMessage{Message: &sandboxv1.ProcessMessage_Opened{
+		Opened: &sandboxv1.ProcessOpened{ProcessId: process.ID},
+	}}); err != nil {
+		return err
+	}
+	inputDone := make(chan error, 1)
+	go func() {
+		for {
+			message, err := stream.Recv()
+			if err != nil {
+				if errors.Is(err, io.EOF) {
+					_ = process.CloseStdin()
+					inputDone <- nil
+				} else {
+					inputDone <- err
+				}
+				return
+			}
+			input := message.GetInput()
+			if input == nil {
+				inputDone <- errors.New("only input messages are accepted after start")
+				return
+			}
+			if len(input.Data) > 0 {
+				if err := process.Send(input.Data); err != nil {
+					inputDone <- err
+					return
+				}
+			}
+			if input.CloseStdin {
+				inputDone <- process.CloseStdin()
+				return
+			}
+		}
+	}()
+	result, err := process.Wait(stream.Context())
+	if err != nil && !errors.Is(err, io.EOF) {
+		return err
+	}
+	value := &sandboxv1.ExecResult{Signal: result.Signal, TimedOut: result.TimedOut, Truncated: result.Truncated}
+	if result.ExitCode != nil {
+		value.ExitCode = result.ExitCode
+	}
+	return stream.Send(&sandboxv1.ProcessMessage{Message: &sandboxv1.ProcessMessage_Result{Result: value}})
+}
+
+func (s *Service) StopProcess(ctx context.Context, request *sandboxv1.StopProcessRequest) (*sandboxv1.Empty, error) {
+	return &sandboxv1.Empty{}, s.runtime.StopProcess(ctx, request.ProcessId, request.FencingToken)
+}
+
+func (s *Service) Inspect(ctx context.Context, request *sandboxv1.InspectRequest) (*sandboxv1.InspectResponse, error) {
+	instance, active, err := s.runtime.Inspect(ctx, request.InstanceId, request.FencingToken)
+	if err != nil {
+		return nil, err
+	}
+	return &sandboxv1.InspectResponse{State: "ready", Runtime: "runsc", ActiveProcesses: uint32(active), CreatedAt: instance.CreatedAt}, nil
+}
+
+func (s *Service) Destroy(ctx context.Context, request *sandboxv1.DestroyRequest) (*sandboxv1.Empty, error) {
+	if err := s.runtime.Destroy(ctx, request.InstanceId, request.FencingToken); err != nil {
+		return nil, err
+	}
+	return &sandboxv1.Empty{}, s.network.Delete(ctx, request.InstanceId)
+}
+
+func (s *Service) Reconcile(ctx context.Context, request *sandboxv1.ReconcileRequest) (*sandboxv1.ReconcileResponse, error) {
+	valid := make(map[string]struct{}, len(request.ValidInstanceIds))
+	for _, id := range request.ValidInstanceIds {
+		valid[id] = struct{}{}
+	}
+	destroyed, failures := s.runtime.Reconcile(ctx, valid, time.UnixMilli(request.GraceBeforeUnixMs))
+	response := &sandboxv1.ReconcileResponse{}
+	for _, instance := range destroyed {
+		response.DestroyedInstanceIds = append(response.DestroyedInstanceIds, instance.ID)
+		if err := s.network.Delete(ctx, instance.ID); err != nil {
+			failures = append(failures, err)
+		}
+	}
+	for _, failure := range failures {
+		response.Errors = append(response.Errors, failure.Error())
+	}
+	return response, nil
+}
+
+func (s *Service) profileForInstance(ctx context.Context, id string, fencing uint64) (config.Profile, error) {
+	instance, _, err := s.runtime.Inspect(ctx, id, fencing)
+	if err != nil {
+		return config.Profile{}, err
+	}
+	return s.config.Profile(instance.ProfileID)
+}
+
+func processSpec(value *sandboxv1.ProcessSpec, profile config.Profile, solverID string) (runtimepkg.ProcessSpec, error) {
+	if value == nil {
+		return runtimepkg.ProcessSpec{}, errors.New("process is required")
+	}
+	if !config.ValidIdentifier(solverID) {
+		return runtimepkg.ProcessSpec{}, errors.New("invalid solver id")
+	}
+	timeout := value.TimeoutSeconds
+	if timeout == 0 || int(timeout) > profile.Limits.TimeoutSeconds {
+		timeout = uint32(profile.Limits.TimeoutSeconds)
+	}
+	for _, grant := range value.NetworkGrants {
+		if err := config.ValidateCIDR(grant.Cidr); err != nil {
+			return runtimepkg.ProcessSpec{}, err
+		}
+		for _, port := range grant.Ports {
+			if port == 0 || port > 65535 {
+				return runtimepkg.ProcessSpec{}, errors.New("invalid port")
+			}
+		}
+	}
+	return runtimepkg.ProcessSpec{
+		Argv: value.Argv, Environment: value.Environment,
+		LogicalWorkspace: value.LogicalWorkspace,
+		Timeout:          time.Duration(timeout) * time.Second,
+		MaxOutputBytes:   profile.Limits.MaxOutputBytes,
+		SolverID:         solverID,
+		ToolID:           value.ToolId,
+	}, nil
+}
+
+func (s *Service) applyNetwork(
+	ctx context.Context,
+	instanceID string,
+	fencing uint64,
+	values []*sandboxv1.NetworkGrant,
+) error {
+	bridge, gateways, err := s.runtime.NetworkPolicyContext(ctx, instanceID, fencing)
+	if err != nil {
+		return err
+	}
+	grants := make([]network.Grant, 0, len(values))
+	for _, value := range values {
+		if err := config.ValidateCIDR(value.Cidr); err != nil {
+			return err
+		}
+		grants = append(grants, network.Grant{CIDR: value.Cidr, Ports: value.Ports})
+	}
+	return s.network.Apply(ctx, instanceID, bridge, gateways, grants)
+}
+
+func commandAvailable(ctx context.Context, name string) bool {
+	return exec.CommandContext(ctx, name, "--version").Run() == nil
+}
+func fileExists(path string) bool { _, err := os.Stat(path); return err == nil }

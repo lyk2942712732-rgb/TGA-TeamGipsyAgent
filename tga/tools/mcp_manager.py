@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import threading
 import time
 from datetime import UTC, datetime
@@ -96,10 +97,12 @@ class MCPManager:
         config_path: str | Path | None = None,
         cache_path: str | Path | None = None,
         policy: MCPPolicy | None = None,
+        sandbox_process_factory: Any | None = None,
     ) -> None:
         self.config_path = Path(config_path).expanduser().resolve() if config_path else configured_mcp_path()
         self.cache_path = Path(cache_path or DEFAULT_CACHE_PATH).expanduser().resolve()
         self.policy = policy or MCPPolicy()
+        self.sandbox_process_factory = sandbox_process_factory
         self.config: MCPConfig | None = None
         self.snapshot = MCPCatalogSnapshot(version="mcp_empty")
         self.config_error: str | None = None
@@ -138,7 +141,9 @@ class MCPManager:
                 return self.snapshot
         return self.refresh(workspace=workspace)
 
-    def refresh(self, *, workspace: Path | None = None) -> MCPCatalogSnapshot:
+    def refresh(
+        self, *, workspace: Path | None = None, task: TGATask | None = None
+    ) -> MCPCatalogSnapshot:
         with self._lock:
             try:
                 config, resolved = load_mcp_config(self.config_path)
@@ -158,13 +163,25 @@ class MCPManager:
                             config_hash=config_hash,
                             discovered_at=_utc_now(),
                             status="configured",
+                            execution_profile_id=server.execution_profile_id,
                         )
                     )
                     continue
                 # Discovery is task-agnostic and must never expose one task's
                 # workspace to every enabled server. Mounting is reserved for
                 # an authorized resources/read or tools/call below.
-                discoveries.append(self._discover(server_id, server, config_hash=config_hash, workspace=None))
+                discovery = self._discover(
+                    server_id,
+                    server,
+                    config_hash=config_hash,
+                    workspace=workspace if task is not None else None,
+                    task=task,
+                )
+                discoveries.append(
+                    discovery.model_copy(
+                        update={"execution_profile_id": server.execution_profile_id}
+                    )
+                )
             self.config = config
             self.config_path = resolved
             self._config_signature = _config_file_signature(resolved)
@@ -177,6 +194,12 @@ class MCPManager:
             return self.snapshot
 
     def snapshot_for_task(self, task: TGATask, *, workspace: Path | None = None) -> MCPCatalogSnapshot:
+        if os.environ.get("TGA_SANDBOX_RUNTIME") == "enforced":
+            return self.policy.filter_snapshot(
+                task=task,
+                snapshot=self.refresh(workspace=workspace, task=task),
+                servers=self.config.servers if self.config else {},
+            )
         snapshot = self.ensure_catalog(workspace=workspace)
         if self.config is None:
             return snapshot
@@ -236,7 +259,7 @@ class MCPManager:
         timings["discovery_ms"] = 0  # The immutable catalog was discovered before this call.
         phase = "transport_start"
         try:
-            transport = build_transport(server, workspace=workspace)
+            transport = self._build_transport(server, workspace=workspace, task=task)
             phase_start = time.perf_counter()
             transport.connect()
             timings["container_start_ms"] = _elapsed_ms(phase_start)
@@ -379,7 +402,7 @@ class MCPManager:
             raise PermissionError("MCP_SERVER_NOT_AVAILABLE")
         transport: MCPTransport | None = None
         try:
-            transport = build_transport(server, workspace=workspace)
+            transport = self._build_transport(server, workspace=workspace, task=task)
             transport.connect()
             initialize = self._initialize(transport, f"init_{uuid4().hex[:12]}", server.timeout_seconds)
             transport.send({"jsonrpc": "2.0", "method": "notifications/initialized"})
@@ -470,11 +493,12 @@ class MCPManager:
         return None
 
     def _discover(
-        self, server_id: str, server: MCPServerConfig, *, config_hash: str, workspace: Path | None
+        self, server_id: str, server: MCPServerConfig, *, config_hash: str,
+        workspace: Path | None, task: TGATask | None = None,
     ) -> MCPServerDiscovery:
         transport: MCPTransport | None = None
         try:
-            transport = build_transport(server, workspace=workspace)
+            transport = self._build_transport(server, workspace=workspace, task=task)
             transport.connect()
             initialize = self._initialize(transport, f"init_{uuid4().hex[:12]}", server.timeout_seconds)
             transport.send({"jsonrpc": "2.0", "method": "notifications/initialized"})
@@ -510,6 +534,22 @@ class MCPManager:
         finally:
             if transport is not None:
                 transport.close()
+
+    def _build_transport(
+        self,
+        server: MCPServerConfig,
+        *,
+        workspace: Path | None,
+        task: TGATask | None,
+    ) -> MCPTransport:
+        factory = None
+        if self.sandbox_process_factory is not None and task is not None:
+            factory = lambda: self.sandbox_process_factory(task, server, workspace)
+        return build_transport(
+            server,
+            workspace=workspace,
+            sandbox_process_factory=factory,
+        )
 
     def _initialize(self, transport: MCPTransport, request_id: str, timeout: int) -> dict[str, Any]:
         return self._rpc(

@@ -266,6 +266,7 @@ class MCPServerConfig(BaseModel):
 
     enabled: bool = True
     transport: Literal["stdio", "streamable_http"] = "stdio"
+    execution_profile_id: str | None = None
     stdio: MCPStdioConfig | None = None
     http: MCPHTTPConfig | None = None
     enabled_tools: list[str] = Field(default_factory=list)
@@ -308,7 +309,7 @@ class MCPServerConfig(BaseModel):
 class MCPConfig(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
-    version: Literal[1] = 1
+    version: Literal[1, 2] = 1
     max_concurrency: int = Field(default=4, alias="maxConcurrency", ge=1, le=128)
     servers: dict[str, MCPServerConfig] = Field(default_factory=dict)
     _source_hash: str | None = PrivateAttr(default=None)

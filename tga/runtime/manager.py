@@ -61,7 +61,10 @@ class Manager:
         self.store = store
         self.run_root = Path(run_root or os.environ.get("TGA_RUN_ROOT", "runs"))
         self.executor = executor
-        self.mcp_manager = mcp_manager or MCPManager(cache_path=self.run_root / "mcp-cache.json")
+        self.mcp_manager = mcp_manager or MCPManager(
+            cache_path=self.run_root / "mcp-cache.json",
+            sandbox_process_factory=self._open_mcp_sandbox_process,
+        )
         self.model_client = model_client
         self.remote_flag_verifier = remote_flag_verifier
         self.limits = RuntimeLimits.from_environment()
@@ -94,7 +97,7 @@ class Manager:
             )
             if session.status == "awaiting_approval":
                 return TaskRuntimeService(run_root=self.run_root).runtime_snapshot(task.id)
-            executor = self.executor or self._default_executor(task)
+            executor = self.executor or self._default_executor(task, store)
             solver_id = self._next_solver_id(
                 persistence, task.id, preferred_id=session.active_solver_id or supervisor_id
             )
@@ -134,6 +137,9 @@ class Manager:
                     task_id=task.id, reason="no_runnable_solver",
                     turn_count=current.turn_count, solver_id=supervisor_id,
                 )
+            current = store.get_session(task.id)
+            if current is not None and current.status in {"completed", "cancelled", "failed"}:
+                self._release_existing_sandbox(store, task.id)
             return TaskRuntimeService(run_root=self.run_root).runtime_snapshot(task.id)
         finally:
             if should_close:
@@ -229,6 +235,7 @@ class Manager:
                         )
                     orchestrator.cancel(reason="user_cancelled")
                     session = coordinator.cancel(task_id=task_id, reason="user_cancelled")
+                self._release_existing_sandbox(store, task_id)
             elif action in {"approve_action", "reject_action"} and action_id:
                 governance = PersistenceBundle(store).tool_governance
                 pending = governance.get_action(action_id)
@@ -446,12 +453,32 @@ class Manager:
             return self.store, False
         return EvidenceStore(self.run_root / task_id / "evidence.db"), True
 
-    def _default_executor(self, task: TGATask) -> ActionExecutor:
+    def _default_executor(self, task: TGATask, store: EvidenceStore) -> ActionExecutor:
         from tga.capabilities.runtime import ControlledActionExecutor, ExecutionBudget
         from tga.evidence.artifacts import ArtifactStore
+        from tga.sandbox import DockerSandboxProvider, SandboxManager, SandboxdProvider, load_sandbox_config
+        from tga.sandbox.repository import SandboxInstanceRepository
 
         policy = task.execution_policy
         assert policy is not None
+        sandbox_config, _ = load_sandbox_config()
+        sandbox_manager = SandboxManager(
+            config=sandbox_config,
+            providers={
+                "docker_sandbox": DockerSandboxProvider(sandbox_config),
+                "sandboxd": SandboxdProvider(sandbox_config),
+            },
+            repository=SandboxInstanceRepository(store),
+            event_repository=store,
+        )
+
+        def fencing_token(solver_id: str) -> int:
+            row = store.conn.execute(
+                "SELECT fencing_token FROM solver_leases WHERE solver_id=?",
+                (solver_id,),
+            ).fetchone()
+            return int(row["fencing_token"]) if row else 1
+
         return ControlledActionExecutor(
             artifact_store=ArtifactStore(task_artifact_root(self.run_root / task.id, task)),
             budget=ExecutionBudget(
@@ -462,7 +489,103 @@ class Manager:
                 http_timeout_s=policy.network.request_timeout_seconds,
                 process_timeout_s=policy.local_compute.timeout_seconds,
             ),
+            sandbox_manager=sandbox_manager,
+            fencing_token_provider=fencing_token,
         )
+
+    def _release_existing_sandbox(self, store: EvidenceStore, task_id: str) -> None:
+        from tga.sandbox import DockerSandboxProvider, SandboxManager, SandboxdProvider, load_sandbox_config
+        from tga.sandbox.repository import SandboxInstanceRepository
+
+        config, _ = load_sandbox_config()
+        repository = SandboxInstanceRepository(store)
+        handle = repository.get_active(task_id)
+        if handle is None:
+            return
+        manager = SandboxManager(
+            config=config,
+            providers={
+                "docker_sandbox": DockerSandboxProvider(config),
+                "sandboxd": SandboxdProvider(config),
+            },
+            repository=repository,
+            event_repository=store,
+        )
+        manager.release(handle)
+
+    def _open_mcp_sandbox_process(self, task: TGATask, server, workspace: Path | None):
+        from tga.sandbox import DockerSandboxProvider, SandboxManager, SandboxdProvider, load_sandbox_config
+        from tga.sandbox.models import NetworkGrant, ProcessSpec
+        from tga.sandbox.provider import SandboxError
+        from tga.sandbox.repository import SandboxInstanceRepository
+
+        if workspace is None or server.stdio is None or server.stdio.image is None:
+            raise SandboxError("sandbox MCP requires a task workspace and pinned server image")
+        solver_id = workspace.resolve().name
+        store = EvidenceStore(self.run_root / task.id / "evidence.db")
+        try:
+            row = store.conn.execute(
+                "SELECT fencing_token FROM solver_leases WHERE solver_id=?",
+                (solver_id,),
+            ).fetchone()
+            fencing = int(row["fencing_token"]) if row else 1
+            config, _ = load_sandbox_config()
+            manager = SandboxManager(
+                config=config,
+                providers={
+                    "docker_sandbox": DockerSandboxProvider(config),
+                    "sandboxd": SandboxdProvider(config),
+                },
+                repository=SandboxInstanceRepository(store),
+                event_repository=store,
+            )
+            profile_id = server.execution_profile_id
+            if not profile_id:
+                raise SandboxError("MCP server has no execution profile", code="POLICY_DENIED")
+            handle = manager.acquire(
+                task_id=task.id,
+                solver_id=solver_id,
+                profile_id=profile_id,
+                fencing_token=fencing,
+                idempotency_key=f"mcp:{task.id}:{solver_id}:{profile_id}",
+            )
+            tool_id = next(
+                (
+                    key
+                    for key, value in config.tools.items()
+                    if value.profile_id == profile_id
+                    and value.image == server.stdio.image
+                ),
+                None,
+            )
+            if tool_id is None:
+                raise SandboxError(
+                    "MCP image is absent from the trusted sandbox tool catalog",
+                    code="TOOL_IMAGE_NOT_AUTHORIZED",
+                )
+            network_grants: list[NetworkGrant] = []
+            if handle.provider == "sandboxd":
+                cidrs = task.execution_policy.network.custom_cidrs
+                ports = tuple(task.execution_policy.network.custom_ports)
+                if ports:
+                    network_grants.extend(
+                        NetworkGrant(cidr=cidr, ports=ports) for cidr in cidrs
+                    )
+                if config.profile(profile_id).allow_net_raw:
+                    network_grants.extend(
+                        NetworkGrant(cidr=cidr) for cidr in cidrs
+                    )
+            return manager.open_process(
+                handle,
+                ProcessSpec(
+                    tool_id=tool_id,
+                    logical_workspace="solver",
+                    timeout_seconds=server.tool_timeout_seconds,
+                    network_grants=tuple(network_grants),
+                ),
+            )
+        finally:
+            store.close()
 
     @staticmethod
     def _next_solver_id(

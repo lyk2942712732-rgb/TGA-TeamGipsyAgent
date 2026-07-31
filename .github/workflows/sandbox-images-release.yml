@@ -1,0 +1,83 @@
+name: sandbox-images-release
+
+on:
+  push:
+    tags:
+      - "sandbox-v*"
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: sigstore/cosign-installer@v3
+      - uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
+        with:
+          version: v0.71.0
+      - uses: anchore/sbom-action/download-syft@v0
+      - name: Resolve immutable bases
+        id: bases
+        shell: bash
+        run: |
+          docker pull kalilinux/kali-rolling
+          docker pull docker.io/docker/sandbox-templates:shell-docker
+          echo "kali=$(docker image inspect kalilinux/kali-rolling --format '{{index .RepoDigests 0}}')" >> "$GITHUB_OUTPUT"
+          echo "sbx=$(docker image inspect docker.io/docker/sandbox-templates:shell-docker --format '{{index .RepoDigests 0}}')" >> "$GITHUB_OUTPUT"
+      - name: Build and publish
+        id: publish
+        shell: bash
+        env:
+          REGISTRY: ghcr.io/${{ github.repository_owner }}
+          RELEASE: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          images=()
+          for target in offline web network; do
+            ref="$REGISTRY/tga-kali-$target:$RELEASE"
+            docker buildx build \
+              --build-arg KALI_BASE="${{ steps.bases.outputs.kali }}" \
+              --target "$target" --tag "$ref" --push \
+              --file sandboxd/Dockerfile sandboxd
+            images+=("$ref")
+          done
+          nmap_ref="$REGISTRY/tga-nmap-mcp:$RELEASE"
+          docker buildx build \
+            --build-arg KALI_BASE="${{ steps.bases.outputs.kali }}" \
+            --tag "$nmap_ref" --push \
+            --file sandboxd/images/nmap-mcp/Dockerfile sandboxd/images/nmap-mcp
+          images+=("$nmap_ref")
+          sbx_ref="$REGISTRY/tga-sbx-template:$RELEASE"
+          docker buildx build \
+            --build-arg SBX_BASE="${{ steps.bases.outputs.sbx }}" \
+            --tag "$sbx_ref" --push \
+            --file sandboxd/images/sbx-template/Dockerfile sandboxd/images/sbx-template
+          images+=("$sbx_ref")
+          printf '%s\n' "${images[@]}" > published-images.txt
+      - name: Sign published digests
+        shell: bash
+        run: |
+          while read -r image; do
+            digest="$(docker buildx imagetools inspect "$image" --format '{{json .Manifest.Digest}}' | tr -d '"')"
+            immutable="${image%:*}@$digest"
+            trivy image --exit-code 1 --ignore-unfixed --severity CRITICAL "$immutable"
+            name="$(basename "${image%:*}")"
+            syft "$immutable" -o "spdx-json=$name.spdx.json"
+            cosign sign --yes "$immutable"
+          done < published-images.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sandbox-published-images
+          path: |
+            published-images.txt
+            *.spdx.json

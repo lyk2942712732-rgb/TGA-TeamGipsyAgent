@@ -157,6 +157,7 @@ class MCPCapabilityTool(BaseModel):
     method: str
     description: str = ""
     input_schema: dict[str, Any] = Field(default_factory=dict)
+    execution_profile_id: str | None = None
 
 
 class MCPCapabilitySnapshot(BaseModel):
@@ -362,6 +363,14 @@ class TGATask(BaseModel):
             if cidr not in cidrs:
                 cidrs.append(cidr)
         self.execution_policy.network.custom_cidrs = cidrs
+        self.execution_policy.network.custom_ports = sorted(
+            set(self.execution_policy.network.custom_ports)
+        )
+        if any(
+            port < 1 or port > 65535
+            for port in self.execution_policy.network.custom_ports
+        ):
+            raise ValueError("custom network ports must be between 1 and 65535")
         if self.task_entry_url:
             parsed_entry = urlparse(self.task_entry_url)
             if parsed_entry.scheme not in {"http", "https"} or not parsed_entry.netloc or parsed_entry.username or parsed_entry.password:

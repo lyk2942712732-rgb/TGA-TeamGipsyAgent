@@ -152,6 +152,8 @@ class Database:
             },
             "governed_actions": {
                 "attempt": "INTEGER NOT NULL DEFAULT 1",
+                "execution_profile_id": "TEXT",
+                "sandbox_config_digest": "TEXT",
             },
         }
         for table, requested in table_additions.items():
