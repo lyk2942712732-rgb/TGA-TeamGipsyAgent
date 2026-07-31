@@ -54,5 +54,12 @@ class RegistrySkillRetriever:
                 retrieval_score=len(matched) * 100,
                 retrieval_reasons=tuple(f"标签匹配：{tag}" for tag in matched),
             ))
-        values.sort(key=lambda item: (-item.retrieval_score, item.skill.name))
+        # Operator-authored overlays must remain visible when a large packaged
+        # catalog reaches the retrieval limit. They still need to match the
+        # task mode/tags and pass capability filtering in SkillSelector.
+        values.sort(key=lambda item: (
+            -item.retrieval_score,
+            0 if item.origin == "custom" else 1,
+            item.skill.name,
+        ))
         return values[:max(0, min(query.limit, 128))]

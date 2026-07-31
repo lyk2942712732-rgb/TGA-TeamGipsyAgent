@@ -17,6 +17,7 @@ from tga.skills.retrieval import RegistrySkillRetriever, SkillRetrievalQuery, Sk
 MAX_SELECTED_SKILLS = 3
 MAX_SKILL_BODY_CHARS = 12_000
 MAX_SKILL_CONTEXT_CHARS = 24_000
+CUSTOM_SKILL_PRIORITY = 1_000
 
 
 @dataclass(frozen=True)
@@ -87,8 +88,17 @@ class SkillSelector:
             lexical = _lexical_overlap(request.search_text, skill.name, skill.tags, skill.body)
             if not matched_tags and lexical < 2 and not candidate.retrieval_reasons:
                 continue
-            score = 100 + candidate.retrieval_score + len(matched_tags) * 160 + lexical * 12
+            origin_priority = CUSTOM_SKILL_PRIORITY if candidate.origin == "custom" else 0
+            score = (
+                100
+                + candidate.retrieval_score
+                + len(matched_tags) * 160
+                + lexical * 12
+                + origin_priority
+            )
             reasons = [*candidate.retrieval_reasons]
+            if origin_priority:
+                reasons.append("用户自定义 Skill 优先")
             reasons.extend(f"任务特征匹配：{tag}" for tag in matched_tags)
             if lexical:
                 reasons.append(f"任务文本相关词匹配：{lexical}")
