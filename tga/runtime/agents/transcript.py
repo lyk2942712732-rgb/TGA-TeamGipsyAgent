@@ -1,13 +1,10 @@
-"""Per-Solver transcript persistence and compatibility mirroring."""
+"""Per-Solver transcript persistence."""
 
 from __future__ import annotations
 
 import json
-from pathlib import Path
+import re
 from typing import Any
-
-from tga.runtime.transcript import TranscriptStore, _redact_message
-
 
 MAX_TRANSCRIPT_TOOL_CONTENT_CHARS = 8_000
 
@@ -17,7 +14,7 @@ class TranscriptDivergenceError(RuntimeError):
 
 
 class RepositorySolverTranscript:
-    """Append through TranscriptRepository; optionally mirror the legacy JSON file."""
+    """Append-only transcript backed by the schema-v6 repository."""
 
     def __init__(
         self,
@@ -25,22 +22,13 @@ class RepositorySolverTranscript:
         repository,
         task_id: str,
         solver_id: str,
-        mirror_path: str | Path | None = None,
     ) -> None:
         self.repository = repository
         self.task_id = task_id
         self.solver_id = solver_id
-        self.mirror = TranscriptStore(mirror_path) if mirror_path is not None else None
-        if not self._read_repository() and self.mirror is not None:
-            legacy = self.mirror.read()
-            if legacy:
-                self.save(legacy)
 
     def read(self) -> list[dict[str, Any]]:
-        values = self._read_repository()
-        if values:
-            return values
-        return self.mirror.read() if self.mirror is not None else []
+        return self._read_repository()
 
     def append(self, message: dict[str, Any]) -> None:
         self.save([*self.read(), message])
@@ -54,8 +42,6 @@ class RepositorySolverTranscript:
             )
         for message in normalized[len(existing):]:
             self.repository.append_message(self.task_id, self.solver_id, message)
-        if self.mirror is not None:
-            self.mirror.save(normalized)
 
     def _read_repository(self) -> list[dict[str, Any]]:
         return [
@@ -95,6 +81,41 @@ def _normalize_message(message: dict[str, Any]) -> dict[str, Any]:
     })
     value["content"] = json.dumps(compact, ensure_ascii=False)
     return value
+
+
+def _redact_message(message: dict[str, Any]) -> dict[str, Any]:
+    def scrub(value: Any) -> Any:
+        if isinstance(value, str):
+            value = re.sub(
+                r"(?i)(authorization|proxy-authorization|cookie|set-cookie|x-api-key)\s*:\s*[^\r\n]+",
+                r"\1: [REDACTED]",
+                value,
+            )
+            value = re.sub(
+                r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]{8,}",
+                "Bearer [REDACTED]",
+                value,
+            )
+            return re.sub(
+                r"(?i)\b(token|secret|api[_-]?key|password)\s*[=:]\s*[^\s,;}&]+",
+                r"\1=[REDACTED]",
+                value,
+            )
+        if isinstance(value, list):
+            return [scrub(item) for item in value]
+        if isinstance(value, dict):
+            return {
+                key: scrub(item)
+                for key, item in value.items()
+                if not re.search(
+                    r"authorization|cookie|token|secret|password|api[_-]?key",
+                    str(key),
+                    re.IGNORECASE,
+                )
+            }
+        return value
+
+    return scrub(message)
 
 
 __all__ = [

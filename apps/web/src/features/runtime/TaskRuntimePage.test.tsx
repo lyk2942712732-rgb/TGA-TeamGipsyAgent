@@ -52,14 +52,10 @@ describe("TaskRuntimePage skeleton", () => {
     expect(inspectorDrawer).toHaveAttribute("data-open", "true");
   });
 
-  it("renders explicit empty and legacy states without positional Solver assumptions", () => {
+  it("renders an explicit empty state without positional Solver assumptions", () => {
     useTaskRuntime.mockReturnValueOnce({ store: snapshot(0), connection: "live", error: null, refresh: vi.fn() });
-    const { rerender } = render(<MemoryRouter><TaskRuntimePage taskId="task" mode="runtime" /></MemoryRouter>);
+    render(<MemoryRouter><TaskRuntimePage taskId="task" mode="runtime" /></MemoryRouter>);
     expect(screen.getByText("尚无 Solver" )).toBeInTheDocument();
-    const legacy = normalizeRuntimeSnapshot({ schema_version: 5, task: { id: "legacy", name: "Legacy task", mode: "ctf" }, session: { status: "completed", active_solver_id: "main", turn_count: 1, max_turns: 8 }, agent_events: [], latest_seq: 0 });
-    useTaskRuntime.mockReturnValue({ store: legacy, connection: "offline", error: null, refresh: vi.fn() });
-    rerender(<MemoryRouter><TaskRuntimePage taskId="legacy" mode="replay" /></MemoryRouter>);
-    expect(screen.getByText(/v5 只读回放/)).toBeInTheDocument();
   });
 
   it("renders a single-Solver task through the same team projection", () => {

@@ -1,71 +1,54 @@
-import { useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { deleteTask, fetchTasks, getLLMSettings, type TaskListItem } from "../api/tasks";
-import { MODE_PROFILES, TASK_MODES, type TaskMode } from "../modes";
-import { SessionRuntimePage } from "../pages/SessionRuntimePage";
 import { TaskRuntimePage } from "../features/runtime/TaskRuntimePage";
-import { DashboardPage } from "../pages/DashboardPage";
+import { ApprovalsPage } from "../pages/ApprovalsPage";
+import { DashboardRoute } from "../pages/DashboardRoute";
 import { NewTaskPage } from "../pages/NewTaskPage";
-import { CapabilitiesPage, ModelsPage, SkillsPage } from "../pages/SettingsPages";
-import { SystemPromptPage } from "../pages/SystemPromptPage";
-import { readRoute, runtimePageVariant } from "./router";
+import { ModelsPage } from "../pages/ModelsPage";
+import { ProductCatalogPage } from "../pages/ProductCatalogPage";
+import { SkillsPage } from "../pages/SkillsPage";
+import { SystemPage } from "../pages/SystemPage";
+import { CapabilitiesPage } from "../pages/ToolsPage";
+import { TaskDetailPage } from "../pages/TaskDetailPage";
+import { TaskListPage } from "../pages/TaskListPage";
+import { AppShell } from "./AppShell";
+import { readRoute, type AppRoute } from "./router";
 
 export function RuntimeApp() {
   const location = useLocation();
   const navigate = useNavigate();
   const route = readRoute(location.pathname);
-  const runtimeVariant = runtimePageVariant();
-  const [tasks, setTasks] = useState<TaskListItem[]>([]);
-  const [llmConfigured, setLLMConfigured] = useState<boolean | null>(null);
-  const [collapsed, setCollapsed] = useState(false);
-  const [closedScenes, setClosedScenes] = useState<Set<TaskMode>>(() => new Set());
-  const grouped = useMemo(() => Object.fromEntries(TASK_MODES.map((mode) => [mode, tasks.filter((task) => task.mode === mode)])) as Record<TaskMode, TaskListItem[]>, [tasks]);
-  const refreshTasks = async () => { try { setTasks((await fetchTasks()).tasks); } catch { setTasks([]); } };
-  useEffect(() => { void refreshTasks(); }, []);
-  useEffect(() => { void getLLMSettings().then((settings) => setLLMConfigured(settings.configured)).catch(() => setLLMConfigured(null)); }, [location.pathname]);
-  const go = (path: string) => navigate(path);
-  const removeTask = async (taskId: string) => { await deleteTask(taskId); if (route.taskId === taskId) go("/"); await refreshTasks(); };
-  const toggleScene = (mode: TaskMode) => setClosedScenes((current) => {
-    const next = new Set(current);
-    if (next.has(mode)) next.delete(mode); else next.add(mode);
-    return next;
-  });
 
-  return <div className={`console-shell ${collapsed ? "nav-collapsed" : ""}`}>
-    <aside className="app-nav" aria-label="主导航">
-      <div className="brand-row"><button className="icon-button" title="折叠导航" onClick={() => setCollapsed((value) => !value)}>{collapsed ? "›" : "‹"}</button><div className="brand-copy"><strong>TGA</strong><span>Trusted Goal Agent</span></div></div>
-      <nav>
-        <Nav active={route.page === "dashboard"} icon="▦" label="总览" collapsed={collapsed} onClick={() => go("/")} />
-        <Nav active={route.page === "new"} icon="＋" label="新建任务" collapsed={collapsed} onClick={() => go("/tasks/new")} />
-        {!collapsed ? <div className="nav-caption">场景任务</div> : null}
-        {!collapsed ? <div className="scene-task-groups">{TASK_MODES.map((mode) => {
-          const sceneTasks = grouped[mode];
-          const closed = closedScenes.has(mode);
-          return <section className="scene-task-group" key={mode}>
-            <button className="scene-group-toggle" aria-expanded={!closed} onClick={() => toggleScene(mode)}><span>{closed ? "›" : "⌄"}</span><b>{MODE_PROFILES[mode].label}</b><em>{sceneTasks.length}</em></button>
-            {!closed ? <div className="scene-task-list">{sceneTasks.length ? sceneTasks.map((task) => <button key={task.task_id} className={`scene-task-link ${route.taskId === task.task_id ? "active" : ""}`} title={task.name || task.task_id} onClick={() => go(`/tasks/${encodeURIComponent(task.task_id)}/runtime`)}><i className={task.status} /><span>{task.name || task.task_id}</span></button>) : <small>暂无任务</small>}</div> : null}
-          </section>;
-        })}</div> : null}
-        {!collapsed ? <div className="nav-caption">配置</div> : null}
-        <Nav active={route.page === "models"} icon="◈" label="Provider 与模型" collapsed={collapsed} onClick={() => go("/settings/models")} />
-        <Nav active={route.page === "capabilities"} icon="⌘" label="能力与 MCP" collapsed={collapsed} onClick={() => go("/settings/capabilities")} />
-        <Nav active={route.page === "skills"} icon="◇" label="Skills" collapsed={collapsed} onClick={() => go("/settings/skills")} />
-        <Nav active={route.page === "system-prompt"} icon="¶" label="System Prompt" collapsed={collapsed} onClick={() => go("/settings/system-prompt")} />
-      </nav>
-      <button className="nav-refresh" title="刷新任务列表" onClick={() => void refreshTasks()}>↻{!collapsed ? " 刷新任务" : ""}</button>
-    </aside>
-    <main className={`app-main ${route.page === "runtime" || route.page === "replay" ? "runtime-main" : ""}`}>
-      {llmConfigured === false && route.page !== "models" ? <div className="model-config-banner" role="alert"><div><strong>尚未配置模型</strong><span>任务需要可用模型才能启动或恢复，请先完成 Provider 配置。</span></div><button onClick={() => go("/settings/models")}>去配置模型</button></div> : null}
-      {route.page === "dashboard" ? <DashboardPage tasks={tasks} onNew={() => go("/tasks/new")} onOpen={(id) => go(`/tasks/${encodeURIComponent(id)}/runtime`)} onDelete={removeTask} /> : null}
-      {route.page === "new" ? <NewTaskPage onCreated={(id) => { void refreshTasks(); go(`/tasks/${encodeURIComponent(id)}/runtime`); }} /> : null}
-      {route.page === "runtime" && route.taskId ? runtimeVariant === "legacy" ? <SessionRuntimePage taskId={route.taskId} mode="runtime" onReplay={() => go(`/tasks/${encodeURIComponent(route.taskId!)}/replay`)} /> : <TaskRuntimePage taskId={route.taskId} mode="runtime" /> : null}
-      {route.page === "replay" && route.taskId ? runtimeVariant === "legacy" ? <SessionRuntimePage taskId={route.taskId} mode="replay" onReplay={() => undefined} /> : <TaskRuntimePage taskId={route.taskId} mode="replay" /> : null}
-      {route.page === "models" ? <ModelsPage onConfiguredChange={setLLMConfigured} /> : null}
-      {route.page === "capabilities" ? <CapabilitiesPage /> : null}
-      {route.page === "skills" ? <SkillsPage /> : null}
-      {route.page === "system-prompt" ? <SystemPromptPage /> : null}
-    </main>
-  </div>;
+  return <AppShell route={route}>
+    <RoutePage route={route} navigate={navigate} />
+  </AppShell>;
 }
 
-function Nav({ active, icon, label, collapsed, onClick }: { active: boolean; icon: string; label: string; collapsed: boolean; onClick: () => void }) { return <button className={`nav-link ${active ? "active" : ""}`} title={label} onClick={onClick}><span>{icon}</span>{!collapsed ? <b>{label}</b> : null}</button>; }
+function RoutePage({ route, navigate }: { route: AppRoute; navigate: (path: string) => void }) {
+  if (route.page === "dashboard") return <DashboardRoute />;
+  if (route.page === "tasks") return <TaskListPage />;
+  if (route.page === "approvals") return <ApprovalsPage />;
+  if (route.page === "new") return <NewTaskPage onCreated={(id) => navigate(`/tasks/${encodeURIComponent(id)}/runtime`)} />;
+  if (route.page === "task-detail" && route.taskId) return <TaskDetailPage taskId={route.taskId} />;
+  if (route.page === "runtime" && route.taskId) return <TaskRuntimePage taskId={route.taskId} mode="runtime" />;
+  if (route.page === "replay" && route.taskId) return <TaskRuntimePage taskId={route.taskId} mode="replay" />;
+  if (route.page === "models") return <ModelsPage />;
+  if (route.page === "tools") return <CapabilitiesPage />;
+  if (route.page === "skills") return <SkillsPage />;
+  if (route.page === "resources") return <ProductCatalogPage kind="resources" />;
+  if (route.page === "reports") return <ProductCatalogPage kind="reports" />;
+  if (route.page === "knowledge-bases") return <ProductCatalogPage kind="knowledge-bases" />;
+  if (route.page === "teams") return <ProductCatalogPage kind="teams" />;
+  if (route.page === "solvers") return <ProductCatalogPage kind="solvers" />;
+  if (route.page === "policies") return <ProductCatalogPage kind="policies" />;
+  if (route.page === "system") return <SystemPage />;
+  return <NotFoundPage navigate={navigate} />;
+}
+
+function NotFoundPage({ navigate }: { navigate: (path: string) => void }) {
+  return <section className="page-stack route-not-found">
+    <span className="eyebrow">404 / ROUTE REMOVED</span>
+    <h1>此入口不存在</h1>
+    <p>旧 Session 与聚合 Settings URL 已完成一次性迁移，不再提供别名或重定向。</p>
+    <div className="button-row"><button onClick={() => navigate("/tasks")}>打开任务列表</button><button className="secondary-button" onClick={() => navigate("/")}>返回首页</button></div>
+  </section>;
+}

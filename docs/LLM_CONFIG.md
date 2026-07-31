@@ -32,7 +32,7 @@ python scripts/tga_llm_healthcheck.py
 - 每轮向已配置的模型发送当前可用工具的 function schema。
 - assistant `tool_calls` 与对应 tool result 保存在同一 Transcript。
 - 所有工具调用先经过治理、执行和持久化，再将结构化结果回传模型。
-- `finish_session` 必须通过模式对应的 Completion Gate，并引用 task-owned Artifact provenance。
+- `propose_task_completion` 必须通过模式对应的 Host Completion Gate，并引用 task-owned Artifact provenance。
 - 模型或 Provider 请求失败时保留可观测错误，不切换到其他执行架构。
 
 单元和集成测试通过依赖注入使用 Fake `ModelClient`、Fake Transport 或受控 Handler。Fake 只存在于测试边界，不进入生产模型配置或执行路径。

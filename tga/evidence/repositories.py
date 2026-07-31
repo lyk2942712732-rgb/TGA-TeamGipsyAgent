@@ -9,20 +9,13 @@ from typing import Any
 from uuid import uuid4
 
 from tga.contracts import (
-    ActionResult,
-    ActionSpec,
     AgentEvent,
     ArtifactIndex,
     ArtifactRecord,
+    CandidateFindingRecord,
     ChallengeContract,
     ContextMetric,
-    Finding,
-    Intent,
-    IntentStatus,
-    MemoryEntry,
     SessionRecord,
-    SolverRecord,
-    StrategyCard,
     TGATask,
 )
 from tga.evidence.database import utc_now
@@ -33,6 +26,8 @@ class TaskRepository:
         return TGATask.model_validate_json(row["payload_json"]) if row else None
 
     def create_task(self, task: TGATask) -> None:
+        if task.schema_version != 6:
+            raise ValueError("runtime persistence accepts only task schema 6")
         self.conn.execute(
             "INSERT OR REPLACE INTO tasks(id, payload_json, created_at) VALUES (?, ?, ?)",
             (task.id, task.model_dump_json(), utc_now()),
@@ -40,6 +35,8 @@ class TaskRepository:
         self._commit()
 
     def update_task(self, task: TGATask) -> None:
+        if task.schema_version != 6:
+            raise ValueError("runtime persistence accepts only task schema 6")
         cursor = self.conn.execute(
             "UPDATE tasks SET payload_json=? WHERE id=?",
             (task.model_dump_json(), task.id),
@@ -48,30 +45,7 @@ class TaskRepository:
             raise KeyError(f"task not found: {task.id}")
         self._commit()
 
-    def add_intent(self, intent: Intent) -> None:
-        now = utc_now()
-        self.conn.execute(
-            "INSERT OR REPLACE INTO intents(id, task_id, payload_json, status, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (intent.id, intent.task_id, intent.model_dump_json(), intent.status, now, now),
-        )
-        self._commit()
-
-    def update_intent_status(self, intent_id: str, status: IntentStatus) -> None:
-        self.conn.execute(
-            "UPDATE intents SET status=?, updated_at=? WHERE id=?",
-            (status, utc_now(), intent_id),
-        )
-        self._commit()
-
-    def add_event(self, task_id: str, type: str, payload: dict, intent_id: str | None = None) -> None:
-        self.conn.execute(
-            "INSERT INTO events(task_id, intent_id, type, payload_json, created_at) VALUES (?, ?, ?, ?, ?)",
-            (task_id, intent_id, type, json.dumps(payload, ensure_ascii=False), utc_now()),
-        )
-        self._commit()
-
-    def add_candidate_finding(self, finding: Finding) -> None:
+    def add_candidate_finding(self, finding: CandidateFindingRecord) -> None:
         payload = finding.model_copy(update={"status": "candidate"}).model_dump_json()
         now = utc_now()
         self.conn.execute(
@@ -85,7 +59,7 @@ class TaskRepository:
         row = self.conn.execute("SELECT payload_json FROM findings WHERE id=?", (finding_id,)).fetchone()
         if row is None:
             raise KeyError(f"finding not found: {finding_id}")
-        finding = Finding.model_validate_json(row["payload_json"])
+        finding = CandidateFindingRecord.model_validate_json(row["payload_json"])
         confirmed = finding.model_copy(
             update={"status": "confirmed", "evidence_artifact_id": evidence_artifact_id}
         )
@@ -117,11 +91,11 @@ class TaskRepository:
             ).fetchall()
         ]
 
-    def list_findings(self, task_id: str) -> list[Finding]:
+    def list_findings(self, task_id: str) -> list[CandidateFindingRecord]:
         rows = self.conn.execute(
             "SELECT payload_json FROM findings WHERE task_id=? ORDER BY created_at", (task_id,)
         ).fetchall()
-        return [Finding.model_validate_json(row["payload_json"]) for row in rows]
+        return [CandidateFindingRecord.model_validate_json(row["payload_json"]) for row in rows]
 
     # v2 runtime repository -------------------------------------------------
     # All v2 writes live here so manager, observer and API readers do not
@@ -188,39 +162,6 @@ class SessionRepository:
             raise KeyError(f"session not found: {task_id}")
         self._commit()
         return self.get_session(task_id)  # type: ignore[return-value]
-
-    def add_solver(self, solver: SolverRecord) -> None:
-        self.conn.execute(
-            "INSERT OR REPLACE INTO solvers(id,task_id,role,status,model_name,parent_solver_id,started_at,finished_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                solver.id, solver.task_id, solver.role, solver.status, solver.model_name,
-                solver.parent_solver_id, solver.started_at, solver.finished_at,
-            ),
-        )
-        self._commit()
-
-    def update_solver(self, solver_id: str, **changes: Any) -> SolverRecord:
-        allowed = {"status", "model_name", "parent_solver_id", "started_at", "finished_at"}
-        values = {key: value for key, value in changes.items() if key in allowed}
-        if values:
-            assignments = ", ".join(f"{key}=?" for key in values)
-            cursor = self.conn.execute(f"UPDATE solvers SET {assignments} WHERE id=?", (*values.values(), solver_id))
-            if cursor.rowcount == 0:
-                raise KeyError(f"solver not found: {solver_id}")
-            self._commit()
-        row = self.conn.execute("SELECT * FROM solvers WHERE id=?", (solver_id,)).fetchone()
-        if row is None:
-            raise KeyError(f"solver not found: {solver_id}")
-        return SolverRecord.model_validate(dict(row))
-
-    def list_solvers(self, task_id: str) -> list[SolverRecord]:
-        rows = self.conn.execute(
-            "SELECT * FROM solvers WHERE task_id=? "
-            "ORDER BY CASE WHEN role='main' THEN 0 ELSE 1 END, started_at, id",
-            (task_id,),
-        ).fetchall()
-        return [SolverRecord.model_validate(dict(row)) for row in rows]
 
     def upsert_challenge(self, challenge: ChallengeContract) -> ChallengeContract:
         self.conn.execute(
@@ -312,184 +253,6 @@ class ArtifactRepository:
         return [ArtifactRecord.model_validate_json(row["payload_json"]) for row in rows]
 
 
-class MemoryRepository:
-    def add_memory(self, entry: MemoryEntry) -> None:
-        self.conn.execute(
-            "INSERT INTO memory_entries(id,task_id,kind,content,artifact_ids_json,source,supersedes_id,created_at,updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                entry.id, entry.task_id, entry.kind, entry.content, json.dumps(entry.artifact_ids),
-                entry.source, entry.supersedes_id, entry.created_at, entry.updated_at,
-            ),
-        )
-        self._commit()
-
-    def list_memory(self, task_id: str, *, include_superseded: bool = False) -> list[MemoryEntry]:
-        sql = "SELECT * FROM memory_entries WHERE task_id=?"
-        if not include_superseded:
-            sql += " AND supersedes_id IS NULL"
-        sql += " ORDER BY created_at, id"
-        return [self._memory_row(row) for row in self.conn.execute(sql, (task_id,)).fetchall()]
-
-    def supersede_memory(self, memory_id: str, replacement_id: str) -> None:
-        self.conn.execute(
-            "UPDATE memory_entries SET supersedes_id=?, updated_at=? WHERE id=?",
-            (replacement_id, utc_now(), memory_id),
-        )
-        self._commit()
-
-
-class ActionRepository:
-    def add_action(
-        self,
-        action: ActionSpec,
-        *,
-        status: str = "proposed",
-        approval_expires_at: str | None = None,
-    ) -> None:
-        now = utc_now()
-        self.conn.execute(
-            "INSERT INTO actions(id,task_id,solver_id,intent_id,local_plan_step_id,execution_policy_snapshot_id,solver_tool_policy_snapshot_id,governed_action_id,kind,capability,target,arguments_json,rationale,risk,strategy_card_id,strategy_step_id,expected_outcome,retry_reason,alternative_analysis,effect_json,approval_expires_at,input_id,target_ref,actual_target,authorization_json,provenance_json,status,created_at,updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                action.id, action.task_id, action.solver_id, action.intent_id,
-                action.local_plan_step_id, action.execution_policy_snapshot_id,
-                action.solver_tool_policy_snapshot_id, action.governed_action_id, action.kind,
-                action.capability, action.target, json.dumps(action.arguments), action.rationale,
-                action.risk, action.strategy_card_id, action.strategy_step_id,
-                action.expected_outcome, action.retry_reason, action.alternative_analysis,
-                action.effect.model_dump_json(), approval_expires_at, action.input_id, action.target_ref,
-                action.actual_target or action.target, json.dumps(action.authorization, ensure_ascii=False),
-                json.dumps(action.provenance, ensure_ascii=False), status, now, now,
-            ),
-        )
-        self._commit()
-
-    def update_action_status(self, action_id: str, status: str, *, expected_status: str | None = None) -> None:
-        if expected_status is None:
-            cursor = self.conn.execute("UPDATE actions SET status=?, updated_at=? WHERE id=?", (status, utc_now(), action_id))
-        else:
-            cursor = self.conn.execute(
-                "UPDATE actions SET status=?, updated_at=? WHERE id=? AND status=?",
-                (status, utc_now(), action_id, expected_status),
-            )
-        if cursor.rowcount != 1:
-            raise KeyError(f"action transition rejected: {action_id}")
-        self._commit()
-
-    def get_action(self, task_id: str, action_id: str) -> dict[str, Any] | None:
-        row = self.conn.execute("SELECT * FROM actions WHERE task_id=? AND id=?", (task_id, action_id)).fetchone()
-        if row is None:
-            return None
-        return {
-            **dict(row),
-            "arguments": json.loads(row["arguments_json"]),
-            "effect": json.loads(row["effect_json"] or "{}"),
-            "authorization": json.loads(row["authorization_json"] or "{}"),
-            "provenance": json.loads(row["provenance_json"] or "{}"),
-            "result": self.get_action_result(row["id"]),
-        }
-
-    def get_action_spec(self, task_id: str, action_id: str) -> ActionSpec | None:
-        item = self.get_action(task_id, action_id)
-        if item is None:
-            return None
-        return ActionSpec.model_validate({
-            key: item[key]
-            for key in ActionSpec.model_fields
-            if key in item
-        })
-
-    def list_actions(self, task_id: str) -> list[dict[str, Any]]:
-        return [
-            {
-                **dict(row),
-                "arguments": json.loads(row["arguments_json"]),
-                "effect": json.loads(row["effect_json"] or "{}"),
-                "authorization": json.loads(row["authorization_json"] or "{}"),
-                "provenance": json.loads(row["provenance_json"] or "{}"),
-                "result": self.get_action_result(row["id"]),
-            }
-            for row in self.conn.execute("SELECT * FROM actions WHERE task_id=? ORDER BY created_at, id", (task_id,)).fetchall()
-        ]
-
-    def add_action_result(self, result: ActionResult) -> None:
-        values = {
-            "action_id": result.action_id,
-            "summary": result.summary,
-            "artifact_ids": result.artifact_ids,
-            "facts": result.facts,
-            "leads": result.leads,
-            "candidate_flags": result.candidate_flags,
-            "candidate_findings": [
-                finding.model_dump(mode="json") for finding in result.candidate_findings
-            ],
-            "error": result.error.model_dump(mode="json") if result.error else None,
-        }
-        action_row = self.conn.execute(
-            "SELECT task_id FROM actions WHERE id=?", (result.action_id,)
-        ).fetchone()
-        task_row = self.conn.execute(
-            "SELECT payload_json FROM tasks WHERE id=?",
-            (action_row["task_id"],),
-        ).fetchone() if action_row else None
-        schema_version = int(json.loads(task_row["payload_json"]).get("schema_version") or 0) if task_row else 0
-        existing = self.get_action_result(result.action_id)
-        if schema_version >= 6 and existing is not None:
-            persisted = {key: existing[key] for key in values}
-            if persisted == values:
-                return
-            raise PersistenceConflict(
-                f"schema-v6 ActionResult is immutable: {result.action_id}"
-            )
-        verb = "INSERT" if schema_version >= 6 else "INSERT OR REPLACE"
-        self.conn.execute(
-            f"{verb} INTO action_results(action_id,summary,artifact_ids_json,facts_json,leads_json,flags_json,findings_json,error_json,created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                result.action_id, result.summary, json.dumps(result.artifact_ids), json.dumps(result.facts),
-                json.dumps(result.leads), json.dumps(result.candidate_flags),
-                json.dumps(values["candidate_findings"]),
-                result.error.model_dump_json() if result.error else None, utc_now(),
-            ),
-        )
-        self._commit()
-
-    def get_action_result(self, action_id: str) -> dict[str, Any] | None:
-        row = self.conn.execute("SELECT * FROM action_results WHERE action_id=?", (action_id,)).fetchone()
-        if row is None:
-            return None
-        return {
-            "action_id": row["action_id"], "summary": row["summary"],
-            "artifact_ids": json.loads(row["artifact_ids_json"]), "facts": json.loads(row["facts_json"]),
-            "leads": json.loads(row["leads_json"]), "candidate_flags": json.loads(row["flags_json"]),
-            "candidate_findings": json.loads(row["findings_json"]),
-            "error": json.loads(row["error_json"]) if row["error_json"] else None,
-            "created_at": row["created_at"],
-        }
-
-
-class StrategyRepository:
-    def upsert_strategy_card(self, card: StrategyCard) -> StrategyCard:
-        self.conn.execute(
-            "INSERT INTO strategy_cards(id,task_id,payload_json,status,created_at,updated_at) VALUES (?, ?, ?, ?, ?, ?) "
-            "ON CONFLICT(id) DO UPDATE SET payload_json=excluded.payload_json,status=excluded.status,updated_at=excluded.updated_at",
-            (card.id, card.task_id, card.model_dump_json(), card.status, card.created_at, card.updated_at),
-        )
-        self._commit()
-        return card
-
-    def get_strategy_card(self, card_id: str) -> StrategyCard | None:
-        row = self.conn.execute("SELECT payload_json FROM strategy_cards WHERE id=?", (card_id,)).fetchone()
-        return StrategyCard.model_validate_json(row["payload_json"]) if row else None
-
-    def list_strategy_cards(self, task_id: str) -> list[StrategyCard]:
-        rows = self.conn.execute(
-            "SELECT payload_json FROM strategy_cards WHERE task_id=? ORDER BY created_at,id", (task_id,)
-        ).fetchall()
-        return [StrategyCard.model_validate_json(row["payload_json"]) for row in rows]
-
-
 class ContextMetricRepository:
     def add_context_metric(self, metric: ContextMetric) -> None:
         self.conn.execute(
@@ -565,75 +328,6 @@ class EventRepository:
             "SELECT COALESCE(MAX(seq), 0) AS seq FROM agent_events WHERE task_id=?", (task_id,)
         ).fetchone()
         return int(row["seq"])
-
-
-class RuntimeReadModel:
-    def task_snapshot(self, task_id: str) -> dict[str, Any]:
-        task = self.conn.execute("SELECT payload_json FROM tasks WHERE id=?", (task_id,)).fetchone()
-        task_payload = TGATask.model_validate_json(task["payload_json"]).model_dump(mode="json") if task else None
-        snapshot = {
-            "task": task_payload,
-            "intents": self._json_rows("SELECT payload_json FROM intents WHERE task_id=? ORDER BY created_at", task_id),
-            "artifacts": self._json_rows("SELECT payload_json FROM artifacts WHERE task_id=? ORDER BY created_at", task_id),
-            "findings": self._json_rows("SELECT payload_json FROM findings WHERE task_id=? ORDER BY created_at", task_id),
-            "flags": [
-                dict(row)
-                for row in self.conn.execute(
-                    "SELECT value, evidence_artifact_id, created_at FROM flags WHERE task_id=? ORDER BY created_at",
-                    (task_id,),
-                ).fetchall()
-            ],
-            "events": [
-                {
-                    "id": row["id"],
-                    "intent_id": row["intent_id"],
-                    "type": row["type"],
-                    "payload": json.loads(row["payload_json"]),
-                    "created_at": row["created_at"],
-                }
-                for row in self.conn.execute(
-                    "SELECT * FROM events WHERE task_id=? ORDER BY id", (task_id,)
-                ).fetchall()
-            ],
-        }
-        session = self.get_session(task_id)
-        if session is not None:
-            snapshot.update(
-                {
-                    "session": session.model_dump(mode="json"),
-                    "solvers": [solver.model_dump(mode="json") for solver in self.list_solvers(task_id)],
-                    "challenge": self.get_challenge(task_id).model_dump(mode="json") if self.get_challenge(task_id) else None,
-                    "runtime": {
-                        "memory": [item.model_dump(mode="json") for item in self.list_memory(task_id)],
-                        "strategy_cards": [item.model_dump(mode="json") for item in self.list_strategy_cards(task_id)],
-                    },
-                    "artifact_indexes": [item.model_dump(mode="json") for item in self.list_artifact_indexes(task_id)],
-                    "context_metrics": [item.model_dump(mode="json") for item in self.list_context_metrics(task_id)],
-                    "actions": self.list_actions(task_id),
-                    "agent_events": [item.model_dump(mode="json") for item in self.list_agent_events(task_id, limit=None)],
-                }
-            )
-        return snapshot
-
-    def get_session_snapshot(self, task_id: str) -> dict[str, Any]:
-        """Public v2 read repository used by API/UI adapters."""
-        return self.task_snapshot(task_id)
-
-    def list_events(self, task_id: str, *, after_seq: int = 0, limit: int = 200) -> list[AgentEvent]:
-        """Public cursor for the runtime's authoritative event stream."""
-        return self.list_agent_events(task_id, after_seq=after_seq, limit=limit)
-
-    def _json_rows(self, sql: str, task_id: str) -> list[dict[str, Any]]:
-        return [
-            json.loads(row["payload_json"])
-            for row in self.conn.execute(sql, (task_id,)).fetchall()
-        ]
-
-    @staticmethod
-    def _memory_row(row: sqlite3.Row) -> MemoryEntry:
-        data = dict(row)
-        data["artifact_ids"] = json.loads(data.pop("artifact_ids_json"))
-        return MemoryEntry.model_validate(data)
 
 
 def _compact_event_payload(value: Any) -> Any:

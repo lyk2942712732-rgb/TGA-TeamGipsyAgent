@@ -12,7 +12,7 @@ from tga.domain.solver.instances import ToolPolicySnapshot
 from tga.infrastructure.persistence import PersistenceBundle
 from tga.infrastructure.persistence.errors import PersistenceConflict
 from tga.infrastructure.solver_definitions.registry import SolverDefinitionRegistry
-from tga.runtime.agents.single_solver_adapter import SingleSolverProvisioner
+from tga.runtime.orchestration import TaskOrchestrator
 from tga.runtime.tooling.catalog import RuntimeToolCatalog
 from tga.runtime.tooling.catalog.manifest_builder import ToolManifestBuilder
 from tga.runtime.tooling import ToolDefinitionBuilder
@@ -78,14 +78,18 @@ def _catalog(task: TGATask) -> RuntimeToolCatalog:
     )
 
 
-def _context(task_id: str = "tool_governance") -> ActionContext:
+def _context(task_id: str = "tool_governance", *, solver=None) -> ActionContext:
+    solver_id = solver.id if solver is not None else "solver_main"
+    role = str(solver.orchestration_role) if solver is not None else "supervisor"
+    definition_id = solver.definition_id if solver is not None else "task-supervisor"
+    intent_id = solver.assigned_intent_id if solver is not None else f"intent_initial_{task_id}"
     return ActionContext(
         task_id=task_id,
-        solver_id="solver_main",
-        intent_id=f"intent_initial_{task_id}",
-        local_plan_step_id="local_step_solver_main_1",
-        orchestration_role="supervisor",
-        solver_definition_id="task-supervisor",
+        solver_id=solver_id,
+        intent_id=intent_id,
+        local_plan_step_id=f"local_step_{solver_id}_1" if intent_id else None,
+        orchestration_role=role,
+        solver_definition_id=definition_id,
         execution_policy_snapshot_id="execution:" + "a" * 64,
         solver_tool_policy_snapshot_id="tool:" + "b" * 64,
         skill_snapshot_id=None,
@@ -97,16 +101,18 @@ def _context(task_id: str = "tool_governance") -> ActionContext:
 def _action(
     *, action_id: str = "governed_one", capability: str = "workspace.write",
     idempotency_key: str | None = None, lock_key: str | None = None,
+    context: ActionContext | None = None,
 ) -> GovernedAction:
+    context = context or _context()
     return GovernedAction(
         id=action_id,
-        context=_context(),
+        context=context,
         provider_tool_name="tga_workspace_write",
         tool_call_id=f"call_{action_id}",
         tool_class="execution",
         capability=capability,
         normalized_arguments={"relative_path": "report.txt", "content": "result"},
-        resolved_target="workspace:solver_main:report.txt",
+        resolved_target=f"workspace:{context.solver_id}:report.txt",
         risk="active",
         effect=ActionEffect(
             scope="workspace", persistence="persistent", reversibility="reversible",
@@ -120,6 +126,36 @@ def _action(
         created_at=NOW,
         updated_at=NOW,
     )
+
+
+def _bootstrap_supervisor(bundle: PersistenceBundle, task: TGATask):
+    orchestrator = TaskOrchestrator(task=task, repositories=bundle)
+    state = orchestrator.bootstrap()
+    assert state.supervisor_solver_id is not None
+    solver = bundle.solvers.get_solver(state.supervisor_solver_id)
+    assert solver is not None
+    return orchestrator, solver
+
+
+def _dispatch_worker(
+    bundle: PersistenceBundle, task: TGATask, *, intent_kind: str = "recon"
+):
+    orchestrator, _ = _bootstrap_supervisor(bundle, task)
+    if intent_kind != "recon":
+        plan = bundle.plans.get_global_plan(task.id)
+        assert plan is not None and len(plan.intents) == 1
+        intent = plan.intents[0].model_copy(update={"kind": intent_kind})
+        bundle.plans.compare_and_swap_global_plan(
+            plan.model_copy(update={
+                "version": plan.version + 1, "intents": [intent],
+            }),
+            expected_version=plan.version,
+        )
+    assignment = orchestrator.dispatch_next()
+    assert assignment is not None
+    solver = bundle.solvers.get_solver(assignment.solver_id)
+    assert solver is not None and solver.orchestration_role == "worker"
+    return orchestrator, solver
 
 
 def test_model_intent_forbids_authoritative_ids_and_action_context_is_host_owned() -> None:
@@ -189,7 +225,7 @@ def test_manifest_schema_exposes_only_non_authoritative_model_governance() -> No
     capabilities = tuple(item.capability for item in catalog.entries)
     solver, definition = _solver(
         "task-supervisor", *capabilities,
-        profile="phase5-single-solver-compatibility",
+        profile="test",
     )
     manifest = ToolManifestBuilder().build(
         task=task, solver=solver, definition=definition, intent=None, catalog=catalog,
@@ -214,9 +250,9 @@ def test_action_state_machine_rejects_terminal_reentry_and_uses_expected_status(
     task = _task()
     try:
         bundle.tasks.create_task(task)
-        SingleSolverProvisioner(bundle).ensure(task=task, solver_id="solver_main")
+        _, solver = _dispatch_worker(bundle, task)
         repository = bundle.tool_governance
-        repository.add_action(_action())
+        repository.add_action(_action(context=_context(solver=solver)))
         repository.transition("governed_one", "validated", expected_status="proposed")
         repository.transition("governed_one", "queued", expected_status="validated")
         repository.transition("governed_one", "running", expected_status="queued")
@@ -235,17 +271,18 @@ def test_semantic_repeat_idempotency_resource_lock_and_budget_are_distinct(tmp_p
     task = _task()
     try:
         bundle.tasks.create_task(task)
-        SingleSolverProvisioner(bundle).ensure(task=task, solver_id="solver_main")
+        _, solver = _dispatch_worker(bundle, task)
+        context = _context(solver=solver)
         repository = bundle.tool_governance
         first = _action(
             action_id="governed_first", idempotency_key="idem_same",
-            lock_key="workspace:solver_main:report.txt",
+            lock_key=f"workspace:{solver.id}:report.txt", context=context,
         )
         repository.add_action(first)
         repository.transition(first.id, "validated", expected_status="proposed")
 
         repeat = SemanticRepeatGuard(repository).check(
-            _action(action_id="governed_repeat", idempotency_key="different")
+            _action(action_id="governed_repeat", idempotency_key="different", context=context)
         )
         assert repeat.previous_action_id == first.id
         assert repeat.requires_retry_reason is True
@@ -253,13 +290,13 @@ def test_semantic_repeat_idempotency_resource_lock_and_budget_are_distinct(tmp_p
         idempotency = IdempotencyService(repository)
         assert idempotency.reserve(first).created is True
         duplicate = idempotency.reserve(
-            _action(action_id="governed_duplicate", idempotency_key="idem_same")
+            _action(action_id="governed_duplicate", idempotency_key="idem_same", context=context)
         )
         assert duplicate.created is False
         assert duplicate.action_id == first.id
 
         lookup = idempotency.lookup(
-            _action(action_id="governed_lookup", idempotency_key="idem_same")
+            _action(action_id="governed_lookup", idempotency_key="idem_same", context=context)
         )
         assert lookup is not None
         assert lookup.action_id == first.id
@@ -267,7 +304,7 @@ def test_semantic_repeat_idempotency_resource_lock_and_budget_are_distinct(tmp_p
         locks = ResourceLockService(repository)
         assert locks.acquire(first, ttl_seconds=30) is True
         assert locks.acquire(
-            _action(action_id="governed_other", lock_key=first.resource_lock_key),
+            _action(action_id="governed_other", lock_key=first.resource_lock_key, context=context),
             ttl_seconds=30,
         ) is False
         locks.release(first)
@@ -288,11 +325,11 @@ def test_task_budget_is_a_persistent_hard_upper_bound(tmp_path) -> None:
     })
     try:
         bundle.tasks.create_task(task)
-        SingleSolverProvisioner(bundle).ensure(task=task, solver_id="solver_main")
+        _, solver = _dispatch_worker(bundle, task)
 
         with pytest.raises(PersistenceConflict, match="TaskBudget tool-call limit"):
             BudgetService(bundle.tool_governance).reserve(
-                _action(action_id="governed_task_budget"),
+                _action(action_id="governed_task_budget", context=_context(solver=solver)),
                 tool_calls=1,
                 artifacts=0,
             )
@@ -300,7 +337,7 @@ def test_task_budget_is_a_persistent_hard_upper_bound(tmp_path) -> None:
         bundle.close()
 
 
-class _LegacyAdapter:
+class _ExecutionAdapter:
     def __init__(self) -> None:
         self.calls: list[GovernedAction] = []
 
@@ -315,7 +352,7 @@ class _LegacyAdapter:
         )
 
 
-class _ExplodingLegacyAdapter(_LegacyAdapter):
+class _ExplodingExecutionAdapter(_ExecutionAdapter):
     def execute(self, action: GovernedAction) -> RawExecutionResult:
         raise RuntimeError("adapter exploded")
 
@@ -325,20 +362,19 @@ def test_gateway_rejects_forged_ids_routes_control_without_execution_and_bounds_
     task = _task()
     try:
         bundle.tasks.create_task(task)
-        solver = SingleSolverProvisioner(bundle).ensure(task=task, solver_id="solver_main")
+        _, solver = _bootstrap_supervisor(bundle, task)
         definition = SolverDefinitionRegistry.builtin().require(solver.definition_id)
         catalog = _catalog(task)
-        intent = bundle.plans.get_global_plan(task.id).intents[0]
         manifest = ToolManifestBuilder().build(
-            task=task, solver=solver, definition=definition, intent=intent, catalog=catalog,
+            task=task, solver=solver, definition=definition, intent=None, catalog=catalog,
         )
-        adapter = _LegacyAdapter()
+        adapter = _ExecutionAdapter()
         completion_calls: list[dict] = []
         gateway = ToolGovernanceGateway(
             task=task,
             manifest=manifest,
             repository=bundle.tool_governance,
-            legacy_adapter=adapter,
+                execution_adapter=adapter,
             control_handlers={
                 "propose_task_completion": lambda arguments: completion_calls.append(arguments)
                 or {"ok": True, "terminal": True, "summary": "done"}
@@ -349,7 +385,7 @@ def test_gateway_rejects_forged_ids_routes_control_without_execution_and_bounds_
             provider_tool_name="input_read",
             arguments={"input_id": "asset_1", "solver_id": "forged"},
             model_intent=ModelToolIntent(rationale="inspect"),
-            action_context=_context(),
+            action_context=_context(solver=solver),
             tool_call_id="call_forged",
         ))
         assert forged.error and forged.error.code == "AUTHORITATIVE_ARGUMENT_FORBIDDEN"
@@ -359,7 +395,7 @@ def test_gateway_rejects_forged_ids_routes_control_without_execution_and_bounds_
             provider_tool_name="input_read",
             arguments={"input_id": "asset_1", "metadata": {"intent_id": "forged"}},
             model_intent=ModelToolIntent(rationale="inspect"),
-            action_context=_context(),
+            action_context=_context(solver=solver),
             tool_call_id="call_nested_forged",
         ))
         assert nested_forged.error
@@ -370,7 +406,7 @@ def test_gateway_rejects_forged_ids_routes_control_without_execution_and_bounds_
             provider_tool_name="input_read",
             arguments={"input_id": "asset_1", "limit": 262145},
             model_intent=ModelToolIntent(rationale="inspect"),
-            action_context=_context(),
+            action_context=_context(solver=solver),
             tool_call_id="call_large",
         ))
         assert oversized.error and oversized.error.code == "RESOURCE_READ_LIMIT_EXCEEDED"
@@ -380,7 +416,7 @@ def test_gateway_rejects_forged_ids_routes_control_without_execution_and_bounds_
             provider_tool_name="input_read",
             arguments={"input_id": "asset_not_owned", "limit": 64},
             model_intent=ModelToolIntent(rationale="inspect"),
-            action_context=_context(),
+            action_context=_context(solver=solver),
             tool_call_id="call_foreign_input",
         ))
         assert foreign_resource.error
@@ -391,7 +427,7 @@ def test_gateway_rejects_forged_ids_routes_control_without_execution_and_bounds_
             provider_tool_name="propose_task_completion",
             arguments={"summary": "done"},
             model_intent=ModelToolIntent(rationale="complete"),
-            action_context=_context(),
+            action_context=_context(solver=solver),
             tool_call_id="call_complete",
         ))
         assert completed.status == "succeeded"
@@ -406,19 +442,19 @@ def test_gateway_executes_allowed_tool_through_adapter_and_persists_terminal_sta
     task = _task()
     try:
         bundle.tasks.create_task(task)
-        solver = SingleSolverProvisioner(bundle).ensure(task=task, solver_id="solver_main")
+        _, solver = _dispatch_worker(bundle, task, intent_kind="validation")
         definition = SolverDefinitionRegistry.builtin().require(solver.definition_id)
         catalog = _catalog(task)
         intent = bundle.plans.get_global_plan(task.id).intents[0]
         manifest = ToolManifestBuilder().build(
             task=task, solver=solver, definition=definition, intent=intent, catalog=catalog,
         )
-        adapter = _LegacyAdapter()
+        adapter = _ExecutionAdapter()
         gateway = ToolGovernanceGateway(
             task=task,
             manifest=manifest,
             repository=bundle.tool_governance,
-            legacy_adapter=adapter,
+            execution_adapter=adapter,
         )
 
         result = gateway.handle(ToolRequest(
@@ -428,14 +464,14 @@ def test_gateway_executes_allowed_tool_through_adapter_and_persists_terminal_sta
                 rationale="persist the report",
                 expected_outcome="report exists",
             ),
-            action_context=_context(),
+            action_context=_context(solver=solver),
             tool_call_id="call_execute",
         ))
 
         assert result.status == "succeeded"
         assert len(adapter.calls) == 1
         persisted = bundle.tool_governance.find_by_tool_call(
-            task.id, "solver_main", "call_execute"
+            task.id, solver.id, "call_execute"
         )
         assert persisted is not None
         assert persisted["status"] == "succeeded"
@@ -461,9 +497,7 @@ def test_high_impact_action_recovery_replays_without_duplicate_execution(tmp_pat
     task = _task()
     try:
         bundle.tasks.create_task(task)
-        solver = SingleSolverProvisioner(bundle).ensure(
-            task=task, solver_id="solver_main"
-        )
+        _, solver = _dispatch_worker(bundle, task, intent_kind="validation")
         definition = SolverDefinitionRegistry.builtin().require(solver.definition_id)
         intent = bundle.plans.get_global_plan(task.id).intents[0]
         manifest = ToolManifestBuilder().build(
@@ -473,35 +507,35 @@ def test_high_impact_action_recovery_replays_without_duplicate_execution(tmp_pat
             intent=intent,
             catalog=_catalog(task),
         )
-        first_adapter = _LegacyAdapter()
+        first_adapter = _ExecutionAdapter()
         first_gateway = ToolGovernanceGateway(
             task=task,
             manifest=manifest,
             repository=bundle.tool_governance,
-            legacy_adapter=first_adapter,
+            execution_adapter=first_adapter,
         )
         arguments = {"relative_path": "report.txt", "content": "result"}
         first = first_gateway.handle(ToolRequest(
             provider_tool_name="tga_workspace_write",
             arguments=arguments,
             model_intent=ModelToolIntent(rationale="publish once"),
-            action_context=_context(),
+            action_context=_context(solver=solver),
             tool_call_id="call_before_restart",
         ))
         assert first.status == "succeeded" and len(first_adapter.calls) == 1
 
-        recovered_adapter = _LegacyAdapter()
+        recovered_adapter = _ExecutionAdapter()
         recovered_gateway = ToolGovernanceGateway(
             task=task,
             manifest=manifest,
             repository=bundle.tool_governance,
-            legacy_adapter=recovered_adapter,
+                execution_adapter=recovered_adapter,
         )
         replay = recovered_gateway.handle(ToolRequest(
             provider_tool_name="tga_workspace_write",
             arguments=arguments,
             model_intent=ModelToolIntent(rationale="recover the same operation"),
-            action_context=_context(),
+            action_context=_context(solver=solver),
             tool_call_id="call_after_restart",
         ))
         assert replay.status == "succeeded"
@@ -515,7 +549,7 @@ def test_high_impact_action_recovery_replays_without_duplicate_execution(tmp_pat
                 rationale="explicit retry",
                 retry_reason="a new attempt was explicitly requested",
             ),
-            action_context=_context().model_copy(update={"attempt": 2}),
+            action_context=_context(solver=solver).model_copy(update={"attempt": 2}),
             tool_call_id="call_retry_attempt_two",
         ))
         assert retry.status == "succeeded"
@@ -531,9 +565,7 @@ def test_gateway_discards_result_if_runner_lease_is_lost_during_execution(tmp_pa
     task = _task()
     try:
         bundle.tasks.create_task(task)
-        solver = SingleSolverProvisioner(bundle).ensure(
-            task=task, solver_id="solver_main"
-        )
+        _, solver = _dispatch_worker(bundle, task, intent_kind="validation")
         definition = SolverDefinitionRegistry.builtin().require(solver.definition_id)
         intent = bundle.plans.get_global_plan(task.id).intents[0]
         manifest = ToolManifestBuilder().build(
@@ -543,13 +575,13 @@ def test_gateway_discards_result_if_runner_lease_is_lost_during_execution(tmp_pa
             intent=intent,
             catalog=_catalog(task),
         )
-        adapter = _LegacyAdapter()
+        adapter = _ExecutionAdapter()
         lease_checks = iter((True, False))
         gateway = ToolGovernanceGateway(
             task=task,
             manifest=manifest,
             repository=bundle.tool_governance,
-            legacy_adapter=adapter,
+            execution_adapter=adapter,
             lease_validator=lambda: next(lease_checks),
         )
 
@@ -557,14 +589,14 @@ def test_gateway_discards_result_if_runner_lease_is_lost_during_execution(tmp_pa
             provider_tool_name="tga_workspace_write",
             arguments={"relative_path": "late.txt", "content": "late"},
             model_intent=ModelToolIntent(rationale="test lease fencing"),
-            action_context=_context(),
+            action_context=_context(solver=solver),
             tool_call_id="call_lease_lost",
         ))
 
         assert result.error and result.error.code == "RUNNER_LEASE_LOST"
         assert len(adapter.calls) == 1
         persisted = bundle.tool_governance.find_by_tool_call(
-            task.id, "solver_main", "call_lease_lost"
+            task.id, solver.id, "call_lease_lost"
         )
         assert persisted["status"] == "cancelled"
         assert persisted.get("result") is None
@@ -582,25 +614,22 @@ def test_retrieval_tool_routes_through_gateway_and_persists_auditable_action(tmp
     task = _task()
     try:
         bundle.tasks.create_task(task)
-        solver = SingleSolverProvisioner(bundle).ensure(
-            task=task, solver_id="solver_main"
-        )
+        _, solver = _bootstrap_supervisor(bundle, task)
         definition = SolverDefinitionRegistry.builtin().require(solver.definition_id)
-        intent = bundle.plans.get_global_plan(task.id).intents[0]
         manifest = ToolManifestBuilder().build(
             task=task,
             solver=solver,
             definition=definition,
-            intent=intent,
+            intent=None,
             catalog=_catalog(task),
         )
         assert "retrieval_search" in manifest.provider_names
-        adapter = _LegacyAdapter()
+        adapter = _ExecutionAdapter()
         gateway = ToolGovernanceGateway(
             task=task,
             manifest=manifest,
             repository=bundle.tool_governance,
-            legacy_adapter=adapter,
+            execution_adapter=adapter,
             retrieval_handlers={
                 "retrieval.search": lambda arguments: {
                     "ok": True,
@@ -615,7 +644,7 @@ def test_retrieval_tool_routes_through_gateway_and_persists_auditable_action(tmp
             provider_tool_name="retrieval_search",
             arguments={"query": "bounded reference", "channels": ["reference"]},
             model_intent=ModelToolIntent(rationale="find relevant reference material"),
-            action_context=_context(),
+            action_context=_context(solver=solver),
             tool_call_id="call_retrieval",
         ))
 
@@ -623,7 +652,7 @@ def test_retrieval_tool_routes_through_gateway_and_persists_auditable_action(tmp
         assert result.model_payload["retrieval_run_id"] == "run_audit"
         assert adapter.calls == []
         persisted = bundle.tool_governance.find_by_tool_call(
-            task.id, "solver_main", "call_retrieval"
+            task.id, solver.id, "call_retrieval"
         )
         assert persisted["tool_class"] == "retrieval"
         assert persisted["capability"] == "retrieval.search"
@@ -636,7 +665,7 @@ def test_gateway_maps_adapter_exception_to_failed_raw_result(tmp_path) -> None:
     task = _task()
     try:
         bundle.tasks.create_task(task)
-        solver = SingleSolverProvisioner(bundle).ensure(task=task, solver_id="solver_main")
+        _, solver = _dispatch_worker(bundle, task, intent_kind="validation")
         definition = SolverDefinitionRegistry.builtin().require(solver.definition_id)
         intent = bundle.plans.get_global_plan(task.id).intents[0]
         manifest = ToolManifestBuilder().build(
@@ -650,21 +679,21 @@ def test_gateway_maps_adapter_exception_to_failed_raw_result(tmp_path) -> None:
             task=task,
             manifest=manifest,
             repository=bundle.tool_governance,
-            legacy_adapter=_ExplodingLegacyAdapter(),
+            execution_adapter=_ExplodingExecutionAdapter(),
         )
 
         result = gateway.handle(ToolRequest(
             provider_tool_name="tga_workspace_write",
             arguments={"relative_path": "report.txt", "content": "result"},
             model_intent=ModelToolIntent(rationale="persist the report"),
-            action_context=_context(),
+            action_context=_context(solver=solver),
             tool_call_id="call_explodes",
         ))
 
         assert result.status == "failed"
         assert result.error and result.error.code == "EXECUTION_ADAPTER_ERROR"
         persisted = bundle.tool_governance.find_by_tool_call(
-            task.id, "solver_main", "call_explodes"
+            task.id, solver.id, "call_explodes"
         )
         assert persisted["status"] == "failed"
         assert persisted["result"]["error"]["code"] == "EXECUTION_ADAPTER_ERROR"

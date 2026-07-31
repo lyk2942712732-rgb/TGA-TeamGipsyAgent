@@ -58,7 +58,7 @@ class ToolGovernanceGateway:
         task,
         manifest,
         repository,
-        legacy_adapter,
+        execution_adapter,
         control_handlers: dict[str, Any] | None = None,
         resource_handlers: dict[str, Any] | None = None,
         retrieval_handlers: dict[str, Any] | None = None,
@@ -67,16 +67,20 @@ class ToolGovernanceGateway:
         lease_validator: Callable[[], bool] | None = None,
         artifact_result_handler: Callable[[RawExecutionResult], None] | None = None,
         sandbox_config_digest: str | None = None,
+        approval_pending_handler: Callable[[GovernedAction], None] | None = None,
+        approval_resolved_handler: Callable[[GovernedAction], None] | None = None,
     ) -> None:
         self.task = task
         self.manifest = manifest
         self.repository = repository
-        self.legacy_adapter = legacy_adapter
+        self.execution_adapter = execution_adapter
         self.events = event_repository
         self.allowed_resource_ids = allowed_resource_ids
         self.lease_validator = lease_validator
         self.artifact_result_handler = artifact_result_handler
         self.sandbox_config_digest = sandbox_config_digest
+        self.approval_pending_handler = approval_pending_handler
+        self.approval_resolved_handler = approval_resolved_handler
         self.actions = GovernedActionService(repository)
         self.semantic_repeat = SemanticRepeatGuard(repository)
         self.idempotency = IdempotencyService(repository)
@@ -86,18 +90,18 @@ class ToolGovernanceGateway:
         self.routers = {
             "control": ControlToolRouter(control_handlers or {}),
             "resource_read": ResourceReadToolRouter(
-                legacy_adapter, resource_handlers or {}
+                execution_adapter, resource_handlers or {}
             ),
-            "execution": ExecutionToolRouter(legacy_adapter),
+            "execution": ExecutionToolRouter(execution_adapter),
             "retrieval": RetrievalToolRouter(retrieval_handlers or {}),
         }
 
-    def resume_approved(self, legacy_action) -> ToolGatewayResult:
-        action = self._governed_for_legacy(legacy_action)
+    def resume_approved(self, action_id: str) -> ToolGatewayResult:
+        action = self._governed_action(action_id)
         if action is None:
             return self._error(
                 "GOVERNED_ACTION_NOT_FOUND",
-                "Approved legacy Action has no governed Action ownership.",
+                "Approved Action no longer exists.",
             )
         current = self.repository.get_action(action.id)
         if current is None or current["status"] != "pending_approval":
@@ -136,9 +140,7 @@ class ToolGovernanceGateway:
             self.actions.transition(action.id, "queued", expected_status="approved")
             self.actions.transition(action.id, "running", expected_status="queued")
             try:
-                raw = self.legacy_adapter.resume_approved(
-                    governed_action=action, legacy_action=legacy_action
-                )
+                raw = self.execution_adapter.resume_approved(action)
             except Exception as exc:
                 raw = self._execution_failure(action, exc)
             if self.lease_validator is not None and not self.lease_validator():
@@ -158,6 +160,7 @@ class ToolGovernanceGateway:
             self._handle_artifact_result(raw)
             result = self._map(action, raw)
             self._publish(action, raw, result.observation)
+            self._approval_resolved(action)
             return result
         except PersistenceConflict as exc:
             current = self.repository.get_action(action.id)
@@ -176,8 +179,8 @@ class ToolGovernanceGateway:
             if locked:
                 self.locks.release(action)
 
-    def resolve_without_execution(self, legacy_action, *, status: str, payload: dict[str, Any]) -> ToolGatewayResult:
-        action = self._governed_for_legacy(legacy_action)
+    def resolve_without_execution(self, action_id: str, *, status: str, payload: dict[str, Any]) -> ToolGatewayResult:
+        action = self._governed_action(action_id)
         if action is None:
             return ToolGatewayResult(status=status, model_payload=payload)
         current = self.repository.get_action(action.id)
@@ -194,6 +197,7 @@ class ToolGovernanceGateway:
             )
             self.actions.persist_result(action.id, raw)
             self.actions.transition(action.id, terminal, expected_status="pending_approval")
+            self._approval_resolved(action)
         return ToolGatewayResult(
             action_id=action.id,
             status=terminal,
@@ -202,10 +206,8 @@ class ToolGovernanceGateway:
             model_payload=payload,
         )
 
-    def _governed_for_legacy(self, legacy_action) -> GovernedAction | None:
-        if not legacy_action.governed_action_id:
-            return None
-        item = self.repository.get_action(legacy_action.governed_action_id)
+    def _governed_action(self, action_id: str) -> GovernedAction | None:
+        item = self.repository.get_action(action_id)
         return GovernedAction.model_validate(item["payload"]) if item else None
 
     def handle(self, request: ToolRequest) -> ToolGatewayResult:
@@ -240,6 +242,13 @@ class ToolGovernanceGateway:
             ),
             normalized_arguments=request.arguments,
             resolved_target=target,
+            execution_metadata={
+                "mcp_server_id": definition.mcp_server_id,
+                "mcp_method": definition.mcp_method,
+                "mcp_catalog_version": str(
+                    getattr(getattr(self.execution_adapter, "handlers", None), "state", None).mcp_snapshot.version
+                ) if definition.mcp_server_id and getattr(getattr(self.execution_adapter, "handlers", None), "state", None) is not None else None,
+            },
             rationale=request.model_intent.rationale,
             expected_outcome=request.model_intent.expected_outcome,
             retry_reason=request.model_intent.retry_reason,
@@ -258,7 +267,7 @@ class ToolGovernanceGateway:
             created_at=now,
             updated_at=now,
         )
-        adapter_authorization = getattr(self.legacy_adapter, "authorization", None)
+        adapter_authorization = getattr(self.execution_adapter, "authorization", None)
         if callable(adapter_authorization):
             replacement = adapter_authorization(action)
             if replacement is not None:
@@ -326,16 +335,23 @@ class ToolGovernanceGateway:
             )
 
         if authorization.requires_approval:
-            raw = self._execute_router(action)
-            if raw.status != "pending_approval":
-                self.actions.transition(action.id, "denied", expected_status="validated")
-                return self._error(
-                    "APPROVAL_ADAPTER_CONTRACT_VIOLATION",
-                    "The execution adapter did not stop before approval.",
-                    action_id=action.id,
-                )
             self.actions.transition(action.id, "pending_approval", expected_status="validated")
-            self._save_approval(action, raw)
+            self._save_approval(action)
+            if self.approval_pending_handler is not None:
+                self.approval_pending_handler(action)
+            raw = RawExecutionResult(
+                action_id=action.id,
+                status="pending_approval",
+                output={
+                    "ok": False,
+                    "status": "pending_approval",
+                    "action_id": action.id,
+                    "approval_required": True,
+                    "_defer_tool_result": True,
+                },
+                artifact_ids=[],
+                telemetry={"approval": "pending"},
+            )
             return self._map(action, raw)
 
         reservation = None
@@ -515,9 +531,8 @@ class ToolGovernanceGateway:
 
     @staticmethod
     def _artifact_reservation(action: GovernedAction) -> int:
-        # Current legacy execution/resource handlers publish at most one
-        # primary Artifact per call. Reserve it before I/O; settlement lowers
-        # the reservation to zero when a call produces no Artifact.
+        # Controlled execution/resource handlers publish at most one primary
+        # Artifact per call. Settlement releases this when no Artifact appears.
         return 1 if action.tool_class in {"resource_read", "execution"} else 0
 
     @staticmethod
@@ -571,20 +586,15 @@ class ToolGovernanceGateway:
             policy_snapshot_ids=snapshots,
         )
 
-    def _save_approval(self, action: GovernedAction, raw: RawExecutionResult) -> None:
-        legacy_action_id = str(raw.telemetry.get("legacy_action_id") or "")
-        expires_at = ""
-        if legacy_action_id:
-            expires_at = self.repository.legacy_approval_expiry(legacy_action_id) or ""
-        if not expires_at:
-            expires_at = (datetime.now(UTC) + timedelta(minutes=15)).isoformat()
+    def _save_approval(self, action: GovernedAction) -> None:
+        expires_at = (datetime.now(UTC) + timedelta(minutes=15)).isoformat()
         now = utc_now()
         approval = ApprovalRequest(
             id=f"approval_{action.id}",
             task_id=action.context.task_id,
             solver_id=action.context.solver_id,
             intent_id=action.context.intent_id,
-            action_id=legacy_action_id or action.id,
+            action_id=action.id,
             governed_action_id=action.id,
             reason=action.authorization.reason,
             risk=action.risk,
@@ -610,6 +620,10 @@ class ToolGovernanceGateway:
                 solver_id=approval.solver_id,
                 intent_id=approval.intent_id,
             )
+
+    def _approval_resolved(self, action: GovernedAction) -> None:
+        if self.approval_resolved_handler is not None:
+            self.approval_resolved_handler(action)
 
     def _publish(self, action, raw, observation) -> None:
         if self.events is None:
@@ -638,8 +652,8 @@ class ToolGovernanceGateway:
         if capability.startswith("workspace.") or capability == "input_materialize":
             relative = str(arguments.get("relative_path") or arguments.get("script_path") or "workspace")
             return f"workspace:{context.solver_id}:{relative}"
-        if capability.startswith("mcp:") or capability == "mcp.gateway":
-            return f"mcp:{capability}:{arguments.get('resource_key') or arguments.get('tool') or 'call'}"
+        if capability.startswith("mcp:"):
+            return capability
         return str(arguments.get("input_id") or arguments.get("artifact_id") or capability)
 
     @staticmethod
@@ -679,7 +693,7 @@ class ToolGovernanceGateway:
 
     @staticmethod
     def _lock_key(capability: str, target: str | None, arguments: dict[str, Any]) -> str:
-        if capability.startswith("mcp:") or capability == "mcp.gateway":
+        if capability.startswith("mcp:"):
             return target or f"mcp:{capability}"
         return target or f"capability:{capability}"
 

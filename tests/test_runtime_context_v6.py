@@ -4,15 +4,13 @@ import hashlib
 
 from tga.application.services.intervention_service import InterventionService
 from tga.domain.knowledge.items import KnowledgeItem
-from tga.domain.planning.global_plan import GlobalPlan
-from tga.domain.planning.intents import Intent
-from tga.domain.skills.models import SkillSnapshot, SolverSkillSnapshot, TaskCommonSkillSnapshot
+from tga.domain.skills.models import SkillSnapshot, TaskCommonSkillSnapshot
 from tga.domain.task.models import TGATask
 from tga.domain.task.spec import TaskDirective, TaskSpec
 from tga.infrastructure.persistence import PersistenceBundle
 from tga.runtime.agents.transcript import RepositorySolverTranscript
 from tga.runtime.context.context_builder import ContextBuilder
-from tga.runtime.agents.single_solver_adapter import SingleSolverProvisioner
+from tga.runtime.orchestration import TaskOrchestrator
 
 
 NOW = "2026-07-30T00:00:00Z"
@@ -46,6 +44,11 @@ def test_context_envelope_labels_selects_new_semantics_and_keeps_retrieval_empty
         bundle.tasks.save_task_spec(TaskSpec(
             task_id=task.id, objective=task.goal, instructions=[directive]
         ))
+        runtime_state = TaskOrchestrator(
+            task=task, repositories=bundle
+        ).bootstrap()
+        solver_id = runtime_state.supervisor_solver_id
+        assert solver_id is not None
         hint = InterventionService(bundle).record(
             task_id=task.id, kind="hint", content="An old note suggests /admin.",
             actor_id="user",
@@ -56,7 +59,7 @@ def test_context_envelope_labels_selects_new_semantics_and_keeps_retrieval_empty
         )
         rejected = bundle.tasks.list_hints(task.id)[-1].model_copy(
             update={
-                "status": "rejected", "reviewed_by_solver_id": "solver_main",
+                "status": "rejected", "reviewed_by_solver_id": solver_id,
                 "reviewed_at": NOW,
             }
         )
@@ -64,42 +67,28 @@ def test_context_envelope_labels_selects_new_semantics_and_keeps_retrieval_empty
         bundle.knowledge.add_knowledge(KnowledgeItem(
             id="knowledge_verified", task_id=task.id, scope="task", status="verified",
             kind="fact", content="The service identifies as version 1.",
-            human_source="operator", created_by_solver_id="solver_main", created_at=NOW,
+            human_source="operator", created_by_solver_id=solver_id, created_at=NOW,
         ))
         bundle.knowledge.add_knowledge(KnowledgeItem(
-            id="knowledge_local", task_id=task.id, scope="solver", target_id="solver_main",
+            id="knowledge_local", task_id=task.id, scope="solver", target_id=solver_id,
             status="candidate", kind="hypothesis", content="The login may be injectable.",
-            created_by_solver_id="solver_main", created_at=NOW,
+            created_by_solver_id=solver_id, created_at=NOW,
         ))
         bundle.knowledge.add_knowledge(KnowledgeItem(
             id="knowledge_other", task_id=task.id, scope="solver", target_id="solver_other",
             status="candidate", kind="hypothesis", content="Private to another solver.",
             created_by_solver_id="solver_other", created_at=NOW,
         ))
-        intent = Intent(
-            id="intent_1", task_id=task.id, title="Inspect", objective="Inspect target",
-            status="running", assigned_solver_id="solver_main", created_at=NOW, updated_at=NOW,
-        )
-        bundle.plans.save_global_plan(GlobalPlan(
-            id="plan_1", task_id=task.id, version=1, status="active", intents=[intent],
-            created_by_solver_id="solver_main", created_at=NOW, updated_at=NOW,
-        ))
-        SingleSolverProvisioner(bundle).ensure(task=task, solver_id="solver_main")
         common = TaskCommonSkillSnapshot(
             task_id=task.id, selector="test", skills=(_skill("common", "Common method"),),
             total_chars=len("Common method"), created_at=NOW,
         )
-        specialized = SolverSkillSnapshot(
-            task_id=task.id, solver_id="solver_main", solver_definition_id="task-supervisor",
-            selector="test", skills=(_skill("specialized", "Special method"),),
-            total_chars=len("Special method"), created_at=NOW,
-        )
         bundle.tasks.save_task_common_skill_snapshot(common)
-        bundle.solvers.save_solver_skill_snapshot(specialized)
+        assert bundle.solvers.get_solver_skill_snapshot(solver_id) is not None
 
         built = ContextBuilder(
             task=task,
-            solver_id="solver_main",
+            solver_id=solver_id,
             repositories=bundle,
             audit_messages=[
                 {"role": "system", "content": "system"},

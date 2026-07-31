@@ -14,8 +14,9 @@ from fastapi import APIRouter, HTTPException, Request
 
 from tga.contracts import SessionFile, TGATask
 from tga.inputs import InputLimits, SessionWorkspace, cleanup_expired_staged_inputs, detect_mime_type, media_kind_for, safe_original_name
+from tga.runtime.service import UnsupportedTaskSchemaError
 
-from apps.api.routes.support import _api_error, _run_root, _snapshot, _task_root
+from apps.api.routes.support import _api_error, _run_root, _runtime_queries, _task_root
 
 router = APIRouter(tags=["inputs"])
 
@@ -110,19 +111,19 @@ def delete_input_upload(asset_id: str) -> dict[str, Any]:
 
 @router.get("/tasks/{task_id}/inputs")
 def list_task_inputs(task_id: str) -> dict[str, Any]:
-    task = TGATask.model_validate(_snapshot(task_id)["task"])
+    task = _task(task_id)
     return task.input_manifest()
 
 
 @router.get("/tasks/{task_id}/inputs/{input_id}")
 def get_task_input(task_id: str, input_id: str) -> dict[str, Any]:
-    task = TGATask.model_validate(_snapshot(task_id)["task"])
+    task = _task(task_id)
     return _session_file(task, input_id).manifest_item()
 
 
 @router.get("/tasks/{task_id}/inputs/{input_id}/read")
 def read_task_input(task_id: str, input_id: str, offset: int = 0, limit: int = 16_384) -> dict[str, Any]:
-    task = TGATask.model_validate(_snapshot(task_id)["task"])
+    task = _task(task_id)
     try:
         return SessionWorkspace(_task_root(task_id)).read(_session_file(task, input_id), offset=offset, limit=limit)
     except KeyError as exc:
@@ -133,7 +134,7 @@ def read_task_input(task_id: str, input_id: str, offset: int = 0, limit: int = 1
 
 @router.get("/tasks/{task_id}/inputs/{input_id}/search")
 def search_task_input(task_id: str, input_id: str, query: str, limit: int = 20) -> dict[str, Any]:
-    task = TGATask.model_validate(_snapshot(task_id)["task"])
+    task = _task(task_id)
     try:
         return SessionWorkspace(_task_root(task_id)).search(_session_file(task, input_id), query=query, limit=limit)
     except KeyError as exc:
@@ -150,3 +151,17 @@ def _session_file(task: TGATask, input_id: str) -> SessionFile:
     if item is None:
         raise HTTPException(status_code=404, detail=_api_error("INPUT_NOT_FOUND", "input not found"))
     return item
+
+
+def _task(task_id: str) -> TGATask:
+    try:
+        return TGATask.model_validate(_runtime_queries().task_definition(task_id))
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="task not found") from exc
+    except UnsupportedTaskSchemaError as exc:
+        raise HTTPException(status_code=409, detail={
+            "code": exc.code,
+            "message": str(exc),
+            "schema_version": exc.schema_version,
+            "required_schema_version": 6,
+        }) from exc

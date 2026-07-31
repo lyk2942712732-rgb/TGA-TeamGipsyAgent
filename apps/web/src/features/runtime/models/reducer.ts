@@ -1,4 +1,3 @@
-import { reduceLegacyV5Event } from "./legacy-reducer";
 import type {
   RuntimeApproval,
   RuntimeEvidenceClaim,
@@ -23,10 +22,14 @@ export function reduceRuntimeEvent(state: RuntimeStore, event: RuntimeEvent): Ru
   if (event.seq <= state.latestSeq || state.eventsBySeq[event.seq]) return { state, gap: false, needsRefresh: false };
   if (event.seq > state.latestSeq + 1) return { state, gap: true, needsRefresh: false };
 
-  let next = state.legacy ? reduceLegacyV5Event(state, event) : reduceV6EntityEvent(state, event);
+  let next = reduceV6EntityEvent(state, event);
   const eventsBySeq = { ...next.eventsBySeq, [event.seq]: event };
-  const sequences = Object.keys(eventsBySeq).map(Number).sort((a, b) => a - b);
-  for (const seq of sequences.slice(0, Math.max(0, sequences.length - 500))) delete eventsBySeq[seq];
+  const expiredSeq = event.seq - 500;
+  if (expiredSeq > 0) delete eventsBySeq[expiredSeq];
+  if (Object.keys(eventsBySeq).length > 500) {
+    const oldest = Math.min(...Object.keys(eventsBySeq).map(Number));
+    delete eventsBySeq[oldest];
+  }
   next = { ...next, eventsBySeq, latestSeq: event.seq };
   return {
     state: next,
@@ -171,6 +174,7 @@ function reduceV6EntityEvent(state: RuntimeStore, event: RuntimeEvent): RuntimeS
   if (event.type === "TASK_COMPLETION_ACCEPTED") next = { ...next, session: { ...next.session, status: "completed" }, team: { ...next.team, status: "completed" } };
   if (event.type === "ORCHESTRATOR_STARTED") next = { ...next, session: { ...next.session, status: "running" }, team: { ...next.team, status: "running" } };
 
+  if (next === state) return state;
   const activeSolverCount = Object.values(next.solversById).filter((solver) => ["created", "queued", "ready", "running", "waiting", "awaiting_approval"].includes(solver.status)).length;
   return { ...next, session: { ...next.session, activeSolverCount }, team: { ...next.team, activeSolverCount, solverIds: Object.keys(next.solversById) } };
 }

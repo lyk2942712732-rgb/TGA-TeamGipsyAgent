@@ -12,10 +12,4 @@ describe("Phase 11 replay projection", () => {
     expect(Object.keys(beforeApproval.approvalsById)).toHaveLength(0);
     expect(afterApproval.approvalsById["approval-write"]).toMatchObject({ actionId: "action-write", status: "pending" });
   });
-
-  it("supports the v5 legacy reducer without enabling mutations", () => {
-    const legacy = workbenchStore();
-    const value = { ...legacy, schemaVersion: 5 as const, legacy: true };
-    expect(replayStoreAtSeq(value, 2).legacy).toBe(true);
-  });
 });

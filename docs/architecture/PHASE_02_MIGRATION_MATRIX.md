@@ -11,6 +11,5 @@
 | legacy `Finding.evidence_artifact_id` | `EvidenceClaim` plus new `Finding` | Requires `legacy_whole_artifact` locator because offsets were not persisted | Claim and Finding always import as `candidate`, even if legacy status was confirmed | EvidenceClaim/Finding tables in phase 4 |
 | legacy Finding without artifact ID | candidate new `Finding` without claim | Conclusion text preserved but unsupported | Cannot be confirmed automatically | Review workflow and phase 4 storage |
 
-All converters in `tga/domain/legacy/converters.py` are pure and add
+All converters in `tga/migrations/converters.py` are pure and add
 `legacy_import=True` plus provenance. They do not read or write `EvidenceStore`.
-

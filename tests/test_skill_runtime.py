@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from types import SimpleNamespace
+from dataclasses import replace
 import hashlib
 import pytest
 
@@ -18,6 +19,10 @@ from tga.rag.retrieval import RAGQuery
 from tga.runtime.prompts import build_agent_system_prompt
 from tga.runtime.service import TaskRuntimeService
 from tga.runtime.task_creation import CreateTaskCommand, TaskCreationService
+from tga.domain.skills.models import (
+    SkillSnapshot as CurrentSkillSnapshot,
+    TaskCommonSkillSnapshot,
+)
 from tga.skills.loader import Skill
 from tga.skills.models import SkillBundleSnapshot, SkillSnapshot
 from tga.skills.retrieval import RetrievedSkill, SkillRetrievalQuery
@@ -155,7 +160,7 @@ def test_task_creation_freezes_custom_skill_and_injects_body_into_system_prompt(
 
     execution_policy = ExecutionPolicy()
     execution_policy.network.access = "public_internet"
-    created = service.create(CreateTaskCommand(
+    command = CreateTaskCommand(
         task_id="skill_runtime_task",
         name="Skill runtime task",
         mode="ctf",
@@ -165,12 +170,15 @@ def test_task_creation_freezes_custom_skill_and_injects_body_into_system_prompt(
         file_ids=[],
         execution_policy=execution_policy,
         selected_skill_names=("custom-runtime-skill",),
-    ))
+    )
+    preflight = service.preflight(command)
+    created = service.create(replace(command, preflight_fingerprint=preflight.fingerprint))
 
     store = EvidenceStore(tmp_path / "runs" / created.task_id / "evidence.db")
     try:
         task = store.get_task(created.task_id)
-        assert task is not None and task.skill_bundle_snapshot is None
+        assert task is not None
+        assert "skill_bundle_snapshot" not in task.model_dump(mode="json")
         common = PersistenceBundle(store).tasks.get_task_common_skill_snapshot(created.task_id)
         assert common is not None and common.legacy_import is False
         selected = next(item for item in common.skills if item.name == "custom-runtime-skill")
@@ -210,29 +218,31 @@ def test_skill_bundle_is_rendered_in_first_system_message_contract() -> None:
         mode="ctf",
         goal="solve",
         session_input={"prompt": "solve"},
-        skill_bundle_snapshot=SkillBundleSnapshot(
-            selector="test-selector",
-            skills=[SkillSnapshot(
-                name="prompt-skill",
-                version="1",
-                origin="custom",
-                modes=["ctf"],
-                capabilities=[],
-                tags=[],
-                body=body,
-                content_sha256="a" * 64,
-                score=100,
-                selection_reasons=["test"],
-            )],
-            total_chars=len(body),
-        ),
+    )
+    common = TaskCommonSkillSnapshot(
+        task_id=task.id,
+        selector="test-selector",
+        skills=(CurrentSkillSnapshot(
+            name="prompt-skill",
+            version="1",
+            origin="custom",
+            modes=("ctf",),
+            body=body,
+            content_sha256=hashlib.sha256(body.encode()).hexdigest(),
+            selection_reasons=("test",),
+        ),),
+        total_chars=len(body),
+        created_at="2026-07-30T00:00:00Z",
     )
 
-    system_message = {"role": "system", "content": build_agent_system_prompt(task)}
+    system_message = {
+        "role": "system",
+        "content": build_agent_system_prompt(task, task_common=common),
+    }
 
     assert system_message["role"] == "system"
     assert body in system_message["content"]
-    assert "never expand target authorization" in system_message["content"]
+    assert "cannot grant tools, expand ExecutionPolicy" in system_message["content"]
 
 
 def test_null_rag_retriever_is_an_explicit_replaceable_noop() -> None:

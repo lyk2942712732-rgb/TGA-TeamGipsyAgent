@@ -6,15 +6,15 @@ from pathlib import Path
 
 ROOT = Path(__file__).parents[1]
 REQUIRED_DOCUMENTS = {
-    "README.md": ("TaskOrchestrator", "v5 read-only", "SQLite"),
+    "README.md": ("TaskOrchestrator", "offline migration", "SQLite"),
     "docs/architecture/OPERATIONS.md": ("pause", "backup", "SSE"),
     "docs/architecture/SECURITY_MODEL.md": ("Hint", "Skill", "RAG", "Approval"),
     "docs/architecture/RECOVERY.md": ("lease", "replay", "rollback"),
     "docs/architecture/RAG.md": ("global", "workspace", "task", "solver"),
     "docs/architecture/FRONTEND_WORKBENCH.md": ("Team Explorer", "Intent", "Replay"),
-    "docs/architecture/LEGACY_CLEANUP_REPORT.md": ("MemoryEntry", "StrategyCard", "deprecated"),
+    "docs/architecture/LEGACY_CLEANUP_REPORT.md": ("MemoryEntry", "StrategyCard", "migration-only"),
     "docs/performance/BASELINE.md": ("Snapshot", "SSE", "10k"),
-    "docs/RELEASE_NOTES_V6.md": ("schema v6", "compatibility", "verification"),
+    "docs/RELEASE_NOTES_V6.md": ("schema v6", "Cutover", "verification"),
 }
 
 

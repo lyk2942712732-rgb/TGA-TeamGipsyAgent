@@ -8,9 +8,8 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 
 from tga.contracts import TGATask
-from tga.runtime.completion_validators import finish_tool_schema
+from tga.runtime.completion_validators import task_completion_tool_schema
 from tga.runtime.tooling.requests import ToolClass
-from tga.tools.mcp_gateway import TGA_MCP_TOOL, gateway_definition
 
 
 class ToolCatalogEntry(BaseModel):
@@ -169,7 +168,7 @@ class RuntimeToolCatalog(BaseModel):
         control_schemas["review_finding"] = control_schemas["review_evidence"]
         for name, (description, roles) in controls.items():
             parameters = (
-                finish_tool_schema(task.mode)
+                task_completion_tool_schema(task.mode)
                 if name == "propose_task_completion"
                 else control_schemas.get(name, generic_schema)
             )
@@ -230,17 +229,6 @@ class RuntimeToolCatalog(BaseModel):
         ))
 
         route_values = tuple(getattr(mcp_snapshot, "routes", ()) or ())
-        if route_values:
-            gateway = gateway_definition()["function"]
-            values.append(ToolCatalogEntry(
-                provider_tool_name=TGA_MCP_TOOL,
-                capability="mcp.gateway",
-                tool_class="execution",
-                description=gateway["description"],
-                parameters=gateway["parameters"],
-                risk="active",
-                specialties=("web", "network", "binary", "source", "forensics", "validation", "recon"),
-            ))
         for route in route_values:
             values.append(ToolCatalogEntry(
                 provider_tool_name=route.provider_name,

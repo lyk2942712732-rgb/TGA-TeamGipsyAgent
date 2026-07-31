@@ -10,26 +10,21 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urlparse
 from uuid import uuid4
 
-from tga.contracts import ActionEffect, ActionResult, ActionSpec, ArtifactRecord, TGAError, TGATask
+from tga.contracts import ActionResult, ActionSpec, ArtifactRecord, TGAError, TGATask
 from tga.evidence.artifacts import ArtifactStore
 from tga.evidence.store import EvidenceStore
 from tga.inputs import SessionWorkspace, task_artifact_root
-from tga.runtime.completion_validators import CompletionValidationContext, FinishSubmission, validator_for
-from tga.runtime.coordinator import SessionCoordinator, SessionOutcome
-from tga.runtime.handler_services import ActionRecorder, ArtifactService, ObserverExecutionCoordinator, StrategyResolver
+from tga.runtime.coordinator import SessionOutcome
+from tga.runtime.handler_services import ArtifactService, ObserverExecutionCoordinator
 from tga.runtime.tool_handlers.plan_knowledge import PlanKnowledgeHandler
 from tga.runtime.tool_handlers.task_completion import TaskCompletionHandler
-from tga.runtime.tooling.governance.approvals import SolverApprovalCoordinator
 from tga.runtime.observer import DeterministicObserver, ObserverCoordinator
-from tga.runtime.strategy import StrategyService
-from tga.tools.mcp_gateway import MCPGateway, TGA_MCP_TOOL
 from tga.tools.mcp_manager import MCPCallOutcome, MCPExecutionError, MCPManager
 from tga.tools.mcp_policy import redact_sensitive
 from tga.tools.mcp_registry import MCPCatalogSnapshot, MCPToolRoute
-from tga.tools.tool_policy import is_allowed
 
 
 def _origin(value: str) -> str:
@@ -71,27 +66,6 @@ def safe_arguments(arguments: dict[str, Any]) -> dict[str, Any]:
         else:
             safe[key] = value
     return safe
-
-
-def _effect_from_governance(governance: dict[str, Any]) -> ActionEffect:
-    raw = governance.get("effect")
-    if raw is None:
-        return ActionEffect()
-    if not isinstance(raw, dict):
-        raise ValueError("_tga.effect must be an object")
-    return ActionEffect.model_validate(raw)
-
-
-def _host_action_fields(governance: dict[str, Any]) -> dict[str, Any]:
-    raw = governance.get("_host_action_context")
-    context = raw if isinstance(raw, dict) else {}
-    return {
-        "intent_id": context.get("intent_id"),
-        "local_plan_step_id": context.get("local_plan_step_id"),
-        "execution_policy_snapshot_id": context.get("execution_policy_snapshot_id"),
-        "solver_tool_policy_snapshot_id": context.get("solver_tool_policy_snapshot_id"),
-        "governed_action_id": governance.get("_governed_action_id"),
-    }
 
 
 def safe_tool_call_arguments(value: Any) -> dict[str, Any]:
@@ -138,7 +112,6 @@ class HandlerState:
         self.tool_by_name = tool_by_name
         self.remote_flag_verifier = remote_flag_verifier
         self.allowed_resource_ids = allowed_resource_ids
-        self.strategies = StrategyService(store)
         self.observer = ObserverCoordinator(observer=DeterministicObserver(), store=store, cooldown_seconds=0)
         self.observer_directive = ""
         self.artifact_retrievals = 0
@@ -172,7 +145,7 @@ class HandlerRuntime:
         for name in (
             "task", "store", "run_root", "client", "executor", "solver_id", "workspace",
             "mcp_manager", "registry", "tool_by_name", "remote_flag_verifier",
-            "strategies", "observer",
+            "observer",
             "plan_knowledge",
         ):
             setattr(self, name, getattr(state, name))
@@ -239,319 +212,30 @@ class HandlerRuntime:
         return "TGA Process"
 
 
-class LegacyCompletionService(HandlerRuntime):
-    def __init__(self, state: HandlerState, artifacts: ArtifactService) -> None:
-        super().__init__(state)
-        self.artifacts = artifacts
-
-    def handle(self, *, arguments: dict[str, Any]) -> dict[str, Any]:
-        return self._handle_finish_submission(arguments)
-
-    def _handle_finish_submission(self, arguments: dict[str, Any]) -> dict[str, Any]:
-        session = self.store.get_session(self.task.id)
-        turn = session.turn_count if session else 0
-        raw_evidence = arguments.get("evidence_artifact_ids")
-        cited = [str(item) for item in raw_evidence] if isinstance(raw_evidence, list) else []
-        raw_claims = arguments.get("claims")
-        if isinstance(raw_claims, list):
-            cited.extend(
-                str(artifact_id)
-                for claim in raw_claims
-                if isinstance(claim, dict) and isinstance(claim.get("evidence_artifact_ids"), list)
-                for artifact_id in claim["evidence_artifact_ids"]
-            )
-        cited = list(dict.fromkeys(cited))
-        self.store.append_agent_event(
-            self.task.id,
-            "FINISH_ATTEMPTED",
-            self._lifecycle_event_payload(
-                turn=turn, code="VALIDATION_PENDING", missing=[],
-                evidence_artifact_ids=cited, terminal=False,
-            ),
-            solver_id=self.solver_id,
-        )
-        try:
-            if self.task.mode != "ctf" and "flag" in arguments:
-                raise ValueError("flag is not a valid finish_session field outside CTF mode")
-            submission = FinishSubmission.model_validate(arguments)
-        except Exception as exc:
-            result = {
-                "accepted": False,
-                "code": "INVALID_FINISH_SUBMISSION",
-                "message": self._safe_model_content(str(exc))[:1200],
-                "missing": ["valid finish_session arguments"],
-                "evidence_artifact_ids": cited,
-                "retryable": True,
-                "details": {},
-            }
-            self.last_finish_rejection = result
-            self.store.append_agent_event(
-                self.task.id,
-                "FINISH_REJECTED",
-                self._lifecycle_event_payload(
-                    turn=turn, code=result["code"], missing=result["missing"],
-                    evidence_artifact_ids=cited, terminal=False,
-                ),
-                solver_id=self.solver_id,
-            )
-            return {"ok": False, "terminal": False, "validation": result, **result}
-
-        result_model = validator_for(self.task.mode).validate(
-            context=CompletionValidationContext(
-                task=self.task, solver_id=self.solver_id, store=self.store,
-                artifact_text=self.artifacts.text,
-                remote_flag_verifier=self.remote_flag_verifier,
-            ),
-            submission=submission,
-        )
-        result = result_model.model_dump(mode="json")
-        event_payload = self._lifecycle_event_payload(
-            turn=turn, code=result_model.code, missing=result_model.missing,
-            evidence_artifact_ids=result_model.evidence_artifact_ids,
-            terminal=result_model.accepted,
-        )
-        if not result_model.accepted:
-            self.last_finish_rejection = result
-            self.store.append_agent_event(self.task.id, "FINISH_REJECTED", event_payload, solver_id=self.solver_id)
-            return {"ok": False, "terminal": False, "validation": result, **result}
-
-        self.last_finish_rejection = None
-        proof_id = result_model.evidence_artifact_ids[0] if result_model.evidence_artifact_ids else ""
-        self.terminal_outcome = SessionOutcome(
-            status="completed",
-            stop_reason="finish_accepted",
-            turn_count=turn,
-            summary=self._safe_model_content(submission.summary),
-            evidence_artifact_ids=result_model.evidence_artifact_ids,
-            details={
-                "coverage": [self._safe_model_content(item) for item in submission.coverage],
-                "limitations": [self._safe_model_content(item) for item in submission.limitations],
-                "claims": [item.model_dump(mode="json") for item in submission.claims],
-                "structured_result": {"flag": submission.flag, "proof_artifact_id": proof_id, "verification": result_model.details.get("verification") or "completion_validator"} if submission.flag else {},
-                "validator_code": result_model.code,
-                "terminal": True,
-            },
-        )
-        return {"ok": True, "terminal": True, "status": "completed", "validation": result, **result}
-
-
-# Import compatibility only. New handler composition uses TaskCompletionHandler.
-CompletionService = LegacyCompletionService
-
-
 class CapabilityToolHandler(HandlerRuntime):
     def __init__(
         self,
         state: HandlerState,
         *,
-        recorder: ActionRecorder,
         artifacts: ArtifactService,
         observer: ObserverExecutionCoordinator,
-        strategy: StrategyResolver,
     ) -> None:
         super().__init__(state)
-        self.recorder = recorder
         self.artifacts = artifacts
         self.observer_service = observer
-        self.strategy = strategy
 
-    def handle(self, **kwargs: Any) -> dict[str, Any]:
-        return self._handle_capability_dispatch(**kwargs)
-
-    def _handle_capability_dispatch(self, *, call: dict[str, Any], tool_name: str, arguments: dict[str, Any], governance: dict[str, Any]) -> dict[str, Any]:
-        name = tool_name
-        capability = self.tool_by_name.get(name)
-        if capability is None:
-            return {"ok": False, "error": f"unknown tool: {name}"}
-        registered = self.registry.get(capability)
-        if registered is None:
-            return {"ok": False, "error": f"capability unavailable: {capability}"}
-        try:
-            self.registry.validate(capability, arguments)
-        except Exception as exc:
-            return {"ok": False, "error": f"invalid {capability} arguments: {str(exc)[:800]}"}
-
-        action_id = f"act_{uuid4().hex[:12]}"
-        risk = registered.spec.risk
-        if capability == "http.request" and str(arguments.get("method") or "GET").upper() != "GET":
-            risk = "active"
-        card, step = self.strategy.resolve(governance)
-        rationale = str(governance.get("rationale") or "").strip()[:500]
-        expected_outcome = str(governance.get("expected_outcome") or "").strip()[:500]
-        retry_reason = str(governance.get("retry_reason") or "").strip()[:500]
-        alternative_analysis = str(governance.get("alternative_analysis") or "").strip()[:500]
-        try:
-            effect = _effect_from_governance(governance)
-        except ValueError as exc:
-            return {"ok": False, "status": "blocked", "error": {"code": "INVALID_EFFECT", "message": str(exc), "retryable": False}}
-        if step is not None:
-            expected_outcome = expected_outcome or step.success_marker or step.expected_request
-            rationale = rationale or f"Validate strategy step: {step.title}"
-        if not rationale:
-            rationale = self._default_rationale(capability, arguments, expected_outcome)
-        try:
-            input_ref, action_target, actual_target = self._action_resource(capability, arguments)
-        except ValueError as exc:
-            return {"ok": False, "status": "blocked", "error": {"code": "TARGET_REF_INVALID", "message": str(exc), "retryable": False}}
-        authorization = is_allowed(
-            tool=capability,
-            target=actual_target,
-            task=self.task,
-            risk=risk,
-            action=str(arguments.get("method") or capability),
-            sandboxed=self.task.execution_policy.local_compute.mode == "isolated",
-        )
-        high_side_effect = capability == "http.request" and str(arguments.get("method") or "GET").upper() in {"PUT", "PATCH", "DELETE"}
-        if high_side_effect and (
-            effect.scope != "target"
-            or effect.persistence != "persistent"
-            or effect.description == ActionEffect().description
-            or not alternative_analysis
-        ):
-            self.store.append_agent_event(
-                self.task.id,
-                "ACTION_VALIDATION_FAILED",
-                {"capability": capability, "reason": "high_side_effect_analysis_required"},
-                solver_id=self.solver_id,
-            )
-            return {
-                "ok": False,
-                "error": {"code": "HIGH_IMPACT_EFFECT_REQUIRED", "message": "persistent-state HTTP actions require _tga.effect and _tga.alternative_analysis"},
-            }
-        action = ActionSpec(
-            id=action_id,
-            task_id=self.task.id,
-            solver_id=self.solver_id,
-            **_host_action_fields(governance),
-            kind=registered.spec.kind,
-            capability=capability,
-            target=action_target,
-            arguments=arguments,
-            rationale=rationale,
-            risk=risk,
-            strategy_card_id=card.id if card else None,
-            strategy_step_id=step.id if step else None,
-            expected_outcome=expected_outcome,
-            retry_reason=retry_reason,
-            alternative_analysis=alternative_analysis,
-            effect=effect,
-            input_id=input_ref.id if input_ref else None,
-            target_ref=input_ref.id if input_ref else None,
-            actual_target=actual_target,
-            authorization={
-                **authorization.model_dump(mode="json"),
-                "tool_call_id": str(call.get("id") or ""),
-                "provider_tool_name": name,
-            },
-            provenance=input_ref.provenance.model_dump(mode="json") if input_ref else {},
-        )
-        if not authorization.allowed:
-            if authorization.code == "APPROVAL_REQUIRED":
-                approval_expires_at = self.recorder.pending(action)
-                with self.store.transaction():
-                    self.store.append_agent_event(
-                        self.task.id,
-                        "ACTION_AWAITING_APPROVAL",
-                        {
-                            "action_id": action.id,
-                            "capability": action.capability,
-                            "target": action.actual_target or action.target,
-                            "risk": action.risk,
-                            "rationale": action.rationale,
-                            "effect": action.effect.model_dump(mode="json"),
-                            "alternative_analysis": action.alternative_analysis,
-                            "approval_expires_at": approval_expires_at,
-                            "authorization": action.authorization,
-                        },
-                        solver_id=self.solver_id,
-                    )
-                    if self.task.schema_version == 6 and action.governed_action_id:
-                        SolverApprovalCoordinator(self.store).await_approval(
-                            solver_id=self.solver_id,
-                            intent_id=action.intent_id,
-                        )
-                    else:
-                        SessionCoordinator(self.store).await_approval(
-                            task_id=self.task.id,
-                            action_id=action.id,
-                        )
-                return {
-                    "ok": False,
-                    "status": "pending_approval",
-                    "action_id": action.id,
-                    "approval_required": True,
-                    "_defer_tool_result": True,
-                }
-            blocked = ActionResult(
-                action_id=action.id, task_id=self.task.id, solver_id=self.solver_id,
-                status="blocked", summary=authorization.reason,
-                error=TGAError(code=authorization.code or "POLICY_DENIED", message=authorization.reason, retryable=authorization.retryable),
-            )
-            self.recorder.block(action, blocked)
-            self.store.append_agent_event(
-                self.task.id,
-                "MANAGER_DECISION",
-                {"action_id": action.id, "decision": "denied", "input_id": action.input_id, "actual_target": action.actual_target, "authorization": action.authorization},
-                solver_id=self.solver_id,
-            )
-            return {"ok": False, "status": "blocked", "error": blocked.error.model_dump(mode="json"), "authorization": action.authorization}
-        repeat = self.recorder.semantic_repeat(action)
-        if repeat and not retry_reason:
-            blocked = ActionResult(
-                action_id=action.id,
-                task_id=self.task.id,
-                solver_id=self.solver_id,
-                status="blocked",
-                summary="semantic repeat requires a reason tied to new evidence, changed parameters, or explicit verification",
-                error=TGAError(code="SEMANTIC_REPEAT_REQUIRES_REASON", message="retry_reason is required for an unchanged action"),
-            )
-            self.recorder.block(action, blocked)
-            self.store.append_agent_event(
-                self.task.id,
-                "SEMANTIC_REPEAT_BLOCKED",
-                {"action_id": action.id, "previous_action_id": repeat, "strategy_step_id": action.strategy_step_id},
-                solver_id=self.solver_id,
-            )
-            self.observer_directive = "This semantic action repeats an existing result. Add a retry reason and a new evidence or validation purpose."
-            return {"ok": False, "status": "blocked", "error": blocked.error.model_dump(mode="json")}
-        return self._execute_action(
-            action=action,
-            call_id=str(call.get("id") or ""),
-            provider_tool_name=name,
-            start=True,
-        )
-
-    def execute_approved(self, action: ActionSpec) -> dict[str, Any]:
-        action = action.model_copy(update={
-            "authorization": {
-                **action.authorization,
-                "approved_action_id": action.id,
-            },
-        })
-        return self._execute_action(
-            action=action,
-            call_id=str(action.authorization.get("tool_call_id") or ""),
-            provider_tool_name=str(action.authorization.get("provider_tool_name") or action.capability),
-            start=False,
-        )
-
-    def _execute_action(
-        self,
-        *,
-        action: ActionSpec,
-        call_id: str,
-        provider_tool_name: str,
-        start: bool,
-    ) -> dict[str, Any]:
+    def execute_governed(self, action: ActionSpec) -> dict[str, Any]:
+        if action.governed_action_id != action.id:
+            raise ValueError("Capability execution requires its governed Action identity")
         capability = action.capability
         arguments = action.arguments
+        call_id = str(action.authorization.get("tool_call_id") or "")
+        provider_tool_name = str(
+            action.authorization.get("provider_tool_name") or capability
+        )
         registered = self.registry.get(capability)
         if registered is None:
-            raise ValueError(f"persisted capability is unavailable: {capability}")
-        if start:
-            self.recorder.start(action)
-        else:
-            self.recorder.resume_approved(action)
+            raise ValueError(f"governed capability is unavailable: {capability}")
         self.store.append_agent_event(
             self.task.id,
             "MANAGER_DECISION",
@@ -594,9 +278,7 @@ class CapabilityToolHandler(HandlerRuntime):
                 summary=f"tool raised: {str(exc)[:800]}",
             )
         with self.store.transaction():
-            self.recorder.finish(action, result)
             excerpts: list[dict[str, str]] = []
-            new_indexes = []
             for artifact_id in result.artifact_ids:
                 artifact = self.artifacts.register(
                     artifact_id, capability, action.actual_target or action.target,
@@ -605,39 +287,8 @@ class CapabilityToolHandler(HandlerRuntime):
                 if artifact is None:
                     continue
                 self.last_artifact_id = artifact.id
-                index = self.artifacts.index(artifact)
-                if index is not None:
-                    new_indexes.append(index)
-                    self.artifacts.attach_strategy_source(action=action, artifact=artifact, index=index)
+                self.artifacts.index(artifact)
                 excerpts.append({"artifact_id": artifact.id, "content": self.artifacts.excerpt(artifact)})
-            expected_marker_found = self.artifacts.expected_marker_found(result)
-            updated_card = self.strategies.record_action(
-                card_id=action.strategy_card_id,
-                step_id=action.strategy_step_id,
-                action_id=action.id,
-                artifact_ids=result.artifact_ids,
-                succeeded=result.status == "succeeded",
-                summary=result.summary,
-                expected_marker_found=expected_marker_found,
-            ) if self.task.schema_version < 6 else None
-            if updated_card is not None:
-                step_status = next(
-                    (item.status for item in updated_card.steps if item.id == action.strategy_step_id), "pending"
-                )
-                self.store.append_agent_event(
-                    self.task.id,
-                    "STRATEGY_STEP_UPDATED",
-                    {
-                        "strategy_card_id": updated_card.id,
-                        "strategy_step_id": action.strategy_step_id,
-                        "status": step_status,
-                        "card_status": updated_card.status,
-                        "active_step_id": updated_card.active_step_id,
-                        "action_id": action.id,
-                        "artifact_ids": result.artifact_ids,
-                    },
-                    solver_id=self.solver_id,
-                )
             for candidate in result.candidate_flags:
                 self.store.append_agent_event(
                     self.task.id,
@@ -650,21 +301,14 @@ class CapabilityToolHandler(HandlerRuntime):
                     continue
                 evidence_id = str(finding.evidence_artifact_id or "")
                 evidence = self.store.get_artifact(evidence_id) if evidence_id else None
-                may_confirm_legacy = self.task.schema_version < 6
                 persisted = finding.model_copy(update={
-                    "status": "confirmed" if (
-                        may_confirm_legacy
-                        and evidence is not None
-                        and evidence.task_id == self.task.id
-                    ) else "candidate",
+                    "status": "candidate",
                     "evidence_artifact_id": evidence_id or None,
                 })
                 self.store.add_candidate_finding(persisted)
-                if persisted.status == "confirmed" and evidence_id:
-                    self.store.confirm_finding(persisted.id, evidence_id)
                 self.store.append_agent_event(
                     self.task.id,
-                    "FINDING_CONFIRMED" if persisted.status == "confirmed" else "FINDING_CANDIDATE",
+                    "FINDING_CANDIDATE",
                     {
                         "finding_id": persisted.id,
                         "title": persisted.title,
@@ -728,27 +372,6 @@ class CapabilityToolHandler(HandlerRuntime):
     def _execution_task(self, arguments: dict[str, Any]) -> TGATask:
         # Capabilities enforce scope, risk, TLS, and rate limits against this task.
         return self.task
-    def _action_resource(self, capability: str, arguments: dict[str, Any]):
-        requested_id = str(arguments.get("input_id") or "")
-        if capability == "http.request":
-            requested_url = str(arguments.get("url") or "")
-            base = self.task.task_entry_url or requested_url
-            if not base:
-                raise ValueError("HTTP request requires an absolute URL or task_entry_url")
-            actual = requested_url if requested_url.startswith(("http://", "https://")) else urljoin(base.rstrip("/") + "/", str(arguments.get("path") or ""))
-            return None, base, actual
-        return None, self.task.id, self.task.id
-    @staticmethod
-    def _default_rationale(capability: str, arguments: dict[str, Any], expected: str) -> str:
-        if capability == "http.request":
-            method = str(arguments.get("method") or "GET").upper()
-            destination = str(arguments.get("path") or arguments.get("url") or "authorized target")
-            base = f"{method} {destination} to collect evidence"
-        elif capability == "artifact.inspect":
-            base = f"Retrieve a bounded segment from {arguments.get('artifact_id') or 'an Artifact'}"
-        else:
-            base = f"Use {capability} to advance the active strategy step"
-        return (base + (f"; expected: {expected}" if expected else ""))[:500]
 
 
 class InputToolHandler(HandlerRuntime):
@@ -756,26 +379,17 @@ class InputToolHandler(HandlerRuntime):
         self,
         state: HandlerState,
         *,
-        recorder: ActionRecorder,
         artifacts: ArtifactService,
-        strategy: StrategyResolver,
     ) -> None:
         super().__init__(state)
-        self.recorder = recorder
         self.artifacts = artifacts
-        self.strategy = strategy
 
-    def handle(self, **kwargs: Any) -> dict[str, Any]:
-        return self._handle_input_tool(**kwargs)
-
-    def _handle_input_tool(
-        self,
-        *,
-        call: dict[str, Any],
-        name: str,
-        arguments: dict[str, Any],
-        governance: dict[str, Any],
-    ) -> dict[str, Any]:
+    def execute_governed(self, action: ActionSpec) -> dict[str, Any]:
+        if action.governed_action_id != action.id:
+            raise ValueError("Input execution requires its governed Action identity")
+        name = action.capability
+        arguments = action.arguments
+        call_id = str(action.authorization.get("tool_call_id") or "")
         files = [
             item for item in self.task.session_input.files
             if self.state.allowed_resource_ids is None
@@ -783,60 +397,10 @@ class InputToolHandler(HandlerRuntime):
         ]
         input_id = str(arguments.get("input_id") or "")
         item = next((candidate for candidate in files if candidate.id == input_id), None) if input_id else None
-        card, step = self.strategy.resolve(governance)
-        action = ActionSpec(
-            id=f"act_{uuid4().hex[:12]}",
-            task_id=self.task.id,
-            solver_id=self.solver_id,
-            **_host_action_fields(governance),
-            kind="tool",
-            capability=name,
-            target=item.container_path if item else self.task.id,
-            arguments=arguments,
-            rationale=(
-                str(governance.get("rationale") or "").strip()
-                or (f"Read immutable task input {input_id}" if input_id else "Inspect the immutable Session input manifest")
-            )[:500],
-            risk="passive",
-            strategy_card_id=card.id if card else None,
-            strategy_step_id=step.id if step else None,
-            expected_outcome=(
-                str(governance.get("expected_outcome") or "").strip()
-                or (step.success_marker if step else "")
-            )[:500],
-            retry_reason=str(governance.get("retry_reason") or "").strip()[:500],
-            input_id=input_id or None,
-            target_ref=input_id or None,
-            actual_target=item.container_path if item else self.task.id,
-            authorization={
-                "allowed": name == "input_list" or item is not None,
-                "code": "TASK_INPUT_OWNED" if name == "input_list" or item is not None else "INPUT_NOT_FOUND",
-                "reason": "input belongs to this Session manifest" if item is not None else "input_id is not present in this Session manifest",
-                "retryable": False,
-            },
-            provenance=item.provenance.model_dump(mode="json") if item else {},
-        )
         if name != "input_list" and item is None:
-            return self._block_missing_input(action=action, call=call, name=name, input_id=input_id)
-        repeat = self.recorder.semantic_repeat(action)
-        if repeat and not action.retry_reason:
-            blocked = ActionResult(
-                action_id=action.id,
-                task_id=self.task.id,
-                solver_id=self.solver_id,
-                status="blocked",
-                summary="semantic repeat requires an explicit retry reason",
-                error=TGAError(code="SEMANTIC_REPEAT_REQUIRES_REASON", message="retry_reason is required for an unchanged input action"),
+            return self._missing_input(
+                action=action, call_id=call_id, name=name, input_id=input_id
             )
-            self.recorder.block(action, blocked)
-            self.store.append_agent_event(
-                self.task.id,
-                "SEMANTIC_REPEAT_BLOCKED",
-                {"action_id": action.id, "previous_action_id": repeat, "strategy_step_id": action.strategy_step_id},
-                solver_id=self.solver_id,
-            )
-            return {"ok": False, "status": "blocked", "error": blocked.error.model_dump(mode="json")}
-        self.recorder.start(action)
         self.store.append_agent_event(
             self.task.id,
             "MANAGER_DECISION",
@@ -858,7 +422,7 @@ class InputToolHandler(HandlerRuntime):
             self.task.id,
             "TOOL_EXECUTION_START",
             {
-                "tool_call_id": call.get("id"),
+                "tool_call_id": call_id,
                 "action_id": action.id,
                 "tool_name": name,
                 "arguments": self._safe_arguments(arguments),
@@ -954,7 +518,6 @@ class InputToolHandler(HandlerRuntime):
                         },
                         solver_id=self.solver_id,
                     )
-                self.recorder.finish(action, result)
                 self.store.append_agent_event(
                     self.task.id,
                     "INPUT_ACCESSED",
@@ -975,7 +538,7 @@ class InputToolHandler(HandlerRuntime):
                     self.task.id,
                     "TOOL_EXECUTION_END",
                     {
-                        "tool_call_id": call.get("id"),
+                        "tool_call_id": call_id,
                         "action_id": action.id,
                         "tool_name": name,
                         "execution_location": "Input Store",
@@ -995,8 +558,8 @@ class InputToolHandler(HandlerRuntime):
             raise
         return payload
 
-    def _block_missing_input(
-        self, *, action: ActionSpec, call: dict[str, Any], name: str, input_id: str,
+    def _missing_input(
+        self, *, action: ActionSpec, call_id: str, name: str, input_id: str,
     ) -> dict[str, Any]:
         error = TGAError(
             code="INPUT_NOT_FOUND",
@@ -1012,25 +575,11 @@ class InputToolHandler(HandlerRuntime):
             error=error,
         )
         with self.store.transaction():
-            self.recorder.block(action, result)
-            self.store.append_agent_event(
-                self.task.id,
-                "MANAGER_DECISION",
-                {
-                    "action_id": action.id,
-                    "capability": name,
-                    "decision": "denied",
-                    "input_id": input_id,
-                    "authorization": action.authorization,
-                    "reason": error.message,
-                },
-                solver_id=self.solver_id,
-            )
             self.store.append_agent_event(
                 self.task.id,
                 "TOOL_EXECUTION_END",
                 {
-                    "tool_call_id": call.get("id"),
+                    "tool_call_id": call_id,
                     "action_id": action.id,
                     "tool_name": name,
                     "execution_location": "Input Store",
@@ -1049,443 +598,134 @@ class MCPToolHandler(HandlerRuntime):
         self,
         state: HandlerState,
         *,
-        recorder: ActionRecorder,
         artifacts: ArtifactService,
         observer: ObserverExecutionCoordinator,
-        strategy: StrategyResolver,
     ) -> None:
         super().__init__(state)
-        self.recorder = recorder
         self.artifacts = artifacts
         self.observer_service = observer
-        self.strategy = strategy
 
     def direct_names(self) -> set[str]:
-        return self._direct_mcp_names()
+        return {item.provider_name for item in self.task.mcp_capabilities.tools}
 
-    def handle(self, **kwargs: Any) -> dict[str, Any]:
-        return self._handle_mcp_dispatch(**kwargs)
-
-    def execute_approved(self, action: ActionSpec) -> dict[str, Any]:
-        expected_catalog = str(action.authorization.get("catalog_version") or "")
-        expected_provider = str(action.authorization.get("mcp_provider_name") or "")
+    def execute_governed(
+        self, action: ActionSpec, *, approved: bool = False,
+    ) -> dict[str, Any]:
+        if action.governed_action_id != action.id:
+            raise ValueError("MCP execution requires its governed Action identity")
+        expected_provider = str(
+            action.authorization.get("mcp_provider_name")
+            or action.authorization.get("provider_tool_name")
+            or ""
+        )
         expected_server = str(action.authorization.get("mcp_server") or "")
         expected_method = str(action.authorization.get("mcp_method") or "")
-        # Re-read the catalog at the approval boundary. A route that changed
-        # after the user reviewed it must never inherit that approval.
-        current_snapshot = self.mcp_manager.snapshot_for_task(
-            self.task,
-            workspace=self.workspace,
-        )
-        self.state.mcp_snapshot = current_snapshot
+        expected_catalog = str(action.authorization.get("catalog_version") or "")
+        if approved:
+            current_snapshot = self.mcp_manager.snapshot_for_task(
+                self.task, workspace=self.workspace,
+            )
+            self.state.mcp_snapshot = current_snapshot
+        else:
+            current_snapshot = self.mcp_snapshot
         route = current_snapshot.route(expected_provider)
         if (
             route is None
-            or current_snapshot.version != expected_catalog
             or route.server_id != expected_server
             or route.method != expected_method
+            or current_snapshot.version != expected_catalog
         ):
-            self.recorder.resume_approved(action)
-            result = ActionResult(
-                action_id=action.id,
-                task_id=self.task.id,
-                solver_id=self.solver_id,
-                status="failed",
-                summary="approved MCP route is no longer available in the pinned catalog",
-                error=TGAError(
-                    code="APPROVED_MCP_ROUTE_STALE",
-                    message="The approved MCP route changed before execution.",
-                    retryable=False,
-                ),
+            return self._validation_failure(
+                action,
+                code="APPROVED_MCP_ROUTE_STALE" if approved else "MCP_ROUTE_STALE",
+                message="The governed MCP route changed before execution.",
             )
-            self.recorder.finish(action, result)
-            return {
-                "ok": False,
-                "status": "failed",
-                "action_id": action.id,
-                "error": result.error.model_dump(mode="json"),
-            }
         server_config = (
             self.mcp_manager.config.servers.get(route.server_id)
             if self.mcp_manager.config is not None
             else None
         )
         if server_config is None:
-            validation_error = "MCP server configuration is unavailable"
-        else:
+            return self._validation_failure(
+                action,
+                code="MCP_SERVER_UNAVAILABLE",
+                message="MCP server configuration is unavailable.",
+            )
+
+        execution_task = self.task
+        if approved:
             approved_policy = self.task.execution_policy.model_copy(deep=True)
             approved_policy.high_impact.mode = "allowlisted"
-            approved_policy.high_impact.allowed_actions = [f"mcp:{route.server_id}.{route.method}"]
-            approved_task = self.task.model_copy(update={"execution_policy": approved_policy})
+            approved_policy.high_impact.allowed_actions = [
+                f"mcp:{route.server_id}.{route.method}"
+            ]
+            execution_task = self.task.model_copy(
+                update={"execution_policy": approved_policy}
+            )
             validation_error = self.mcp_manager.policy.authorize(
-                task=approved_task,
+                task=execution_task,
                 server=server_config,
                 route=route,
                 arguments=action.arguments,
             )
-        if validation_error:
-            self.recorder.resume_approved(action)
-            result = ActionResult(
-                action_id=action.id,
-                task_id=self.task.id,
-                solver_id=self.solver_id,
-                status="failed",
-                summary="approved MCP arguments failed execution-time validation",
-                error=TGAError(
+            if validation_error:
+                return self._validation_failure(
+                    action,
                     code="APPROVED_MCP_VALIDATION_FAILED",
                     message=str(validation_error)[:800],
-                    retryable=False,
-                ),
-            )
-            self.recorder.finish(action, result)
-            return {
-                "ok": False,
-                "status": "failed",
-                "action_id": action.id,
-                "error": result.error.model_dump(mode="json"),
-            }
-        return self._handle_mcp_tool_call(
-            call={
-                "id": str(action.authorization.get("tool_call_id") or ""),
-                "function": {
-                    "name": str(action.authorization.get("provider_tool_name") or expected_provider),
-                },
-            },
-            route=route,
-            arguments=action.arguments,
-            governance={},
-            llm_tool_name=str(action.authorization.get("provider_tool_name") or expected_provider),
-            approved_action=action,
-        )
+                )
 
-    def _direct_mcp_names(self) -> set[str]:
-        return {item.provider_name for item in self.task.mcp_capabilities.tools}
-    def _handle_mcp_dispatch(self, *, call: dict[str, Any], arguments: dict[str, Any], governance: dict[str, Any], direct: bool) -> dict[str, Any]:
-        if not direct:
-            return self._handle_mcp_gateway_call(call=call, arguments=arguments, governance=governance)
-        name = str((call.get("function") or {}).get("name") or "")
-        mcp_route = self.mcp_snapshot.route(name)
-        if mcp_route is not None:
-            return self._handle_mcp_tool_call(
-                call=call,
-                route=mcp_route,
-                arguments=arguments,
-                governance=governance,
-                llm_tool_name=name,
-            )
-        return {"ok": False, "status": "blocked", "error": {"code": "UNKNOWN_MCP_TOOL", "message": name}}
-    def _handle_mcp_gateway_call(
-        self, *, call: dict[str, Any], arguments: dict[str, Any], governance: dict[str, Any]
-    ) -> dict[str, Any]:
-        gateway = MCPGateway(manager=self.mcp_manager, task=self.task, snapshot=self.mcp_snapshot)
-        action = str(arguments.pop("action", ""))
-        server = str(arguments.pop("server", "") or "")
-        tool = str(arguments.pop("tool", "") or "")
-        query = str(arguments.pop("query", "") or "")
-        if action == "call":
-            call_arguments = arguments.pop("arguments", {})
-            if not isinstance(call_arguments, dict):
-                return {"ok": False, "error": "arguments must be an object"}
-            if arguments:
-                return {"ok": False, "error": f"unknown tga_mcp fields: {', '.join(sorted(arguments))}"}
-            try:
-                route = gateway.resolve(server=server, tool=tool)
-            except ValueError as exc:
-                return {"ok": False, "error": str(exc)}
-            return self._handle_mcp_tool_call(
-                call=call,
-                route=route,
-                arguments=call_arguments,
-                governance=governance,
-                llm_tool_name=TGA_MCP_TOOL,
-            )
-        if arguments:
-            return {"ok": False, "error": f"unknown tga_mcp fields: {', '.join(sorted(arguments))}"}
-        try:
-            result = gateway.query(action=action, server=server, tool=tool, query=query)
-        except ValueError as exc:
-            return {"ok": False, "error": str(exc)}
-        self.store.append_agent_event(
-            self.task.id,
-            "MCP_CATALOG_QUERY",
-            {
-                "tool_kind": "mcp",
-                "llm_tool_name": TGA_MCP_TOOL,
-                "action": action,
-                "server": server or None,
-                "query": query or None,
-                "catalog_version": self.mcp_snapshot.version,
-                "llm_tool_call_id": call.get("id"),
-            },
-            solver_id=self.solver_id,
-        )
-        return {"ok": True, **result}
-    def _handle_mcp_tool_call(
-        self,
-        *,
-        call: dict[str, Any],
-        route: MCPToolRoute,
-        arguments: dict[str, Any],
-        governance: dict[str, Any],
-        llm_tool_name: str,
-        approved_action: ActionSpec | None = None,
-    ) -> dict[str, Any]:
-        """Execute a discovered MCP method without exposing host launch data to the model."""
-
-        action_id = approved_action.id if approved_action is not None else f"act_{uuid4().hex[:12]}"
         trace_id = f"trace_{uuid4().hex}"
-        card, step = self.strategy.resolve(governance)
-        expected_outcome = str(governance.get("expected_outcome") or "").strip()[:500]
-        if step is not None:
-            expected_outcome = expected_outcome or step.success_marker or step.expected_request
-        rationale = str(governance.get("rationale") or "").strip()[:500]
-        rationale = rationale or f"Use {route.server_id}.{route.method} to advance the active strategy step"
-        server_config = (
-            self.mcp_manager.config.servers.get(route.server_id)
-            if self.mcp_manager.config is not None
-            else None
+        call_id = str(action.authorization.get("tool_call_id") or "")
+        llm_tool_name = str(
+            action.authorization.get("provider_tool_name") or route.provider_name
         )
-        mcp_ref = None
-        mcp_target = f"{route.server_id}.{route.method}"
-        risk = self.mcp_manager.policy.risk_for(server=server_config, method=route.method) if server_config is not None else "active"
-        alternative_analysis = str(governance.get("alternative_analysis") or "").strip()[:500]
-        try:
-            effect = approved_action.effect if approved_action is not None else _effect_from_governance(governance)
-        except ValueError as exc:
-            return {"ok": False, "status": "blocked", "error": {"code": "INVALID_EFFECT", "message": str(exc), "retryable": False}}
-        if approved_action is None and risk == "destructive" and (
-            effect.scope == "none"
-            or effect.persistence == "none"
-            or effect.description == ActionEffect().description
-            or not alternative_analysis
-        ):
-            self.store.append_agent_event(
-                self.task.id,
-                "ACTION_VALIDATION_FAILED",
-                {"capability": route.provider_name, "reason": "high_side_effect_analysis_required"},
-                solver_id=self.solver_id,
-            )
-            return {
-                "ok": False,
-                "status": "blocked",
-                "error": {
-                    "code": "HIGH_IMPACT_EFFECT_REQUIRED",
-                    "message": "destructive MCP actions require _tga.effect and _tga.alternative_analysis",
-                    "retryable": False,
-                },
-            }
-        execution_task = self.task
-        if approved_action is not None:
-            # The persisted action was already reviewed by the user. Carry a
-            # one-call allowlist through the manager's final policy check so
-            # approval is not accidentally denied a second time.
-            approved_policy = self.task.execution_policy.model_copy(deep=True)
-            approved_policy.high_impact.mode = "allowlisted"
-            approved_policy.high_impact.allowed_actions = [f"mcp:{route.server_id}.{route.method}"]
-            execution_task = self.task.model_copy(update={"execution_policy": approved_policy})
-        if server_config is not None and approved_action is None:
-            try:
-                validation_error = self.mcp_manager.policy.authorize(
-                    task=self.task, server=server_config, route=route, arguments=arguments
-                )
-            except Exception as exc:
-                validation_error = f"schema validation failed safely: {exc}"
-            if validation_error:
-                approval_required = validation_error.startswith("APPROVAL_REQUIRED:")
-                code = "APPROVAL_REQUIRED" if approval_required else "INVALID_ARGUMENTS" if validation_error.startswith("arguments") or "schema validation" in validation_error else "POLICY_DENIED"
-                error_payload = {
-                    "code": code,
-                    "message": validation_error,
-                    "phase": "policy",
-                    "retryable": False,
-                    "server": route.server_id,
-                    "method": route.method,
-                    "trace_id": trace_id,
-                }
-                denied_action = ActionSpec(
-                    id=action_id, task_id=self.task.id, solver_id=self.solver_id,
-                    **_host_action_fields(governance),
-                    kind="tool", capability=route.provider_name,
-                    target=mcp_target, actual_target=mcp_target, arguments=arguments,
-                    rationale=rationale, risk=risk, input_id=mcp_ref.id if mcp_ref else None,
-                    target_ref=mcp_ref.id if mcp_ref else None,
-                    expected_outcome=expected_outcome,
-                    alternative_analysis=alternative_analysis,
-                    effect=effect,
-                    authorization={
-                        "allowed": False,
-                        "code": code,
-                        "reason": validation_error,
-                        "required_authorization": "user approval" if approval_required else "global MCP enablement and execution boundaries",
-                        "retryable": False,
-                        "tool_call_id": str(call.get("id") or ""),
-                        "provider_tool_name": llm_tool_name,
-                        "mcp_provider_name": route.provider_name,
-                        "mcp_server": route.server_id,
-                        "mcp_method": route.method,
-                        "catalog_version": self.mcp_snapshot.version,
-                    },
-                    provenance=mcp_ref.provenance.model_dump(mode="json") if mcp_ref else {"source": "mcp", "server_id": route.server_id},
-                )
-                if approval_required:
-                    approval_expires_at = self.recorder.pending(denied_action)
-                    with self.store.transaction():
-                        self.store.append_agent_event(
-                            self.task.id,
-                            "ACTION_AWAITING_APPROVAL",
-                            {
-                                "action_id": denied_action.id,
-                                "capability": denied_action.capability,
-                                "target": denied_action.actual_target,
-                                "risk": denied_action.risk,
-                                "rationale": denied_action.rationale,
-                                "tool_kind": "mcp",
-                                "mcp_server": route.server_id,
-                                "mcp_method": route.method,
-                                "effect": denied_action.effect.model_dump(mode="json"),
-                                "alternative_analysis": denied_action.alternative_analysis,
-                                "approval_expires_at": approval_expires_at,
-                                "authorization": denied_action.authorization,
-                            },
-                            solver_id=self.solver_id,
-                        )
-                        if self.task.schema_version == 6 and denied_action.governed_action_id:
-                            SolverApprovalCoordinator(self.store).await_approval(
-                                solver_id=self.solver_id,
-                                intent_id=denied_action.intent_id,
-                            )
-                        else:
-                            SessionCoordinator(self.store).await_approval(
-                                task_id=self.task.id,
-                                action_id=denied_action.id,
-                            )
-                    return {
-                        "ok": False,
-                        "status": "pending_approval",
-                        "action_id": denied_action.id,
-                        "approval_required": True,
-                        "_defer_tool_result": True,
-                    }
-                denied_result = ActionResult(
-                    action_id=action_id, task_id=self.task.id, solver_id=self.solver_id,
-                    status="blocked", summary=validation_error,
-                    error=TGAError(code=code, message=validation_error, retryable=False),
-                )
-                self.recorder.block(denied_action, denied_result)
-                self.store.append_agent_event(
-                    self.task.id,
-                    "ACTION_VALIDATION_FAILED",
-                    {"tool_kind": "mcp", "tool_name": route.provider_name, "mcp_server": route.server_id, "mcp_method": route.method, "trace_id": trace_id, "reason": validation_error, "error": error_payload},
-                    solver_id=self.solver_id,
-                )
-                return {"ok": False, "status": "blocked", "server": route.server_id, "method": route.method, "trace_id": trace_id, "error": error_payload}
-        action = approved_action or ActionSpec(
-            id=action_id,
-            task_id=self.task.id,
-            solver_id=self.solver_id,
-            **_host_action_fields(governance),
-            kind="tool",
-            capability=route.provider_name,
-            target=mcp_target,
-            arguments=arguments,
-            rationale=rationale,
-            risk=risk,
-            strategy_card_id=card.id if card else None,
-            strategy_step_id=step.id if step else None,
-            expected_outcome=expected_outcome,
-            retry_reason=str(governance.get("retry_reason") or "")[:500],
-            alternative_analysis=alternative_analysis,
-            effect=effect,
-            input_id=mcp_ref.id if mcp_ref else None,
-            target_ref=mcp_ref.id if mcp_ref else None,
-            actual_target=mcp_target,
-            authorization={
-                "allowed": True,
-                "code": None,
-                "reason": "available from the global MCP registry and permitted by execution boundaries",
-                "required_authorization": None,
-                "retryable": False,
-                "tool_call_id": str(call.get("id") or ""),
-                "provider_tool_name": llm_tool_name,
-                "mcp_provider_name": route.provider_name,
-                "mcp_server": route.server_id,
-                "mcp_method": route.method,
-                "catalog_version": self.mcp_snapshot.version,
-            },
-            provenance=mcp_ref.provenance.model_dump(mode="json") if mcp_ref else {"source": "mcp", "server_id": route.server_id},
-        )
-        repeat = self.recorder.semantic_repeat(action) if approved_action is None else None
-        if repeat and not action.retry_reason:
-            blocked = ActionResult(
-                action_id=action.id,
-                task_id=self.task.id,
-                solver_id=self.solver_id,
-                status="blocked",
-                summary="semantic repeat requires a reason tied to new evidence or changed parameters",
-                error=TGAError(code="SEMANTIC_REPEAT_REQUIRES_REASON", message="retry_reason is required for an unchanged MCP action"),
-            )
-            self.recorder.block(action, blocked)
-            self.store.append_agent_event(
-                self.task.id,
-                "SEMANTIC_REPEAT_BLOCKED",
-                {"action_id": action.id, "previous_action_id": repeat, "tool_kind": "mcp", "mcp_server": route.server_id, "mcp_method": route.method},
-                solver_id=self.solver_id,
-            )
-            return {"ok": False, "status": "blocked", "error": blocked.error.model_dump(mode="json")}
-        if approved_action is None:
-            self.recorder.start(action)
-        else:
-            self.recorder.resume_approved(action)
         self.store.append_agent_event(
             self.task.id,
             "MANAGER_DECISION",
             {
                 "action_id": action.id,
                 "decision": "approved",
-                "strategy_card_id": action.strategy_card_id,
-                "strategy_step_id": action.strategy_step_id,
-                "expected_outcome": action.expected_outcome,
                 "risk": action.risk,
                 "tool_kind": "mcp",
                 "mcp_server": route.server_id,
                 "mcp_method": route.method,
-                "input_id": action.input_id,
                 "authorization": action.authorization,
             },
             solver_id=self.solver_id,
         )
-        start_payload = {
-            "tool_call_id": call.get("id"),
-            "llm_tool_call_id": call.get("id"),
-            "action_id": action.id,
-            "tool_name": llm_tool_name,
-            "llm_tool_name": llm_tool_name,
-            "routed_tool_name": route.provider_name,
-            "tool_kind": "mcp",
-            "mcp_server": route.server_id,
-            "mcp_method": route.method,
-            "trace_id": trace_id,
-            "task_id": self.task.id,
-            "session_id": self.task.id,
-            "solver_id": self.solver_id,
-            "turn_number": (self.store.get_session(self.task.id).turn_count if self.store.get_session(self.task.id) else 0),
-            "catalog_version": self.mcp_snapshot.version,
-            "arguments": redact_sensitive(arguments),
-            "strategy_step_id": action.strategy_step_id,
-            "execution_location": self._mcp_execution_location(route.server_id),
-        }
         self.store.append_agent_event(
             self.task.id,
             "TOOL_EXECUTION_START",
-            start_payload,
+            {
+                "tool_call_id": call_id,
+                "llm_tool_call_id": call_id,
+                "action_id": action.id,
+                "tool_name": llm_tool_name,
+                "llm_tool_name": llm_tool_name,
+                "routed_tool_name": route.provider_name,
+                "tool_kind": "mcp",
+                "mcp_server": route.server_id,
+                "mcp_method": route.method,
+                "trace_id": trace_id,
+                "task_id": self.task.id,
+                "solver_id": self.solver_id,
+                "turn_number": (
+                    self.store.get_session(self.task.id).turn_count
+                    if self.store.get_session(self.task.id) else 0
+                ),
+                "catalog_version": current_snapshot.version,
+                "arguments": redact_sensitive(action.arguments),
+                "execution_location": self._mcp_execution_location(route.server_id),
+            },
             solver_id=self.solver_id,
         )
         started = time.perf_counter()
         outcome = self.mcp_manager.call_tool(
             task=execution_task,
             route=route,
-            arguments=arguments,
-            catalog_version=self.mcp_snapshot.version,
+            arguments=action.arguments,
+            catalog_version=current_snapshot.version,
             workspace=self.workspace,
             trace_id=trace_id,
         )
@@ -1497,12 +737,14 @@ class MCPToolHandler(HandlerRuntime):
             artifact = self._save_mcp_artifact(
                 outcome=outcome,
                 route=route,
-                arguments=arguments,
+                arguments=action.arguments,
                 server_config=server_config,
                 action_id=action.id,
-                llm_tool_call_id=str(call.get("id") or ""),
-            )
-            artifact = artifact.model_copy(update={"input_id": action.input_id, "provenance": action.provenance})
+                llm_tool_call_id=call_id,
+            ).model_copy(update={
+                "input_id": action.input_id,
+                "provenance": action.provenance,
+            })
             artifact_ids.append(artifact.id)
             self.last_artifact_id = artifact.id
         except Exception as exc:
@@ -1511,8 +753,12 @@ class MCPToolHandler(HandlerRuntime):
                 message=self._safe_model_content(str(exc))[:800],
                 retryable=True,
             )
-        outcome.timings["artifact_write_ms"] = max(0, int((time.perf_counter() - artifact_started) * 1000))
-        outcome.timings.setdefault("total_ms", max(0, int((time.perf_counter() - started) * 1000)))
+        outcome.timings["artifact_write_ms"] = max(
+            0, int((time.perf_counter() - artifact_started) * 1000)
+        )
+        outcome.timings.setdefault(
+            "total_ms", max(0, int((time.perf_counter() - started) * 1000))
+        )
         status = "succeeded" if outcome.ok and artifact_error is None else "failed"
         error = artifact_error or (
             TGAError(
@@ -1520,11 +766,13 @@ class MCPToolHandler(HandlerRuntime):
                 message=self._safe_model_content(outcome.error.message),
                 retryable=outcome.error.retryable,
             )
-            if outcome.error
-            else None
+            if outcome.error else None
         )
         content_text = json.dumps(
-            {"content": outcome.content, "structured_content": outcome.structured_content},
+            {
+                "content": outcome.content,
+                "structured_content": outcome.structured_content,
+            },
             ensure_ascii=False,
             default=str,
         )
@@ -1535,9 +783,9 @@ class MCPToolHandler(HandlerRuntime):
             solver_id=self.solver_id,
             status=status,
             summary=(
-                f"MCP {route.server_id}.{route.method} returned {len(outcome.content)} content block(s)"
-                if outcome.ok
-                else f"MCP {route.server_id}.{route.method} failed"
+                f"MCP {route.server_id}.{route.method} returned "
+                f"{len(outcome.content)} content block(s)"
+                if outcome.ok else f"MCP {route.server_id}.{route.method} failed"
             ),
             artifact_ids=artifact_ids,
             candidate_flags=[candidate] if candidate else [],
@@ -1552,33 +800,10 @@ class MCPToolHandler(HandlerRuntime):
                     self.store.append_agent_event(
                         self.task.id,
                         "ARTIFACT_INDEX_FAILED",
-                        {"artifact_id": artifact.id, "trace_id": trace_id, "reason": self._safe_model_content(str(exc))[:800]},
-                        solver_id=self.solver_id,
-                    )
-            self.recorder.finish(action, result)
-            if card is not None and self.task.schema_version < 6:
-                updated_card = self.strategies.record_action(
-                    card_id=action.strategy_card_id,
-                    step_id=action.strategy_step_id,
-                    action_id=action.id,
-                    artifact_ids=artifact_ids,
-                    succeeded=status == "succeeded",
-                    summary=result.summary,
-                )
-                if updated_card is not None:
-                    updated_step = next((item for item in updated_card.steps if item.id == action.strategy_step_id), None)
-                    self.store.append_agent_event(
-                        self.task.id,
-                        "STRATEGY_STEP_UPDATED",
                         {
-                            "strategy_card_id": updated_card.id,
-                            "strategy_step_id": action.strategy_step_id,
-                            "status": updated_step.status if updated_step else updated_card.status,
-                            "card_status": updated_card.status,
-                            "active_step_id": updated_card.active_step_id,
-                            "action_id": action.id,
-                            "artifact_ids": artifact_ids,
+                            "artifact_id": artifact.id,
                             "trace_id": trace_id,
+                            "reason": self._safe_model_content(str(exc))[:800],
                         },
                         solver_id=self.solver_id,
                     )
@@ -1586,10 +811,14 @@ class MCPToolHandler(HandlerRuntime):
                 self.store.append_agent_event(
                     self.task.id,
                     "FLAG_CANDIDATE",
-                    {"value": candidate, "artifact_ids": artifact_ids, "trace_id": trace_id},
+                    {
+                        "value": candidate,
+                        "artifact_ids": artifact_ids,
+                        "trace_id": trace_id,
+                    },
                     solver_id=self.solver_id,
                 )
-            inline_limit = server_config.max_inline_chars if server_config is not None else 32_000
+            inline_limit = server_config.max_inline_chars
             spill = len(content_text) > inline_limit
             if spill:
                 tool_payload: dict[str, Any] = {
@@ -1615,62 +844,81 @@ class MCPToolHandler(HandlerRuntime):
                     "truncated": False,
                 }
             model_image = self._mcp_image_block(outcome.content)
-            if model_image is not None and getattr(self.client, "supports_vision", None) is not False:
+            if model_image is not None and getattr(
+                self.client, "supports_vision", None
+            ) is not False:
                 tool_payload["_model_content"] = model_image
                 tool_payload["input_id"] = action.input_id
             elif model_image is not None:
                 tool_payload["vision_status"] = {
                     "ok": False,
                     "code": "MODEL_VISION_UNSUPPORTED",
-                    "reason": "image bytes were preserved in the MCP Artifact but the configured model is marked as text-only",
+                    "reason": (
+                        "image bytes were preserved in the MCP Artifact but the "
+                        "configured model is marked as text-only"
+                    ),
                 }
-            tool_payload.update(
-                {
-                    "status": status,
-                    "trace_id": trace_id,
-                    "catalog_version": self.mcp_snapshot.version,
-                    "artifact_truncated": outcome.artifact_truncated,
-                    "error": outcome.error.model_dump(mode="json") if outcome.error else (error.model_dump(mode="json") if error else None),
-                }
-            )
-            end_payload = {
-                "tool_call_id": call.get("id"),
-                "llm_tool_call_id": call.get("id"),
-                "action_id": action.id,
-                "tool_name": llm_tool_name,
-                "llm_tool_name": llm_tool_name,
-                "routed_tool_name": route.provider_name,
-                "tool_kind": "mcp",
-                "mcp_server": route.server_id,
-                "mcp_method": route.method,
-                "mcp_request_id": outcome.request_id,
-                "request_id": outcome.request_id,
-                "trace_id": trace_id,
-                "catalog_version": self.mcp_snapshot.version,
-                "task_id": self.task.id,
-                "session_id": self.task.id,
-                "solver_id": self.solver_id,
+            tool_payload.update({
                 "status": status,
-                "artifact_ids": artifact_ids,
-                "artifact_id": artifact_ids[0] if artifact_ids else None,
-                "truncated": spill,
+                "trace_id": trace_id,
+                "catalog_version": current_snapshot.version,
                 "artifact_truncated": outcome.artifact_truncated,
-                "duration_ms": outcome.timings.get("total_ms", 0),
-                "timings": outcome.timings,
-                "execution_location": self._mcp_execution_location(route.server_id),
-                "error": outcome.error.model_dump(mode="json") if outcome.error else (
-                    {**error.model_dump(mode="json"), "phase": "artifact", "server": route.server_id, "method": route.method, "trace_id": trace_id}
-                    if error else None
+                "error": (
+                    outcome.error.model_dump(mode="json")
+                    if outcome.error else error.model_dump(mode="json") if error else None
                 ),
-            }
+            })
             self.store.append_agent_event(
                 self.task.id,
                 "TOOL_EXECUTION_END",
-                end_payload,
+                {
+                    "tool_call_id": call_id,
+                    "llm_tool_call_id": call_id,
+                    "action_id": action.id,
+                    "tool_name": llm_tool_name,
+                    "llm_tool_name": llm_tool_name,
+                    "routed_tool_name": route.provider_name,
+                    "tool_kind": "mcp",
+                    "mcp_server": route.server_id,
+                    "mcp_method": route.method,
+                    "mcp_request_id": outcome.request_id,
+                    "request_id": outcome.request_id,
+                    "trace_id": trace_id,
+                    "catalog_version": current_snapshot.version,
+                    "task_id": self.task.id,
+                    "solver_id": self.solver_id,
+                    "status": status,
+                    "artifact_ids": artifact_ids,
+                    "artifact_id": artifact_ids[0] if artifact_ids else None,
+                    "truncated": spill,
+                    "artifact_truncated": outcome.artifact_truncated,
+                    "duration_ms": outcome.timings.get("total_ms", 0),
+                    "timings": outcome.timings,
+                    "execution_location": self._mcp_execution_location(route.server_id),
+                    "error": (
+                        outcome.error.model_dump(mode="json")
+                        if outcome.error else error.model_dump(mode="json") if error else None
+                    ),
+                },
                 solver_id=self.solver_id,
             )
         self.observer_service.review(action=action, result=result)
         return tool_payload
+
+    @staticmethod
+    def _validation_failure(
+        action: ActionSpec, *, code: str, message: str,
+    ) -> dict[str, Any]:
+        return {
+            "ok": False,
+            "status": "failed",
+            "action_id": action.id,
+            "error": {
+                "code": code,
+                "message": message,
+                "retryable": False,
+            },
+        }
     @staticmethod
     def _mcp_image_block(content: list[dict[str, Any]]) -> dict[str, Any] | None:
         for item in content:
@@ -1852,7 +1100,6 @@ class ToolHandlers:
     inputs: InputToolHandler
     mcp: MCPToolHandler
     completion: TaskCompletionHandler
-    recorder: ActionRecorder
     artifacts: ArtifactService
     observer: ObserverExecutionCoordinator
 
@@ -1865,24 +1112,20 @@ class ToolHandlers:
 
 def build_tool_handlers(**kwargs: Any) -> ToolHandlers:
     state = HandlerState(**kwargs)
-    recorder = ActionRecorder(state)
     artifacts = ArtifactService(state)
     observer = ObserverExecutionCoordinator(state)
-    strategy = StrategyResolver(state)
     capability = CapabilityToolHandler(
-        state, recorder=recorder, artifacts=artifacts, observer=observer, strategy=strategy,
+        state, artifacts=artifacts, observer=observer,
     )
     mcp = MCPToolHandler(
-        state, recorder=recorder, artifacts=artifacts, observer=observer, strategy=strategy,
+        state, artifacts=artifacts, observer=observer,
     )
     return ToolHandlers(
         state=state,
         capability=capability,
-        inputs=InputToolHandler(state, recorder=recorder, artifacts=artifacts, strategy=strategy),
+        inputs=InputToolHandler(state, artifacts=artifacts),
         mcp=mcp,
         completion=TaskCompletionHandler(state, artifacts),
-        recorder=recorder,
         artifacts=artifacts,
         observer=observer,
     )
-

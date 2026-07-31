@@ -15,10 +15,13 @@ from apps.api.routes import sessions as session_routes
 from apps.api.routes import support as route_support
 from tga.runtime.coordinator import SessionTransitionError
 from apps.api.routes import tasks as task_routes
-from tga.contracts import ActionSpec, ExecutionPolicy, SessionRecord, TGATask
+from tga.contracts import ActionEffect, ActionSpec, ExecutionPolicy, SessionRecord, TGATask
 from tga.evidence.store import EvidenceStore
+from tga.runtime.service import TaskRuntimeService
 from tga.tools.mcp_manager import MCPManager
 from tga.runtime.task_creation import build_mcp_capability_snapshot
+from tga.infrastructure.persistence import PersistenceBundle
+from tga.runtime.tooling.requests import ActionContext, AuthorizationDecision, GovernedAction
 from tga.models.capability_probe import ProviderCapabilityProbe
 from tests.runtime_fixtures import configure_verified_model
 
@@ -54,6 +57,15 @@ def _create_request(task_id: str, *, mode: str = "ctf", task_ids: list[str] | No
     }
 
 
+def _preflight_and_create(client: TestClient, payload: dict):
+    preflight = client.post("/api/v2/tasks/preflight", json=payload)
+    assert preflight.status_code == 200, preflight.text
+    return client.post(
+        "/api/v2/tasks",
+        json={**payload, "preflightFingerprint": preflight.json()["fingerprint"]},
+    )
+
+
 def _seed_session(tmp_path, monkeypatch) -> str:
     monkeypatch.setenv("TGA_RUN_ROOT", str(tmp_path / "runs"))
     task = TGATask(id="runtime_v2", name="runtime", mode="ctf", goal="solve", schema_version=6)
@@ -80,7 +92,7 @@ def test_new_session_automatically_snapshots_enabled_mcp(tmp_path, monkeypatch):
     client = TestClient(app)
     asset_id = _upload(client)
     payload = _create_request("selected_mcp", task_ids=[asset_id])
-    created = client.post("/api/v2/tasks", json=payload)
+    created = _preflight_and_create(client, payload)
     assert created.status_code == 200
     task = client.get("/api/v2/tasks/selected_mcp/session").json()["task"]
     assert "mcp" not in task["execution_policy"]
@@ -142,7 +154,7 @@ def test_v2_task_creation_initializes_a_runtime_session(tmp_path, monkeypatch):
     runtime_manager._manager = None
     client = TestClient(app)
     asset_id = _upload(client)
-    response = client.post("/api/v2/tasks", json=_create_request(
+    response = _preflight_and_create(client, _create_request(
         "task_api", task_ids=[asset_id], hint="Inspect https://challenge.example/login before analyzing the supplied task.",
     ))
 
@@ -153,7 +165,7 @@ def test_v2_task_creation_initializes_a_runtime_session(tmp_path, monkeypatch):
     assert snapshot["session"]["status"] == "created"
     assert snapshot["task"]["session_input"]["prompt"] == "Inspect https://challenge.example/login before analyzing the supplied task."
     assert snapshot["task"]["schema_version"] == 6
-    assert snapshot["task"]["skill_bundle_snapshot"] is None
+    assert "skill_bundle_snapshot" not in snapshot["task"]
     assert snapshot["task_common_skill_snapshot"]["selector"].startswith("task-common:")
     assert all(
         {"name", "version", "content_sha256", "selection_reasons"} <= set(item)
@@ -162,9 +174,9 @@ def test_v2_task_creation_initializes_a_runtime_session(tmp_path, monkeypatch):
     assert snapshot["task"]["task_entry_url"] == "https://challenge.example/login"
     assert snapshot["task"]["execution_policy"]["network"]["seed_origins"] == ["https://challenge.example"]
     assert {event["type"] for event in snapshot["events"]} >= {
-        "TASK_INPUT_ANALYZED", "NETWORK_SEEDS_EXTRACTED", "MODEL_CONFIG_SNAPSHOTTED", "SOLVER_INSTANCE_CREATED",
+            "TASK_INPUT_ANALYZED", "NETWORK_SEEDS_EXTRACTED", "MODEL_CONFIG_SNAPSHOTTED", "SOLVER_CREATED",
     }
-    assert snapshot["runtime"]["strategy_cards"] == []
+    assert "runtime" not in snapshot
     assert "test-key" not in json.dumps(snapshot)
     assert "runtime_ready" not in snapshot
     assert client.get("/api/tasks").status_code == 404
@@ -190,7 +202,7 @@ def test_v2_api_accepts_and_outputs_each_current_mode(tmp_path, monkeypatch, mod
     task_id = f"api_{mode}"
     client = TestClient(app)
     asset_id = _upload(client, name=f"{mode}.txt")
-    response = client.post("/api/v2/tasks", json=_create_request(task_id, mode=mode, task_ids=[asset_id]))
+    response = _preflight_and_create(client, _create_request(task_id, mode=mode, task_ids=[asset_id]))
     assert response.status_code == 200
     task = client.get(f"/api/v2/tasks/{task_id}/session").json()["task"]
     assert task["mode"] == mode
@@ -213,19 +225,39 @@ def test_v2_session_uses_only_agent_event_cursor(tmp_path, monkeypatch):
 def test_action_snapshot_and_events_recursively_redact_tool_secrets(tmp_path, monkeypatch):
     task_id = _seed_session(tmp_path, monkeypatch)
     store = EvidenceStore(tmp_path / "runs" / task_id / "evidence.db")
-    action = ActionSpec(
-        id="act_secret", task_id=task_id, solver_id="solver_main",
-        kind="tool", capability="mcp__fixture__login", target="fixture.login",
-        arguments={
+    now = "2026-01-01T00:00:00Z"
+    action = GovernedAction(
+        id="governed_secret",
+        context=ActionContext(
+            task_id=task_id,
+            solver_id="solver_main",
+            orchestration_role="supervisor",
+            solver_definition_id="task-supervisor",
+            execution_policy_snapshot_id="execution:" + "a" * 64,
+            solver_tool_policy_snapshot_id="tool:" + "b" * 64,
+            created_at=now,
+        ),
+        provider_tool_name="mcp__fixture__login",
+        tool_call_id="call_secret",
+        tool_class="execution",
+        capability="mcp:fixture:login",
+        resolved_target="fixture.login",
+        normalized_arguments={
             "apiKey": "top-secret-key",
             "nested": {"password": "top-secret-password", "safe": "visible"},
         },
-        rationale="test public projection", risk="active",
+        rationale="test public projection",
+        risk="active",
+        effect=ActionEffect(),
+        authorization=AuthorizationDecision(allowed=True, reason="test"),
+        status="running",
+        created_at=now,
+        updated_at=now,
     )
-    store.add_action(action, status="running")
+    PersistenceBundle(store).tool_governance.add_action(action)
     store.append_agent_event(
         task_id, "ACTION_PROPOSED",
-        {"action_id": action.id, "arguments": action.arguments},
+        {"action_id": action.id, "arguments": action.normalized_arguments},
         solver_id="solver_main",
     )
     store.close()
@@ -245,9 +277,10 @@ def test_action_snapshot_and_events_recursively_redact_tool_secrets(tmp_path, mo
 
 def test_event_endpoint_never_builds_a_full_snapshot(tmp_path, monkeypatch):
     task_id = _seed_session(tmp_path, monkeypatch)
+    assert not hasattr(EvidenceStore, "task_snapshot")
     monkeypatch.setattr(
-        EvidenceStore,
-        "task_snapshot",
+        TaskRuntimeService,
+        "runtime_snapshot",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("full snapshot was loaded")),
     )
 
@@ -295,64 +328,6 @@ def test_v2_event_projection_omits_null_optional_payload_fields(tmp_path, monkey
     payload = TestClient(app).get(f"/api/v2/tasks/{task_id}/session").json()["events"][-1]["payload"]
     assert payload["action"] == "resume"
     assert "action_id" not in payload
-
-
-def test_v2_snapshot_projection_omits_null_optional_context_metrics():
-    snapshot = route_support._normalize_snapshot({
-        "task": {"id": "task"},
-        "session": {"status": "running", "turn_count": 1, "max_turns": 8},
-        "context_metrics": [{
-            "turn": 1,
-            "audit_message_count": 2,
-            "working_message_count": 3,
-            "working_chars": 128,
-            "summary_hits": 0,
-            "artifact_retrievals": 0,
-            "provider_input_tokens": None,
-            "provider_output_tokens": None,
-        }],
-    })
-
-    metric = snapshot["context_metrics"][0]
-    assert metric["turn"] == 1
-    assert "provider_input_tokens" not in metric
-    assert "provider_output_tokens" not in metric
-
-
-def test_v2_action_projection_keeps_in_flight_summary_a_string():
-    action = route_support._normalize_action({
-        "id": "act_running",
-        "capability": "http.request",
-        "target": "https://target.test/",
-        "status": "running",
-        "summary": None,
-        "result": None,
-    })
-
-    assert action["summary"] == ""
-    assert action["artifact_ids"] == []
-
-
-def test_v2_action_projection_redacts_credentials_and_request_body():
-    action = route_support._normalize_action({
-        "id": "act_secret",
-        "capability": "http.request",
-        "target": "https://target.test/login",
-        "status": "succeeded",
-        "arguments": {
-            "method": "POST",
-            "path": "/login",
-            "headers": {"Authorization": "Bearer private", "X-Trace": "safe"},
-            "query": {"token": "private-query", "page": "1"},
-            "body": {"password": "private-body"},
-        },
-    })
-
-    encoded = str(action["arguments"])
-    assert "private" not in encoded
-    assert action["arguments"]["headers"]["Authorization"] == "[REDACTED]"
-    assert action["arguments"]["query"]["token"] == "[REDACTED]"
-    assert action["arguments"]["body"]["present"] is True
 
 
 def test_v2_sse_stream_reads_agent_events(tmp_path, monkeypatch):
@@ -438,7 +413,7 @@ def test_v2_task_creation_requires_a_configured_model(tmp_path, monkeypatch):
     monkeypatch.delenv("TGA_LLM_API_KEY", raising=False)
     monkeypatch.delenv("TGA_LLM_MODEL", raising=False)
 
-    response = TestClient(app).post("/api/v2/tasks", json=_create_request("model_required", task_ids=["asset_" + "a" * 32]))
+    response = TestClient(app).post("/api/v2/tasks/preflight", json=_create_request("model_required", task_ids=["asset_" + "a" * 32]))
 
     assert response.status_code == 409
     assert response.json()["detail"] == {"code": "MODEL_NOT_CONFIGURED", "message": "model_not_configured"}
@@ -485,16 +460,24 @@ def test_v2_settings_and_capabilities_routes(monkeypatch):
     assert client.get("/api/v2/settings/prompts").status_code == 404
 
 
-def test_mcp_catalog_refresh_route(monkeypatch):
+def test_mcp_server_refresh_route(monkeypatch, tmp_path):
     class FakeManager:
-        def __init__(self): self.refreshed = False
+        def __init__(self):
+            self.refreshed = False
+            self.config_path = tmp_path / "mcp.json"
         def refresh(self): self.refreshed = True
-        def status_snapshot(self): return {"configured": True, "catalog_version": "mcp_next", "records": []}
+        def status_snapshot(self):
+            return {"configured": True, "catalog_version": "mcp_next", "records": [{"server": "demo"}]}
     manager = FakeManager()
+    manager.config_path.write_text(
+        '{"version":1,"servers":{"demo":{"transport":"stdio","stdio":{"source":"docker_image","image":"demo-mcp:latest"}}}}',
+        encoding="utf-8",
+    )
     monkeypatch.setattr(mcp_routes, "_catalog_runner", lambda: manager)
-    response = TestClient(app).post("/api/v2/tools/mcp/refresh")
+    response = TestClient(app).post("/api/v2/mcp/servers/demo/refresh")
     assert response.status_code == 200
-    assert response.json()["catalog_version"] == "mcp_next"
+    assert response.json()["id"] == "demo"
+    assert response.json()["status"]["server"] == "demo"
     assert manager.refreshed is True
 
 
@@ -520,7 +503,7 @@ def test_mcp_import_route_streams_file_and_refreshes_catalog(monkeypatch, tmp_pa
     monkeypatch.setattr(mcp_routes, "_catalog_runner", lambda: manager)
     monkeypatch.setattr(mcp_routes, "MCPImageImporter", FakeImporter)
     response = TestClient(app).post(
-        "/api/v2/tools/mcp/import",
+        "/api/v2/mcp/images/import",
         content=b"docker archive",
         headers={"X-TGA-Filename": "demo%20image.tar", "Content-Type": "application/octet-stream"},
     )
@@ -544,7 +527,7 @@ def test_mcp_delete_route_removes_config_but_not_image(monkeypatch, tmp_path):
 
     manager = FakeManager()
     monkeypatch.setattr(mcp_routes, "_catalog_runner", lambda: manager)
-    response = TestClient(app).delete("/api/v2/tools/mcp/demo")
+    response = TestClient(app).delete("/api/v2/mcp/servers/demo")
     assert response.status_code == 200
     assert response.json()["deleted"] is True
     assert response.json()["image_deleted"] is False
@@ -566,11 +549,19 @@ def test_mcp_enabled_route_updates_config_and_refreshes(monkeypatch, tmp_path):
 
     manager = FakeManager()
     monkeypatch.setattr(mcp_routes, "_catalog_runner", lambda: manager)
-    response = TestClient(app).patch("/api/v2/tools/mcp/demo/enabled", json={"enabled": True})
+    response = TestClient(app).patch("/api/v2/mcp/servers/demo", json={"enabled": True})
     assert response.status_code == 200
-    assert response.json()["enabled"] is True
+    assert response.json()["server"]["config"]["enabled"] is True
     assert json.loads(config_path.read_text(encoding="utf-8"))["servers"]["demo"]["enabled"] is True
     assert manager.refreshed is True
+
+
+def test_legacy_mcp_management_routes_are_not_registered():
+    client = TestClient(app)
+    assert client.post("/api/v2/tools/mcp/refresh").status_code == 404
+    assert client.post("/api/v2/tools/mcp/import").status_code == 404
+    assert client.delete("/api/v2/tools/mcp/demo").status_code == 404
+    assert client.patch("/api/v2/tools/mcp/demo/enabled", json={"enabled": True}).status_code == 404
 
 
 def test_full_mcp_management_api_crud_and_redaction(monkeypatch, tmp_path):

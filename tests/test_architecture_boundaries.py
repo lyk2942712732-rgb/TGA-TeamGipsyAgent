@@ -8,9 +8,11 @@ from pathlib import Path
 from pydantic import BaseModel
 
 from tga import contracts
-from tga.domain.evidence import legacy_models as evidence_models
+from tga.domain.events import records as event_records
+from tga.domain.evidence import indexes as evidence_indexes
+from tga.domain.evidence import records as evidence_records
 from tga.domain.governance import models as governance_models
-from tga.domain.solver import legacy_models as solver_models
+from tga.domain.runtime import models as runtime_models
 from tga.domain.task import models as task_models
 
 
@@ -21,7 +23,7 @@ def test_domain_does_not_import_framework_or_infrastructure_implementations() ->
     domain_root = Path(__file__).parents[1] / "tga" / "domain"
     violations: list[str] = []
     for path in domain_root.rglob("*.py"):
-        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        tree = ast.parse(path.read_text(encoding="utf-8-sig"), filename=str(path))
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
                 names = [alias.name for alias in node.names]
@@ -36,15 +38,49 @@ def test_domain_does_not_import_framework_or_infrastructure_implementations() ->
     assert violations == []
 
 
-def test_contracts_are_identity_preserving_compatibility_exports() -> None:
-    for module in (task_models, governance_models, evidence_models, solver_models):
+def test_contracts_are_identity_preserving_public_exports() -> None:
+    for module in (
+        task_models, governance_models, evidence_records, evidence_indexes,
+        event_records, runtime_models,
+    ):
         for name in module.__all__:
             canonical = getattr(module, name)
             if inspect.isclass(canonical) and issubclass(canonical, BaseModel):
                 assert getattr(contracts, name) is canonical
 
 
-def test_task_json_shape_remains_stable_through_compatibility_export() -> None:
+def test_migration_namespace_is_not_imported_by_production_runtime() -> None:
+    root = Path(__file__).parents[1]
+    violations: list[str] = []
+    for path in (root / "tga").rglob("*.py"):
+        relative = path.relative_to(root).as_posix()
+        if relative.startswith("tga/migrations/") or relative == "tga/cli/main.py":
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8-sig"), filename=str(path))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and (node.module or "").startswith("tga.migrations"):
+                violations.append(f"{relative} imports {node.module}")
+            elif isinstance(node, ast.Import):
+                violations.extend(
+                    f"{relative} imports {alias.name}"
+                    for alias in node.names
+                    if alias.name.startswith("tga.migrations")
+                )
+    assert violations == []
+
+
+def test_retired_runtime_type_and_hint_adapter_files_are_absent() -> None:
+    root = Path(__file__).parents[1]
+    assert not (root / "tga" / "domain" / "evidence" / "legacy_models.py").exists()
+    assert not (root / "tga" / "core" / "intents.py").exists()
+    session_routes = (root / "apps" / "api" / "routes" / "sessions.py").read_text(
+        encoding="utf-8"
+    )
+    assert '"/tasks/{task_id}/hints"' not in session_routes
+    assert "HintRequest" not in session_routes
+
+
+def test_task_json_shape_remains_stable_through_public_export() -> None:
     task = contracts.TGATask(id="architecture_snapshot", name="snapshot", mode="ctf", goal="solve")
     payload = task.model_dump(mode="json")
 

@@ -32,7 +32,7 @@ def test_markdown_report_keeps_candidates_out_of_confirmed():
                 }
             ],
             "flags": [],
-            "agent_events": [{"seq": 1, "type": "deadend", "payload": {"reason": "no login form found"}}],
+            "events": [{"seq": 1, "type": "deadend", "payload": {"reason": "no login form found"}}],
         }
     )
 
@@ -52,7 +52,7 @@ def test_markdown_report_renders_plan_and_decision_trace():
             "artifacts": [],
             "findings": [],
             "flags": [],
-            "agent_events": [
+            "events": [
                 {
                     "type": "PLAN_CREATED",
                     "payload": {
@@ -95,12 +95,13 @@ def test_markdown_report_renders_v2_session_outcome_and_seq_timeline():
             "findings": [], "flags": [], "events": [],
             "session": {"status": "blocked", "turn_count": 3, "max_turns": 48, "stop_reason": "budget"},
             "solvers": [{"id": "solver_1", "role": "main", "status": "waiting"}],
-            "runtime": {"memory": [{"id": "memory_1", "kind": "failure_boundary", "content": "Authorization: Bearer secret-value", "artifact_ids": ["artifact_1"], "source": "agent"}], "strategy_cards": []},
+            "global_plan": {"id": "plan_1", "status": "active", "version": 2},
             "actions": [{"id": "action_1", "status": "blocked", "capability": "http.request", "target": "http://target/login", "artifact_ids": ["artifact_1"], "summary": "scope boundary"}],
-            "agent_events": [{"seq": 2, "type": "ACTION_FINISHED", "payload": {"summary": "scope boundary"}, "created_at": "2026-01-01T00:00:01Z"}, {"seq": 1, "type": "SESSION_STARTED", "payload": {}, "created_at": "2026-01-01T00:00:00Z"}],
+            "events": [{"seq": 2, "type": "ACTION_FINISHED", "payload": {"summary": "Authorization: Bearer secret-value"}, "created_at": "2026-01-01T00:00:01Z"}, {"seq": 1, "type": "SESSION_STARTED", "payload": {}, "created_at": "2026-01-01T00:00:00Z"}],
         }
     )
     assert "## Session Outcome" in report
+    assert "## Global Plan" in report
     assert "## Runtime Report (seq ordered)" in report
     assert "seq 1" in report and "seq 2" in report
     assert "[REDACTED]" in report

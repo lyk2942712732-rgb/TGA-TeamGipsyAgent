@@ -6,7 +6,7 @@
 
 | 模式 | 方法与证据重点 | 完成重点 |
 | --- | --- | --- |
-| `ctf` | 根据题面动态选择 Web、Pwn、Reverse、Crypto、Misc 工具 | 显式 `finish_session`，且 Flag 通过远端验证器或本地格式、占位符、Artifact 归属和内容验证 |
+| `ctf` | 根据题面动态选择 Web、Pwn、Reverse、Crypto、Misc 工具 | Supervisor 提交 `propose_task_completion`，且 Flag 通过远端验证器或本地格式、占位符、Artifact 归属和内容验证 |
 | `penetration_test` | 授权范围、攻击面、假设验证、影响和覆盖 | 有真实证据、覆盖和限制；允许“未发现漏洞” |
 | `incident_response` | 非破坏性保全、时间线、IOC、根因、影响和处置 | 调查结论、覆盖和逐条证据引用 |
 | `vulnerability_research` | 静态/动态分析、最小化复现、根因和前提 | 漏洞声明必须有复现证据；阴性结果必须有覆盖和限制 |
@@ -16,11 +16,11 @@
 
 ## 完成状态机
 
-`finish_session` 是整项任务的完成声明，不是回合结束动作。公共字段为 `summary`、`evidence_artifact_ids`、结构化 `claims`、`coverage` 和 `limitations`；只有 CTF Schema 暴露 `flag`。Schema 和嵌套 claim 均禁止额外字段。
+`propose_task_completion` 是 Supervisor 的整项任务完成提案，不是回合结束动作。公共字段为 `summary`、`evidence_artifact_ids`、结构化 `claims`、`coverage` 和 `limitations`；只有 CTF Schema 暴露 `flag`。Schema 和嵌套 claim 均禁止额外字段。
 
 1. 普通工具调用：结果和 Artifact 回填原会话，继续下一轮。
-2. `finish_session` 被拒绝：写入 `FINISH_REJECTED`，结构化 `missing` 作为 tool result 回填，Session 保持 `running`。
-3. `finish_session` 被接受：写入 `FINISH_ACCEPTED`，随后 Session 才进入 `completed`。
+2. 完成提案被拒绝：写入 `FINISH_REJECTED`，结构化 `missing` 作为 tool result 回填，Task 保持 `running`。
+3. 完成提案被 Host 接受：写入 `FINISH_ACCEPTED`，随后 Task 才进入 `completed`。
 4. 无 tool call 的自然结束：写入 `AGENT_TURN_ENDED` 和 `CONTINUATION_TRIGGERED`，继续原会话；连续无进展只触发 Observer 纠偏。
 5. `max_turns`、暂停、取消和模型失败继续使用各自硬停止状态，不会伪装成完成。
 

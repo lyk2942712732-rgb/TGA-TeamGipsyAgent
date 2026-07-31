@@ -1,4 +1,4 @@
-"""One-Solver runner boundary with the legacy class retained behind an adapter."""
+"""Run one durable SolverInstance through the model-turn engine."""
 
 from __future__ import annotations
 
@@ -34,8 +34,7 @@ class SolverRunner:
             raise RuntimeError(
                 f"durable SolverInstance is missing or mis-owned: {self.solver_id}"
             )
-        # Compatibility execution engine. It is scoped to this Solver and is
-        # no longer responsible for choosing or creating the durable identity.
+        # The turn engine executes only the already-provisioned Solver identity.
         from tga.runtime.agent_session import AgentSessionRunner
 
         self._engine = AgentSessionRunner(**kwargs)

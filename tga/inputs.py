@@ -122,12 +122,7 @@ def media_kind_for(mime_type: str, original_name: str) -> MediaKind:
 
 
 def task_artifact_root(task_root: str | Path, task: Any) -> Path:
-    """Return the compatibility ArtifactStore root used by legacy adapters.
-
-    Schema-v6 Solver publication uses ``workspace/shared/artifacts`` through
-    ``SolverWorkspaceService``; existing adapters keep this path until their
-    dedicated migration so persisted Sessions remain readable.
-    """
+    """Return the task-owned ArtifactStore root used by controlled execution."""
 
     root = Path(task_root).resolve()
     return (root / "workspace" / "artifacts").resolve()
@@ -270,6 +265,72 @@ class SessionWorkspace:
         manifest = self.root / "state" / "input-manifest.json"
         manifest.write_text(session_input.model_dump_json(indent=2, by_alias=True), encoding="utf-8")
         return session_input, cleanup
+
+    def inspect_staged(
+        self,
+        *,
+        staging_root: str | Path,
+        prompt: str,
+        asset_ids: list[str],
+    ) -> SessionInput:
+        """Validate staged assets without creating or moving task files."""
+        ids = list(asset_ids)
+        if len(ids) != len(set(ids)):
+            raise ValueError("asset ids must be unique")
+        if len(ids) > self.limits.max_files:
+            raise ValueError("input file count limit exceeded")
+        staging = Path(staging_root).resolve()
+        files: list[SessionFile] = []
+        total = 0
+        for asset_id in ids:
+            if not re.fullmatch(r"asset_[a-f0-9]{32}", asset_id):
+                raise ValueError(f"invalid asset id: {asset_id}")
+            token = asset_id.removeprefix("asset_")
+            stage = (staging / token).resolve()
+            self._inside(stage, staging)
+            try:
+                metadata = json.loads((stage / "manifest.json").read_text(encoding="utf-8"))
+                source = stage / "source"
+                original_name = safe_original_name(str(metadata.get("original_name") or ""))
+                size = 0
+                digest_builder = hashlib.sha256()
+                with source.open("rb") as stream:
+                    while chunk := stream.read(1024 * 1024):
+                        size += len(chunk)
+                        digest_builder.update(chunk)
+                digest = digest_builder.hexdigest()
+            except (OSError, json.JSONDecodeError) as exc:
+                raise ValueError(f"staged asset is unavailable: {asset_id}") from exc
+            if metadata.get("asset_id") != asset_id:
+                raise ValueError(f"staged asset identity mismatch: {asset_id}")
+            if size != int(metadata.get("size") or -1) or digest != metadata.get("sha256"):
+                raise ValueError(f"staged asset checksum mismatch: {asset_id}")
+            if size > self.limits.max_file_bytes:
+                raise ValueError("input exceeds per-file size limit")
+            total += size
+            suffix = Path(original_name).suffix.casefold()
+            safe_suffix = suffix if re.fullmatch(r"\.[a-z0-9]{1,16}", suffix) else ""
+            stored_name = f"{token}{safe_suffix}"
+            mime_type = detect_mime_type(source, original_name)
+            files.append(SessionFile(
+                id=asset_id,
+                originalName=original_name,
+                storedName=stored_name,
+                relativePath=f"inputs/files/{stored_name}",
+                mimeType=mime_type,
+                size=size,
+                sha256=digest,
+                kind="task_input",
+                mediaKind=media_kind_for(mime_type, original_name),
+                provenance=ResourceProvenance(
+                    source="user_upload",
+                    created_at=str(metadata.get("created_at") or "") or None,
+                    original_name=original_name,
+                ),
+            ))
+        if total > self.limits.max_total_bytes:
+            raise ValueError("input total size limit exceeded")
+        return SessionInput(prompt=prompt, files=files)
 
     def path_for(self, item: SessionFile) -> Path:
         path = (self.root / item.relative_path).resolve()

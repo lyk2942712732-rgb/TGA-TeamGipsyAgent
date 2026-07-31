@@ -12,7 +12,7 @@ from typing import Any, Protocol
 from tga.domain.evidence.artifacts import Artifact
 from tga.domain.evidence.claims import EvidenceClaim
 from tga.domain.evidence.findings import Finding
-from tga.domain.evidence.legacy_models import AgentEvent
+from tga.domain.events import AgentEvent
 from tga.domain.knowledge.items import KnowledgeItem
 from tga.domain.planning.global_plan import GlobalPlan
 from tga.domain.planning.local_plan import LocalPlan
@@ -21,7 +21,7 @@ from tga.domain.solver.assignments import SolverAssignment
 from tga.domain.solver.results import ReportResult, ReviewResult, WorkerResult
 from tga.domain.solver.team_runtime import TeamRuntimeState
 from tga.domain.solver.leases import SolverLease, TaskOrchestratorLease
-from tga.domain.solver.legacy_models import SessionRecord
+from tga.domain.runtime.models import SessionRecord
 from tga.domain.task.models import TGATask
 from tga.domain.task.spec import TaskSpec
 from tga.domain.task.hints import TaskHint

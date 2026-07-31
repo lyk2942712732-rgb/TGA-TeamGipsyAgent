@@ -7,7 +7,7 @@ import threading
 import time
 from collections import defaultdict, deque
 
-from tga.domain.evidence.legacy_models import AgentEvent
+from tga.domain.events import AgentEvent
 
 
 class InProcessEventBus:

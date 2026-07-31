@@ -32,6 +32,23 @@ test("new task selects a scene and stages task files plus Hint without task-leve
       { server: "disabled", configured: true, enabled: false, discovered: true },
     ],
   } }));
+  await page.route("**/api/v2/tasks/skill-preview", (route) => route.fulfill({ json: {
+    selector: "fixture",
+    fingerprint: "s".repeat(64),
+    count: 0,
+    skills: [],
+  } }));
+  await page.route("**/api/v2/tasks/preflight", (route) => route.fulfill({ json: {
+    fingerprint: "f".repeat(64),
+    task_id: "task_created",
+    checks: [
+      { id: "inputs", status: "passed", detail: "Inputs verified" },
+      { id: "model", status: "passed", detail: "Model verified" },
+    ],
+    skill_snapshot: { selector: "fixture", count: 0, content_sha256: "a".repeat(64) },
+    mcp_catalog_version: "fixture-v1",
+    model_verification_id: "model-verification-fixture",
+  } }));
   await page.route("**/api/v2/input-uploads?*", async (route) => {
     upload += 1;
     const name = new URL(route.request().url()).searchParams.get("filename") ?? "file.bin";
@@ -52,13 +69,6 @@ test("new task selects a scene and stages task files plus Hint without task-leve
     }
     await route.fulfill({ json: { tasks: [] } });
   });
-  await page.route("**/api/v2/tasks/task_created/session", (route) => route.fulfill({ json: {
-    task: { id: "task_created", name: "new", mode: "ctf", task_entry_url: null, session_input: { prompt: "Analyze the supplied diagram.", files: [] } },
-    session: { status: "created", turn_count: 0, max_turns: 48 }, solvers: [], challenge: null,
-    runtime: { memory: [], strategy_cards: [] }, actions: [], flags: [], findings: [], artifacts: [], events: [], latest_seq: 0,
-  } }));
-  await page.route("**/api/v2/tasks/task_created/events/stream?*", (route) => route.fulfill({ status: 200, contentType: "text/event-stream", body: "event: heartbeat\ndata: {}\n\n" }));
-
   await page.goto("/tasks/new");
   await expect(page.getByRole("heading", { name: "新建任务" })).toBeVisible();
   await expect(page.getByRole("button", { name: /选择场景/ })).toBeVisible();
@@ -89,6 +99,7 @@ test("new task selects a scene and stages task files plus Hint without task-leve
 
   expect(createPayload).toMatchObject({
     mode: "ctf",
+    preflightFingerprint: "f".repeat(64),
     input: {
       text: "Analyze the supplied diagram.",
     },

@@ -62,7 +62,7 @@ class Database:
                 version = int(json.loads(row["payload_json"]).get("schema_version") or 0)
             except (TypeError, ValueError, json.JSONDecodeError) as exc:
                 raise DatabaseSchemaVersionError(0) from exc
-            if version not in {5, 6}:
+            if version != 6:
                 raise DatabaseSchemaVersionError(version)
 
     def transaction(self):
@@ -131,21 +131,6 @@ class Database:
             self.conn.execute("ALTER TABLE agent_events ADD COLUMN schema_version INTEGER NOT NULL DEFAULT 2")
         if "intent_id" not in event_columns:
             self.conn.execute("ALTER TABLE agent_events ADD COLUMN intent_id TEXT")
-        action_columns = {row["name"] for row in self.conn.execute("PRAGMA table_info(actions)").fetchall()}
-        additions = {
-            "strategy_card_id": "TEXT", "strategy_step_id": "TEXT",
-            "expected_outcome": "TEXT NOT NULL DEFAULT ''", "retry_reason": "TEXT NOT NULL DEFAULT ''",
-            "alternative_analysis": "TEXT NOT NULL DEFAULT ''", "effect_json": "TEXT NOT NULL DEFAULT '{}'",
-            "approval_expires_at": "TEXT",
-            "input_id": "TEXT", "target_ref": "TEXT", "actual_target": "TEXT",
-            "authorization_json": "TEXT NOT NULL DEFAULT '{}'", "provenance_json": "TEXT NOT NULL DEFAULT '{}'",
-            "intent_id": "TEXT", "local_plan_step_id": "TEXT",
-            "execution_policy_snapshot_id": "TEXT", "solver_tool_policy_snapshot_id": "TEXT",
-            "governed_action_id": "TEXT",
-        }
-        for name, declaration in additions.items():
-            if name not in action_columns:
-                self.conn.execute(f"ALTER TABLE actions ADD COLUMN {name} {declaration}")
         table_additions = {
             "intents": {
                 "global_plan_id": "TEXT",
@@ -153,10 +138,10 @@ class Database:
                 "priority": "INTEGER NOT NULL DEFAULT 0",
                 "version": "INTEGER NOT NULL DEFAULT 1",
                 "claimed_at": "TEXT",
-                "schema_version": "INTEGER NOT NULL DEFAULT 5",
+                "schema_version": "INTEGER NOT NULL DEFAULT 6",
             },
-            "artifacts": {"schema_version": "INTEGER NOT NULL DEFAULT 5"},
-            "findings": {"schema_version": "INTEGER NOT NULL DEFAULT 5"},
+            "artifacts": {"schema_version": "INTEGER NOT NULL DEFAULT 6"},
+            "findings": {"schema_version": "INTEGER NOT NULL DEFAULT 6"},
             "solver_leases": {
                 "fencing_token": "INTEGER NOT NULL DEFAULT 1",
                 "renewed_at": "TEXT NOT NULL DEFAULT ''",
@@ -185,8 +170,5 @@ class Database:
             for name, declaration in requested.items():
                 if name not in existing:
                     self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {declaration}")
-        # Destructive legacy cleanup belongs in an explicit migration command,
-        # never in a read-path constructor.
-
     def close(self) -> None:
         self.conn.close()

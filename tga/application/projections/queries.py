@@ -47,8 +47,8 @@ class TaskProjectionQueries:
                 assigned_intent_id=item.assigned_intent_id,
                 model_snapshot=item.model_snapshot.model_dump(mode="json"),
                 skill_snapshot=(
-                    item.skill_bundle_snapshot.model_dump(mode="json")
-                    if item.skill_bundle_snapshot else {}
+                    item.skill_snapshot.model_dump(mode="json")
+                    if item.skill_snapshot else {}
                 ),
                 tool_policy=item.tool_policy_snapshot.model_dump(mode="json"),
                 timestamps=item.timestamps.model_dump(mode="json"),

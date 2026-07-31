@@ -1,16 +1,79 @@
-export type AppRoute = { page: "dashboard" | "new" | "runtime" | "replay" | "models" | "capabilities" | "skills" | "system-prompt"; taskId?: string };
+export type AppPage =
+  | "dashboard"
+  | "tasks"
+  | "new"
+  | "task-detail"
+  | "runtime"
+  | "replay"
+  | "approvals"
+  | "resources"
+  | "reports"
+  | "knowledge-bases"
+  | "teams"
+  | "solvers"
+  | "skills"
+  | "tools"
+  | "models"
+  | "policies"
+  | "system"
+  | "not-found";
+
+export type AppRoute = {
+  page: AppPage;
+  taskId?: string;
+};
+
+const ROOT_ROUTES: Record<string, AppPage> = {
+  approvals: "approvals",
+  resources: "resources",
+  reports: "reports",
+  "knowledge-bases": "knowledge-bases",
+  system: "system",
+};
+
+const SETTINGS_ROUTES: Record<string, AppPage> = {
+  teams: "teams",
+  solvers: "solvers",
+  skills: "skills",
+  tools: "tools",
+  models: "models",
+  policies: "policies",
+};
 
 export function readRoute(pathname = window.location.pathname): AppRoute {
   const parts = pathname.split("/").filter(Boolean);
-  if (parts[0] === "tasks" && parts[1] === "new") return { page: "new" };
-  if (parts[0] === "tasks" && parts[1] && (parts[2] === "runtime" || parts[2] === "replay")) {
-    try { return { page: parts[2], taskId: decodeURIComponent(parts[1]) }; }
-    catch { return { page: "dashboard" }; }
+  if (!parts.length) return { page: "dashboard" };
+
+  if (parts[0] === "tasks") return readTaskRoute(parts);
+  if (parts.length === 2 && parts[0] === "settings" && parts[1] && SETTINGS_ROUTES[parts[1]]) {
+    return { page: SETTINGS_ROUTES[parts[1]] };
   }
-  if (parts[0] === "settings" && ["models", "capabilities", "skills", "system-prompt"].includes(parts[1] ?? "")) return { page: parts[1] as AppRoute["page"] };
-  return { page: "dashboard" };
+
+  const rootPage = parts.length === 1 ? ROOT_ROUTES[parts[0]] : undefined;
+  return rootPage ? { page: rootPage } : { page: "not-found" };
 }
 
-export function runtimePageVariant(value = import.meta.env.VITE_RUNTIME_PAGE): "task" | "legacy" {
-  return value === "legacy" ? "legacy" : "task";
+function readTaskRoute(parts: string[]): AppRoute {
+  if (parts.length === 1) return { page: "tasks" };
+  if (parts.length === 2 && parts[1] === "new") return { page: "new" };
+
+  const taskId = decodeTaskId(parts[1]);
+  if (!taskId) return { page: "not-found" };
+  if (parts.length === 2) return { page: "task-detail", taskId };
+  if (parts.length === 3 && (parts[2] === "runtime" || parts[2] === "replay")) {
+    return { page: parts[2], taskId };
+  }
+  return { page: "not-found" };
+}
+
+function decodeTaskId(value: string): string | null {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return null;
+  }
+}
+
+export function isRuntimePage(page: AppPage): boolean {
+  return page === "runtime" || page === "replay";
 }

@@ -61,6 +61,16 @@ export type CreateSessionRequest = {
   input: { text: string; fileIds: string[] };
   executionPolicy: ExecutionPolicy;
   selectedSkills?: string[] | null;
+  preflightFingerprint?: string | null;
+};
+
+export type TaskPreflight = {
+  fingerprint: string;
+  task_id: string;
+  checks: Array<{ id: string; status: "passed"; detail: string }>;
+  skill_snapshot: { selector: string; count: number; content_sha256: string };
+  mcp_catalog_version: string;
+  model_verification_id: string;
 };
 
 export type TaskListItem = {
@@ -69,6 +79,8 @@ export type TaskListItem = {
   updated_at?: string; status: string; turn_count?: number; max_turns?: number;
   active_solvers?: number; latest_event?: { seq?: number; type?: string } | null;
   flags: number; findings: number; artifacts: number;
+  pending_approvals?: number; needs_attention?: boolean;
+  intent_total?: number; intent_completed?: number;
 };
 
 export type LLMVerification = {
@@ -84,6 +96,10 @@ export const createTask = (request: CreateSessionRequest) => requestJson<{
   task_id: string; status: string; scheduled: boolean;
   mcp_capabilities: { server_ids: string[]; tools: unknown[] };
 }>("/api/v2/tasks", {
+  method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(request),
+});
+
+export const preflightTask = (request: CreateSessionRequest) => requestJson<TaskPreflight>("/api/v2/tasks/preflight", {
   method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(request),
 });
 

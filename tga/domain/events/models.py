@@ -48,7 +48,7 @@ REQUIRED_PAYLOAD_FIELDS: dict[str, frozenset[str]] = {
 
 
 class VersionedEventPayload(BaseModel):
-    """A compatibility-safe payload with hard structural and byte bounds."""
+    """A transport-safe payload with hard structural and byte bounds."""
 
     model_config = ConfigDict(extra="allow")
     schema_version: int = Field(default=1, ge=1, le=1_000)

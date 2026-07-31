@@ -1,31 +1,14 @@
-# Phase 3 solver and team resources
+# Phase 3 Solver and team resources
 
-The nine built-in SolverDefinitions are immutable JSON resources split by
-orchestration role. `SolverDefinitionRegistry.builtin()` validates their schema,
-Skill references, Capability references, unique IDs, content hashes and exact
-built-in set.
+> Historical phase record, updated to describe the final resource contract.
 
-The five `resources/team_templates/*.yaml` files contain JSON, which is a strict
-YAML 1.2 subset and therefore needs no additional parser dependency. The team
-registry validates Definition roles and mode compatibility. Every phase-3 team
-has `max_active_workers = 1`; limited parallelism remains disabled until phase 7.
+Built-in SolverDefinitions and TeamTemplates are immutable, validated resources. Each current
+SolverInstance freezes its Definition, model, ToolPolicy, budget, completion authority, and
+`SolverSkillSnapshot`. Task-wide methods use `TaskCommonSkillSnapshot`.
 
-Skill ownership is now:
+Skills provide guidance and never grant authority. Capability requirements must already be
+allowed by both the Runtime catalog and the frozen ToolPolicy.
 
-```text
-TaskCommonSkillSnapshot (normally 1–2)
-+ SolverSkillSnapshot (at most 3)
-```
-
-Both freeze version, body and SHA-256. `SkillActivation` records guidance use
-but has no tool or capability-grant field. The application selection service
-requires every Skill capability to be present in both the runtime Capability
-catalog and the independently supplied ToolPolicy snapshot.
-
-The existing Markdown sources now live under `resources/skills`; the legacy
-registry reads the same files, so management behavior is preserved without two
-built-in source trees.
-
-Schema-v5 `TGATask.skill_bundle_snapshot` remains unchanged. A pure compatibility
-projection can preserve all three legacy entries in a legacy-import Task Common
-snapshot; this does not move data or alter runtime prompts in phase 3.
+Historical Task-level skill bundles are not accepted by current Tasks. The field is read only
+inside schema-v5 offline migration and converted into current snapshots without affecting
+Runtime authorization.

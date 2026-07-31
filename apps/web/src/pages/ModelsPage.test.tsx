@@ -11,7 +11,7 @@ vi.mock("../api/tasks", async (original) => ({ ...await original<typeof import("
 vi.mock("../api/capabilities", () => ({ fetchCapabilities: vi.fn(), fetchMCPHealth: vi.fn() }));
 vi.mock("../runtime/api-v2", () => ({ runtimeApi: {} }));
 
-import { ModelsPage } from "./SettingsPages";
+import { ModelsPage } from "./ModelsPage";
 
 describe("ModelsPage browser configuration", () => {
   beforeEach(() => {

@@ -43,7 +43,7 @@ class SolverInstance(BaseModel):
     specialties: tuple[str, ...] = Field(min_length=1, max_length=32)
     status: SolverInstanceStatus = SolverInstanceStatus.CREATED
     model_snapshot: ModelSnapshot
-    skill_bundle_snapshot: SolverSkillSnapshot | None = None
+    skill_snapshot: SolverSkillSnapshot | None = None
     tool_policy_snapshot: ToolPolicySnapshot
     budget: SolverBudget
     completion_authority: CompletionAuthority
@@ -60,12 +60,11 @@ class SolverInstance(BaseModel):
                 raise ValueError("worker SolverInstance requires parent and assigned intent")
             if self.completion_authority == "task":
                 raise ValueError("worker SolverInstance cannot own task completion")
-        if self.skill_bundle_snapshot is not None:
-            snapshot = self.skill_bundle_snapshot
+        if self.skill_snapshot is not None:
+            snapshot = self.skill_snapshot
             if snapshot.task_id != self.task_id or snapshot.solver_id != self.id:
                 raise ValueError("SolverSkillSnapshot ownership does not match SolverInstance")
         return self
 
 
 __all__ = ["SolverInstance", "SolverTimestamps", "ToolPolicySnapshot"]
-

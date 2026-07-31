@@ -10,9 +10,8 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass
 from typing import Any
-from uuid import uuid4
 
-from tga.contracts import ChallengeContract, Finding, SessionRecord, SolverRecord, TGATask
+from tga.contracts import CandidateFindingRecord, ChallengeContract, SessionRecord, TGATask
 from tga.evidence.store import EvidenceStore, utc_now
 
 
@@ -56,14 +55,14 @@ class SessionCoordinator:
         with self.store.transaction():
             return self.store.create_session(session)
 
-    def ensure_runtime(
+    def ensure_session(
         self,
         *,
         task: TGATask,
         max_turns: int,
-        model_name: str = "",
-    ) -> tuple[SessionRecord, str]:
-        """Create the lifecycle aggregate atomically or recover its main Agent."""
+        supervisor_solver_id: str,
+    ) -> SessionRecord:
+        """Create or recover the Task lifecycle aggregate for the formal Supervisor."""
         with self.store.transaction():
             session = self.store.get_session(task.id)
             created = session is None
@@ -72,27 +71,16 @@ class SessionCoordinator:
                     task_id=task.id,
                     schema_version=task.schema_version,
                     max_turns=max_turns,
+                    active_solver_id=supervisor_solver_id,
                     workspace_path="workspace",
                     mcp_catalog_version=task.mcp_capabilities.catalog_version,
                 ))
             elif session.max_turns > max_turns:
                 session = self.store.update_session(task.id, max_turns=max_turns)
-
-            solvers = self.store.list_solvers(task.id)
-            solver = next((item for item in solvers if item.id == session.active_solver_id), None)
-            if solver is None:
-                solver = next((item for item in solvers if item.role == "main"), None)
-            if solver is None:
-                solver = SolverRecord(
-                    id=f"agent_{uuid4().hex[:12]}",
-                    task_id=task.id,
-                    role="main",
-                    status="starting",
-                    model_name=model_name,
+            elif session.active_solver_id is None:
+                session = self.store.update_session(
+                    task.id, active_solver_id=supervisor_solver_id
                 )
-                self.store.add_solver(solver)
-            elif model_name and solver.model_name != model_name:
-                solver = self.store.update_solver(solver.id, model_name=model_name)
 
             if task.mode == "ctf" and self.store.get_challenge(task.id) is None:
                 self.store.upsert_challenge(ChallengeContract(
@@ -108,9 +96,9 @@ class SessionCoordinator:
                     task.id,
                     "SESSION_CREATED",
                     {"status": session.status, "max_turns": session.max_turns},
-                    solver_id=solver.id,
+                    solver_id=supervisor_solver_id,
                 )
-            return session, solver.id
+            return session
 
     def update_session(self, *, task_id: str, **changes: Any) -> SessionRecord:
         if not changes:
@@ -155,13 +143,6 @@ class SessionCoordinator:
                     finished_at=None,
                     stop_reason="",
                 )
-                if effective_solver_id is not None:
-                    self.store.update_solver(
-                        effective_solver_id,
-                        status="running",
-                        started_at=session.started_at,
-                        finished_at=None,
-                    )
                 return session
         return self._transition(task_id=task_id, status="running", reason="session_started", solver_id=solver_id)
 
@@ -202,6 +183,7 @@ class SessionCoordinator:
         handlers: Any,
         executor: Any,
         mcp_manager: Any,
+        close_shared_mcp: bool = True,
     ) -> None:
         """Release runtime-owned resources through the lifecycle boundary."""
         handlers.close()
@@ -217,7 +199,8 @@ class SessionCoordinator:
                     {"profile": "destroyed", "destroyed_origins": destroyed},
                     solver_id=solver_id,
                 )
-        mcp_manager.close()
+        if close_shared_mcp:
+            mcp_manager.close()
 
     def stop(
         self,
@@ -286,20 +269,6 @@ class SessionCoordinator:
                 update["active_solver_id"] = solver_id
             session = self.store.update_session(task_id, **update)
             effective_solver_id = solver_id or session.active_solver_id
-            if effective_solver_id is not None and status == "running":
-                self.store.update_solver(effective_solver_id, status="running", started_at=session.started_at, finished_at=None)
-            elif effective_solver_id is not None and status in {"completed", "blocked", "cancelled", "failed"}:
-                solver_status = {
-                    "completed": "completed",
-                    "cancelled": "cancelled",
-                    "failed": "failed",
-                    "blocked": "waiting",
-                }[status]
-                self.store.update_solver(
-                    effective_solver_id,
-                    status=solver_status,
-                    finished_at=utc_now(),
-                )
             challenge = self.store.get_challenge(task_id)
             if status == "running" and challenge is not None and challenge.status in {"unknown", "blocked"}:
                 previous = challenge.status
@@ -339,10 +308,8 @@ class SessionCoordinator:
                     ), "")
                     if not statement:
                         continue
-                    task = self.store.get_task(task_id)
-                    may_confirm_legacy = bool(task and task.schema_version < 6)
                     digest = hashlib.sha256(f"{task_id}\0{claim.get('kind')}\0{statement}".encode("utf-8")).hexdigest()[:16]
-                    finding = Finding(
+                    finding = CandidateFindingRecord(
                         id=f"finding_{digest}",
                         task_id=task_id,
                         title=statement[:255],
@@ -352,17 +319,15 @@ class SessionCoordinator:
                         evidence_excerpt=statement[:500],
                     )
                     self.store.add_candidate_finding(finding)
-                    if evidence_id and may_confirm_legacy:
-                        self.store.confirm_finding(finding.id, evidence_id)
                     self.store.append_agent_event(
                         task_id,
-                        "FINDING_CONFIRMED" if evidence_id and may_confirm_legacy else "FINDING_CANDIDATE",
+                        "FINDING_CANDIDATE",
                         {
                             "finding_id": finding.id,
                             "title": finding.title,
                             "target": finding.target,
                             "severity": finding.severity,
-                            "status": "confirmed" if evidence_id and may_confirm_legacy else "candidate",
+                            "status": "candidate",
                             "evidence_artifact_id": evidence_id or None,
                         },
                         solver_id=solver_id,

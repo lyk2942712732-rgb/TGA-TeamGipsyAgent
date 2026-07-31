@@ -192,7 +192,7 @@ def _resource_lines(resources: list[dict[str, Any]]) -> list[str]:
 
 def _accessed_input_lines(snapshot: dict[str, Any]) -> list[str]:
     events = [
-        event for event in (snapshot.get("agent_events") or snapshot.get("events") or [])
+        event for event in (snapshot.get("events") or [])
         if event.get("type") == "INPUT_ACCESSED"
     ]
     if not events:
@@ -224,10 +224,9 @@ def _summarize_response(text: str) -> str:
     return clean[:260]
 
 def _append_runtime_sections(lines: list[str], snapshot: dict[str, Any]) -> None:
-    """Render the two v2 report layers from durable runtime state only."""
+    """Render current durable Runtime state without historical fallbacks."""
     session = snapshot.get("session") or {}
     challenge = snapshot.get("challenge") or {}
-    runtime = snapshot.get("runtime") or {}
     events = runtime_events(snapshot)
     actions = {item.get("id"): item for item in runtime_actions(snapshot)}
     solvers = snapshot.get("solvers") or []
@@ -262,25 +261,15 @@ def _append_runtime_sections(lines: list[str], snapshot: dict[str, Any]) -> None
             f"- Completion Proof Artifact: {challenge.get('completion_proof_artifact_id') or 'none'}",
         ])
 
-    cards = runtime.get("strategy_cards") or snapshot.get("strategy_cards") or []
-    lines.extend(["", "## Strategy Ledger"])
-    if not cards:
-        lines.append("- none (historical task without StrategyCard data)")
-    for card in cards:
-        lines.append(f"### {card.get('title')} ({card.get('id')})")
-        lines.append(f"- Status: {card.get('status')} · Active Step: {card.get('active_step_id') or 'none'}")
-        lines.append(f"- Summary: {_redact(str(card.get('summary') or ''))}")
-        for source in card.get("sources") or []:
-            lines.append(
-                f"- Source: {source.get('url') or source.get('hint_id') or 'inline'} "
-                f"extraction={source.get('extraction_status')} artifact={source.get('artifact_id') or 'none'}"
-            )
-        for step in card.get("steps") or []:
-            lines.append(
-                f"  - [{step.get('status')}] {step.get('id')}: {step.get('title')} "
-                f"risk={step.get('risk')} actions={format_list(step.get('action_ids') or [])} "
-                f"evidence={format_list(step.get('evidence_artifact_ids') or [])}"
-            )
+    plan = snapshot.get("global_plan") or {}
+    lines.extend(["", "## Global Plan"])
+    if not plan:
+        lines.append("- none")
+    else:
+        lines.append(
+            f"- {plan.get('id') or 'current'} status={plan.get('status') or 'unknown'} "
+            f"version={plan.get('version') or 'unknown'}"
+        )
     metrics = snapshot.get("context_metrics") or []
     lines.extend(["", "## Context and Artifact Retrieval"])
     if metrics:
@@ -315,7 +304,7 @@ def _append_runtime_sections(lines: list[str], snapshot: dict[str, Any]) -> None
     lines.extend(["", "## Completion Validation"])
     finish_events = [event for event in events if event.get("type") in {"FINISH_ATTEMPTED", "FINISH_REJECTED", "FINISH_ACCEPTED"}]
     if not finish_events:
-        lines.append("- no finish_session declaration recorded")
+        lines.append("- no accepted task completion proposal recorded")
     for event in finish_events:
         payload = event.get("payload") or {}
         lines.append(
@@ -323,12 +312,6 @@ def _append_runtime_sections(lines: list[str], snapshot: dict[str, Any]) -> None
             f"terminal={payload.get('terminal', False)} evidence={format_list(payload.get('evidence_artifact_ids') or [])} "
             f"missing={format_list(payload.get('missing') or [])}"
         )
-    boundaries = [item for item in runtime.get("memory") or [] if item.get("kind") == "failure_boundary"]
-    lines.extend(["", "## Failure Boundaries"])
-    if not boundaries:
-        lines.append("- none")
-    for item in boundaries:
-        lines.append(f"- {_redact(str(item.get('content') or ''))} artifacts={format_list(item.get('artifact_ids') or [])}")
     if evaluation:
         lines.extend([
             "", "## Evaluation Closure",

@@ -40,10 +40,6 @@ class ControlRequest(BaseModel):
     action_id: str | None = None
 
 
-class HintRequest(BaseModel):
-    content: str = Field(min_length=1, max_length=800)
-
-
 class StartRequest(BaseModel):
     initial_hint: str | None = Field(default=None, max_length=800)
 
@@ -68,6 +64,9 @@ class CreateTaskRequest(BaseModel):
     input: CreateSessionInputRequest
     execution_policy: ExecutionPolicy = Field(alias="executionPolicy")
     selected_skills: list[str] | None = Field(default=None, alias="selectedSkills", max_length=3)
+    preflight_fingerprint: str | None = Field(
+        default=None, alias="preflightFingerprint", pattern=r"^[a-f0-9]{64}$"
+    )
 
 
 class SkillPreviewRequest(BaseModel):
@@ -114,10 +113,6 @@ class LLMSettingsRequest(BaseModel):
         if not clean:
             raise ValueError("model must not be blank")
         return clean
-
-
-class MCPEnabledRequest(BaseModel):
-    enabled: bool
 
 
 class MCPMethodTestRequest(BaseModel):
@@ -199,66 +194,6 @@ def _compact_public_payload(value: Any) -> Any:
     return value
 
 
-def _normalize_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
-    """Project the durable v2 repository into its public UI contract."""
-    events = _runtime_events(snapshot)
-    latest_seq = max((event["seq"] for event in events), default=0)
-    session = snapshot["session"]
-    runtime = snapshot.get("runtime") or {}
-    solvers = snapshot.get("solvers") or []
-    http_sessions: dict[str, dict[str, Any]] = {}
-    observer_directives: list[dict[str, Any]] = []
-    for event in events:
-        if event.get("type") == "HTTP_SESSION_STATUS":
-            http_sessions[str(event.get("solver_id") or "main")] = event.get("payload") or {}
-        elif event.get("type") == "OBSERVER_DIRECTIVE":
-            observer_directives.append({
-                "seq": event.get("seq"),
-                "created_at": event.get("created_at"),
-                **(event.get("payload") or {}),
-            })
-    result = {
-        "task": snapshot.get("task") or {},
-        "session": {
-            "status": session["status"],
-            "turn_count": int(session["turn_count"]),
-            "max_turns": int(session["max_turns"]),
-            "active_solver_id": session.get("active_solver_id"),
-            "stop_reason": session.get("stop_reason"),
-            "started_at": session.get("started_at"),
-            "finished_at": session.get("finished_at"),
-        },
-        "solvers": solvers,
-        "challenge": snapshot.get("challenge") or {},
-        "runtime": {
-            "memory": runtime.get("memory") or snapshot.get("memory") or snapshot.get("memory_entries") or [],
-            "strategy_cards": runtime.get("strategy_cards") or snapshot.get("strategy_cards") or [],
-        },
-        "actions": [_normalize_action(item) for item in (snapshot.get("actions") or [])],
-        "flags": snapshot.get("flags") or [],
-        "findings": snapshot.get("findings") or [],
-        "artifacts": snapshot.get("artifacts") or [],
-        "artifact_indexes": [
-            {
-                "artifact_id": item.get("artifact_id"),
-                "document_type": item.get("document_type"),
-                "extraction_status": item.get("extraction_status"),
-                "summary": item.get("summary"),
-                "segment_count": len(item.get("segments") or []),
-                "source_refs": [segment.get("ref") for segment in (item.get("segments") or [])[:16]],
-            }
-            for item in (snapshot.get("artifact_indexes") or [])
-        ],
-        "http_sessions": list(http_sessions.values()),
-        "observer": {"directives": observer_directives[-20:]},
-        "context_metrics": _normalize_context_metrics(snapshot.get("context_metrics") or []),
-        "events": events,
-        "latest_seq": latest_seq,
-        "schema_version": 2,
-    }
-    return result
-
-
 def _normalize_context_metrics(metrics: list[Any]) -> list[dict[str, Any]]:
     """Keep optional provider usage fields absent when old rows persisted null."""
     normalized: list[dict[str, Any]] = []
@@ -269,29 +204,6 @@ def _normalize_context_metrics(metrics: list[Any]) -> list[dict[str, Any]]:
         # snapshots wrote them before a provider response was available.
         normalized.append(_compact_public_payload(metric))
     return normalized
-
-
-def _normalize_action(item: dict[str, Any]) -> dict[str, Any]:
-    """Flatten the persisted tool result into the Web action projection."""
-    result = item.get("result") if isinstance(item.get("result"), dict) else {}
-    summary = result.get("summary") or item.get("summary") or ""
-    public_fields = {
-        "id", "solver_id", "kind", "capability", "target", "rationale", "risk",
-        "strategy_card_id", "strategy_step_id", "expected_outcome", "retry_reason",
-        "alternative_analysis", "approval_expires_at", "input_id", "target_ref",
-        "actual_target", "authorization", "provenance", "status", "created_at", "updated_at",
-    }
-    return {
-        **{key: value for key, value in item.items() if key in public_fields},
-        "arguments": _public_action_arguments(item.get("arguments") or {}),
-        "effect": item.get("effect") or {},
-        # A running action has no result yet. Keep the public contract stable
-        # instead of emitting null and making one in-flight tool invalidate the
-        # entire Runtime snapshot in strict clients.
-        "summary": str(summary),
-        "artifact_ids": result.get("artifact_ids") or [],
-        "error": result.get("error"),
-    }
 
 
 def _public_action_arguments(arguments: dict[str, Any]) -> dict[str, Any]:

@@ -71,7 +71,7 @@ class BuiltContext(BaseModel):
 
 
 class ContextBuilder:
-    """Select task/solver state without loading legacy Memory or StrategyCards."""
+    """Select bounded schema-v6 Task, Solver, plan, and Knowledge state."""
 
     def __init__(
         self,
@@ -204,19 +204,11 @@ class ContextBuilder:
             }
             for item in recent
         ]
-        directive_payload = (
-            spec.model_dump(mode="json")
-            if spec is not None
-            else {
-                "task_id": self.task.id,
-                "objective": self.task.goal,
-                "instructions": [],
-                "constraints": [],
-                "success_criteria": [],
-                "resources": [],
-                "compatibility_fallback": True,
-            }
-        )
+        if spec is None:
+            raise RuntimeError(
+                f"schema-v6 TaskSpec is missing for task {self.task.id}"
+            )
+        directive_payload = spec.model_dump(mode="json")
         if observer_directive:
             directive_payload = {
                 **directive_payload,

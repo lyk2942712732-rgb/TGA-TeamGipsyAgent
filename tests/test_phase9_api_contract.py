@@ -10,14 +10,16 @@ from fastapi.testclient import TestClient
 from apps.api.main import app
 from apps.api.routes import events as event_routes
 from apps.api.routes import sessions as session_routes
-from tga.contracts import ActionSpec, SessionRecord, TGATask
+from tga.contracts import SessionRecord, TGATask
 from tga.domain.governance.models import ActionEffect
 from tga.domain.evidence.artifacts import Artifact
 from tga.evidence.store import EvidenceStore
 from tga.infrastructure.persistence import PersistenceBundle
 from tga.runtime.orchestration import TaskOrchestrator
 from tga.runtime.tooling.governance.approvals import SolverApprovalCoordinator
-from tga.runtime.tooling.requests import ApprovalRequest
+from tga.runtime.tooling.requests import (
+    ActionContext, ApprovalRequest, AuthorizationDecision, GovernedAction,
+)
 
 
 def _seed_team(tmp_path: Path, monkeypatch, task_id: str = "phase9_team") -> dict[str, str]:
@@ -61,16 +63,23 @@ def _add_approval(run_root: Path, ids: dict[str, str], suffix: str) -> str:
     store = EvidenceStore(run_root / ids["task_id"] / "evidence.db")
     try:
         action_id = f"action_{suffix}"
-        governed_id = f"governed_{suffix}"
-        store.add_action(ActionSpec(
+        governed_id = action_id
+        now = "2026-07-30T00:00:00Z"
+        PersistenceBundle(store).tool_governance.add_action(GovernedAction(
             id=action_id,
-            task_id=ids["task_id"],
-            solver_id=ids["worker_id"],
-            intent_id=ids["intent_id"],
-            governed_action_id=governed_id,
-            kind="tool",
+            context=ActionContext(
+                task_id=ids["task_id"], solver_id=ids["worker_id"],
+                intent_id=ids["intent_id"], orchestration_role="worker",
+                solver_definition_id="recon-triage",
+                execution_policy_snapshot_id="execution:" + "a" * 64,
+                solver_tool_policy_snapshot_id="tool:" + "b" * 64,
+                created_at=now,
+            ),
+            provider_tool_name="tga_workspace_write",
+            tool_call_id=f"call_{suffix}",
+            tool_class="execution",
             capability="workspace.write",
-            target=f"workspace/{suffix}.txt",
+            resolved_target=f"workspace/{suffix}.txt",
             rationale="phase 9 approval projection",
             risk="active",
             effect=ActionEffect(
@@ -80,8 +89,11 @@ def _add_approval(run_root: Path, ids: dict[str, str], suffix: str) -> str:
                 category="file_write",
                 description="Write a bounded workspace result.",
             ),
-        ), status="pending_approval")
-        now = "2026-07-30T00:00:00Z"
+            authorization=AuthorizationDecision(
+                allowed=True, reason="approval required", requires_approval=True,
+            ),
+            status="pending_approval", created_at=now, updated_at=now,
+        ))
         PersistenceBundle(store).tool_governance.save_approval(ApprovalRequest(
             id=f"approval_{suffix}",
             task_id=ids["task_id"],
@@ -99,7 +111,7 @@ def _add_approval(run_root: Path, ids: dict[str, str], suffix: str) -> str:
                 description="Write a bounded workspace result.",
             ),
             alternatives=("Return a dry-run preview.",),
-            expires_at="2026-07-31T00:00:00Z",
+            expires_at="2099-07-31T00:00:00Z",
             created_at=now,
             updated_at=now,
         ))
@@ -228,7 +240,7 @@ def test_phase9_queries_are_paginated_and_enforce_task_ownership(
     assert foreign_intervention.status_code == 404
 
 
-def test_interventions_legacy_hint_and_solver_intent_commands(
+def test_interventions_and_solver_intent_commands(
     tmp_path: Path, monkeypatch
 ) -> None:
     ids = _seed_team(tmp_path, monkeypatch, "phase9_commands")
@@ -238,7 +250,7 @@ def test_interventions_legacy_hint_and_solver_intent_commands(
         f"/api/v2/tasks/{ids['task_id']}/interventions",
         json={"kind": "instruction", "content": "Prioritize the supplied binary.", "scope": "task"},
     )
-    legacy_hint = client.post(
+    hint = client.post(
         f"/api/v2/tasks/{ids['task_id']}/hints",
         json={"content": "The parser output may contain a useful offset."},
     )
@@ -253,9 +265,7 @@ def test_interventions_legacy_hint_and_solver_intent_commands(
 
     assert intervention.status_code == 200
     assert intervention.json()["intervention"]["kind"] == "instruction"
-    assert legacy_hint.status_code == 200
-    assert legacy_hint.json()["deprecated"] is True
-    assert "memory_id" not in legacy_hint.json()
+    assert hint.status_code == 404
     assert paused.json()["status"] == "paused"
     assert resumed.json()["status"] in {"queued", "ready"}
 

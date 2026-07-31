@@ -1,0 +1,1 @@
+{"version": 1, "servers": {"remote": {"transport": "streamable_http", "http": {"url": "http://127.0.0.1:50336/mcp"}, "enabledTools": ["echo"]}}}

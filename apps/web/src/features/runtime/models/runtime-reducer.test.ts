@@ -58,11 +58,11 @@ describe("Phase 10 runtime event reducer", () => {
     expect(reduceRuntimeEvent(newer, stale).state.solversById.supervisor.status).toBe("paused");
   });
 
-  it("uses the explicit legacy reducer for schema-v5 lifecycle replay", () => {
-    const legacy = normalizeRuntimeSnapshot({ schema_version: 5, task: { id: "legacy", name: "Legacy", mode: "ctf" }, session: { status: "created", active_solver_id: "main", turn_count: 0, max_turns: 8 }, agent_events: [], latest_seq: 0 });
-    const started = reduceRuntimeEvent(legacy, { ...event(1, "SESSION_STARTED", {}, "main"), schemaVersion: 5, taskId: "legacy" });
-    expect(started.state.legacy).toBe(true);
-    expect(started.state.session.status).toBe("running");
-    expect(started.state.solversById.main.status).toBe("running");
+  it("retains only the newest 500 contiguous events", () => {
+    const events = Array.from({ length: 501 }, (_, index) => event(index + 1, "FUTURE_EVENT"));
+    const result = mergeRuntimeEvents(base(), events);
+    expect(Object.keys(result.state.eventsBySeq).map(Number).sort((a, b) => a - b)).toEqual(
+      Array.from({ length: 500 }, (_, index) => index + 2),
+    );
   });
 });

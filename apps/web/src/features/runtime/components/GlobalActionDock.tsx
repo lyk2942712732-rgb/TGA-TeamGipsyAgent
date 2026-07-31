@@ -6,7 +6,7 @@ import type { RuntimeStore } from "../models/types";
 export function GlobalActionDock({ store, mode, onRefresh, onOpenApprovals }: { store: RuntimeStore; mode: "runtime" | "replay"; onRefresh: () => void; onOpenApprovals: () => void }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
-  const readonly = mode === "replay" || store.legacy;
+  const readonly = mode === "replay";
   const pending = selectPendingApprovals(store).length;
   const control = async (action: "pause" | "resume" | "cancel") => {
     setBusy(action); setMessage(null);

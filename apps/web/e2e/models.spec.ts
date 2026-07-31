@@ -35,6 +35,7 @@ for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 
     await mockModels(page, (value) => { payload = value; });
 
     await page.goto("/");
+    if (viewport.width <= 900) await page.getByRole("button", { name: "打开导航" }).click();
     await page.getByTitle("Provider 与模型").click();
     await expect(page).toHaveURL(/\/settings\/models$/);
     await expect(page.getByRole("heading", { name: "Provider 与模型" })).toBeVisible();

@@ -14,12 +14,14 @@ from tga.models.bootstrap import build_model_client
 from tga.models.bootstrap import model_config_status
 from tga.application.services.intervention_service import InterventionService
 from tga.infrastructure.persistence import PersistenceBundle
+from tga.infrastructure.persistence.errors import PersistenceConflict
 from tga.runtime.approvals import expire_pending_approvals
 from tga.runtime.tooling.governance.approvals import SolverApprovalCoordinator
 from tga.runtime.coordinator import SessionCoordinator
 from tga.runtime.errors import RuntimeConfigurationError
-from tga.runtime.service import require_current_task_schema
+from tga.runtime.service import TaskRuntimeService, require_current_task_schema
 from tga.runtime.orchestration import TaskOrchestrator
+from tga.runtime.agents import SolverRunner
 from tga.tools.mcp_manager import MCPManager
 
 
@@ -82,48 +84,63 @@ class Manager:
                     code="CREDENTIAL_UNAVAILABLE",
                     message="runtime model is not configured; credentials or provider configuration are unavailable",
                 )
-            coordinator = SessionCoordinator(store)
-            _, solver_id = coordinator.ensure_runtime(
-                task=task,
-                max_turns=self.limits.max_turns,
-                model_name=getattr(client, "model", ""),
-            )
             persistence = PersistenceBundle(store)
             orchestrator = TaskOrchestrator(task=task, repositories=persistence)
-            durable_solver = orchestrator.ensure_compatibility_supervisor(
-                solver_id=solver_id,
-                model_name=getattr(client, "model", ""),
+            state = orchestrator.bootstrap()
+            supervisor_id = state.supervisor_solver_id
+            if not supervisor_id:
+                raise RuntimeError("TaskOrchestrator did not provision a Supervisor")
+            coordinator = SessionCoordinator(store)
+            session = coordinator.ensure_session(
+                task=task, max_turns=self.limits.max_turns,
+                supervisor_solver_id=supervisor_id,
             )
-            orchestrator.bootstrap()
-            if str(durable_solver.status) == "awaiting_approval":
-                return store.task_snapshot(task.id)
+            if session.status == "awaiting_approval":
+                return TaskRuntimeService(run_root=self.run_root).runtime_snapshot(task.id)
             executor = self.executor or self._default_executor(task, store)
-            runner_kwargs = dict(
-                store=store,
-                run_root=self.run_root,
-                client=client,
-                executor=executor,
-                solver_id=solver_id,
-                max_turns=self.limits.max_turns,
-                mcp_manager=self.mcp_manager,
-                remote_flag_verifier=self.remote_flag_verifier,
+            solver_id = self._next_solver_id(
+                persistence, task.id, preferred_id=session.active_solver_id or supervisor_id
             )
-            coordinator.start(task_id=task.id, solver_id=solver_id)
-            runner, outcome = orchestrator.run_compatibility_solver(**runner_kwargs)
+            while solver_id is not None:
+                coordinator.start(task_id=task.id, solver_id=solver_id)
+                solver = persistence.solvers.get_solver(solver_id)
+                if solver is None:
+                    raise RuntimeError(f"scheduled Solver disappeared: {solver_id}")
+                runner = SolverRunner(
+                    task=task, store=store, run_root=self.run_root, client=client,
+                    executor=executor, solver_id=solver_id,
+                    max_turns=self.limits.max_turns, mcp_manager=self.mcp_manager,
+                    remote_flag_verifier=self.remote_flag_verifier,
+                )
+                outcome = runner.run()
+                current = store.get_session(task.id)
+                if current is None or current.status != "running":
+                    break
+                if outcome.status in {
+                    "awaiting_approval", "blocked", "failed", "cancelled"
+                }:
+                    coordinator.apply(
+                        task_id=task.id, solver_id=solver_id, outcome=outcome
+                    )
+                    break
+                if outcome.status == "completed" and solver.orchestration_role == "supervisor":
+                    coordinator.apply(
+                        task_id=task.id, solver_id=solver_id, outcome=outcome
+                    )
+                    break
+                solver_id = self._next_solver_id(
+                    persistence, task.id, preferred_id=supervisor_id
+                )
             current = store.get_session(task.id)
-            if (
-                current is not None
-                and current.status == "running"
-                and outcome.status not in {"running", "awaiting_approval"}
-            ):
-                coordinator.apply(task_id=task.id, solver_id=runner.solver_id, outcome=outcome)
-            if outcome.status in {"completed", "cancelled", "failed"}:
-                sandbox_manager = getattr(executor, "sandbox_manager", None)
-                repository = getattr(sandbox_manager, "repository", None)
-                handle = repository.get_active(task.id) if repository is not None else None
-                if handle is not None:
-                    sandbox_manager.release(handle)
-            return store.task_snapshot(task.id)
+            if current is not None and current.status == "running" and solver_id is None:
+                coordinator.block(
+                    task_id=task.id, reason="no_runnable_solver",
+                    turn_count=current.turn_count, solver_id=supervisor_id,
+                )
+            current = store.get_session(task.id)
+            if current is not None and current.status in {"completed", "cancelled", "failed"}:
+                self._release_existing_sandbox(store, task.id)
+            return TaskRuntimeService(run_root=self.run_root).runtime_snapshot(task.id)
         finally:
             if should_close:
                 store.close()
@@ -139,23 +156,27 @@ class Manager:
             if task is None:
                 raise KeyError(f"task not found: {task_id}")
             require_current_task_schema(task)
-            session, solver_id = SessionCoordinator(store).ensure_runtime(
-                task=task,
-                max_turns=self.limits.max_turns,
-            )
             orchestrator = TaskOrchestrator(
                 task=task, repositories=PersistenceBundle(store)
             )
-            orchestrator.ensure_compatibility_supervisor(
-                solver_id=solver_id,
+            state = orchestrator.bootstrap()
+            if not state.supervisor_solver_id:
+                raise RuntimeError("TaskOrchestrator did not provision a Supervisor")
+            session = SessionCoordinator(store).ensure_session(
+                task=task, max_turns=self.limits.max_turns,
+                supervisor_solver_id=state.supervisor_solver_id,
             )
-            orchestrator.bootstrap()
             if session.status in {"completed", "cancelled", "failed"}:
                 return {"accepted": False, "status": session.status, "reason": "terminal_session"}
             if session.status not in {"created", "running"}:
                 return {"accepted": False, "status": session.status, "reason": "session_not_startable"}
             if initial_hint and initial_hint.strip():
-                self._record_user_hint(store=store, task=task, content=initial_hint)
+                InterventionService(PersistenceBundle(store)).record(
+                    task_id=task.id,
+                    kind="hint",
+                    content=initial_hint.strip(),
+                    actor_id="user",
+                )
             return {"accepted": True, "status": session.status}
         finally:
             if should_close:
@@ -193,25 +214,19 @@ class Manager:
                     session = coordinator.resume(task_id=task_id)
             elif action == "cancel":
                 with store.transaction():
-                    for pending in store.list_actions(task_id):
-                        if pending.get("status") != "pending_approval":
-                            continue
+                    governance = PersistenceBundle(store).tool_governance
+                    for pending in governance.list_actions(
+                        task_id, status="pending_approval", limit=1_000
+                    ):
                         pending_id = str(pending["id"])
-                        store.update_action_status(
+                        governance.transition(
                             pending_id, "cancelled", expected_status="pending_approval"
                         )
-                        store.add_action_result(ActionResult(
-                            action_id=pending_id,
-                            task_id=task_id,
-                            solver_id=str(pending.get("solver_id") or ""),
-                            status="cancelled",
-                            summary="The task was cancelled while this action awaited approval.",
-                            error={
-                                "code": "ACTION_CANCELLED",
-                                "message": "The task was cancelled before the approval decision.",
-                                "retryable": False,
-                            },
-                        ))
+                        approval = governance.get_approval_for_action(pending_id)
+                        if approval is not None and approval["status"] == "pending":
+                            governance.decide_approval(
+                                pending_id, "cancelled", expected_status="pending"
+                            )
                         store.append_agent_event(
                             task_id,
                             "ACTION_CANCELLED",
@@ -222,19 +237,18 @@ class Manager:
                     session = coordinator.cancel(task_id=task_id, reason="user_cancelled")
                 self._release_existing_sandbox(store, task_id)
             elif action in {"approve_action", "reject_action"} and action_id:
-                pending = store.get_action(task_id, action_id)
+                governance = PersistenceBundle(store).tool_governance
+                pending = governance.get_action(action_id)
                 if pending is None:
                     return {"accepted": False, "status": session.status, "reason": "action_not_found"}
-                scoped_v6 = bool(
-                    task and task.schema_version == 6
-                    and pending.get("governed_action_id")
-                )
-                if not scoped_v6 and session.status != "awaiting_approval":
-                    return {"accepted": False, "status": session.status, "reason": "session_not_awaiting_approval"}
+                if pending["task_id"] != task_id or pending["status"] != "pending_approval":
+                    return {"accepted": False, "status": session.status, "reason": "action_not_pending_approval"}
                 target_status = "approved" if action == "approve_action" else "rejected"
                 try:
                     with store.transaction():
-                        store.update_action_status(action_id, target_status, expected_status="pending_approval")
+                        governance.decide_approval(
+                            action_id, target_status, expected_status="pending"
+                        )
                         store.append_agent_event(
                             task_id,
                             "ACTION_APPROVED" if target_status == "approved" else "ACTION_REJECTED",
@@ -246,42 +260,18 @@ class Manager:
                             solver_id=str(pending.get("solver_id") or "") or None,
                             intent_id=str(pending.get("intent_id") or "") or None,
                         )
-                        if target_status == "rejected":
-                            store.add_action_result(ActionResult(
-                                action_id=action_id,
-                                task_id=task_id,
+                        remaining = store.conn.execute(
+                            "SELECT COUNT(*) FROM approvals WHERE task_id=? "
+                            "AND solver_id=? AND status='pending'",
+                            (task_id, str(pending.get("solver_id") or "")),
+                        ).fetchone()[0]
+                        if int(remaining) == 0:
+                            SolverApprovalCoordinator(store).resolve(
                                 solver_id=str(pending.get("solver_id") or ""),
-                                status="rejected",
-                                summary="The user rejected this high-impact action.",
-                                error={
-                                    "code": "ACTION_REJECTED_BY_USER",
-                                    "message": "The user rejected this high-impact action.",
-                                    "retryable": False,
-                                },
-                            ))
-                        if scoped_v6:
-                            approval = PersistenceBundle(store).tool_governance.get_approval_for_action(action_id)
-                            if approval is not None:
-                                PersistenceBundle(store).tool_governance.decide_approval(
-                                    action_id, target_status, expected_status="pending"
-                                )
-                            remaining = store.conn.execute(
-                                "SELECT COUNT(*) FROM approvals WHERE task_id=? "
-                                "AND solver_id=? AND status='pending'",
-                                (task_id, str(pending.get("solver_id") or "")),
-                            ).fetchone()[0]
-                            if int(remaining) == 0:
-                                SolverApprovalCoordinator(store).resolve(
-                                    solver_id=str(pending.get("solver_id") or ""),
-                                    intent_id=str(pending.get("intent_id") or "") or None,
-                                )
-                            session = store.get_session(task_id) or session
-                        else:
-                            session = coordinator.resume(
-                                task_id=task_id,
-                                reason=f"action_{target_status}:{action_id}",
+                                intent_id=str(pending.get("intent_id") or "") or None,
                             )
-                except KeyError:
+                        session = store.get_session(task_id) or session
+                except (KeyError, PersistenceConflict):
                     return {"accepted": False, "status": session.status, "reason": "action_not_pending_approval"}
             else:
                 return {"accepted": False, "reason": "invalid_control_action"}
@@ -458,40 +448,6 @@ class Manager:
             if should_close:
                 store.close()
 
-    def add_hint(self, *, task_id: str, content: str) -> dict[str, Any]:
-        store, should_close = self._store_for(task_id)
-        try:
-            task = store.get_task(task_id)
-            if task is None:
-                raise KeyError(f"task not found: {task_id}")
-            require_current_task_schema(task)
-            result = self._record_user_hint(store=store, task=task, content=content)
-            assert result.hint is not None
-            return {
-                "accepted": True,
-                "hint_id": result.hint.id,
-                "intervention_id": result.intervention.id,
-                # Compatibility response field; no MemoryEntry is created.
-                "memory_id": result.hint.id,
-            }
-        finally:
-            if should_close:
-                store.close()
-
-    @staticmethod
-    def _record_user_hint(*, store: EvidenceStore, task: TGATask, content: str):
-        text = content.strip()
-        if not text:
-            raise ValueError("hint must not be empty")
-        if len(text) > 800:
-            raise ValueError("hint exceeds 800 characters")
-        return InterventionService(PersistenceBundle(store)).record(
-            task_id=task.id,
-            kind="hint",
-            content=text,
-            actor_id="user",
-        )
-
     def _store_for(self, task_id: str) -> tuple[EvidenceStore, bool]:
         if self.store is not None:
             return self.store, False
@@ -630,6 +586,26 @@ class Manager:
             )
         finally:
             store.close()
+
+    @staticmethod
+    def _next_solver_id(
+        persistence: PersistenceBundle, task_id: str, *, preferred_id: str
+    ) -> str | None:
+        solvers = persistence.solvers.list_solvers(task_id)
+        runnable = {
+            "created", "queued", "ready", "waiting", "blocked",
+        }
+        queued_roles = {"worker", "reviewer", "reporter"}
+        queued = next((
+            item for item in solvers
+            if item.orchestration_role in queued_roles and str(item.status) in runnable
+        ), None)
+        if queued is not None:
+            return queued.id
+        preferred = next((item for item in solvers if item.id == preferred_id), None)
+        if preferred is not None and str(preferred.status) in runnable:
+            return preferred.id
+        return None
 
     @staticmethod
     def _require_model_snapshot(task: TGATask) -> None:

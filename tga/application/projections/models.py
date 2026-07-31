@@ -230,23 +230,12 @@ class RuntimeSnapshotResponse(ApiDTO):
     events: list[EventEnvelope] = Field(default_factory=list, max_length=100)
     events_page: dict[str, int | bool]
     latest_seq: int = Field(ge=0)
-    # Bounded release-window compatibility projections for the current Web UI.
     challenge: dict[str, Any] = Field(default_factory=dict)
-    runtime: dict[str, list[dict[str, Any]]] = Field(default_factory=dict)
     flags: list[dict[str, Any]] = Field(default_factory=list)
     artifact_indexes: list[dict[str, Any]] = Field(default_factory=list)
     http_sessions: list[dict[str, Any]] = Field(default_factory=list)
     observer: dict[str, Any] = Field(default_factory=dict)
     context_metrics: list[dict[str, Any]] = Field(default_factory=list)
-
-
-class LegacyRuntimeSnapshotResponse(BaseModel):
-    """Read-only v5 envelope; its body is intentionally opaque to v6 commands."""
-
-    model_config = ConfigDict(extra="allow")
-    schema_version: Literal[5] = 5
-    task: dict[str, Any]
-    session: dict[str, Any]
 
 
 class SolverResponse(ApiDTO):
@@ -280,6 +269,135 @@ class EvidencePageResponse(ApiDTO):
     artifacts: dict[str, Any]
     evidence_claims: dict[str, Any]
     findings: dict[str, Any]
+
+
+class TaskDetailResponse(ApiDTO):
+    """Lifecycle detail without the Runtime workbench projection."""
+
+    schema_version: Literal[6] = 6
+    task_id: str
+    task: dict[str, Any]
+    task_spec: dict[str, Any]
+    lifecycle: dict[str, Any]
+    input_summary: dict[str, Any]
+    config_snapshot: dict[str, Any]
+
+
+class OperationalTaskSummary(ApiDTO):
+    task_id: str
+    name: str
+    mode: str
+    status: str
+    updated_at: str
+    active_solvers: int = Field(default=0, ge=0)
+    pending_approvals: int = Field(default=0, ge=0)
+    intent_total: int = Field(default=0, ge=0)
+    intent_completed: int = Field(default=0, ge=0)
+    findings: int = Field(default=0, ge=0)
+    artifacts: int = Field(default=0, ge=0)
+    turn_count: int = Field(default=0, ge=0)
+    max_turns: int = Field(default=0, ge=0)
+    needs_attention: bool = False
+    latest_event: dict[str, Any] | None = None
+
+
+class DashboardAttentionItem(ApiDTO):
+    id: str
+    kind: Literal["approval", "user_input", "blocked"]
+    task_id: str
+    task_name: str
+    title: str
+    description: str
+    status: str
+    risk: str | None = None
+    action_id: str | None = None
+    updated_at: str
+
+
+class SystemStatusSummary(ApiDTO):
+    id: str
+    label: str
+    status: Literal["healthy", "available", "degraded", "unavailable"]
+    detail: str
+    available: bool
+
+
+class DashboardMetrics(ApiDTO):
+    running_tasks: int | None = Field(default=None, ge=0)
+    pending_approvals: int | None = Field(default=None, ge=0)
+    awaiting_user_input: int | None = Field(default=None, ge=0)
+    blocked_tasks: int | None = Field(default=None, ge=0)
+    active_solvers: int | None = Field(default=None, ge=0)
+
+
+class DashboardResponse(ApiDTO):
+    schema_version: Literal[1] = 1
+    generated_at: str
+    metrics: DashboardMetrics
+    needs_attention: list[DashboardAttentionItem] = Field(default_factory=list, max_length=20)
+    active_tasks: list[OperationalTaskSummary] = Field(default_factory=list, max_length=20)
+    recent_completed: list[OperationalTaskSummary] = Field(default_factory=list, max_length=20)
+    system_status: list[SystemStatusSummary] = Field(default_factory=list, max_length=20)
+    unavailable_metrics: list[str] = Field(default_factory=list)
+
+
+class GlobalApprovalItem(ApiDTO):
+    approval_id: str
+    task_id: str
+    task_name: str
+    solver_id: str
+    intent_id: str | None = None
+    action_id: str
+    action_kind: str
+    capability: str
+    target: str
+    risk: str
+    effect: dict[str, Any] = Field(default_factory=dict)
+    rationale: str
+    expected_outcome: str
+    alternative_analysis: str
+    alternatives: list[str] = Field(default_factory=list)
+    reversibility: str
+    expires_at: str | None = None
+    status: Literal["pending", "approved", "rejected", "expired"]
+    decision_allowed: bool
+    decision_block_reason: str | None = None
+    created_at: str
+    updated_at: str
+
+
+class GlobalApprovalFilters(ApiDTO):
+    status: str | None = None
+    task_id: str | None = None
+    solver_id: str | None = None
+    intent_id: str | None = None
+    risk: str | None = None
+    capability: str | None = None
+    deadline: str | None = None
+
+
+class GlobalApprovalPage(PageMeta):
+    schema_version: Literal[1] = 1
+    items: list[GlobalApprovalItem]
+    filters: GlobalApprovalFilters = Field(default_factory=GlobalApprovalFilters)
+
+
+class CatalogError(ApiDTO):
+    code: Literal["CATALOG_DATABASE_INVALID", "CATALOG_RECORD_INVALID"]
+    task_id: str
+    message: str
+
+
+class CatalogPage(PageMeta):
+    schema_version: Literal[1] = 1
+    kind: Literal[
+        "resources", "reports", "knowledge-bases", "teams", "solvers",
+        "policies", "skills",
+    ]
+    supported: bool = True
+    reason: str | None = None
+    items: list[dict[str, Any]] = Field(default_factory=list, max_length=200)
+    errors: list[CatalogError] = Field(default_factory=list, max_length=50)
 
 
 # Compatibility names retained for earlier application callers.

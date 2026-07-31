@@ -58,7 +58,8 @@ Persisted state vocabularies are:
 - Solver: `created`, `queued`, `running`, `awaiting_approval`, `paused`,
   `completed`, `blocked`, `failed`, `cancelled`;
 - Intent: `pending`, `assigned`, `running`, `reviewing`, `completed`, `blocked`,
-  `failed`, `cancelled` (compatibility import states remain accepted).
+  `failed`, `cancelled`; records produced by offline migration retain explicit
+  provenance but do not activate an alternate Runtime state machine.
 
 A blocked Worker does not directly block the task. The dispatcher may run a
 different ready Intent; the task moves to `awaiting_input` only when no work is

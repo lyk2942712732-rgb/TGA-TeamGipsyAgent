@@ -14,10 +14,8 @@ from tga.evidence.store import EvidenceStore
 from tga.evidence.database import DatabaseSchemaVersionError
 from tga.reporting.markdown_report import render_markdown_report
 from tga.runtime.protocol import RUNTIME_SCHEMA_VERSION
-from tga.infrastructure.persistence.legacy_v5 import LegacyV5TaskReader
 from tga.infrastructure.persistence.bundle import PersistenceBundle
 from tga.domain.task.spec import TaskDirective, TaskSpec
-from tga.domain.skills.compatibility import legacy_skill_bundle_to_task_common
 from tga.domain.skills.models import TaskCommonSkillSnapshot
 from tga.evidence.database import utc_now
 
@@ -98,14 +96,6 @@ class TaskRuntimeService:
                 persistence.tasks.save_task_common_skill_snapshot(
                     task_common_skill_snapshot
                 )
-            elif task.skill_bundle_snapshot is not None:
-                # Explicit compatibility for callers constructing an older
-                # TGATask payload. New Task creation never writes this field.
-                persistence.tasks.save_task_common_skill_snapshot(
-                    legacy_skill_bundle_to_task_common(
-                        task.skill_bundle_snapshot, task_id=task.id, created_at=created_at,
-                    )
-                )
             store.append_agent_event(
                 task.id,
                 "TASK_INPUT_ANALYZED",
@@ -174,95 +164,29 @@ class TaskRuntimeService:
         return result if isinstance(result, dict) else {"accepted": True, "status": "accepted"}
 
     def snapshot(self, task_id: str) -> dict[str, Any]:
-        db_path = self.task_root(task_id) / "evidence.db"
-        if not db_path.is_file():
-            raise KeyError(f"task not found: {task_id}")
-        schema_version = self._database_schema(db_path)
-        if schema_version == 5:
-            reader = LegacyV5TaskReader(db_path)
-            try:
-                snapshot = reader.snapshot(task_id)
-            finally:
-                reader.close()
-            snapshot.setdefault("solvers", [])
-            snapshot.setdefault("flags", [])
-            snapshot.setdefault("actions", [])
-            snapshot.setdefault("artifact_indexes", [])
-            snapshot.setdefault("context_metrics", [])
-            snapshot["runtime"] = {
-                "memory": snapshot.pop("memory", []),
-                "strategy_cards": snapshot.pop("strategy_cards", []),
-            }
-            snapshot["schema_version"] = RUNTIME_SCHEMA_VERSION
-            events = snapshot.get("agent_events") or []
-            snapshot["latest_seq"] = events[-1]["seq"] if events else 0
-            return snapshot
-        try:
-            store = EvidenceStore(db_path)
-        except DatabaseSchemaVersionError as exc:
-            raise UnsupportedTaskSchemaError(exc.schema_version) from exc
-        try:
-            snapshot = store.get_session_snapshot(task_id)
-        finally:
-            store.close()
-        if not snapshot.get("task") or not snapshot.get("session"):
-            raise KeyError(f"runtime session not found: {task_id}")
-        require_current_task_schema(TGATask.model_validate(snapshot["task"]))
-        snapshot["schema_version"] = RUNTIME_SCHEMA_VERSION
-        store = EvidenceStore(db_path)
-        try:
-            snapshot["latest_seq"] = store.latest_agent_event_seq(task_id)
-        finally:
-            store.close()
-        return snapshot
+        return self.runtime_snapshot(task_id)
 
     def events(self, task_id: str, *, after_seq: int = 0, limit: int = 200) -> list[dict[str, Any]]:
         db_path = self.task_root(task_id) / "evidence.db"
         if not db_path.is_file():
             raise KeyError(f"task not found: {task_id}")
-        if self._database_schema(db_path) == 5:
-            reader = LegacyV5TaskReader(db_path)
-            try:
-                return [
-                    item.model_dump(mode="json")
-                    for item in reader.replay(task_id, after_seq=after_seq, limit=limit)
-                ]
-            finally:
-                reader.close()
+        self._require_executable_database(task_id)
         store = EvidenceStore(db_path)
         try:
             return [
                 item.model_dump(mode="json")
-                for item in store.list_events(task_id, after_seq=after_seq, limit=limit)
+                for item in store.list_agent_events(
+                    task_id, after_seq=after_seq, limit=limit
+                )
             ]
         finally:
             store.close()
 
     def runtime_snapshot(self, task_id: str) -> dict[str, Any]:
-        """Return the bounded Phase-9 task-level projection.
-
-        Version-5 databases use the dedicated read-only reader.  Version-6
-        projections are assembled from repositories without loading complete
-        event history or Artifact bytes.
-        """
+        """Return the bounded schema-v6 task-level projection."""
         db_path = self.task_root(task_id) / "evidence.db"
         if not db_path.is_file():
             raise KeyError(f"task not found: {task_id}")
-        if self._database_schema(db_path) == 5:
-            reader = LegacyV5TaskReader(db_path)
-            try:
-                payload = reader.snapshot(task_id)
-            finally:
-                reader.close()
-            payload["schema_version"] = 5
-            payload.setdefault("solvers", [])
-            payload.setdefault("events", payload.get("agent_events") or [])
-            payload["latest_seq"] = max(
-                (int(item.get("seq") or 0) for item in payload["events"]),
-                default=0,
-            )
-            return payload
-
         self._require_executable_database(task_id)
         store = EvidenceStore(db_path)
         try:
@@ -306,7 +230,7 @@ class TaskRuntimeService:
             _, findings = repositories.evidence.page_findings(
                 task_id, offset=0, limit=100
             )
-            actions = store.list_actions(task_id)[-100:]
+            actions = repositories.tool_governance.list_actions(task_id, limit=100)
             approval_payload = self._approval_page_open(
                 store, task_id, offset=0, limit=100, status="pending"
             )["items"]
@@ -370,14 +294,6 @@ class TaskRuntimeService:
                 }
                 if task_common_skills is not None else None
             )
-            legacy_memory = [
-                item.model_dump(mode="json")
-                for item in store.list_memory(task_id)[-100:]
-            ]
-            strategy_cards = [
-                item.model_dump(mode="json")
-                for item in store.list_strategy_cards(task_id)[-50:]
-            ]
             return {
                 "schema_version": 6,
                 "task": task_payload,
@@ -444,10 +360,6 @@ class TaskRuntimeService:
                 },
                 "latest_seq": latest_seq,
                 "challenge": challenge.model_dump(mode="json") if challenge else {},
-                "runtime": {
-                    "memory": legacy_memory,
-                    "strategy_cards": strategy_cards,
-                },
                 "flags": flags,
                 "artifact_indexes": [
                     {
@@ -467,24 +379,134 @@ class TaskRuntimeService:
         finally:
             store.close()
 
+    def task_definition(self, task_id: str) -> dict[str, Any]:
+        """Read the persisted Task without assembling any Runtime projection."""
+        db_path = self.task_root(task_id) / "evidence.db"
+        if not db_path.is_file():
+            raise KeyError(f"task not found: {task_id}")
+        connection = _readonly_connection(db_path)
+        try:
+            row = connection.execute(
+                "SELECT payload_json FROM tasks WHERE id=?", (task_id,)
+            ).fetchone()
+            if row is None:
+                raise KeyError(f"task not found: {task_id}")
+            task = TGATask.model_validate_json(row["payload_json"])
+            require_current_task_schema(task)
+            return task.model_dump(mode="json")
+        finally:
+            connection.close()
+
+    def task_detail(self, task_id: str) -> dict[str, Any]:
+        """Return lifecycle detail while keeping Runtime entities behind their tabs."""
+        db_path = self.task_root(task_id) / "evidence.db"
+        if not db_path.is_file():
+            raise KeyError(f"task not found: {task_id}")
+        connection = _readonly_connection(db_path)
+        try:
+            task_row = connection.execute(
+                "SELECT payload_json,created_at FROM tasks WHERE id=?", (task_id,)
+            ).fetchone()
+            if task_row is None:
+                raise KeyError(f"task not found: {task_id}")
+            task = TGATask.model_validate_json(task_row["payload_json"])
+            require_current_task_schema(task)
+            summary = _task_summary_from_connection(
+                connection, task, created_at=str(task_row["created_at"] or "")
+            )
+            spec = _task_spec_payload(connection, task)
+            common_skills = _optional_payload(
+                connection, "task_common_skill_snapshots", "task_id", task_id
+            )
+            files = task.session_input.files
+            return {
+                "schema_version": task.schema_version,
+                "task_id": task.id,
+                "task": {
+                    "id": task.id,
+                    "name": task.name,
+                    "mode": str(task.mode),
+                    "goal": task.goal,
+                    "task_entry_url": task.task_entry_url,
+                    "schema_version": task.schema_version,
+                },
+                "task_spec": spec,
+                "lifecycle": summary,
+                "input_summary": {
+                    "prompt_present": bool(task.session_input.prompt.strip()),
+                    "prompt_preview": task.session_input.prompt[:500],
+                    "file_count": len(files),
+                    "files": [item.manifest_item() for item in files[:20]],
+                    "task_entry_url": task.task_entry_url,
+                },
+                "config_snapshot": {
+                    "mode_config": task.mode_config.model_dump(mode="json") if task.mode_config else {},
+                    "execution_policy": task.execution_policy.model_dump(mode="json") if task.execution_policy else {},
+                    "execution_budget": task.execution_budget,
+                    "model": task.model_snapshot.model_dump(mode="json") if task.model_snapshot else None,
+                    "mcp_capabilities": task.mcp_capabilities.model_dump(mode="json"),
+                    "task_common_skills": common_skills,
+                    "agent_prompt": task.agent_prompt_snapshot,
+                },
+            }
+        finally:
+            connection.close()
+
     def task_schema_version(self, task_id: str) -> int:
         db_path = self.task_root(task_id) / "evidence.db"
         if not db_path.is_file():
             raise KeyError(f"task not found: {task_id}")
         schema_version = self._database_schema(db_path)
-        if schema_version not in {5, 6}:
+        if schema_version != 6:
             raise UnsupportedTaskSchemaError(schema_version)
         return schema_version
 
     def team_projection(self, task_id: str) -> dict[str, Any]:
-        snapshot = self.runtime_snapshot(task_id)
-        self._require_v6_projection(snapshot)
-        return {
-            "schema_version": 6,
-            "task_id": task_id,
-            "team": snapshot["team"],
-            "solvers": snapshot["solvers"],
-        }
+        self._require_executable_database(task_id)
+        store = EvidenceStore(self.task_root(task_id) / "evidence.db")
+        try:
+            repositories = PersistenceBundle(store)
+            task = repositories.tasks.get_task(task_id)
+            session = store.get_session(task_id)
+            if task is None or session is None:
+                raise KeyError(f"runtime session not found: {task_id}")
+            state = repositories.orchestration.get_state(task_id)
+            solvers = repositories.solvers.list_solvers(task_id)
+            active_statuses = {
+                "created", "queued", "ready", "running", "waiting",
+                "awaiting_approval",
+            }
+            active_count = sum(str(item.status) in active_statuses for item in solvers)
+            supervisor_id = state.supervisor_solver_id if state is not None else next(
+                (item.id for item in solvers if item.orchestration_role == "supervisor"),
+                None,
+            )
+            max_workers = state.max_active_workers if state is not None else max(
+                1, min(2, int(task.execution_budget.get("max_active_workers", 1)))
+            )
+            return {
+                "schema_version": 6,
+                "task_id": task_id,
+                "team": {
+                    "task_id": task_id,
+                    "status": state.status if state is not None else session.status,
+                    "supervisor_solver_id": supervisor_id,
+                    "max_active_workers": max_workers,
+                    "max_total_solvers": state.max_total_solvers if state is not None else max(
+                        1, int(task.execution_budget.get("max_total_solvers", 1))
+                    ),
+                    "active_solver_count": active_count,
+                    "solver_ids": [item.id for item in solvers],
+                    "version": state.version if state is not None else 1,
+                    "timestamps": {
+                        "created_at": state.created_at if state is not None else session.started_at,
+                        "updated_at": state.updated_at if state is not None else session.finished_at,
+                    },
+                },
+                "solvers": [_solver_projection(repositories, item) for item in solvers[:100]],
+            }
+        finally:
+            store.close()
 
     def solver_projection(self, task_id: str, solver_id: str) -> dict[str, Any]:
         snapshot = self.runtime_snapshot(task_id)
@@ -580,7 +602,10 @@ class TaskRuntimeService:
         values = []
         for row in rows:
             payload = json.loads(row["payload_json"])
-            action = store.get_action(task_id, str(row["action_id"])) or {}
+            governed = PersistenceBundle(store).tool_governance.get_action(
+                str(row["action_id"])
+            )
+            action = _governed_action_payload(governed) if governed else {}
             values.append(_approval_projection(payload, action, status=str(row["status"])))
         return {
             "schema_version": 6,
@@ -601,23 +626,6 @@ class TaskRuntimeService:
         db_path = self.task_root(task_id) / "evidence.db"
         if not db_path.is_file():
             raise KeyError(f"task not found: {task_id}")
-        if self._database_schema(db_path) == 5:
-            events = self.events(task_id, after_seq=after_seq, limit=limit)
-            next_seq = int(events[-1]["seq"]) if events else max(0, after_seq)
-            reader = LegacyV5TaskReader(db_path)
-            try:
-                latest_seq = reader.latest_event_seq(task_id)
-            finally:
-                reader.close()
-            return {
-                "schema_version": 5,
-                "task_id": task_id,
-                "after_seq": max(0, after_seq),
-                "next_after_seq": next_seq,
-                "latest_seq": latest_seq,
-                "has_more": next_seq < latest_seq,
-                "events": [_public_event(item) for item in events],
-            }
         self._require_executable_database(task_id)
         store = EvidenceStore(db_path)
         try:
@@ -635,7 +643,9 @@ class TaskRuntimeService:
         bounded = max(1, min(int(limit), 200))
         values = [
             _public_event(item.model_dump(mode="json"))
-            for item in store.list_events(task_id, after_seq=cursor, limit=bounded)
+            for item in store.list_agent_events(
+                task_id, after_seq=cursor, limit=bounded
+            )
         ]
         next_seq = values[-1]["seq"] if values else cursor
         latest = store.latest_agent_event_seq(task_id)
@@ -685,49 +695,70 @@ class TaskRuntimeService:
         if int(payload.get("schema_version") or 0) != 6:
             raise UnsupportedTaskSchemaError(int(payload.get("schema_version") or 0))
 
-    def list_tasks(self) -> list[dict[str, Any]]:
+    def list_tasks(
+        self, *, query: str = "", mode: str | None = None,
+        status: str | None = None, needs_attention: bool | None = None,
+        offset: int = 0, limit: int | None = None,
+    ) -> dict[str, Any]:
         if not self.run_root.exists():
-            return []
+            return {"tasks": [], "offset": 0, "limit": limit, "total": 0, "next_offset": None}
         values: list[dict[str, Any]] = []
         for child in sorted(self.run_root.iterdir(), key=lambda path: path.stat().st_mtime, reverse=True):
             if not child.is_dir() or child.name.startswith(".") or not (child / "evidence.db").is_file():
                 continue
             try:
-                snapshot = self.runtime_snapshot(child.name)
+                connection = _readonly_connection(child / "evidence.db")
+                try:
+                    task_row = connection.execute(
+                        "SELECT payload_json,created_at FROM tasks WHERE id=?", (child.name,)
+                    ).fetchone()
+                    if task_row is None:
+                        continue
+                    task = TGATask.model_validate_json(task_row["payload_json"])
+                    require_current_task_schema(task)
+                    summary = _task_summary_from_connection(
+                        connection, task, created_at=str(task_row["created_at"] or "")
+                    )
+                finally:
+                    connection.close()
             except (KeyError, OSError, ValueError):
                 continue
-            task = snapshot["task"]
-            session = snapshot["session"]
-            session_input = task.get("session_input") or {}
-            input_files = session_input.get("files") or []
-            prompt = str(session_input.get("prompt") or "").strip()
-            events = snapshot.get("events") or snapshot.get("agent_events") or []
-            solvers = snapshot.get("solvers") or []
-            latest = events[-1] if events else None
             values.append({
-                "schema_version": RUNTIME_SCHEMA_VERSION,
+                "schema_version": task.schema_version,
                 "task_id": child.name,
-                "name": task.get("name") or child.name,
-                "mode": task.get("mode") or "ctf",
-                "task_entry_url": task.get("task_entry_url"),
+                "name": task.name or child.name,
+                "mode": str(task.mode),
+                "task_entry_url": task.task_entry_url,
                 "target_summary": ", ".join(
-                    str(item.get("original_name") or item.get("originalName") or item.get("label") or item.get("id"))
-                    for item in input_files[:3]
+                    item.original_name for item in task.session_input.files[:3]
                 ),
-                "target_count": len(input_files),
-                "hint_count": int(bool(prompt)),
-                "created_at": events[0].get("created_at", "") if events else "",
-                "updated_at": latest.get("created_at", "") if latest else "",
-                "status": session.get("status") or "created",
-                "turn_count": int(session.get("turn_count") or 0),
-                "max_turns": int(session.get("max_turns") or 0),
-                "active_solvers": sum(1 for item in solvers if item.get("status") in {"starting", "running", "waiting"}),
-                "latest_event": {"seq": latest.get("seq"), "type": latest.get("type")} if latest else None,
-                "flags": len(snapshot.get("flags") or []),
-                "findings": len(snapshot.get("findings") or []),
-                "artifacts": len(snapshot.get("artifacts") or []),
+                "target_count": len(task.session_input.files),
+                "hint_count": int(bool(task.session_input.prompt.strip())),
+                **summary,
             })
-        return values
+        term = query.strip().casefold()
+        if term:
+            values = [item for item in values if term in str(item["name"]).casefold() or term in str(item["task_id"]).casefold()]
+        if mode:
+            values = [item for item in values if item["mode"] == mode]
+        if status:
+            values = [item for item in values if item["status"] == status]
+        if needs_attention is not None:
+            values = [item for item in values if bool(item["needs_attention"]) is needs_attention]
+        bounded_offset = max(0, int(offset))
+        bounded_limit = max(1, min(int(limit), 200)) if limit is not None else None
+        selected = values[bounded_offset:] if bounded_limit is None else values[bounded_offset:bounded_offset + bounded_limit]
+        return {
+            "tasks": selected,
+            "offset": bounded_offset,
+            "limit": bounded_limit,
+            "total": len(values),
+            "next_offset": (
+                bounded_offset + len(selected)
+                if bounded_limit is not None and bounded_offset + len(selected) < len(values)
+                else None
+            ),
+        }
 
     def delete_task(self, task_id: str) -> None:
         root = self.task_root(task_id)
@@ -787,6 +818,116 @@ class TaskRuntimeService:
             return int(json.loads(row[0]).get("schema_version") or 0)
         except (TypeError, ValueError, json.JSONDecodeError) as exc:
             raise UnsupportedTaskSchemaError(0) from exc
+
+
+def _readonly_connection(db_path: Path) -> sqlite3.Connection:
+    connection = sqlite3.connect(
+        f"file:{db_path.resolve().as_posix()}?mode=ro", uri=True
+    )
+    connection.row_factory = sqlite3.Row
+    connection.execute("PRAGMA query_only=ON")
+    return connection
+
+
+def _has_table(connection: sqlite3.Connection, name: str) -> bool:
+    return connection.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)
+    ).fetchone() is not None
+
+
+def _count(
+    connection: sqlite3.Connection, table: str, task_id: str,
+    *, where: str = "", parameters: tuple[Any, ...] = (),
+) -> int:
+    if not _has_table(connection, table):
+        return 0
+    clause = f" AND {where}" if where else ""
+    row = connection.execute(
+        f"SELECT COUNT(*) AS count FROM {table} WHERE task_id=?{clause}",
+        (task_id, *parameters),
+    ).fetchone()
+    return int(row["count"] if row else 0)
+
+
+def _optional_payload(
+    connection: sqlite3.Connection, table: str, key: str, value: str
+) -> dict[str, Any] | None:
+    if not _has_table(connection, table):
+        return None
+    row = connection.execute(
+        f"SELECT payload_json FROM {table} WHERE {key}=?", (value,)
+    ).fetchone()
+    return json.loads(row["payload_json"]) if row else None
+
+
+def _task_spec_payload(
+    connection: sqlite3.Connection, task: TGATask
+) -> dict[str, Any]:
+    payload = _optional_payload(connection, "task_specs", "task_id", task.id)
+    if payload is None:
+        raise UnsupportedTaskSchemaError(6)
+    return payload
+
+
+def _task_summary_from_connection(
+    connection: sqlite3.Connection, task: TGATask, *, created_at: str
+) -> dict[str, Any]:
+    session = connection.execute(
+        "SELECT status,turn_count,max_turns,started_at,finished_at,stop_reason "
+        "FROM sessions WHERE task_id=?", (task.id,)
+    ).fetchone() if _has_table(connection, "sessions") else None
+    event = connection.execute(
+        "SELECT seq,type,created_at FROM agent_events WHERE task_id=? "
+        "ORDER BY seq DESC LIMIT 1", (task.id,)
+    ).fetchone() if _has_table(connection, "agent_events") else None
+    status = str(session["status"] if session else "created")
+    pending_approvals = _count(
+        connection, "approvals", task.id,
+        where="status='pending'",
+    )
+    active_solvers = _count(
+        connection, "solver_instances", task.id,
+        where="status IN ('created','queued','ready','running','waiting','awaiting_approval')",
+    ) if _has_table(connection, "solver_instances") else _count(
+        connection, "solvers", task.id,
+        where="status IN ('starting','running','waiting')",
+    )
+    intent_total = _count(connection, "intents", task.id)
+    intent_completed = _count(
+        connection, "intents", task.id,
+        where="status='completed'",
+    )
+    findings = _count(
+        connection, "findings", task.id,
+        where="status='confirmed'",
+    )
+    lifecycle = {
+        "created_at": created_at,
+        "updated_at": str(event["created_at"] if event else created_at),
+        "status": status,
+        "turn_count": int(session["turn_count"] if session else 0),
+        "max_turns": int(session["max_turns"] if session else 0),
+        "started_at": session["started_at"] if session else None,
+        "finished_at": session["finished_at"] if session else None,
+        "stop_reason": str(session["stop_reason"] if session else ""),
+        "active_solvers": active_solvers,
+        "pending_approvals": pending_approvals,
+        "intent_total": intent_total,
+        "intent_completed": intent_completed,
+        "flags": _count(connection, "flags", task.id),
+        "findings": findings,
+        "artifacts": _count(connection, "artifacts", task.id),
+        "latest_event": ({
+            "seq": int(event["seq"]),
+            "type": str(event["type"]),
+            "created_at": str(event["created_at"]),
+        } if event else None),
+    }
+    lifecycle["needs_attention"] = (
+        status in {"awaiting_approval", "awaiting_input", "awaiting_user_input", "blocked"}
+        or pending_approvals > 0
+    )
+    return lifecycle
 
 
 def _bounds(offset: int, limit: int) -> tuple[int, int]:
@@ -858,7 +999,7 @@ def _solver_projection(repositories: PersistenceBundle, solver) -> dict[str, Any
         if item.solver_id == solver.id
     ]
     current_summary = results[-1].summary[:1_000] if results else ""
-    skill = solver.skill_bundle_snapshot
+    skill = solver.skill_snapshot
     return {
         "task_id": solver.task_id,
         "solver_id": solver.id,
@@ -1009,6 +1150,8 @@ def _finding_projection(item) -> dict[str, Any]:
 
 
 def _action_projection(item: dict[str, Any]) -> dict[str, Any]:
+    if "payload" in item:
+        item = _governed_action_payload(item)
     result = item.get("result") if isinstance(item.get("result"), dict) else {}
     return {
         "id": str(item["id"]),
@@ -1025,6 +1168,30 @@ def _action_projection(item: dict[str, Any]) -> dict[str, Any]:
         "artifact_ids": list(result.get("artifact_ids") or ()),
         "created_at": str(item.get("created_at") or ""),
         "updated_at": str(item.get("updated_at") or ""),
+    }
+
+
+def _governed_action_payload(item: dict[str, Any]) -> dict[str, Any]:
+    payload = dict(item.get("payload") or {})
+    context = payload.get("context") if isinstance(payload.get("context"), dict) else {}
+    raw_result = item.get("result") if isinstance(item.get("result"), dict) else {}
+    output = raw_result.get("output") if isinstance(raw_result.get("output"), dict) else {}
+    return {
+        "id": str(item.get("id") or payload.get("id") or ""),
+        "solver_id": str(item.get("solver_id") or context.get("solver_id") or ""),
+        "intent_id": item.get("intent_id") or context.get("intent_id"),
+        "capability": str(item.get("capability") or payload.get("capability") or ""),
+        "target": str(payload.get("resolved_target") or ""),
+        "risk": str(payload.get("risk") or "passive"),
+        "effect": payload.get("effect") or {},
+        "arguments": payload.get("normalized_arguments") or {},
+        "status": str(item.get("status") or payload.get("status") or ""),
+        "result": {
+            "summary": str(output.get("summary") or ""),
+            "artifact_ids": list(raw_result.get("artifact_ids") or ()),
+        },
+        "created_at": str(item.get("created_at") or payload.get("created_at") or ""),
+        "updated_at": str(item.get("updated_at") or payload.get("updated_at") or ""),
     }
 
 

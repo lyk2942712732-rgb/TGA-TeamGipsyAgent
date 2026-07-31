@@ -11,7 +11,7 @@ from uuid import uuid4
 from tga.domain.evidence.artifacts import Artifact
 from tga.domain.evidence.claims import EvidenceClaim
 from tga.domain.evidence.findings import Finding
-from tga.domain.evidence.legacy_models import AgentEvent
+from tga.domain.events import AgentEvent
 from tga.domain.knowledge.items import KnowledgeItem
 from tga.domain.knowledge.conflicts import KnowledgeConflict
 from tga.domain.knowledge.promotion import KnowledgePromotionProposal

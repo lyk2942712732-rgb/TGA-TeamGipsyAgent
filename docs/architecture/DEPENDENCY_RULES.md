@@ -1,20 +1,11 @@
 # Dependency rules
 
-1. `apps` may depend on `application`; `application` may depend on `runtime` and
-   `domain`; `runtime` may depend on `domain` and application ports.
-2. Infrastructure implements application ports. Domain code never imports
-   FastAPI, SQLite, provider SDKs or MCP transports.
-3. API routes never perform direct SQL. New persistence construction goes
-   through the composition root and later repository adapters.
-4. Runtime code must not open unrelated databases ad hoc; remaining
-   `EvidenceStore` dependencies are tracked migration debt.
-5. Model-controlled text, hints, skills and retrieval results never expand
-   authorization or completion authority.
-6. Transcripts, events, artifacts, evidence claims and knowledge are separate
-   concepts and storage projections.
-7. Compatibility modules may re-export canonical objects, but must not redefine
-   them. JSON contracts remain stable while compatibility is supported.
+1. `apps` depend on `application`; `application` may depend on `runtime` and `domain`; `runtime` depends on domain and application ports.
+2. Infrastructure implements application ports. Domain code never imports FastAPI, SQLite, provider SDKs, or MCP transports.
+3. API routes never perform direct SQL or construct persistence stores.
+4. Runtime opens only the owning Task database through current persistence services.
+5. Model text, hints, skills, and retrieval results never expand authorization or completion authority.
+6. Transcript, Event, Artifact, EvidenceClaim, Finding, and Knowledge remain distinct concepts.
+7. Public contracts export current models only. Historical models and readers are confined to `tga.migrations`.
 
-`tests/test_architecture_boundaries.py` enforces the domain import boundary and
-compatibility identity rather than relying on this document alone.
-
+`tests/test_architecture_boundaries.py` enforces domain imports and public model identity.

@@ -66,6 +66,20 @@ def _create_payload(
     }
 
 
+def _preflight(client: TestClient, payload: dict) -> dict:
+    response = client.post("/api/v2/tasks/preflight", json=payload)
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def _preflight_and_create(client: TestClient, payload: dict):
+    fingerprint = _preflight(client, payload)["fingerprint"]
+    return client.post(
+        "/api/v2/tasks",
+        json={**payload, "preflightFingerprint": fingerprint},
+    )
+
+
 def _mcp_manager(tmp_path: Path) -> MCPManager:
     fixture = Path(__file__).parent / "fixtures" / "fake_mcp_server.py"
     config = tmp_path / "mcp.json"
@@ -83,9 +97,9 @@ def test_schema_v6_uploads_are_archived_with_structured_metadata_and_survive_res
     task_asset = _upload(client, "sample.bin", b"\x00\x01sample-binary", "text/plain")
     hint_asset = _upload(client, "topology.png", PNG, "text/plain")
 
-    response = client.post(
-        "/api/v2/tasks",
-        json=_create_payload(
+    response = _preflight_and_create(
+        client,
+        _create_payload(
             "binary_only",
             task_ids=[task_asset["id"]],
             hint_text="Inspect the image too.",
@@ -108,7 +122,8 @@ def test_schema_v6_uploads_are_archived_with_structured_metadata_and_survive_res
 
     store = EvidenceStore(tmp_path / "runs" / "binary_only" / "evidence.db")
     try:
-        restarted = TGATask.model_validate(store.task_snapshot("binary_only")["task"])
+        restarted = store.get_task("binary_only")
+        assert restarted is not None
         session = store.get_session("binary_only")
         assert restarted.schema_version == 6
         assert restarted.session_input.files[0].sha256 == task_file["sha256"]
@@ -120,7 +135,7 @@ def test_schema_v6_uploads_are_archived_with_structured_metadata_and_survive_res
 def test_schema_v6_api_lists_reads_and_searches_workspace_inputs(tmp_path, monkeypatch):
     client = _configured_api(monkeypatch, tmp_path)
     asset = _upload(client, "notes.txt", b"first\nneedle\nlast", "application/octet-stream")
-    assert client.post("/api/v2/tasks", json=_create_payload("readable", task_ids=[asset["id"]])).status_code == 200
+    assert _preflight_and_create(client, _create_payload("readable", task_ids=[asset["id"]])).status_code == 200
 
     manifest = client.get("/api/v2/tasks/readable/inputs").json()
     assert manifest["files"][0]["relative_path"].startswith("inputs/files/")
@@ -133,7 +148,7 @@ def test_same_named_files_never_overwrite(tmp_path, monkeypatch):
     client = _configured_api(monkeypatch, tmp_path)
     first = _upload(client, "same.txt", b"first")
     second = _upload(client, "same.txt", b"second")
-    response = client.post("/api/v2/tasks", json=_create_payload("same_names", task_ids=[first["id"], second["id"]]))
+    response = _preflight_and_create(client, _create_payload("same_names", task_ids=[first["id"], second["id"]]))
     assert response.status_code == 200
     files = client.get("/api/v2/tasks/same_names/session").json()["task"]["session_input"]["files"]
     assert len({item["stored_name"] for item in files}) == 2
@@ -154,9 +169,9 @@ def test_upload_and_claim_limits_return_structured_errors(tmp_path, monkeypatch)
     monkeypatch.setenv("TGA_INPUT_MAX_TOTAL_BYTES", "5")
     first = _upload(client, "one.txt", b"123")
     second = _upload(client, "two.txt", b"456")
-    failed = client.post("/api/v2/tasks", json=_create_payload("total_limit", task_ids=[first["id"], second["id"]]))
+    failed = client.post("/api/v2/tasks/preflight", json=_create_payload("total_limit", task_ids=[first["id"], second["id"]]))
     assert failed.status_code == 422
-    assert failed.json()["detail"]["code"] == "SESSION_CREATE_FAILED"
+    assert failed.json()["detail"]["code"] == "PREFLIGHT_INVALID"
     assert not (tmp_path / "runs" / "total_limit").exists()
 
 
@@ -166,7 +181,7 @@ def test_file_count_limit_is_enforced_at_session_claim(tmp_path, monkeypatch):
     second = _upload(client, "two.txt", b"two")
     monkeypatch.setenv("TGA_INPUT_MAX_FILES", "1")
 
-    response = client.post("/api/v2/tasks", json=_create_payload("count_limit", task_ids=[first["id"], second["id"]]))
+    response = client.post("/api/v2/tasks/preflight", json=_create_payload("count_limit", task_ids=[first["id"], second["id"]]))
 
     assert response.status_code == 422
     assert "file count limit" in response.json()["detail"]["message"]
@@ -189,15 +204,15 @@ def test_upload_rejects_traversal_and_dangerous_names(tmp_path, monkeypatch):
 def test_hint_can_be_empty_but_mode_rules_require_context(tmp_path, monkeypatch):
     client = _configured_api(monkeypatch, tmp_path)
     task_asset = _upload(client, "task.txt", b"question")
-    empty_hint = client.post("/api/v2/tasks", json=_create_payload("empty_hint", mode="ctf", task_ids=[task_asset["id"]], hint_text="   "))
+    empty_hint = _preflight_and_create(client, _create_payload("empty_hint", mode="ctf", task_ids=[task_asset["id"]], hint_text="   "))
     assert empty_hint.status_code == 200
 
-    no_task = client.post("/api/v2/tasks", json=_create_payload("no_task", mode="ctf", hint_text="only a hint"))
+    no_task = _preflight_and_create(client, _create_payload("no_task", mode="ctf", hint_text="only a hint"))
     assert no_task.status_code == 200
 
-    incident = client.post("/api/v2/tasks", json=_create_payload("hint_incident", mode="incident_response", hint_text="Investigate host A"))
+    incident = _preflight_and_create(client, _create_payload("hint_incident", mode="incident_response", hint_text="Investigate host A"))
     assert incident.status_code == 200
-    empty_incident = client.post("/api/v2/tasks", json=_create_payload("empty_incident", mode="incident_response"))
+    empty_incident = client.post("/api/v2/tasks/preflight", json=_create_payload("empty_incident", mode="incident_response"))
     assert empty_incident.status_code == 422
     assert "at least one task input file or prompt" in empty_incident.json()["detail"]["message"]
 
@@ -206,13 +221,13 @@ def test_failed_creation_removes_partial_workspace_but_keeps_staging_for_retry(t
     client = _configured_api(monkeypatch, tmp_path)
     asset = _upload(client, "retry.txt", b"retry me")
     invalid = ExecutionPolicy.model_validate({"preset": "custom", "network": {"access": "custom", "interaction": "observe", "custom_origins": ["not an origin"]}})
-    failed = client.post("/api/v2/tasks", json=_create_payload("retry_task", task_ids=[asset["id"]], policy=invalid))
+    failed = client.post("/api/v2/tasks/preflight", json=_create_payload("retry_task", task_ids=[asset["id"]], policy=invalid))
     stage = tmp_path / "runs" / "_input_staging" / asset["id"].removeprefix("asset_")
     assert failed.status_code == 422
     assert not (tmp_path / "runs" / "retry_task").exists()
     assert stage.is_dir()
 
-    succeeded = client.post("/api/v2/tasks", json=_create_payload("retry_task", task_ids=[asset["id"]]))
+    succeeded = _preflight_and_create(client, _create_payload("retry_task", task_ids=[asset["id"]]))
     assert succeeded.status_code == 200
     assert not stage.exists()
 
@@ -220,16 +235,63 @@ def test_failed_creation_removes_partial_workspace_but_keeps_staging_for_retry(t
 def test_unexpected_runtime_start_failure_removes_partial_session_and_keeps_staging(tmp_path, monkeypatch):
     client = _configured_api(monkeypatch, tmp_path)
     asset = _upload(client, "unexpected.txt", b"retry after exception")
+    payload = _create_payload("unexpected_failure", task_ids=[asset["id"]])
+    fingerprint = _preflight(client, payload)["fingerprint"]
 
     def fail_start(*_args, **_kwargs):
         raise RuntimeError("runtime startup failed")
 
     monkeypatch.setattr(task_routes.TaskRuntimeService, "create_task", fail_start)
     with pytest.raises(RuntimeError, match="runtime startup failed"):
-        client.post("/api/v2/tasks", json=_create_payload("unexpected_failure", task_ids=[asset["id"]]))
+        client.post("/api/v2/tasks", json={**payload, "preflightFingerprint": fingerprint})
 
     assert not (tmp_path / "runs" / "unexpected_failure").exists()
     assert (tmp_path / "runs" / "_input_staging" / asset["id"].removeprefix("asset_")).is_dir()
+
+
+def test_create_rejects_missing_or_stale_preflight_and_does_not_consume_staging(tmp_path, monkeypatch):
+    client = _configured_api(monkeypatch, tmp_path)
+    asset = _upload(client, "guarded.txt", b"immutable preflight input")
+    payload = _create_payload("preflight_guard", task_ids=[asset["id"]], hint_text="original")
+    stage = tmp_path / "runs" / "_input_staging" / asset["id"].removeprefix("asset_")
+
+    missing = client.post("/api/v2/tasks", json=payload)
+    assert missing.status_code == 422
+    assert missing.json()["detail"]["code"] == "PREFLIGHT_REQUIRED"
+
+    fingerprint = _preflight(client, payload)["fingerprint"]
+    assert not (tmp_path / "runs" / "preflight_guard").exists()
+    assert stage.is_dir()
+
+    changed = {
+        **payload,
+        "input": {**payload["input"], "text": "changed after preflight"},
+        "preflightFingerprint": fingerprint,
+    }
+    stale = client.post("/api/v2/tasks", json=changed)
+    assert stale.status_code == 422
+    assert stale.json()["detail"]["code"] == "PREFLIGHT_STALE"
+    assert not (tmp_path / "runs" / "preflight_guard").exists()
+    assert stage.is_dir()
+
+
+def test_create_rejects_staged_input_corruption_after_preflight(tmp_path, monkeypatch):
+    client = _configured_api(monkeypatch, tmp_path)
+    asset = _upload(client, "corrupt.txt", b"trusted bytes")
+    payload = _create_payload("corrupt_after_preflight", task_ids=[asset["id"]])
+    fingerprint = _preflight(client, payload)["fingerprint"]
+    stage = tmp_path / "runs" / "_input_staging" / asset["id"].removeprefix("asset_")
+    (stage / "source").write_bytes(b"tampered bytes")
+
+    response = client.post(
+        "/api/v2/tasks",
+        json={**payload, "preflightFingerprint": fingerprint},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "PREFLIGHT_INVALID"
+    assert not (tmp_path / "runs" / "corrupt_after_preflight").exists()
+    assert stage.is_dir()
 
 
 def test_expired_staging_is_swept_but_recent_retry_assets_remain(tmp_path):

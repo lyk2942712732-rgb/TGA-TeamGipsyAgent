@@ -87,7 +87,7 @@ class SolverFactory:
             specialties=definition.specialties,
             status="created",
             model_snapshot=model_snapshot.model_copy(deep=True),
-            skill_bundle_snapshot=skill_snapshot.model_copy(deep=True) if skill_snapshot else None,
+            skill_snapshot=skill_snapshot.model_copy(deep=True) if skill_snapshot else None,
             tool_policy_snapshot=tool_policy_snapshot.model_copy(deep=True),
             budget=definition.default_budget.model_copy(deep=True),
             completion_authority=definition.completion_authority,
@@ -98,4 +98,3 @@ class SolverFactory:
 
 
 __all__ = ["SolverFactory"]
-

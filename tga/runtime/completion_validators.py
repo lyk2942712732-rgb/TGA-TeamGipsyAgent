@@ -1,4 +1,4 @@
-"""Mode-specific, evidence-backed finish_session validation."""
+"""Mode-specific, evidence-backed task-completion validation."""
 
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ class CompletionClaim(BaseModel):
     evidence_artifact_ids: list[str] = Field(default_factory=list, max_length=32)
 
 
-class FinishSubmission(BaseModel):
+class TaskCompletionSubmission(BaseModel):
     model_config = ConfigDict(extra="forbid")
     summary: str = Field(min_length=1, max_length=5000)
     evidence_artifact_ids: list[str] = Field(default_factory=list, max_length=64)
@@ -47,7 +47,7 @@ class CompletionValidationResult(BaseModel):
 
 
 class CompletionValidator(Protocol):
-    def validate(self, *, context: "CompletionValidationContext", submission: FinishSubmission) -> CompletionValidationResult: ...
+    def validate(self, *, context: "CompletionValidationContext", submission: TaskCompletionSubmission) -> CompletionValidationResult: ...
 
 
 class CompletionValidationContext:
@@ -61,7 +61,7 @@ class CompletionValidationContext:
         self.artifact_text = artifact_text
         self.remote_flag_verifier = remote_flag_verifier
 
-    def resolve_artifacts(self, submission: FinishSubmission) -> tuple[list[ArtifactRecord], list[str]]:
+    def resolve_artifacts(self, submission: TaskCompletionSubmission) -> tuple[list[ArtifactRecord], list[str]]:
         ids = list(dict.fromkeys([
             *submission.evidence_artifact_ids,
             *(artifact_id for claim in submission.claims for artifact_id in claim.evidence_artifact_ids),
@@ -78,13 +78,13 @@ class CompletionValidationContext:
 
 
 class BaseCompletionValidator:
-    def common(self, *, context: CompletionValidationContext, submission: FinishSubmission) -> tuple[list[ArtifactRecord], CompletionValidationResult | None]:
+    def common(self, *, context: CompletionValidationContext, submission: TaskCompletionSubmission) -> tuple[list[ArtifactRecord], CompletionValidationResult | None]:
         artifacts, invalid = context.resolve_artifacts(submission)
         if context.task.mode != "ctf" and submission.flag is not None:
             return artifacts, rejected(
                 "FLAG_NOT_ALLOWED_FOR_MODE",
                 "The flag field is available only in CTF mode.",
-                ["remove flag from finish_session"], artifacts,
+                ["remove flag from task completion proposal"], artifacts,
             )
         if invalid:
             return artifacts, rejected(
@@ -98,7 +98,7 @@ class BaseCompletionValidator:
 
 
 class CTFCompletionValidator(BaseCompletionValidator):
-    def validate(self, *, context: CompletionValidationContext, submission: FinishSubmission) -> CompletionValidationResult:
+    def validate(self, *, context: CompletionValidationContext, submission: TaskCompletionSubmission) -> CompletionValidationResult:
         artifacts, failure = self.common(context=context, submission=submission)
         if failure:
             return failure
@@ -175,7 +175,7 @@ class CTFCompletionValidator(BaseCompletionValidator):
 
 
 class PenetrationTestCompletionValidator(BaseCompletionValidator):
-    def validate(self, *, context: CompletionValidationContext, submission: FinishSubmission) -> CompletionValidationResult:
+    def validate(self, *, context: CompletionValidationContext, submission: TaskCompletionSubmission) -> CompletionValidationResult:
         artifacts, failure = self.common(context=context, submission=submission)
         if failure:
             return failure
@@ -193,7 +193,7 @@ class PenetrationTestCompletionValidator(BaseCompletionValidator):
 
 
 class IncidentResponseCompletionValidator(BaseCompletionValidator):
-    def validate(self, *, context: CompletionValidationContext, submission: FinishSubmission) -> CompletionValidationResult:
+    def validate(self, *, context: CompletionValidationContext, submission: TaskCompletionSubmission) -> CompletionValidationResult:
         artifacts, failure = self.common(context=context, submission=submission)
         if failure:
             return failure
@@ -207,7 +207,7 @@ class IncidentResponseCompletionValidator(BaseCompletionValidator):
 
 
 class VulnerabilityResearchCompletionValidator(BaseCompletionValidator):
-    def validate(self, *, context: CompletionValidationContext, submission: FinishSubmission) -> CompletionValidationResult:
+    def validate(self, *, context: CompletionValidationContext, submission: TaskCompletionSubmission) -> CompletionValidationResult:
         artifacts, failure = self.common(context=context, submission=submission)
         if failure:
             return failure
@@ -225,13 +225,13 @@ class VulnerabilityResearchCompletionValidator(BaseCompletionValidator):
         if isinstance(config, VulnerabilityResearchModeConfig):
             if config.require_poc and "reproduction" not in kinds:
                 missing.append("PoC/reproduction claim required by mode_config")
-            if config.require_minimized_crash and not any("minimiz" in claim.statement.casefold() or "最小" in claim.statement for claim in submission.claims):
+            if config.require_minimized_crash and not any("minimiz" in claim.statement.casefold() for claim in submission.claims):
                 missing.append("minimized crash sample evidence required by mode_config")
         return _finish_or_reject("VULNERABILITY_RESEARCH_COMPLETE", submission, artifacts, missing, {"vulnerability_claimed": has_vulnerability})
 
 
 class ReverseEngineeringCompletionValidator(BaseCompletionValidator):
-    def validate(self, *, context: CompletionValidationContext, submission: FinishSubmission) -> CompletionValidationResult:
+    def validate(self, *, context: CompletionValidationContext, submission: TaskCompletionSubmission) -> CompletionValidationResult:
         artifacts, failure = self.common(context=context, submission=submission)
         if failure:
             return failure
@@ -263,15 +263,15 @@ def validator_for(mode: TaskMode) -> CompletionValidator:
     return VALIDATORS[mode]
 
 
-def finish_tool_schema(mode: TaskMode) -> dict[str, Any]:
-    schema = FinishSubmission.model_json_schema()
+def task_completion_tool_schema(mode: TaskMode) -> dict[str, Any]:
+    schema = TaskCompletionSubmission.model_json_schema()
     schema["additionalProperties"] = False
     if mode != "ctf":
         schema.get("properties", {}).pop("flag", None)
     return schema
 
 
-def _base_non_ctf_missing(submission: FinishSubmission, artifacts: list[ArtifactRecord], *, require_limitations: bool = False) -> list[str]:
+def _base_non_ctf_missing(submission: TaskCompletionSubmission, artifacts: list[ArtifactRecord], *, require_limitations: bool = False) -> list[str]:
     missing: list[str] = []
     if not artifacts:
         missing.append("at least one task-owned evidence Artifact")
@@ -282,11 +282,11 @@ def _base_non_ctf_missing(submission: FinishSubmission, artifacts: list[Artifact
     return missing
 
 
-def _claims_without_evidence(submission: FinishSubmission, kinds: set[str]) -> list[str]:
+def _claims_without_evidence(submission: TaskCompletionSubmission, kinds: set[str]) -> list[str]:
     return [claim.statement[:120] for claim in submission.claims if claim.kind in kinds and not claim.evidence_artifact_ids]
 
 
-def _finish_or_reject(code: str, submission: FinishSubmission, artifacts: list[ArtifactRecord], missing: list[str], details: dict[str, Any]) -> CompletionValidationResult:
+def _finish_or_reject(code: str, submission: TaskCompletionSubmission, artifacts: list[ArtifactRecord], missing: list[str], details: dict[str, Any]) -> CompletionValidationResult:
     if missing:
         return rejected(f"{code}_MISSING", "Completion declaration needs more evidence or coverage.", missing, artifacts, details=details)
     return accepted(code, "Mode-specific completion requirements satisfied.", [artifact.id for artifact in artifacts], details=details)
