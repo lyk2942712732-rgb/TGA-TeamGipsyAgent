@@ -3,13 +3,18 @@ name: sandbox-runtime
 on:
   pull_request:
     paths:
+      - ".github/workflows/sandbox-runtime.yml"
+      - "pyproject.toml"
       - "tga/sandbox/**"
+      - "tga/runtime/scheduler.py"
       - "apps/api/main.py"
       - "sandboxd/**"
       - "config/sandbox.json"
       - "sandboxd/api/**"
       - "scripts/generate_sandbox_proto.py"
+      - "tests/test_capabilities.py"
       - "tests/test_nmap_mcp.py"
+      - "tests/test_runtime_scheduler.py"
   push:
     branches: [main]
 

@@ -22,7 +22,9 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - uses: sigstore/cosign-installer@v3
-      - uses: aquasecurity/setup-trivy@v0.2.3
+      - uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
+        with:
+          version: v0.71.0
       - uses: anchore/sbom-action/download-syft@v0
       - name: Resolve immutable bases
         id: bases
