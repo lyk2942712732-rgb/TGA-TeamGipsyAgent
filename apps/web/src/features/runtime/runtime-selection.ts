@@ -1,7 +1,7 @@
-export type RuntimeTab = "overview" | "work-items" | "timeline" | "evidence" | "resources" | "approvals" | "retrieval";
+export type RuntimeTab = "overview" | "work-items" | "timeline" | "evidence" | "findings" | "resources" | "approvals" | "retrieval";
 export type RuntimeSelection = { solverId: string | null; intentId: string | null; tab: RuntimeTab };
 
-const TABS = new Set<RuntimeTab>(["overview", "work-items", "timeline", "evidence", "resources", "approvals", "retrieval"]);
+const TABS = new Set<RuntimeTab>(["overview", "work-items", "timeline", "evidence", "findings", "resources", "approvals", "retrieval"]);
 
 export function readRuntimeSelection(search: string): RuntimeSelection {
   const params = new URLSearchParams(search);

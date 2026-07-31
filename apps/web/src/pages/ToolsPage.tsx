@@ -5,8 +5,12 @@ import type { MCPManagedServer } from "../runtime/event-types";
 import { runtimeApi } from "../runtime/api-v2";
 import { EmptyState } from "../components/ui/EmptyState";
 import { MCPWizard } from "../components/mcp/MCPWizard";
+import { BACKEND_CAPABILITIES } from "../api/capability-state";
+import { CapabilityNotice, Chip, DefinitionList, ProductEmpty, ProductPageHeader, ProductTable, ProductTabs } from "../components/ui/ProductPrimitives";
 
 export function CapabilitiesPage() {
+  const [pageTab, setPageTab] = useState("Capabilities");
+  const [selectedCapability, setSelectedCapability] = useState("");
   const [items, setItems] = useState<Capability[]>([]);
   const [catalog, setCatalog] = useState<MCPCatalog | null>(null);
   const [health, setHealth] = useState<MCPHealth | null>(null);
@@ -167,10 +171,13 @@ export function CapabilitiesPage() {
   const catalogSummary = catalog
     ? `已配置 ${serverGroups.length} 个服务，发现 ${discoveredMethodCount} 个工具。展开服务可查看其工具。`
     : loading ? "正在读取已配置的 MCP 工具目录…" : "MCP 工具目录暂时无法读取，其他运行时能力仍可使用。";
-  return <section className="page-stack settings-page capabilities-settings-page">
-    <header className="page-title"><div><span className="eyebrow">配置 / 工具目录</span><h1>工具能力与 MCP</h1><p>内置工具由 TGA 本机运行时提供；MCP 工具来自 <code>mcp.json</code> 允许列表，并通过 <code>initialize</code> 与 <code>tools/list</code> 发现。</p></div><div className="button-row"><button className="secondary-button" disabled={refreshing || importing || switchingServer !== null} onClick={() => void refresh()}>{refreshing ? "正在刷新…" : "刷新目录"}</button><button onClick={() => { setEditingServer(null); setWizardOpen(true); }}>添加 MCP 服务</button></div></header>
+  const focusedCapability = items.find((item) => item.name === selectedCapability) ?? items[0];
+  return <section className="product-page capabilities-settings-page">
+    <ProductPageHeader title="Tools & MCP" description="查看受控 Capabilities，管理 MCP Servers、工具发现和连接健康。" action={pageTab === "MCP Servers" ? <div className="button-row"><button className="secondary-button" disabled={refreshing || importing || switchingServer !== null} onClick={() => void refresh()}>{refreshing ? "正在刷新…" : "刷新目录"}</button><button onClick={() => { setEditingServer(null); setWizardOpen(true); }}>添加 MCP 服务</button></div> : undefined} />
+    <ProductTabs items={["Capabilities", "MCP Servers"]} active={pageTab} onChange={setPageTab} />
     {error ? <div className="inline-error" role="alert">{error}</div> : null}
     {Object.entries(loadErrors).map(([source, message]) => <div className="inline-error" role="alert" key={source}><strong>{source}:</strong> {message}</div>)}
+    {pageTab === "Capabilities" ? <><CapabilityNotice state={BACKEND_CAPABILITIES.capabilityRegistry.state} reason={BACKEND_CAPABILITIES.capabilityRegistry.reason} /><div className="capability-master-detail"><div>{items.length ? <ProductTable label="Capabilities 表格" headers={["名称", "Category", "风险", "审批要求", "执行位置", "支持 Mode", "状态"]}>{items.map((item) => <tr key={item.name} className={focusedCapability?.name === item.name ? "selected-row" : ""} onClick={() => setSelectedCapability(item.name)}><td><strong>{item.name}</strong></td><td>{capabilityCategory(item.name)}</td><td><Chip tone={item.risk === "destructive" ? "danger" : item.risk === "active" ? "warning" : "success"}>{riskText(item.risk)}</Chip></td><td>{item.risk === "passive" ? "不需要" : "按策略审批"}</td><td>本地 Runtime</td><td>{item.modes.map(modeLabel).join("、") || "未声明"}</td><td><Chip tone="success">{availabilityLabel(item.availability)}</Chip></td></tr>)}</ProductTable> : loading ? <p>正在读取 Capability 注册表...</p> : <ProductEmpty title="暂无 Capabilities" description="当前后端未返回内置能力。" />}</div>{focusedCapability ? <article className="capability-detail-panel"><header><div><span className="detail-kicker">CAPABILITY DETAIL</span><h2>{focusedCapability.name}</h2><p>{capabilityDescription(focusedCapability.name)}</p></div><Chip tone="success">{availabilityLabel(focusedCapability.availability)}</Chip></header><DefinitionList rows={[["是否启用", "是（注册表只读）"], ["风险", riskText(focusedCapability.risk)], ["Category", capabilityCategory(focusedCapability.name)], ["审批要求", focusedCapability.risk === "passive" ? "不需要" : "由任务策略决定"], ["支持 Mode", focusedCapability.modes.map(modeLabel).join("、")], ["执行限制", "受任务网络、并发、超时和预算策略治理"], ["来源", "TGA Capability Registry"], ["使用统计", "后端未提供"]]} /></article> : null}</div></> : <>
     <section className="surface">
       <div className="surface-head"><div><h2>导入 MCP 镜像</h2><p>拖入由 <code>docker save</code> 创建的镜像归档；TGA 会加载镜像、写入本机允许列表并刷新工具发现。</p></div><span className="schema-chip">本机 Docker</span></div>
       <input ref={fileInput} hidden type="file" accept=".tar,.tgz,.gz,application/x-tar" onChange={chooseFile} />
@@ -192,7 +199,6 @@ export function CapabilitiesPage() {
       </div>
       {importMessage ? <div className="mcp-import-result" role="status">{importMessage}</div> : null}
     </section>
-    <section className="surface builtin-capabilities"><div className="surface-head"><div><h2>内置受控工具</h2><p>由本机运行时直接执行，并按任务的执行边界、并发和超时策略治理。工具标识保留原样，便于与运行日志对应。</p></div><span className="schema-chip">{items.length} 个工具</span></div><div className="capability-grid">{items.map((item) => <article className="capability-card" key={item.name}><div className="capability-title"><div><h3>{item.name}</h3><p>{capabilityDescription(item.name)}</p></div><span className={`status-badge ${item.availability === "available" || item.availability === "healthy" ? "completed" : "blocked"}`}>{availabilityLabel(item.availability)}</span></div><div className="capability-meta"><span>适用场景：{item.modes.map(modeLabel).join(" · ") || "未声明"}</span><small>风险级别：{riskText(item.risk)}</small></div></article>)}</div>{!items.length && !loading ? <EmptyState label="当前后端未返回内置工具能力。" /> : null}</section>
     <section className="surface">
       <div className="surface-head"><div><h2>MCP 工具目录</h2><p>{catalogSummary}</p></div><span className={`status-badge ${catalogState === "healthy" ? "completed" : "blocked"}`}>{availabilityLabel(catalogState)}</span></div>
       {catalog?.reason ? <div className="inline-error">{catalog.reason}</div> : null}
@@ -216,6 +222,7 @@ export function CapabilitiesPage() {
       })}</div>
       {catalog && !serverGroups.length ? <EmptyState label="尚未配置 MCP 服务。请导入镜像，或在 mcp.json 中添加服务。" /> : null}
     </section>
+    </>}
     {confirmDelete ? <div className="dialog-backdrop" role="presentation"><section className="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="delete-mcp-title"><h2 id="delete-mcp-title">删除 MCP 服务？</h2><p><strong>{confirmDelete}</strong> 将从 mcp.json 中移除，不再向后续任务轮次提供。对应的本机 Docker 镜像不会删除。</p><div><button className="secondary-button" disabled={deleting} onClick={() => setConfirmDelete(null)}>取消</button><button className="danger-button" disabled={deleting} onClick={() => void removeServer()}>{deleting ? "正在删除…" : "从配置中删除"}</button></div></section></div> : null}
     {wizardOpen ? <MCPWizard initial={editingServer} onClose={() => setWizardOpen(false)} onSaved={load} /> : null}
   </section>;
@@ -243,3 +250,5 @@ function capabilityDescription(value: string) {
     "workspace.write": "向任务工作区写入文件或生成后续分析材料。",
   } as Record<string, string>)[value] ?? "由本机运行时治理并执行的任务工具。";
 }
+
+function capabilityCategory(value: string) { return value.includes("http") ? "Network" : value.includes("workspace") ? "Local Compute" : value.includes("artifact") ? "Artifact" : "Runtime"; }

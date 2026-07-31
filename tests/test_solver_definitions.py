@@ -16,6 +16,7 @@ from tga.domain.solver.results import WorkerResult
 from tga.infrastructure.skills.catalog import FileSkillCatalog
 from tga.infrastructure.solver_definitions.registry import SolverDefinitionRegistry
 from tga.infrastructure.team_templates.registry import TeamTemplateRegistry
+from tga.runtime.orchestration.solver_selector import SolverSelector
 from tga.application.services.skill_selection_service import (
     SolverSkillSelectionRequest,
     SolverSkillSelectionService,
@@ -25,9 +26,17 @@ from tga.skills.models import SkillBundleSnapshot, SkillSnapshot as LegacySkillS
 
 
 EXPECTED_DEFINITIONS = {
-    "task-supervisor", "recon-triage", "web-network-analyst", "code-audit",
-    "binary-analysis", "forensics-analysis", "vulnerability-validator",
-    "evidence-reviewer", "security-reporter",
+    "architecture-analyst", "binary-triage-solver", "challenge-classifier",
+    "code-audit-solver", "containment-advisor", "crash-root-cause-solver",
+    "ctf-crypto-solver", "ctf-forensics-solver", "ctf-pwn-solver",
+    "ctf-reverse-solver", "ctf-supervisor", "ctf-web-solver",
+    "dynamic-analysis-solver", "dynamic-fuzzing-solver", "evidence-reviewer",
+    "evidence-triage-solver", "flag-verifier", "host-network-forensics-solver",
+    "incident-supervisor", "logic-config-recovery-solver", "malware-solver",
+    "pentest-supervisor", "poc-reproduction-solver", "research-supervisor",
+    "reverse-supervisor", "security-reporter", "static-analysis-solver",
+    "surface-mapper", "timeline-ioc-solver", "vulnerability-validator",
+    "web-api-analyst",
 }
 EXPECTED_MODES = {
     "ctf", "penetration_test", "incident_response", "vulnerability_research",
@@ -76,7 +85,7 @@ def test_builtin_solver_definitions_load_validate_and_hash() -> None:
 
 
 def test_solver_definition_loader_rejects_unknown_fields(tmp_path: Path) -> None:
-    source = SolverDefinitionRegistry.builtin().get("task-supervisor")
+    source = SolverDefinitionRegistry.builtin().get("ctf-supervisor")
     assert source is not None
     payload = source.model_dump(mode="json", exclude={"content_sha256"})
     payload["unexpected"] = True
@@ -100,7 +109,7 @@ def test_solver_definition_loader_rejects_unknown_references(
     updates: dict[str, object],
     message: str,
 ) -> None:
-    source = SolverDefinitionRegistry.builtin().require("task-supervisor")
+    source = SolverDefinitionRegistry.builtin().require("ctf-supervisor")
     payload = source.model_dump(mode="json", exclude={"content_sha256"})
     payload.update(updates)
     path = tmp_path / "definition.json"
@@ -111,7 +120,7 @@ def test_solver_definition_loader_rejects_unknown_references(
 
 
 def test_worker_definition_cannot_own_task_completion() -> None:
-    base = SolverDefinitionRegistry.builtin().get("recon-triage")
+    base = SolverDefinitionRegistry.builtin().get("challenge-classifier")
     assert base is not None
     with pytest.raises(ValidationError, match="Worker cannot own task completion"):
         SolverDefinition.model_validate({
@@ -126,7 +135,7 @@ def test_five_team_templates_reference_compatible_definitions() -> None:
 
     assert set(teams.modes()) == EXPECTED_MODES
     for template in teams.all():
-        assert template.max_active_workers == 1
+        assert template.max_active_workers == 2
         assert template.content_sha256
         supervisor = definitions.require(template.supervisor_definition_id)
         reviewer = definitions.require(template.reviewer_definition_id)
@@ -145,7 +154,7 @@ def test_five_team_templates_reference_compatible_definitions() -> None:
 
 def test_solver_skill_selection_rejects_missing_capability_or_policy_permission() -> None:
     definitions = SolverDefinitionRegistry.builtin()
-    definition = definitions.require("web-network-analyst")
+    definition = definitions.require("ctf-web-solver")
     service = SolverSkillSelectionService(FileSkillCatalog.builtin())
     request = SolverSkillSelectionRequest(
         task_id="task_1",
@@ -153,7 +162,7 @@ def test_solver_skill_selection_rejects_missing_capability_or_policy_permission(
         mode="ctf",
         mode_config={"mode": "ctf", "subtype": "web"},
         definition=definition,
-        intent=_intent("task_1", kind="web_analysis"),
+        intent=_intent("task_1", kind="ctf_web"),
         available_capabilities=("http.request", "artifact.inspect"),
         tool_policy_allowed_capabilities=("artifact.inspect",),
         created_at="2026-01-01T00:00:00Z",
@@ -234,11 +243,11 @@ def test_skill_activation_has_no_tool_grant_surface() -> None:
 
 
 def test_same_definition_can_create_instances_for_different_tasks() -> None:
-    definition = SolverDefinitionRegistry.builtin().require("task-supervisor")
+    definition = SolverDefinitionRegistry.builtin().require("ctf-supervisor")
     policy = ToolPolicySnapshot(
         profile=definition.tool_policy_profile,
         allowed_tool_groups=definition.allowed_tool_groups,
-        allowed_capabilities=(),
+        allowed_capabilities=definition.required_capabilities,
         content_sha256="c" * 64,
     )
     factory = SolverFactory()
@@ -256,15 +265,15 @@ def test_same_definition_can_create_instances_for_different_tasks() -> None:
         created_at="2026-01-01T00:00:00Z",
     )
 
-    assert first.definition_id == second.definition_id == "task-supervisor"
+    assert first.definition_id == second.definition_id == "ctf-supervisor"
     assert first.task_id == "task_a" and second.task_id == "task_b"
     assert first.id != second.id
 
 
 def test_factory_builds_worker_without_starting_a_runner() -> None:
-    definition = SolverDefinitionRegistry.builtin().require("web-network-analyst")
+    definition = SolverDefinitionRegistry.builtin().require("ctf-web-solver")
     task = _task("task_worker")
-    intent = _intent(task.id, kind="web_analysis")
+    intent = _intent(task.id, kind="ctf_web")
     policy = ToolPolicySnapshot(
         profile=definition.tool_policy_profile,
         allowed_tool_groups=definition.allowed_tool_groups,
@@ -295,14 +304,18 @@ def test_factory_builds_worker_without_starting_a_runner() -> None:
 
 def test_loaded_completion_authority_matches_orchestration_role() -> None:
     registry = SolverDefinitionRegistry.builtin()
-    assert registry.require("task-supervisor").completion_authority == "task"
+    for supervisor_id in (
+        "ctf-supervisor", "pentest-supervisor", "incident-supervisor",
+        "research-supervisor", "reverse-supervisor",
+    ):
+        assert registry.require(supervisor_id).completion_authority == "task"
     for definition in registry.all():
         if definition.orchestration_role == "worker":
             assert definition.completion_authority != "task"
 
 
 def test_definition_scene_support_and_structured_worker_result() -> None:
-    definition = SolverDefinitionRegistry.builtin().require("recon-triage")
+    definition = SolverDefinitionRegistry.builtin().require("ctf-web-solver")
     assert definition.supports(mode="ctf", subtype="web") is True
     assert definition.supports(mode="incident_response") is False
 
@@ -326,6 +339,83 @@ def test_definition_scene_support_and_structured_worker_result() -> None:
     payload = result.model_dump(mode="json")
     assert payload["solver_id"] == "solver_1"
     assert payload["candidate_evidence_claim_ids"] == ["claim_1"]
+
+
+@pytest.mark.parametrize(
+    ("mode", "mode_config", "intent_kind", "expected_definition"),
+    [
+        ("ctf", {"mode": "ctf", "subtype": "web"}, "ctf_web", "ctf-web-solver"),
+        (
+            "penetration_test",
+            {"mode": "penetration_test", "exploit_validation": True},
+            "vulnerability_validation",
+            "vulnerability-validator",
+        ),
+        (
+            "incident_response",
+            {"mode": "incident_response", "response_authority": "containment_with_approval"},
+            "containment_advice",
+            "containment-advisor",
+        ),
+        (
+            "vulnerability_research",
+            {"mode": "vulnerability_research", "allow_fuzzing": True},
+            "dynamic_fuzzing",
+            "dynamic-fuzzing-solver",
+        ),
+        (
+            "reverse_engineering",
+            {"mode": "reverse_engineering", "allow_dynamic_execution": True},
+            "dynamic_analysis",
+            "dynamic-analysis-solver",
+        ),
+    ],
+)
+def test_solver_selector_honors_scene_and_explicit_mode_authority(
+    mode: str,
+    mode_config: dict[str, object],
+    intent_kind: str,
+    expected_definition: str,
+) -> None:
+    definitions = SolverDefinitionRegistry.builtin()
+    templates = TeamTemplateRegistry.builtin(definitions=definitions)
+    task = TGATask(
+        id=f"selector_{mode}", name="selector", mode=mode, goal="select",
+        mode_config=mode_config,
+    )
+    selector = SolverSelector(
+        definitions=definitions,
+        template=templates.require(task.mode),
+        task=task,
+    )
+
+    assert selector.select(_intent(task.id, kind=intent_kind)).id == expected_definition
+
+
+@pytest.mark.parametrize(
+    ("mode", "intent_kind"),
+    [
+        ("penetration_test", "vulnerability_validation"),
+        ("incident_response", "containment_advice"),
+        ("vulnerability_research", "dynamic_fuzzing"),
+        ("vulnerability_research", "poc_reproduction"),
+        ("reverse_engineering", "dynamic_analysis"),
+    ],
+)
+def test_solver_selector_rejects_config_gated_workers_by_default(
+    mode: str, intent_kind: str
+) -> None:
+    definitions = SolverDefinitionRegistry.builtin()
+    templates = TeamTemplateRegistry.builtin(definitions=definitions)
+    task = _task(f"selector_denied_{mode}", mode=mode)
+    selector = SolverSelector(
+        definitions=definitions,
+        template=templates.require(task.mode),
+        task=task,
+    )
+
+    with pytest.raises(ValueError, match="no Worker SolverDefinition"):
+        selector.select(_intent(task.id, kind=intent_kind))
 
 
 def test_every_phase_3_domain_model_forbids_extra_fields() -> None:

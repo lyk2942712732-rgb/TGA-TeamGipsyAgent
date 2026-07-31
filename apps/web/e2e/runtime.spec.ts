@@ -150,7 +150,7 @@ test("approval, scoped intervention and replay remain task-governed", async ({ p
   await expect(page.getByRole("button", { name: "补充信息" })).toHaveCount(0);
 });
 
-for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 }]) {
+for (const viewport of [{ width: 1280, height: 900 }, { width: 1440, height: 900 }, { width: 1920, height: 1080 }]) {
   test(`command workbench has no horizontal overlap at ${viewport.width}px`, async ({ page }) => {
     await page.setViewportSize(viewport);
     await mockRuntime(page, "ctf");

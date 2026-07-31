@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+﻿import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { TeamExplorer } from "../team/TeamExplorer";
 import { IntentBoard } from "../intents/IntentBoard";
@@ -36,13 +36,13 @@ describe("Phase 11 command workbench components", () => {
     expect(screen.getByRole("treeitem", { name: /reporter/ })).toHaveTextContent("已完成");
   });
 
-  it("provides Kanban, bounded dependency graph and list views for Intent work items", () => {
+  it("provides Kanban, bounded dependency graph and timeline views for Intent work items", () => {
     render(<IntentBoard store={workbenchStore()} selectedIntentId={null} onSelect={() => undefined} />);
-    expect(screen.getByRole("region", { name: "Intent Kanban" })).toHaveTextContent("等待审批");
-    fireEvent.click(screen.getByRole("button", { name: "依赖图" }));
+    expect(screen.getByRole("region", { name: "Intent 看板" })).toHaveTextContent("等待审批");
+    fireEvent.click(screen.getByRole("button", { name: "拓扑" }));
     expect(screen.getByRole("figure", { name: "Intent 依赖图" })).toHaveTextContent("Resolve reviewer conflict");
-    fireEvent.click(screen.getByRole("button", { name: "列表" }));
-    expect(screen.getByRole("table", { name: "Intent 列表" })).toHaveTextContent("Write report");
+    fireEvent.click(screen.getByRole("button", { name: "时间线" }));
+    expect(screen.getByRole("list", { name: "Intent 时间线" })).toHaveTextContent("Write report");
   });
 
   it("answers command-level progress, verified knowledge, conflicts and completion criteria", () => {

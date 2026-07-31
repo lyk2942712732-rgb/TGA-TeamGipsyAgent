@@ -25,11 +25,11 @@ from tga.infrastructure.skills.catalog import FileSkillCatalog
 
 
 INITIAL_INTENT_KIND = {
-    "ctf": "recon",
-    "penetration_test": "recon",
-    "incident_response": "forensics",
-    "vulnerability_research": "code_audit",
-    "reverse_engineering": "binary_analysis",
+    "ctf": "challenge_classification",
+    "penetration_test": "surface_mapping",
+    "incident_response": "evidence_triage",
+    "vulnerability_research": "architecture_analysis",
+    "reverse_engineering": "binary_triage",
 }
 
 
@@ -349,10 +349,13 @@ class TeamRuntime:
         return solver
 
     def _tool_policy(self, definition) -> ToolPolicySnapshot:
-        capabilities = tuple(sorted(
+        mode_capabilities = {
             item["name"]
             for item in self.registry.snapshot()["capabilities"]
             if self.task.mode in item["modes"]
+        }
+        capabilities = tuple(sorted(
+            set(definition.required_capabilities).intersection(mode_capabilities)
         ))
         payload = {
             "definition": definition.id,

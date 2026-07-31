@@ -55,7 +55,9 @@ class TaskOrchestrator:
         )
         self.dispatcher = IntentDispatcher()
         self.selector = SolverSelector(
-            definitions=self.definitions, template=self.template
+            definitions=self.definitions,
+            template=self.template,
+            task=self.task,
         )
         self.merger = ResultMerger(task=task, repositories=repositories)
 

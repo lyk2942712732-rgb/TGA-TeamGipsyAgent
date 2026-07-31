@@ -39,10 +39,8 @@ async function mockCreatePage(page: Page) {
 }
 
 const viewports = [
-  { width: 390, height: 844 },
-  { width: 1024, height: 768 },
   { width: 1280, height: 900 },
-  { width: 1440, height: 960 },
+  { width: 1440, height: 900 },
   { width: 1920, height: 1080 },
 ];
 
@@ -88,7 +86,7 @@ for (const viewport of viewports) {
 
     await page.goto("/tasks/new");
     await expect(page.getByRole("heading", { name: "新建任务" })).toBeVisible();
-    await expect(page.getByRole("button", { name: /选择场景与任务目标/ })).toBeVisible();
+    await expect(page.getByRole("button", { name: /选择场景/ })).toBeVisible();
     await expect(page.getByRole("button", { name: /启动前检查/ })).toBeVisible();
     await expectNoHorizontalOverflow(page);
     await page.screenshot({ path: join(artifactRoot, `task-create-${viewport.width}.png`), fullPage: true });

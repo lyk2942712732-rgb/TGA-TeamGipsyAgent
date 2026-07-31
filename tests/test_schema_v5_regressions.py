@@ -49,7 +49,7 @@ def _pending_governed_action(
             solver_id="agent_main",
             intent_id=None,
             orchestration_role="supervisor",
-            solver_definition_id="task-supervisor",
+            solver_definition_id="ctf-supervisor",
             execution_policy_snapshot_id="execution:" + "a" * 64,
             solver_tool_policy_snapshot_id="tool:" + "b" * 64,
             attempt=1,

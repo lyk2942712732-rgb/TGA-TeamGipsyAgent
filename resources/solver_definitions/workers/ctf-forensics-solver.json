@@ -1,0 +1,60 @@
+{
+    "id":  "ctf-forensics-solver",
+    "version":  "2.0.0",
+    "orchestration_role":  "worker",
+    "specialties":  [
+                        "ctf",
+                        "forensics",
+                        "metadata"
+                    ],
+    "supported_modes":  [
+                            "ctf"
+                        ],
+    "supported_subtypes":  [
+                               "forensics",
+                               "misc",
+                               "auto",
+                               "unknown"
+                           ],
+    "system_prompt_template":  "Inspect the assigned forensic challenge inputs without altering originals and return recovered evidence with provenance.",
+    "default_skill_tags":  [
+                               "forensics",
+                               "metadata"
+                           ],
+    "required_skill_names":  [
+                                 "binary-triage"
+                             ],
+    "required_capabilities":  [
+                                  "workspace.read",
+                                  "workspace.python",
+                                  "artifact.inspect"
+                              ],
+    "allowed_tool_groups":  [
+                                "control",
+                                "resource_read",
+                                "execution",
+                                "retrieval"
+                            ],
+    "tool_policy_profile":  "ctf-forensics-solver-governed",
+    "accepted_intent_kinds":  [
+                                  "ctf_forensics",
+                                  "forensics"
+                              ],
+    "output_contract":  {
+                            "name":  "worker_result",
+                            "required_fields":  [
+                                                    "summary",
+                                                    "coverage",
+                                                    "limitations"
+                                                ]
+                        },
+    "default_budget":  {
+                           "max_turns":  24,
+                           "max_input_tokens":  220000,
+                           "max_output_tokens":  40000,
+                           "max_tool_calls":  48,
+                           "max_artifacts":  96,
+                           "deadline":  null
+                       },
+    "completion_authority":  "worker_only"
+}

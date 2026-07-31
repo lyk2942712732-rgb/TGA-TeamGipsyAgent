@@ -39,6 +39,8 @@ describe("ModelsPage browser configuration", () => {
     const onConfiguredChange = vi.fn();
     render(<ModelsPage onConfiguredChange={onConfiguredChange} />);
 
+    await screen.findByRole("heading", { name: "Models" });
+    fireEvent.click(screen.getByRole("button", { name: "编辑配置" }));
     const baseUrl = await screen.findByLabelText("Provider Base URL");
     fireEvent.change(baseUrl, { target: { value: "https://provider.example/v1" } });
     fireEvent.change(screen.getByLabelText("模型 ID"), { target: { value: "tool-model" } });
@@ -58,9 +60,9 @@ describe("ModelsPage browser configuration", () => {
       temperature: 0.2,
       reasoning_mode: "auto",
     }));
-    expect(key).toHaveValue("");
+    expect(screen.queryByRole("dialog", { name: "Provider 配置" })).toBeNull();
     expect(onConfiguredChange).toHaveBeenCalledWith(true);
-    expect(screen.getByRole("status")).toHaveTextContent("API Key 不会回显");
+    expect(screen.getByText(/Provider、模型和凭据设置已保存.*API Key 不会回显/)).toBeInTheDocument();
   });
 
   it("never places the saved key into the input", async () => {
@@ -73,7 +75,8 @@ describe("ModelsPage browser configuration", () => {
       max_output_tokens: 4096, timeout_seconds: 90, temperature: 0.4, reasoning_mode: "enabled",
     });
     render(<ModelsPage />);
-
+    await screen.findByRole("heading", { name: "Models" });
+    fireEvent.click(screen.getByRole("button", { name: "编辑配置" }));
     const key = await screen.findByLabelText("API Key");
     expect(key).toHaveValue("");
     expect(key).toHaveAttribute("placeholder", "已保存，留空表示不修改");

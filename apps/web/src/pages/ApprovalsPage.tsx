@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronLeft, ChevronRight, ExternalLink, RotateCcw } from "lucide-react";
+import { ChevronLeft, ChevronRight, ExternalLink, RotateCcw, ShieldCheck } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
@@ -9,10 +9,8 @@ import {
   type ApprovalStatus,
   type GlobalApproval,
 } from "../api/operations-query-adapter";
-import { ApprovalCard } from "../components/ui/ApprovalCard";
 import { ConfirmDialog } from "../components/ui/ConfirmDialog";
 import { EmptyState } from "../components/ui/EmptyState";
-import { EntityDrawer } from "../components/ui/EntityDrawer";
 import { ErrorState } from "../components/ui/ErrorState";
 import { FilterBar } from "../components/ui/FilterBar";
 import { LoadingSkeleton } from "../components/ui/LoadingSkeleton";
@@ -76,6 +74,7 @@ export function ApprovalsPage() {
   };
   const clear = () => setParams({ status: query.status, page: "1" }, { replace: true });
   const item = decision ? selected : null;
+  const focused = selected ?? approvals.data?.items[0] ?? null;
 
   return <section className="page-stack approvals-page">
     <PageHeader
@@ -107,29 +106,9 @@ export function ApprovalsPage() {
     {approvals.isLoading ? <LoadingSkeleton label="正在读取审批队列" rows={8} /> : null}
     {approvals.isError ? <ErrorState title="审批队列加载失败" description={approvals.error instanceof Error ? approvals.error.message : "无法读取审批聚合"} actionLabel="重试" onAction={() => void approvals.refetch()} /> : null}
     {approvals.data && !approvals.data.items.length ? <EmptyState label={`当前筛选下没有${STATUSES.find((tab) => tab.id === query.status)?.label ?? ""}审批。`} /> : null}
-    {approvals.data?.items.length ? <div className="global-approval-grid">{approvals.data.items.map((approval) => <ApprovalCard
-      key={approval.approval_id}
-      title={approval.capability}
-      status={approval.status}
-      risk={approval.risk}
-      details={<ApprovalSummary item={approval} />}
-      rationale={<><b>Rationale</b>{approval.rationale || "未提供"}</>}
-      actions={<>
-        <button className="text-button" onClick={() => setSelected(approval)}>查看详情</button>
-        <button className="secondary-button" onClick={() => navigate(`/tasks/${encodeURIComponent(approval.task_id)}`)}>任务上下文 <ExternalLink size={12} /></button>
-        {query.status === "pending" ? <><button className="danger-button" disabled={!approval.decision_allowed || mutation.isPending} title={approval.decision_block_reason ?? "拒绝该操作"} onClick={() => { setSelected(approval); setDecision("reject"); }}>拒绝</button><button disabled={!approval.decision_allowed || mutation.isPending} title={approval.decision_block_reason ?? "仅批准本次"} onClick={() => { setSelected(approval); setDecision("approve"); }}>批准本次</button></> : null}
-      </>}
-    />)}</div> : null}
+    {approvals.data?.items.length ? <div className="approval-master-detail"><aside className="approval-queue" aria-label="审批队列">{approvals.data.items.map((approval) => <button key={approval.approval_id} className={focused?.approval_id === approval.approval_id ? "selected" : ""} onClick={() => setSelected(approval)}><span className="approval-queue-icon"><ShieldCheck size={16} /></span><div><strong>{approval.capability}</strong><small>{approval.task_name} · {approval.solver_id}</small><span>{approval.target}</span></div><div><RiskBadge value={approval.risk} /><time>{formatDate(approval.expires_at)}</time></div></button>)}</aside>{focused ? <article className="approval-detail-panel"><header><div><span className="detail-kicker">APPROVAL REQUEST</span><h2>{focused.capability}</h2><p>{focused.action_kind} · Action ID: {focused.action_id}</p></div><div><StatusBadge value={focused.status} /><RiskBadge value={focused.risk} /></div></header><ApprovalDetail item={focused} /><footer><button className="secondary-button" onClick={() => navigate(`/tasks/${encodeURIComponent(focused.task_id)}`)}>任务上下文 <ExternalLink size={12} /></button>{query.status === "pending" ? <><button className="danger-button" disabled={!focused.decision_allowed || mutation.isPending} title={focused.decision_block_reason ?? "拒绝该操作"} onClick={() => { setSelected(focused); setDecision("reject"); }}>拒绝</button><button disabled={!focused.decision_allowed || mutation.isPending} title={focused.decision_block_reason ?? "仅批准本次"} onClick={() => { setSelected(focused); setDecision("approve"); }}>批准本次</button></> : null}</footer></article> : null}</div> : null}
 
     {approvals.data ? <footer className="approval-pagination"><span>第 {query.page} 页 · 共 {approvals.data.total} 项</span><div><button className="secondary-button" aria-label="上一页" disabled={(query.page ?? 1) <= 1} onClick={() => update("page", String((query.page ?? 1) - 1), false)}><ChevronLeft size={14} /></button><button className="secondary-button" aria-label="下一页" disabled={!approvals.data.next_offset} onClick={() => update("page", String((query.page ?? 1) + 1), false)}><ChevronRight size={14} /></button></div></footer> : null}
-
-    <EntityDrawer
-      open={Boolean(selected) && !decision}
-      title={selected?.capability ?? "审批详情"}
-      description={selected ? `${selected.task_name} · ${selected.action_id}` : undefined}
-      onClose={() => setSelected(null)}
-      footer={selected ? <button className="secondary-button" onClick={() => navigate(`/tasks/${encodeURIComponent(selected.task_id)}`)}>打开任务上下文</button> : undefined}
-    >{selected ? <ApprovalDetail item={selected} /> : null}</EntityDrawer>
 
     <ConfirmDialog
       open={Boolean(item && decision)}
@@ -145,12 +124,8 @@ export function ApprovalsPage() {
   </section>;
 }
 
-function ApprovalSummary({ item }: { item: GlobalApproval }) {
-  return <dl className="approval-summary"><Row label="Task" value={item.task_name} /><Row label="Solver" value={item.solver_id || "未投影"} /><Row label="Intent" value={item.intent_id || "Task scope"} /><Row label="Target" value={item.target} /><Row label="Expires" value={formatDate(item.expires_at)} /></dl>;
-}
-
 function ApprovalDetail({ item }: { item: GlobalApproval }) {
-  return <div className="approval-detail"><div className="approval-detail-badges"><StatusBadge value={item.status} /><RiskBadge value={item.risk} /></div><dl>
+  return <div className="approval-detail"><dl>
     <Row label="Task" value={`${item.task_name} (${item.task_id})`} />
     <Row label="Solver" value={item.solver_id || "未投影"} />
     <Row label="Intent" value={item.intent_id || "Task scope"} />
@@ -162,6 +137,7 @@ function ApprovalDetail({ item }: { item: GlobalApproval }) {
     <Row label="Expected Outcome" value={item.expected_outcome || "未提供"} />
     <Row label="Alternative Analysis" value={item.alternative_analysis || item.alternatives.join("；") || "未提供"} />
     <Row label="Reversibility" value={item.reversibility} />
+    <Row label="提交时间" value={formatDate(item.created_at)} />
     <Row label="Expires At" value={formatDate(item.expires_at)} />
   </dl>{item.decision_block_reason ? <p className="approval-block-reason">{item.decision_block_reason}</p> : null}</div>;
 }

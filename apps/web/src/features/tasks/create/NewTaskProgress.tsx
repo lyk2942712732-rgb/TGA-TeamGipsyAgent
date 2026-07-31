@@ -1,11 +1,11 @@
 import { PageHeader } from "../../../components/ui/PageHeader";
 
 const STEPS = [
-  { title: "场景与目标", accessible: "选择场景与任务目标", legacy: "" },
-  { title: "任务配置", accessible: "任务配置", legacy: "" },
-  { title: "输入与资源", accessible: "任务提示与材料 / 输入与资源", legacy: "任务提示与材料" },
-  { title: "执行策略", accessible: "执行边界 / 执行策略", legacy: "执行边界" },
-  { title: "启动前检查", accessible: "创建摘要 / 启动前检查", legacy: "创建摘要" },
+  { title: "选择场景", accessible: "选择场景" },
+  { title: "输入与资源", accessible: "输入与资源" },
+  { title: "目标与成功标准", accessible: "目标与成功标准" },
+  { title: "团队与策略", accessible: "团队与策略" },
+  { title: "启动前检查", accessible: "启动前检查" },
 ];
 
 export function NewTaskHeader() {
@@ -21,7 +21,7 @@ export function NewTaskProgress({ step, onStep }: { step: number; onStep: (step:
   return <nav className="wizard-steps" aria-label="创建步骤">{STEPS.map((item, index) => {
     const number = index + 1;
     return <button key={item.title} type="button" aria-label={item.accessible} aria-current={step === number ? "step" : undefined} className={`${step === number ? "active" : ""} ${step > number ? "complete" : ""}`} onClick={() => onStep(number)}>
-      <b>{step > number ? "✓" : number}</b><span>{item.title}</span>{item.legacy ? <span className="sr-only">{item.legacy}</span> : null}
+      <b>{step > number ? "✓" : number}</b><span>{item.title}</span>
     </button>;
   })}</nav>;
 }

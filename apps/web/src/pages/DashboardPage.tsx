@@ -6,6 +6,8 @@ import { PageHeader } from "../components/ui/PageHeader";
 import { RiskBadge } from "../components/ui/RiskBadge";
 import { StatusBadge } from "../shared/StatusBadge";
 import { MODE_PROFILES } from "../modes";
+import { BACKEND_CAPABILITIES } from "../api/capability-state";
+import { CapabilityNotice, ProductEmpty } from "../components/ui/ProductPrimitives";
 
 export function DashboardPage({ value, onNew, onTask, onRuntime, onApprovals }: {
   value: DashboardResponse;
@@ -31,7 +33,7 @@ export function DashboardPage({ value, onNew, onTask, onRuntime, onApprovals }: 
       <MetricCard label="活动 Solver" value={metric("active_solvers")} detail="运行及等待中的实例" icon={Bot} tone="success" />
     </div>
 
-    <div className="operations-primary-grid">
+    <div className="operations-primary-grid dashboard-work-grid">
       <section className="operations-panel attention-panel">
         <header><div><span>ACTION REQUIRED</span><h2>需要你的处理</h2></div><button className="text-button" onClick={() => onApprovals()}>打开审批中心</button></header>
         {value.needs_attention.length ? <div className="attention-list">{value.needs_attention.map((item) => <button key={item.id} onClick={() => item.kind === "approval" ? onApprovals(item.task_id) : onTask(item.task_id)}>
@@ -40,21 +42,17 @@ export function DashboardPage({ value, onNew, onTask, onRuntime, onApprovals }: 
           <div className="attention-badges"><StatusBadge value={item.status} />{item.risk ? <RiskBadge value={item.risk} /> : null}</div>
         </button>)}</div> : <EmptyState label="当前没有需要人工处理的任务。" />}
       </section>
-      <section className="operations-panel system-summary">
-        <header><div><span>SYSTEM SIGNALS</span><h2>系统状态摘要</h2></div></header>
-        <div>{value.system_status.map((item) => <article key={item.id}><StatusBadge value={item.status} /><div><strong>{item.label}</strong><small>{item.detail}</small></div></article>)}</div>
+      <section className="operations-panel active-work-panel">
+        <header><div><span>ACTIVE WORK</span><h2>活动任务</h2></div><a href="/tasks">查看全部</a></header>
+        {value.active_tasks.length ? <div className="operations-task-grid dashboard-active-grid">{value.active_tasks.map((task) => <TaskSummaryCard key={task.task_id} task={task} onOpen={onTask} onRuntime={onRuntime} />)}</div> : <EmptyState label="当前没有活动任务。" />}
       </section>
     </div>
 
-    <section className="operations-panel">
-      <header><div><span>ACTIVE WORK</span><h2>活动任务</h2></div><a href="/tasks">查看全部任务</a></header>
-      {value.active_tasks.length ? <div className="operations-task-grid">{value.active_tasks.map((task) => <TaskSummaryCard key={task.task_id} task={task} onOpen={onTask} onRuntime={onRuntime} />)}</div> : <EmptyState label="当前没有活动任务。" />}
-    </section>
-
-    <section className="operations-panel recent-results">
-      <header><div><span>RECENT OUTCOMES</span><h2>最近完成</h2></div></header>
-      {value.recent_completed.length ? <div className="recent-result-list">{value.recent_completed.map((task) => <button key={task.task_id} onClick={() => onTask(task.task_id)}><StatusBadge value={task.status} /><div><strong>{task.name}</strong><small>{task.findings} 个确认结果 · {task.artifacts} 个 Artifact · {formatDate(task.updated_at)}</small></div></button>)}</div> : <EmptyState label="尚无最近完成任务或确认结果。" />}
-    </section>
+    <div className="dashboard-bottom-grid">
+      <section className="operations-panel recent-results"><header><div><span>RECENT COMPLETED</span><h2>最近完成任务</h2></div></header>{value.recent_completed.length ? <div className="recent-result-list">{value.recent_completed.map((task) => <button key={task.task_id} onClick={() => onTask(task.task_id)}><StatusBadge value={task.status} /><div><strong>{task.name}</strong><small>{task.findings} 个 Finding · {task.artifacts} 个 Artifact · {formatDate(task.updated_at)}</small></div></button>)}</div> : <EmptyState label="尚无最近完成任务或确认结果。" />}</section>
+      <section className="operations-panel confirmed-results"><header><div><span>CONFIRMED RESULTS</span><h2>最近确认结果</h2></div></header><CapabilityNotice state={BACKEND_CAPABILITIES.confirmedResults.state} reason={BACKEND_CAPABILITIES.confirmedResults.reason} /><ProductEmpty title="暂无独立结果流" description="保留该区域，未从任务摘要推断或伪造确认结果。" /></section>
+      <section className="operations-panel system-summary"><header><div><span>SYSTEM SIGNALS</span><h2>系统状态</h2></div><a href="/system">查看详情</a></header><div>{value.system_status.map((item) => <article key={item.id}><StatusBadge value={item.status} /><div><strong>{item.label}</strong><small>{item.detail}</small></div></article>)}</div></section>
+    </div>
   </section>;
 }
 

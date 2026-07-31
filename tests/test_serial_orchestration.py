@@ -31,11 +31,11 @@ from tga.evidence.database import utc_now
 
 
 MODES_AND_WORKERS = {
-    "ctf": "recon-triage",
-    "penetration_test": "recon-triage",
-    "incident_response": "forensics-analysis",
-    "vulnerability_research": "code-audit",
-    "reverse_engineering": "binary-analysis",
+    "ctf": "challenge-classifier",
+    "penetration_test": "surface-mapper",
+    "incident_response": "evidence-triage-solver",
+    "vulnerability_research": "architecture-analyst",
+    "reverse_engineering": "binary-triage-solver",
 }
 
 
@@ -71,6 +71,10 @@ def test_five_modes_bootstrap_supervisor_and_dispatch_one_worker(
         worker = bundle.solvers.get_solver(assignment.solver_id)
         supervisor = bundle.solvers.get_solver(state.supervisor_solver_id)
         assert worker is not None and worker.definition_id == expected_worker
+        definition = orchestrator.definitions.require(expected_worker)
+        assert set(worker.tool_policy_snapshot.allowed_capabilities) == set(
+            definition.required_capabilities
+        )
         assert worker.parent_solver_id == supervisor.id
         assert assignment.intent.id == assignment.intent_id
         assert assignment.tool_policy_snapshot == worker.tool_policy_snapshot
@@ -543,7 +547,7 @@ def test_serial_recon_validator_reviewer_reporter_pipeline(tmp_path: Path) -> No
             completion_validator=lambda _proposal: {"accepted": True},
         )
 
-        assert definitions_seen == ["recon-triage", "vulnerability-validator"]
+        assert definitions_seen == ["challenge-classifier", "flag-verifier"]
         assert final.status == "completed"
         roles = [item.orchestration_role for item in bundle.solvers.list_solvers(task.id)]
         assert roles.count("worker") == 2

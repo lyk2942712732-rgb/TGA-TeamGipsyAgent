@@ -28,17 +28,17 @@ async function mockModels(page: Page, capture: (payload: Record<string, unknown>
 }
 
 
-for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 }]) {
+for (const viewport of [{ width: 1280, height: 900 }, { width: 1440, height: 900 }, { width: 1920, height: 1080 }]) {
   test(`browser configures a write-only model credential at ${viewport.width}px`, async ({ page }) => {
     await page.setViewportSize(viewport);
     let payload: Record<string, unknown> | undefined;
     await mockModels(page, (value) => { payload = value; });
 
     await page.goto("/");
-    if (viewport.width <= 900) await page.getByRole("button", { name: "打开导航" }).click();
     await page.getByTitle("Provider 与模型").click();
     await expect(page).toHaveURL(/\/settings\/models$/);
-    await expect(page.getByRole("heading", { name: "Provider 与模型" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Models" })).toBeVisible();
+    await page.getByRole("button", { name: "配置", exact: true }).click();
     const key = page.getByRole("textbox", { name: "API Key", exact: true });
     await expect(key).toHaveAttribute("type", "password");
     await expect(key).toHaveValue("");
@@ -50,8 +50,9 @@ for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 
     await page.getByLabel("视觉输入").selectOption("true");
     await page.getByRole("button", { name: "保存设置" }).click();
 
-    await expect(page.getByRole("status")).toContainText("API Key 不会回显");
-    await expect(key).toHaveValue("");
+    await expect(page.getByText(/API Key 不会回显/)).toBeVisible();
+    await page.getByRole("button", { name: "配置", exact: true }).click();
+    await expect(page.getByRole("textbox", { name: "API Key", exact: true })).toHaveValue("");
     expect(payload).toMatchObject({
       base_url: "https://provider.example/v1",
       model: "tool-model",

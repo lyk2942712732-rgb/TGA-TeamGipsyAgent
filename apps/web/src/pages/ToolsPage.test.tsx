@@ -55,6 +55,7 @@ describe("CapabilitiesPage MCP import", () => {
   it("imports a dropped image and reports the discovered tool count", async () => {
     render(<CapabilitiesPage />);
     await waitFor(() => expect(capabilities).toHaveBeenCalled());
+    fireEvent.click(screen.getByRole("button", { name: "MCP Servers" }));
     const file = new File(["docker archive"], "demo.tar", { type: "application/x-tar" });
     fireEvent.drop(screen.getByRole("button", { name: /将 MCP 镜像归档拖到这里/ }), {
       dataTransfer: { files: [file] },
@@ -76,6 +77,7 @@ describe("CapabilitiesPage MCP import", () => {
     });
     health.mockResolvedValue({ configured: true, records: [{ server: "demo", enabled: true, discovered: true, tools: 2 }] });
     render(<CapabilitiesPage />);
+    fireEvent.click(screen.getByRole("button", { name: "MCP Servers" }));
     const toggle = await screen.findByRole("button", { name: /demo.*2 个工具/i });
     expect(screen.queryByText("mcp__demo__scan")).toBeNull();
     fireEvent.click(toggle);
@@ -93,6 +95,7 @@ describe("CapabilitiesPage MCP import", () => {
     health.mockResolvedValue({ configured: true, records: [{ server: "bridge", enabled: false, discovered: false, tools: 0 }] });
     updateMCPServer.mockResolvedValue({ server: { id: "bridge", config: { enabled: true }, status: { server: "bridge", enabled: true, discovered: false, tools: 0 } } });
     render(<CapabilitiesPage />);
+    fireEvent.click(screen.getByRole("button", { name: "MCP Servers" }));
     fireEvent.click(await screen.findByRole("button", { name: "启用" }));
     await waitFor(() => expect(updateMCPServer).toHaveBeenCalledWith("bridge", { enabled: true }));
   });
@@ -101,6 +104,7 @@ describe("CapabilitiesPage MCP import", () => {
     mcpServers.mockRejectedValue(new Error("MCP_CONFIG_INVALID: MCP configuration is invalid"));
 
     render(<CapabilitiesPage />);
+    fireEvent.click(screen.getByRole("button", { name: "MCP Servers" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent("servers: MCP_CONFIG_INVALID: MCP configuration is invalid");
     expect(screen.getByText(/已配置 0 个服务，发现 0 个工具/)).toBeInTheDocument();
@@ -112,6 +116,7 @@ describe("CapabilitiesPage MCP import", () => {
     capabilities.mockRejectedValue(new Error("capability endpoint unavailable"));
 
     render(<CapabilitiesPage />);
+    fireEvent.click(screen.getByRole("button", { name: "MCP Servers" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent("capabilities: capability endpoint unavailable");
     expect(screen.getByText("MCP 工具目录暂时无法读取，其他运行时能力仍可使用。")).toBeInTheDocument();

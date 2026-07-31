@@ -81,7 +81,7 @@ def _catalog(task: TGATask) -> RuntimeToolCatalog:
 def _context(task_id: str = "tool_governance", *, solver=None) -> ActionContext:
     solver_id = solver.id if solver is not None else "solver_main"
     role = str(solver.orchestration_role) if solver is not None else "supervisor"
-    definition_id = solver.definition_id if solver is not None else "task-supervisor"
+    definition_id = solver.definition_id if solver is not None else "ctf-supervisor"
     intent_id = solver.assigned_intent_id if solver is not None else f"intent_initial_{task_id}"
     return ActionContext(
         task_id=task_id,
@@ -138,10 +138,10 @@ def _bootstrap_supervisor(bundle: PersistenceBundle, task: TGATask):
 
 
 def _dispatch_worker(
-    bundle: PersistenceBundle, task: TGATask, *, intent_kind: str = "recon"
+    bundle: PersistenceBundle, task: TGATask, *, intent_kind: str = "challenge_classification"
 ):
     orchestrator, _ = _bootstrap_supervisor(bundle, task)
-    if intent_kind != "recon":
+    if intent_kind != "challenge_classification":
         plan = bundle.plans.get_global_plan(task.id)
         assert plan is not None and len(plan.intents) == 1
         intent = plan.intents[0].model_copy(update={"kind": intent_kind})
@@ -180,8 +180,8 @@ def test_role_manifests_are_distinct_and_respect_completion_authority() -> None:
     all_capabilities = tuple(item.capability for item in catalog.entries)
     builder = ToolManifestBuilder()
 
-    supervisor, supervisor_definition = _solver("task-supervisor", *all_capabilities)
-    worker, worker_definition = _solver("web-network-analyst", *all_capabilities)
+    supervisor, supervisor_definition = _solver("ctf-supervisor", *all_capabilities)
+    worker, worker_definition = _solver("ctf-web-solver", *all_capabilities)
     reviewer, reviewer_definition = _solver("evidence-reviewer", *all_capabilities)
     reporter, reporter_definition = _solver("security-reporter", *all_capabilities)
 
@@ -224,7 +224,7 @@ def test_manifest_schema_exposes_only_non_authoritative_model_governance() -> No
     catalog = _catalog(task)
     capabilities = tuple(item.capability for item in catalog.entries)
     solver, definition = _solver(
-        "task-supervisor", *capabilities,
+        "ctf-supervisor", *capabilities,
         profile="test",
     )
     manifest = ToolManifestBuilder().build(
@@ -442,7 +442,7 @@ def test_gateway_executes_allowed_tool_through_adapter_and_persists_terminal_sta
     task = _task()
     try:
         bundle.tasks.create_task(task)
-        _, solver = _dispatch_worker(bundle, task, intent_kind="validation")
+        _, solver = _dispatch_worker(bundle, task, intent_kind="binary_analysis")
         definition = SolverDefinitionRegistry.builtin().require(solver.definition_id)
         catalog = _catalog(task)
         intent = bundle.plans.get_global_plan(task.id).intents[0]
@@ -497,7 +497,7 @@ def test_high_impact_action_recovery_replays_without_duplicate_execution(tmp_pat
     task = _task()
     try:
         bundle.tasks.create_task(task)
-        _, solver = _dispatch_worker(bundle, task, intent_kind="validation")
+        _, solver = _dispatch_worker(bundle, task, intent_kind="binary_analysis")
         definition = SolverDefinitionRegistry.builtin().require(solver.definition_id)
         intent = bundle.plans.get_global_plan(task.id).intents[0]
         manifest = ToolManifestBuilder().build(
@@ -565,7 +565,7 @@ def test_gateway_discards_result_if_runner_lease_is_lost_during_execution(tmp_pa
     task = _task()
     try:
         bundle.tasks.create_task(task)
-        _, solver = _dispatch_worker(bundle, task, intent_kind="validation")
+        _, solver = _dispatch_worker(bundle, task, intent_kind="binary_analysis")
         definition = SolverDefinitionRegistry.builtin().require(solver.definition_id)
         intent = bundle.plans.get_global_plan(task.id).intents[0]
         manifest = ToolManifestBuilder().build(
@@ -665,7 +665,7 @@ def test_gateway_maps_adapter_exception_to_failed_raw_result(tmp_path) -> None:
     task = _task()
     try:
         bundle.tasks.create_task(task)
-        _, solver = _dispatch_worker(bundle, task, intent_kind="validation")
+        _, solver = _dispatch_worker(bundle, task, intent_kind="binary_analysis")
         definition = SolverDefinitionRegistry.builtin().require(solver.definition_id)
         intent = bundle.plans.get_global_plan(task.id).intents[0]
         manifest = ToolManifestBuilder().build(

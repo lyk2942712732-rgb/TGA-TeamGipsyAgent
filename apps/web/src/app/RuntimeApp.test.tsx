@@ -14,6 +14,12 @@ vi.mock("../features/runtime/TaskRuntimePage", () => ({ TaskRuntimePage: () => <
 vi.mock("../pages/ToolsPage", () => ({ CapabilitiesPage: () => <div>tools</div> }));
 vi.mock("../pages/ModelsPage", () => ({ ModelsPage: () => <div>models</div> }));
 vi.mock("../pages/SkillsPage", () => ({ SkillsPage: () => <div>skills</div> }));
+vi.mock("../pages/ResourcesPage", () => ({ ResourcesPage: () => <h1>资源</h1> }));
+vi.mock("../pages/ReportsPage", () => ({ ReportsPage: () => <h1>报告</h1> }));
+vi.mock("../pages/KnowledgeBasesPage", () => ({ KnowledgeBasesPage: () => <h1>知识库</h1> }));
+vi.mock("../pages/TeamTemplatesPage", () => ({ TeamTemplatesPage: () => <h1>团队模板</h1> }));
+vi.mock("../pages/SolversPage", () => ({ SolversPage: () => <h1>Solver Definitions</h1> }));
+vi.mock("../pages/PoliciesPage", () => ({ PoliciesPage: () => <h1>策略与预算</h1> }));
 
 import { RuntimeApp } from "./RuntimeApp";
 

@@ -1,9 +1,10 @@
 import { useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { Check, Grid2X2, List, Plus, Search } from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { AlertTriangle, Check, Grid2X2, List, Plus, Search, Trash2 } from "lucide-react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { fetchTaskList, taskListQueryString } from "../api/task-query-adapter";
 import type { TaskListItem } from "../api/tasks";
+import { deleteTask } from "../api/tasks";
 import { DataTable } from "../components/ui/DataTable";
 import { EmptyState } from "../components/ui/EmptyState";
 import { ErrorState } from "../components/ui/ErrorState";
@@ -18,6 +19,7 @@ const STATUSES = ["created", "running", "paused", "awaiting_approval", "blocked"
 
 export function TaskListPage() {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [params, setParams] = useSearchParams();
   const query = params.get("query") ?? "";
   const mode = params.get("mode") ?? "";
@@ -27,6 +29,7 @@ export function TaskListPage() {
   const offset = Math.max(0, Number(params.get("offset") ?? 0) || 0);
   const filters = useMemo(() => ({ query, mode: mode || undefined, status: status || undefined, needsAttention: attention === null ? undefined : attention === "true", offset, limit: 100 }), [query, mode, status, attention, offset]);
   const tasks = useQuery({ queryKey: ["task-list", filters], queryFn: () => fetchTaskList(filters) });
+  const deletion = useMutation({ mutationFn: deleteTask, onSuccess: async () => { await queryClient.invalidateQueries({ queryKey: ["task-list"] }); await queryClient.invalidateQueries({ queryKey: ["dashboard"] }); } });
 
   const update = (key: string, value: string) => {
     const next = new URLSearchParams(params);
@@ -58,23 +61,28 @@ export function TaskListPage() {
     {tasks.isLoading ? <LoadingSkeleton label="正在读取任务列表" rows={7} /> : null}
     {tasks.isError ? <ErrorState title="任务列表加载失败" description={tasks.error instanceof Error ? tasks.error.message : "无法读取任务列表"} actionLabel="重试" onAction={() => void tasks.refetch()} /> : null}
     {!tasks.isLoading && !tasks.isError && !rows.length ? <EmptyState title={query || mode || status || attention !== null ? "没有匹配的任务" : "还没有任务"} description={query || mode || status || attention !== null ? "尝试清除筛选条件，或创建新的任务。" : "创建第一个任务后，它会出现在这里。"} action={<button className="primary-action" onClick={() => navigate("/tasks/new")}><Plus size={15} />创建第一个任务</button>} /> : null}
-    {!tasks.isLoading && !tasks.isError && rows.length ? view === "list" ? <TaskTable rows={rows} onOpen={(id) => navigate(`/tasks/${encodeURIComponent(id)}`)} onRuntime={(id) => navigate(`/tasks/${encodeURIComponent(id)}/runtime`)} onReplay={(id) => navigate(`/tasks/${encodeURIComponent(id)}/replay`)} /> : <TaskCardGrid rows={rows} onOpen={(id) => navigate(`/tasks/${encodeURIComponent(id)}`)} onRuntime={(id) => navigate(`/tasks/${encodeURIComponent(id)}/runtime`)} onReplay={(id) => navigate(`/tasks/${encodeURIComponent(id)}/replay`)} /> : null}
+    {deletion.isError ? <p className="inline-error" role="alert">{deletion.error instanceof Error ? deletion.error.message : "任务删除失败"}</p> : null}
+    {!tasks.isLoading && !tasks.isError && rows.length ? view === "list" ? <TaskTable rows={rows} onOpen={(id) => navigate(`/tasks/${encodeURIComponent(id)}`)} onRuntime={(id) => navigate(`/tasks/${encodeURIComponent(id)}/runtime`)} onReplay={(id) => navigate(`/tasks/${encodeURIComponent(id)}/replay`)} onDelete={(id) => { if (window.confirm(`确定删除任务 ${id}？`)) deletion.mutate(id); }} /> : <TaskCardGrid rows={rows} onOpen={(id) => navigate(`/tasks/${encodeURIComponent(id)}`)} onRuntime={(id) => navigate(`/tasks/${encodeURIComponent(id)}/runtime`)} onReplay={(id) => navigate(`/tasks/${encodeURIComponent(id)}/replay`)} /> : null}
     {!tasks.isLoading && !tasks.isError && (offset > 0 || tasks.data?.next_offset != null) ? <nav className="task-pagination" aria-label="任务分页"><button disabled={offset === 0} onClick={() => update("offset", String(Math.max(0, offset - 100)))}>上一页</button><span>第 {Math.floor(offset / 100) + 1} 页</span><button disabled={tasks.data?.next_offset == null} onClick={() => update("offset", String(tasks.data?.next_offset ?? offset))}>下一页</button></nav> : null}
   </section>;
 }
 
-function TaskTable({ rows, onOpen, onRuntime, onReplay }: { rows: TaskListItem[]; onOpen: (id: string) => void; onRuntime: (id: string) => void; onReplay: (id: string) => void }) {
+function TaskTable({ rows, onOpen, onRuntime, onReplay, onDelete }: { rows: TaskListItem[]; onOpen: (id: string) => void; onRuntime: (id: string) => void; onReplay: (id: string) => void; onDelete: (id: string) => void }) {
   return <DataTable label="任务列表" rows={rows} rowKey={(row) => row.task_id} onRowClick={(row) => onOpen(row.task_id)} columns={[
     { id: "name", header: "任务", render: (row) => <div className="task-cell"><strong>{row.name || row.task_id}</strong><code>{row.task_id}</code></div> },
     { id: "mode", header: "模式", render: (row) => MODE_PROFILES[row.mode]?.label ?? row.mode },
     { id: "status", header: "状态", render: (row) => <StatusBadge value={row.status} /> },
-    { id: "progress", header: "Intent", render: (row) => <span>{row.intent_completed ?? 0} / {row.intent_total ?? "-"}</span> },
+    { id: "progress", header: "当前进度", render: (row) => <Progress value={row.intent_total ? Math.round((row.intent_completed ?? 0) / row.intent_total * 100) : 0} /> },
     { id: "solver", header: "Solver", render: (row) => row.active_solvers ?? "-" },
-    { id: "approval", header: "待处理", render: (row) => row.needs_attention ? <span className="attention-mark"><Check size={13} />{row.pending_approvals ? `${row.pending_approvals} 项审批` : "需要处理"}</span> : "-" },
+    { id: "intent", header: "Intent", render: (row) => <span>{row.intent_completed ?? 0} / {row.intent_total ?? "-"}</span> },
+    { id: "results", header: "Finding / 结果", render: (row) => <span>{row.findings ?? 0} / {row.artifacts ?? 0}</span> },
+    { id: "attention", header: "风险 / 关注", render: (row) => row.needs_attention ? <span className="attention-mark"><AlertTriangle size={13} />{row.pending_approvals ? `${row.pending_approvals} 项审批` : "需要处理"}</span> : <span className="task-normal"><Check size={12} />正常</span> },
     { id: "updated", header: "更新时间", render: (row) => formatDate(row.updated_at || row.created_at) },
-    { id: "actions", header: "操作", render: (row) => <div className="task-row-actions"><button onClick={(event) => { event.stopPropagation(); onOpen(row.task_id); }}>打开</button><button onClick={(event) => { event.stopPropagation(); onRuntime(row.task_id); }}>运行</button><button onClick={(event) => { event.stopPropagation(); onReplay(row.task_id); }}>回放</button></div> },
+    { id: "actions", header: "操作", render: (row) => <div className="task-row-actions"><button onClick={(event) => { event.stopPropagation(); onOpen(row.task_id); }}>详情</button><button onClick={(event) => { event.stopPropagation(); onRuntime(row.task_id); }}>运行</button><button onClick={(event) => { event.stopPropagation(); onReplay(row.task_id); }}>回放</button><button className="delete" title="删除任务" onClick={(event) => { event.stopPropagation(); onDelete(row.task_id); }}><Trash2 size={12} /></button></div> },
   ]} />;
 }
+
+function Progress({ value }: { value: number }) { return <div className="task-table-progress"><i><b style={{ width: `${value}%` }} /></i><span>{value}%</span></div>; }
 
 function TaskCardGrid({ rows, onOpen, onRuntime, onReplay }: { rows: TaskListItem[]; onOpen: (id: string) => void; onRuntime: (id: string) => void; onReplay: (id: string) => void }) {
   return <div className="task-list-card-grid">{rows.map((row) => <article className="task-list-card" key={row.task_id}>

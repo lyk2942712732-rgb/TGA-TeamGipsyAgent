@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+﻿import { fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { normalizeRuntimeSnapshot } from "./models/normalize";
@@ -28,7 +28,7 @@ describe("TaskRuntimePage skeleton", () => {
     expect(screen.getByRole("heading", { name: "Task workbench" })).toBeInTheDocument();
     expect(screen.getByRole("tree", { name: "Solver 团队" })).toBeInTheDocument();
     expect(screen.getByRole("treeitem", { name: /worker/ })).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByRole("tab", { name: "活动时间线" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: "工作项" })).toHaveAttribute("aria-selected", "true");
     expect(screen.getByRole("complementary", { name: "Solver 检查器" })).toHaveTextContent("inspect");
     expect(screen.getByRole("region", { name: "全局操作" })).toBeInTheDocument();
   });

@@ -15,9 +15,37 @@ from tga.infrastructure.skills.catalog import FileSkillCatalog
 
 
 BUILTIN_DEFINITION_IDS = {
-    "task-supervisor", "recon-triage", "web-network-analyst", "code-audit",
-    "binary-analysis", "forensics-analysis", "vulnerability-validator",
-    "evidence-reviewer", "security-reporter",
+    "architecture-analyst",
+    "binary-triage-solver",
+    "challenge-classifier",
+    "code-audit-solver",
+    "containment-advisor",
+    "crash-root-cause-solver",
+    "ctf-crypto-solver",
+    "ctf-forensics-solver",
+    "ctf-pwn-solver",
+    "ctf-reverse-solver",
+    "ctf-supervisor",
+    "ctf-web-solver",
+    "dynamic-analysis-solver",
+    "dynamic-fuzzing-solver",
+    "evidence-reviewer",
+    "evidence-triage-solver",
+    "flag-verifier",
+    "host-network-forensics-solver",
+    "incident-supervisor",
+    "logic-config-recovery-solver",
+    "malware-solver",
+    "pentest-supervisor",
+    "poc-reproduction-solver",
+    "research-supervisor",
+    "reverse-supervisor",
+    "security-reporter",
+    "static-analysis-solver",
+    "surface-mapper",
+    "timeline-ioc-solver",
+    "vulnerability-validator",
+    "web-api-analyst",
 }
 
 
@@ -109,4 +137,3 @@ class SolverDefinitionRegistry:
 
 
 __all__ = ["BUILTIN_DEFINITION_IDS", "SolverDefinitionRegistry"]
-

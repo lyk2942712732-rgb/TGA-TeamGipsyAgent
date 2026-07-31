@@ -77,8 +77,8 @@ test("new task selects a scene and stages task files plus Hint without task-leve
     text: await page.locator("body").innerText(),
     errors: browserErrors,
     scripts: await page.locator("script").evaluateAll((items) => items.map((item) => item.getAttribute("src"))),
-  }), { timeout: 5000 }).toMatchObject({ text: expect.stringContaining("任务提示与材料"), errors: [] });
-  await page.getByRole("button", { name: /任务提示与材料/ }).click();
+  }), { timeout: 5000 }).toMatchObject({ text: expect.stringContaining("输入与资源"), errors: [] });
+  await page.getByRole("button", { name: /输入与资源/ }).click();
   const fileInput = page.locator('input[type="file"]');
   await fileInput.setInputFiles([
     { name: "challenge.txt", mimeType: "text/plain", buffer: Buffer.from("question") },
@@ -88,10 +88,10 @@ test("new task selects a scene and stages task files plus Hint without task-leve
   await expect(page.getByAltText("diagram.png 缩略图")).toBeVisible();
   await page.getByLabel("任务提示词").fill("Analyze the supplied diagram.");
 
-  await page.getByRole("button", { name: /执行边界/ }).click();
+  await page.getByRole("button", { name: /团队与策略/ }).click();
   await expect(page.getByLabel("网络访问")).toBeVisible();
   await expect(page.getByText("MCP 服务与方法授权")).toHaveCount(0);
-  await page.getByRole("button", { name: /创建摘要/ }).click();
+  await page.getByRole("button", { name: /启动前检查/ }).click();
   await expect(page.getByText("fixture")).toBeVisible();
   await expect(page.getByText("disabled")).toHaveCount(0);
   await page.getByRole("button", { name: "创建任务并开始" }).click();
