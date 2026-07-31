@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import os
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
+from uuid import uuid4
 
 from tga.contracts import ActionResult, ActionSpec, TGATask
 from tga.evidence.store import EvidenceStore
@@ -22,6 +24,7 @@ from tga.runtime.errors import RuntimeConfigurationError
 from tga.runtime.service import TaskRuntimeService, require_current_task_schema
 from tga.runtime.orchestration import TaskOrchestrator
 from tga.runtime.agents import SolverRunner
+from tga.runtime.scheduling import SolverRunCompletion, SolverRunPool
 from tga.tools.mcp_manager import MCPManager
 
 
@@ -68,6 +71,7 @@ class Manager:
         self.model_client = model_client
         self.remote_flag_verifier = remote_flag_verifier
         self.limits = RuntimeLimits.from_environment()
+        self.runtime_owner_id = f"manager_{uuid4().hex}"
 
     def run_session(self, task_id: str) -> dict[str, Any]:
         store, should_close = self._store_for(task_id)
@@ -87,6 +91,8 @@ class Manager:
             persistence = PersistenceBundle(store)
             orchestrator = TaskOrchestrator(task=task, repositories=persistence)
             state = orchestrator.bootstrap()
+            orchestrator.recover()
+            state = orchestrator.state()
             supervisor_id = state.supervisor_solver_id
             if not supervisor_id:
                 raise RuntimeError("TaskOrchestrator did not provision a Supervisor")
@@ -102,6 +108,27 @@ class Manager:
                 persistence, task.id, preferred_id=session.active_solver_id or supervisor_id
             )
             while solver_id is not None:
+                queued_runs = tuple(
+                    run for run in persistence.orchestration.list_solver_runs(task.id)
+                    if run.orchestration_role == "worker" and run.state in {
+                        "queued", "retry_queued",
+                    }
+                )
+                if queued_runs:
+                    self._run_worker_batch(
+                        task=task,
+                        database_path=store.db_path,
+                        client=client,
+                        runs=queued_runs,
+                        max_active_workers=state.max_active_workers,
+                    )
+                    current = store.get_session(task.id)
+                    if current is None or current.status not in {"created", "running"}:
+                        break
+                    solver_id = self._next_solver_id(
+                        persistence, task.id, preferred_id=supervisor_id
+                    )
+                    continue
                 coordinator.start(task_id=task.id, solver_id=solver_id)
                 solver = persistence.solvers.get_solver(solver_id)
                 if solver is None:
@@ -144,6 +171,68 @@ class Manager:
         finally:
             if should_close:
                 store.close()
+
+    def _run_worker_batch(
+        self,
+        *,
+        task: TGATask,
+        database_path: Path,
+        client: Any,
+        runs: tuple,
+        max_active_workers: int,
+    ) -> tuple[SolverRunCompletion, ...]:
+        model_call_limit = max(
+            1,
+            min(
+                max_active_workers,
+                int(task.execution_budget.get("max_concurrent_model_calls", max_active_workers)),
+            ),
+        )
+        model_call_slots = threading.BoundedSemaphore(model_call_limit)
+
+        def repository_factory() -> PersistenceBundle:
+            return PersistenceBundle.open(database_path)
+
+        def execute(run, context) -> SolverRunCompletion:
+            worker_store = EvidenceStore(database_path)
+            try:
+                context.assert_active()
+                executor = self.executor or self._default_executor(task, worker_store)
+                runner = SolverRunner(
+                    task=task,
+                    store=worker_store,
+                    run_root=self.run_root,
+                    client=client,
+                    executor=executor,
+                    solver_id=run.solver_id,
+                    max_turns=self.limits.max_turns,
+                    mcp_manager=self.mcp_manager,
+                    remote_flag_verifier=self.remote_flag_verifier,
+                )
+                with model_call_slots:
+                    context.assert_active()
+                    outcome = runner.run()
+                context.assert_active()
+                state = {
+                    "completed": "completed",
+                    "cancelled": "cancelled",
+                    "awaiting_approval": "waiting_approval",
+                }.get(outcome.status, "failed")
+                error = outcome.error or {}
+                return SolverRunCompletion(
+                    state=state,
+                    error_code=str(error.get("code") or "") or None,
+                    error_message=str(error.get("message") or outcome.stop_reason or "") or None,
+                    value=outcome,
+                )
+            finally:
+                worker_store.close()
+
+        return SolverRunPool(
+            repository_factory=repository_factory,
+            owner_id=self.runtime_owner_id,
+            max_active_workers=max_active_workers,
+        ).run(task.id, runs, execute)
 
     def refresh_mcp_catalog(self) -> dict[str, Any]:
         self.mcp_manager.refresh()
@@ -474,9 +563,15 @@ class Manager:
 
         def fencing_token(solver_id: str) -> int:
             row = store.conn.execute(
-                "SELECT fencing_token FROM solver_leases WHERE solver_id=?",
+                "SELECT fencing_token FROM solver_runs WHERE solver_id=? "
+                "AND state IN ('leased','running') ORDER BY updated_at DESC LIMIT 1",
                 (solver_id,),
             ).fetchone()
+            if row is None:
+                row = store.conn.execute(
+                    "SELECT fencing_token FROM solver_leases WHERE solver_id=?",
+                    (solver_id,),
+                ).fetchone()
             return int(row["fencing_token"]) if row else 1
 
         return ControlledActionExecutor(
@@ -525,9 +620,15 @@ class Manager:
         store = EvidenceStore(self.run_root / task.id / "evidence.db")
         try:
             row = store.conn.execute(
-                "SELECT fencing_token FROM solver_leases WHERE solver_id=?",
+                "SELECT fencing_token FROM solver_runs WHERE solver_id=? "
+                "AND state IN ('leased','running') ORDER BY updated_at DESC LIMIT 1",
                 (solver_id,),
             ).fetchone()
+            if row is None:
+                row = store.conn.execute(
+                    "SELECT fencing_token FROM solver_leases WHERE solver_id=?",
+                    (solver_id,),
+                ).fetchone()
             fencing = int(row["fencing_token"]) if row else 1
             config, _ = load_sandbox_config()
             manager = SandboxManager(

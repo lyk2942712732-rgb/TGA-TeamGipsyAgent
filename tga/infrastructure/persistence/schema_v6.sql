@@ -162,6 +162,40 @@ CREATE TABLE IF NOT EXISTS solver_assignments (
     UNIQUE(task_id, intent_id, attempt)
 );
 
+CREATE TABLE IF NOT EXISTS solver_runs (
+    id TEXT PRIMARY KEY,
+    task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    solver_id TEXT NOT NULL REFERENCES solver_instances(id) ON DELETE CASCADE,
+    assignment_id TEXT REFERENCES solver_assignments(id) ON DELETE RESTRICT,
+    intent_id TEXT REFERENCES intents(id) ON DELETE RESTRICT,
+    orchestration_role TEXT NOT NULL,
+    state TEXT NOT NULL,
+    attempt INTEGER NOT NULL CHECK(attempt >= 1),
+    lease_owner TEXT,
+    fencing_token INTEGER NOT NULL DEFAULT 0 CHECK(fencing_token >= 0),
+    lease_expires_at TEXT,
+    heartbeat_at TEXT,
+    result_id TEXT,
+    error_code TEXT,
+    version INTEGER NOT NULL DEFAULT 1 CHECK(version >= 1),
+    payload_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(assignment_id)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_v6_active_solver_run_per_intent
+ON solver_runs(intent_id)
+WHERE intent_id IS NOT NULL
+  AND state IN ('leased','running','waiting_approval');
+
+CREATE INDEX IF NOT EXISTS idx_v6_solver_runs_task_state
+ON solver_runs(task_id,state,created_at);
+
+CREATE INDEX IF NOT EXISTS idx_v6_solver_runs_lease_expiry
+ON solver_runs(lease_expires_at)
+WHERE state IN ('leased','running');
+
 CREATE TABLE IF NOT EXISTS worker_result_merges (
     worker_result_id TEXT PRIMARY KEY REFERENCES worker_results(id) ON DELETE CASCADE,
     task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,

@@ -24,6 +24,9 @@ from tga.runtime.orchestration.solver_selector import SolverSelector
 from tga.runtime.orchestration.team_runtime import TeamRuntime
 
 
+MAX_SOLVER_RUN_ATTEMPTS = 3
+
+
 class TaskOrchestrator:
     """The sole task-level owner of team identity, dispatch, merge and completion."""
 
@@ -170,6 +173,17 @@ class TaskOrchestrator:
                     self.repositories.solvers.update_solver_status(
                         solver.id, "cancelled"
                     )
+            cancelled_runs = self.repositories.orchestration.cancel_task_solver_runs(
+                self.task.id
+            )
+            for run in cancelled_runs:
+                self.repositories.events.append_agent_event(
+                    self.task.id,
+                    "SOLVER_RUN_CANCELLED",
+                    {"run_id": run.id, "reason": reason},
+                    solver_id=run.solver_id,
+                    intent_id=run.intent_id,
+                )
             self.repositories.solvers.revoke_task_leases(self.task.id)
             replacement = self._set_state("cancelled")
             self.repositories.events.append_agent_event(
@@ -363,6 +377,53 @@ class TaskOrchestrator:
 
     def recover(self):
         state = self.state()
+        expired_runs = self.repositories.orchestration.expire_solver_runs()
+        for run in expired_runs:
+            self.repositories.events.append_agent_event(
+                self.task.id,
+                "SOLVER_RUN_EXPIRED",
+                {
+                    "run_id": run.id,
+                    "attempt": run.attempt,
+                    "error_code": run.error_code,
+                },
+                solver_id=run.solver_id,
+                intent_id=run.intent_id,
+            )
+            solver = self.repositories.solvers.get_solver(run.solver_id)
+            if solver is not None and str(solver.status) not in {
+                "completed", "failed", "cancelled",
+            }:
+                self.repositories.solvers.update_solver_status(run.solver_id, "failed")
+            if run.assignment_id:
+                assignment = self.repositories.orchestration.get_assignment(
+                    run.assignment_id
+                )
+                if assignment is not None and assignment.status in {"proposed", "accepted"}:
+                    self.repositories.orchestration.cancel_assignment(
+                        assignment.id, finished_at=run.finished_at or utc_now()
+                    )
+            if run.intent_id:
+                plan = self.repositories.plans.get_global_plan(self.task.id)
+                intent = next(
+                    (item for item in plan.intents if item.id == run.intent_id),
+                    None,
+                ) if plan else None
+                if intent is not None and intent.status not in {
+                    "completed", "failed", "cancelled",
+                }:
+                    self.repositories.plans.update_intent_status(
+                        intent.id, "failed", expected_status=intent.status
+                    )
+                if (
+                    state.status == "running"
+                    and run.attempt < MAX_SOLVER_RUN_ATTEMPTS
+                    and state.supervisor_solver_id
+                ):
+                    self.retry_intent(
+                        supervisor_solver_id=state.supervisor_solver_id,
+                        intent_id=run.intent_id,
+                    )
         for result_id, result in self.repositories.solvers.list_worker_result_records(
             self.task.id
         ):

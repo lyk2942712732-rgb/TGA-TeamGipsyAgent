@@ -197,6 +197,7 @@ class TaskRuntimeService:
                 raise KeyError(f"runtime session not found: {task_id}")
             state = repositories.orchestration.get_state(task_id)
             solvers = repositories.solvers.list_solvers(task_id)
+            solver_runs = repositories.orchestration.list_solver_runs(task_id)
             solver_payloads = [
                 _solver_projection(repositories, item) for item in solvers[:100]
             ]
@@ -332,6 +333,17 @@ class TaskRuntimeService:
                     },
                 },
                 "solvers": solver_payloads,
+                "solver_runs": [
+                    {
+                        "run_id": run.id,
+                        **{
+                            key: value
+                            for key, value in run.model_dump(mode="json").items()
+                            if key != "id"
+                        },
+                    }
+                    for run in solver_runs[-100:]
+                ],
                 "intents": [_intent_projection(item) for item in intents[:100]],
                 "worker_results": [
                     _worker_result_projection(result_id, result)
@@ -529,6 +541,28 @@ class TaskRuntimeService:
         try:
             plan = PersistenceBundle(store).plans.get_global_plan(task_id)
             values = [_intent_projection(item) for item in (plan.intents if plan else [])]
+            return _page(values, task_id=task_id, offset=offset, limit=limit)
+        finally:
+            store.close()
+
+    def solver_run_page(
+        self, task_id: str, *, offset: int = 0, limit: int = 50
+    ) -> dict[str, Any]:
+        self._require_executable_database(task_id)
+        store = EvidenceStore(self.task_root(task_id) / "evidence.db")
+        try:
+            runs = PersistenceBundle(store).orchestration.list_solver_runs(task_id)
+            values = [
+                {
+                    "run_id": run.id,
+                    **{
+                        key: value
+                        for key, value in run.model_dump(mode="json").items()
+                        if key != "id"
+                    },
+                }
+                for run in runs
+            ]
             return _page(values, task_id=task_id, offset=offset, limit=limit)
         finally:
             store.close()
