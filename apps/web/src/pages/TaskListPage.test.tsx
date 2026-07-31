@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, useLocation } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -37,9 +37,20 @@ describe("TaskListPage", () => {
     expect(await screen.findByRole("heading", { name: "Alpha task" })).toBeInTheDocument();
   });
 
-  it("shows an honest empty state", async () => {
+  it("keeps real tasks ahead of the reference sample rows", async () => {
+    renderPage();
+    const table = await screen.findByRole("table", { name: "任务列表" });
+    const names = [...table.querySelectorAll("tbody .task-name-cell strong")].map((node) => node.textContent);
+    expect(names[0]).toBe("Alpha task");
+    expect(names).toContain("Web API 安全测试");
+  });
+
+  it("does not navigate to a sample task that was never created", async () => {
+    const user = userEvent.setup();
     mocks.fetchTaskList.mockResolvedValue({ tasks: [], total: 0 });
     renderPage();
-    expect(await screen.findByRole("heading", { name: "还没有任务" })).toBeInTheDocument();
+    const table = await screen.findByRole("table", { name: "任务列表" });
+    await user.click(within(table).getByText("Web API 安全测试"));
+    expect(screen.getByTestId("location")).not.toHaveTextContent("sample-");
   });
 });

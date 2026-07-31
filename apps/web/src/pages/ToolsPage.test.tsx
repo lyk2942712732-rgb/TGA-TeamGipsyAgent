@@ -1,121 +1,121 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { CapabilitiesPage } from "./ToolsPage";
 
-const capabilities = vi.fn();
-const health = vi.fn();
-const importMCP = vi.fn();
-const deleteMCPServer = vi.fn();
-const updateMCPServer = vi.fn();
-const mcpServers = vi.fn();
-
-vi.mock("../api/capabilities", () => ({
-  fetchCapabilities: (...args: unknown[]) => capabilities(...args),
-  fetchMCPHealth: (...args: unknown[]) => health(...args),
+const mocks = vi.hoisted(() => ({
+  requestJson: vi.fn(),
+  updateMCPServer: vi.fn(),
+  deleteMCPServer: vi.fn(),
+  mcpServers: vi.fn(),
 }));
-vi.mock("../api/tasks", () => ({
-  fetchSkillSettings: vi.fn(),
-  getLLMSettings: vi.fn(),
-  updateLLMSettings: vi.fn(),
-  verifyLLMSettings: vi.fn(),
+
+vi.mock("../api/client", async (original) => ({
+  ...await original<typeof import("../api/client")>(),
+  requestJson: (...args: unknown[]) => mocks.requestJson(...args),
 }));
 vi.mock("../runtime/api-v2", () => ({
   runtimeApi: {
-    importMCP: (...args: unknown[]) => importMCP(...args),
-    deleteMCPServer: (...args: unknown[]) => deleteMCPServer(...args),
-    updateMCPServer: (...args: unknown[]) => updateMCPServer(...args),
-    refreshMCPServer: vi.fn(),
-    mcpServers: (...args: unknown[]) => mcpServers(...args),
+    mcpServers: (...args: unknown[]) => mocks.mcpServers(...args),
+    updateMCPServer: (...args: unknown[]) => mocks.updateMCPServer(...args),
+    deleteMCPServer: (...args: unknown[]) => mocks.deleteMCPServer(...args),
   },
 }));
+vi.mock("../components/mcp/MCPWizard", () => ({ MCPWizard: () => <div>mcp wizard</div> }));
 
-describe("CapabilitiesPage MCP import", () => {
-  beforeEach(() => {
-    capabilities.mockReset();
-    health.mockReset();
-    importMCP.mockReset();
-    deleteMCPServer.mockReset();
-    updateMCPServer.mockReset();
-    mcpServers.mockReset();
-    capabilities.mockResolvedValue({ capabilities: [], tools: { availability: "healthy", tools: [] } });
-    health.mockResolvedValue({ configured: true, records: [] });
-    mcpServers.mockResolvedValue({ servers: [] });
-    importMCP.mockResolvedValue({
-      server_id: "demo",
-      image: "demo-mcp:latest",
-      source_type: "docker-image",
-      config_path: "config/mcp.json",
-      config_action: "created",
-      catalog: { configured: true, records: [{ server: "demo", discovered: true, tools: 2 }] },
-    });
-    deleteMCPServer.mockResolvedValue({ deleted: true, server_id: "demo", image_deleted: false });
-    updateMCPServer.mockResolvedValue({ server: { id: "demo", config: { enabled: false }, status: { server: "demo", enabled: false, discovered: false, tools: 0 } } });
+import { CapabilitiesPage } from "./ToolsPage";
+
+const capability = {
+  name: "http.request",
+  description: "Scoped HTTP request with redirect verification.",
+  kind: "network",
+  risk: "active",
+  modes: ["penetration_test"],
+  availability: "healthy",
+  budget_key: "http",
+  input_schema: { properties: { method: {}, url: {}, headers: {} } },
+};
+
+const record = {
+  server: "binwalk", configured: true, enabled: false, reachable: false,
+  discovered: false, tools: 0, transport: "stdio", image: "binwalk-mcp:latest",
+  endpoint: null, error: null, protocol_version: "",
+};
+
+function renderPage() {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(<QueryClientProvider client={client}><CapabilitiesPage /></QueryClientProvider>);
+}
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  mocks.requestJson.mockImplementation((path: string) => {
+    if (path.includes("/capabilities")) return Promise.resolve({ capabilities: [capability] });
+    if (path.includes("/tools/health")) return Promise.resolve({ configured: true, records: [record] });
+    return Promise.reject(new Error(`unexpected path ${path}`));
+  });
+  mocks.mcpServers.mockResolvedValue({ servers: [{ id: "binwalk", config: {} }] });
+});
+
+/** Names repeat in the detail heading, so table assertions must be scoped. */
+async function findTable(container: HTMLElement): Promise<HTMLElement> {
+  await waitFor(() => expect(container.querySelector(".catalog-table")).toBeTruthy());
+  return container.querySelector(".catalog-table") as HTMLElement;
+}
+
+describe("Tools & MCP", () => {
+  it("renders the real capability registry with risk levels", async () => {
+    const { container } = renderPage();
+    const table = await findTable(container);
+    expect(within(table).getByText("http.request")).toBeInTheDocument();
+    expect(within(table).getByText("network")).toBeInTheDocument();
   });
 
-  it("imports a dropped image and reports the discovered tool count", async () => {
-    render(<CapabilitiesPage />);
-    await waitFor(() => expect(capabilities).toHaveBeenCalled());
-    const file = new File(["docker archive"], "demo.tar", { type: "application/x-tar" });
-    fireEvent.drop(screen.getByRole("button", { name: /将 MCP 镜像归档拖到这里/ }), {
-      dataTransfer: { files: [file] },
-    });
-    await waitFor(() => expect(importMCP).toHaveBeenCalledWith(file));
-    expect(await screen.findByText(/已发现 2 个工具/)).toBeInTheDocument();
+  it("defers the approval column to task policy instead of deriving it from risk", async () => {
+    const { container } = renderPage();
+    const table = await findTable(container);
+    // Approval comes from the task's ExecutionPolicy.high_impact mode, so the
+    // column must not restate the capability's risk level.
+    expect(within(table).getAllByText("按任务策略").length).toBeGreaterThan(0);
+    expect(within(table).queryByText("必须审批")).not.toBeInTheDocument();
+    expect(within(table).queryByText("无需审批")).not.toBeInTheDocument();
+    expect(container.textContent).not.toContain("项目没有实现");
   });
 
-  it("groups tools by MCP service and supports disable plus confirmed deletion", async () => {
-    capabilities.mockResolvedValue({
-      capabilities: [],
-      tools: {
-        availability: "healthy",
-        tools: [
-          { tool_id: "demo", provider_name: "mcp__demo__scan", risk: "active", methods: [{ name: "scan" }] },
-          { tool_id: "demo", provider_name: "mcp__demo__status", risk: "passive", methods: [{ name: "status" }] },
-        ],
-      },
-    });
-    health.mockResolvedValue({ configured: true, records: [{ server: "demo", enabled: true, discovered: true, tools: 2 }] });
-    render(<CapabilitiesPage />);
-    const toggle = await screen.findByRole("button", { name: /demo.*2 个工具/i });
-    expect(screen.queryByText("mcp__demo__scan")).toBeNull();
-    fireEvent.click(toggle);
-    expect(screen.getByText("mcp__demo__scan")).toBeInTheDocument();
-    expect(screen.getByText("mcp__demo__status")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "停用" }));
-    await waitFor(() => expect(updateMCPServer).toHaveBeenCalledWith("demo", { enabled: false }));
-    fireEvent.click(screen.getByRole("button", { name: "删除" }));
-    expect(screen.getByRole("dialog", { name: "删除 MCP 服务？" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "从配置中删除" }));
-    await waitFor(() => expect(deleteMCPServer).toHaveBeenCalledWith("demo"));
+  it("shows real parameter names from the capability input schema", async () => {
+    const { container } = renderPage();
+    await findTable(container);
+    const panel = container.querySelector(".ref-detail-panel") as HTMLElement;
+    await waitFor(() => expect(within(panel).getByText("method")).toBeInTheDocument());
+    expect(within(panel).getByText("url")).toBeInTheDocument();
   });
 
-  it("offers enable for a disabled configured MCP service", async () => {
-    health.mockResolvedValue({ configured: true, records: [{ server: "bridge", enabled: false, discovered: false, tools: 0 }] });
-    updateMCPServer.mockResolvedValue({ server: { id: "bridge", config: { enabled: true }, status: { server: "bridge", enabled: true, discovered: false, tools: 0 } } });
-    render(<CapabilitiesPage />);
-    fireEvent.click(await screen.findByRole("button", { name: "启用" }));
-    await waitFor(() => expect(updateMCPServer).toHaveBeenCalledWith("bridge", { enabled: true }));
+  it("lists MCP servers and toggles enablement through the real endpoint", async () => {
+    const user = userEvent.setup();
+    mocks.updateMCPServer.mockResolvedValue({ server: { id: "binwalk" } });
+    const { container } = renderPage();
+
+    await user.click(screen.getByRole("tab", { name: /MCP Servers/ }));
+    const table = await findTable(container);
+    expect(within(table).getByText("binwalk")).toBeInTheDocument();
+
+    await user.click(await screen.findByRole("button", { name: "启用" }));
+    await waitFor(() => expect(mocks.updateMCPServer).toHaveBeenCalledWith("binwalk", { enabled: true }));
   });
 
-  it("keeps the capability catalog visible when the managed-server request fails", async () => {
-    mcpServers.mockRejectedValue(new Error("MCP_CONFIG_INVALID: MCP configuration is invalid"));
+  it("deletes an MCP server only after confirmation", async () => {
+    const user = userEvent.setup();
+    mocks.deleteMCPServer.mockResolvedValue({ deleted: true, server_id: "binwalk" });
+    const { container } = renderPage();
 
-    render(<CapabilitiesPage />);
+    await user.click(screen.getByRole("tab", { name: /MCP Servers/ }));
+    await findTable(container);
 
-    expect(await screen.findByRole("alert")).toHaveTextContent("servers: MCP_CONFIG_INVALID: MCP configuration is invalid");
-    expect(screen.getByText(/已配置 0 个服务，发现 0 个工具/)).toBeInTheDocument();
-    expect(screen.queryByText(/正在读取已配置的 MCP 工具目录/)).toBeNull();
-    expect(screen.getByText("健康")).toBeInTheDocument();
-  });
+    await user.click(await screen.findByRole("button", { name: /删除/ }));
+    expect(mocks.deleteMCPServer).not.toHaveBeenCalled();
 
-  it("leaves the loading state when the capability request itself fails", async () => {
-    capabilities.mockRejectedValue(new Error("capability endpoint unavailable"));
-
-    render(<CapabilitiesPage />);
-
-    expect(await screen.findByRole("alert")).toHaveTextContent("capabilities: capability endpoint unavailable");
-    expect(screen.getByText("MCP 工具目录暂时无法读取，其他运行时能力仍可使用。")).toBeInTheDocument();
-    expect(screen.queryByText(/正在读取已配置的 MCP 工具目录/)).toBeNull();
-    expect(screen.getByText("不可用")).toBeInTheDocument();
+    const dialog = await screen.findByRole("dialog");
+    await user.click(within(dialog).getByRole("button", { name: "删除" }));
+    await waitFor(() => expect(mocks.deleteMCPServer).toHaveBeenCalledWith("binwalk"));
   });
 });

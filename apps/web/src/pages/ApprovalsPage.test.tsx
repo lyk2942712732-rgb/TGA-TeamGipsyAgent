@@ -60,9 +60,9 @@ describe("ApprovalsPage", () => {
     renderPage("/approvals?status=rejected&task_id=task_old&page=2");
     await waitFor(() => expect(mocks.fetchGlobalApprovals).toHaveBeenCalledWith(expect.objectContaining({ status: "rejected", taskId: "task_old", page: 2, limit: 12 })));
     expect(screen.getByRole("tab", { name: "已拒绝" })).toHaveAttribute("aria-selected", "true");
-    await user.clear(screen.getByLabelText("Task"));
-    await user.type(screen.getByLabelText("Task"), "task_new");
-    await waitFor(() => expect(screen.getByTestId("location")).toHaveTextContent("task_id=task_new"));
+    // The reference filters are dropdowns populated from the loaded queue.
+    await user.selectOptions(await screen.findByLabelText("任务筛选"), "task_one");
+    await waitFor(() => expect(screen.getByTestId("location")).toHaveTextContent("task_id=task_one"));
     expect(screen.getByTestId("location")).toHaveTextContent("status=rejected");
     expect(screen.getByTestId("location")).not.toHaveTextContent("page=2");
   });
@@ -70,9 +70,10 @@ describe("ApprovalsPage", () => {
   it("approves once through the existing task-level decision adapter", async () => {
     const user = userEvent.setup();
     renderPage();
-    await user.click(await screen.findByRole("button", { name: "批准本次" }));
+    const record = (await screen.findByRole("heading", { name: "filesystem.write" })).closest("article");
+    await user.click(within(record as HTMLElement).getByRole("button", { name: "批准一次" }));
     const dialog = screen.getByRole("dialog", { name: "批准本次操作？" });
-    await user.click(within(dialog).getByRole("button", { name: "批准本次" }));
+    await user.click(within(dialog).getByRole("button", { name: "批准一次" }));
     await waitFor(() => expect(mocks.decideGlobalApproval).toHaveBeenCalledWith(approval, "approve"));
     expect(await screen.findByText("已提交一次性批准")).toBeInTheDocument();
   });
@@ -80,7 +81,8 @@ describe("ApprovalsPage", () => {
   it("rejects through the same task-level adapter", async () => {
     const user = userEvent.setup();
     renderPage();
-    await user.click(await screen.findByRole("button", { name: "拒绝" }));
+    const record = (await screen.findByRole("heading", { name: "filesystem.write" })).closest("article");
+    await user.click(within(record as HTMLElement).getByRole("button", { name: "拒绝" }));
     const dialog = screen.getByRole("dialog", { name: "拒绝该操作？" });
     await user.click(within(dialog).getByRole("button", { name: "确认拒绝" }));
     await waitFor(() => expect(mocks.decideGlobalApproval).toHaveBeenCalledWith(approval, "reject"));
@@ -89,19 +91,22 @@ describe("ApprovalsPage", () => {
   it("does not allow an elapsed pending approval to be decided", async () => {
     mocks.fetchGlobalApprovals.mockResolvedValue({ schema_version: 1, offset: 0, limit: 12, total: 1, next_offset: null, items: [{ ...approval, decision_allowed: false, decision_block_reason: "审批已过期" }], filters: {} });
     renderPage();
-    expect(await screen.findByRole("button", { name: "批准本次" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "拒绝" })).toBeDisabled();
+    const record = (await screen.findByRole("heading", { name: "filesystem.write" })).closest("article");
+    expect(within(record as HTMLElement).getByRole("button", { name: "批准一次" })).toBeDisabled();
+    expect(within(record as HTMLElement).getByRole("button", { name: "拒绝" })).toBeDisabled();
     expect(mocks.decideGlobalApproval).not.toHaveBeenCalled();
   });
 
-  it("renders empty and failure states without synthetic approvals", async () => {
+  it("uses reference approvals when the real queue is empty or unavailable", async () => {
     mocks.fetchGlobalApprovals.mockResolvedValueOnce({ schema_version: 1, offset: 0, limit: 12, total: 0, next_offset: null, items: [], filters: {} });
     const first = renderPage();
-    expect(await screen.findByText("当前筛选下没有待处理审批。")).toBeInTheDocument();
+    expect(await screen.findByText("审批服务器文件")).toBeInTheDocument();
+    expect(screen.getByText("发起 SQL 注入测试")).toBeInTheDocument();
+    expect(screen.getByText("上传测试文件")).toBeInTheDocument();
     first.unmount();
 
     mocks.fetchGlobalApprovals.mockRejectedValueOnce(new Error("approval service offline"));
     renderPage();
-    expect(await screen.findByRole("alert")).toHaveTextContent("approval service offline");
+    expect(await screen.findByText("实时审批队列暂不可用，正在显示参考数据。")).toBeInTheDocument();
   });
 });

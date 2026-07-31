@@ -1,1 +1,0 @@
-{"version":1,"servers":{"a":{"transport":"stdio","stdio":{"source":"local_process","command":"x"}},"a":{"transport":"stdio","stdio":{"source":"local_process","command":"y"}}}}

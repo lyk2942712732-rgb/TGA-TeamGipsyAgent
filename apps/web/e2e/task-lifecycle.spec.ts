@@ -43,6 +43,7 @@ const viewports = [
   { width: 1024, height: 768 },
   { width: 1280, height: 900 },
   { width: 1440, height: 960 },
+  { width: 1448, height: 1086 },
   { width: 1920, height: 1080 },
 ];
 
@@ -63,7 +64,7 @@ for (const viewport of viewports) {
     await page.goto("/tasks");
     await expect(page.getByRole("heading", { name: "任务" })).toBeVisible();
     await expect(page.getByRole("table", { name: "任务列表" })).toBeVisible();
-    await page.getByLabel("需要处理").selectOption("true");
+    await page.getByLabel("处理状态筛选").selectOption("true");
     await expect(page).toHaveURL(/needs_attention=true/);
     await page.getByRole("button", { name: "卡片视图" }).click();
     await expect(page.getByRole("heading", { name: "Alpha task" })).toBeVisible();
@@ -80,15 +81,15 @@ for (const viewport of viewports) {
     await page.getByRole("tab", { name: /输入/ }).click();
     await expect(page.getByRole("heading", { name: "输入摘要" })).toBeVisible();
     await page.getByRole("tab", { name: /结果/ }).click();
-    await expect(page.getByRole("heading", { name: "已确认结果摘要" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "已确认结果" })).toBeVisible();
     await page.getByRole("tab", { name: /历史/ }).click();
     await expect(page.getByRole("heading", { name: "持久化事件历史" })).toBeVisible();
     await expectNoHorizontalOverflow(page);
     await page.screenshot({ path: join(artifactRoot, `task-detail-${viewport.width}.png`), fullPage: true });
 
     await page.goto("/tasks/new");
-    await expect(page.getByRole("heading", { name: "新建任务" })).toBeVisible();
-    await expect(page.getByRole("button", { name: /选择场景与任务目标/ })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "创建任务 · 五步向导" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "任务目标" })).toBeVisible();
     await expect(page.getByRole("button", { name: /启动前检查/ })).toBeVisible();
     await expectNoHorizontalOverflow(page);
     await page.screenshot({ path: join(artifactRoot, `task-create-${viewport.width}.png`), fullPage: true });

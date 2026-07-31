@@ -70,14 +70,17 @@ test("new task selects a scene and stages task files plus Hint without task-leve
     await route.fulfill({ json: { tasks: [] } });
   });
   await page.goto("/tasks/new");
-  await expect(page.getByRole("heading", { name: "新建任务" })).toBeVisible();
-  await expect(page.getByRole("button", { name: /选择场景/ })).toBeVisible();
-  await expect(page.getByText("第一步：选择场景")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "创建任务 · 五步向导" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "任务目标" })).toBeVisible();
+  await expect(page.getByLabel("Objective")).toBeVisible();
+  await page.getByLabel("任务名称").fill("CTF fixture task");
+  await page.getByLabel("Objective").fill("Recover a verified flag.");
+  await page.getByRole("button", { name: /CTF：/ }).click();
   await expect.poll(async () => ({
     text: await page.locator("body").innerText(),
     errors: browserErrors,
     scripts: await page.locator("script").evaluateAll((items) => items.map((item) => item.getAttribute("src"))),
-  }), { timeout: 5000 }).toMatchObject({ text: expect.stringContaining("任务提示与材料"), errors: [] });
+  }), { timeout: 5000 }).toMatchObject({ text: expect.stringContaining("输入与资源"), errors: [] });
   await page.getByRole("button", { name: /任务提示与材料/ }).click();
   const fileInput = page.locator('input[type="file"]');
   await fileInput.setInputFiles([
@@ -91,8 +94,10 @@ test("new task selects a scene and stages task files plus Hint without task-leve
   await page.getByRole("button", { name: /执行边界/ }).click();
   await expect(page.getByLabel("网络访问")).toBeVisible();
   await expect(page.getByText("MCP 服务与方法授权")).toHaveCount(0);
+  await page.getByRole("button", { name: "团队和模型" }).click();
+  await expect(page.getByText("fixture", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: /创建摘要/ }).click();
-  await expect(page.getByText("fixture")).toBeVisible();
+  await expect(page.getByText("fixture", { exact: true })).toBeVisible();
   await expect(page.getByText("disabled")).toHaveCount(0);
   await page.getByRole("button", { name: "创建任务并开始" }).click();
   await expect(page).toHaveURL(/\/tasks\/task_created\/runtime$/);

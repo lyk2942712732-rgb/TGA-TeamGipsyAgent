@@ -1,18 +1,116 @@
 import { useMemo, useState } from "react";
+import { ScrollText, Users } from "lucide-react";
 import { selectEventsBySolver } from "../models/selectors";
 import type { RuntimeEvent, RuntimeSolver, RuntimeStore } from "../models/types";
 import { SkillSummary } from "../../skills/SkillSummary";
 import { StatusBadge } from "../../../shared/StatusBadge";
+import { statusDefinition } from "../../../shared/status";
+
+/**
+ * Reference image 05's Solver Inspector: a labelled summary of the selected
+ * Solver (当前阶段 / 所属 Solver / 工具 / 预算 / Token / 状态 / 关联对象) with a
+ * 查看详细日志 button underneath.  The reference stops there; the tab strip below
+ * the summary keeps the drill-downs the workbench already projects.
+ */
 
 type InspectorTab = "overview" | "transcript" | "plan" | "knowledge" | "skills" | "tools" | "artifacts" | "config";
 const TABS: Array<[InspectorTab, string]> = [["overview", "概览"], ["transcript", "Transcript"], ["plan", "Local Plan"], ["knowledge", "Knowledge"], ["skills", "Skills"], ["tools", "Tools"], ["artifacts", "Artifacts"], ["config", "配置"]];
 
 export function SolverInspector({ solver, store }: { solver: RuntimeSolver | null; store?: RuntimeStore }) {
   const [tab, setTab] = useState<InspectorTab>("overview");
-  return <aside className="solver-inspector" aria-label="Solver 检查器"><header><span>INSPECTOR</span><h2>Solver 检查器</h2></header>{solver ? <><div className="solver-inspector-title"><div><h3>{solver.solverId}</h3><small>{solver.definitionId}</small></div><StatusBadge value={solver.status} /></div><div className="solver-inspector-tabs" role="tablist" aria-label="Solver 检查器标签">{TABS.map(([value, label]) => <button key={value} role="tab" aria-selected={tab === value} onClick={() => setTab(value)}>{label}</button>)}</div><div className="solver-inspector-panel" role="tabpanel">{tab === "overview" ? <Overview solver={solver} /> : null}{tab === "transcript" ? <Transcript solver={solver} store={store} /> : null}{tab === "plan" ? <LocalPlan solver={solver} store={store} /> : null}{tab === "knowledge" ? <Knowledge solver={solver} store={store} /> : null}{tab === "skills" ? <Skills solver={solver} store={store} /> : null}{tab === "tools" ? <Tools solver={solver} store={store} /> : null}{tab === "artifacts" ? <Artifacts solver={solver} store={store} /> : null}{tab === "config" ? <Config solver={solver} /> : null}</div></> : <p className="runtime-empty">选择一个 Solver 查看详情</p>}</aside>;
+  return <aside className="solver-inspector" aria-label="Solver 检查器">
+    <header><h2>Solver Inspector</h2><Users size={16} aria-hidden="true" /></header>
+    {solver ? <>
+      <div className="solver-inspector-title">
+        <div><h3>{solver.solverId}</h3><small>{solver.definitionId}</small></div>
+        <StatusBadge value={solver.status} />
+      </div>
+      <div className="solver-inspector-tabs" role="tablist" aria-label="Solver 检查器标签">
+        {TABS.map(([value, label]) => <button key={value} role="tab" aria-selected={tab === value} onClick={() => setTab(value)}>{label}</button>)}
+      </div>
+      <div className="solver-inspector-panel" role="tabpanel">
+        {tab === "overview" ? <Overview solver={solver} store={store} /> : null}
+        {tab === "transcript" ? <Transcript solver={solver} store={store} /> : null}
+        {tab === "plan" ? <LocalPlan solver={solver} store={store} /> : null}
+        {tab === "knowledge" ? <Knowledge solver={solver} store={store} /> : null}
+        {tab === "skills" ? <Skills solver={solver} store={store} /> : null}
+        {tab === "tools" ? <Tools solver={solver} store={store} /> : null}
+        {tab === "artifacts" ? <Artifacts solver={solver} store={store} /> : null}
+        {tab === "config" ? <Config solver={solver} /> : null}
+      </div>
+      <footer>
+        <button type="button" className="ref-secondary-button" onClick={() => setTab("transcript")}>
+          <ScrollText size={14} aria-hidden="true" />查看详细日志
+        </button>
+      </footer>
+    </> : <p className="runtime-empty">选择一个 Solver 查看详情</p>}
+  </aside>;
 }
 
-function Overview({ solver }: { solver: RuntimeSolver }) { return <><p>{solver.currentSummary || "当前没有摘要"}</p><dl className="solver-summary-list"><Item label="角色" value={solver.orchestrationRole} /><Item label="专业方向" value={solver.specialties.join(" / ") || "通用"} /><Item label="父 Solver" value={solver.parentSolverId ?? "无"} /><Item label="当前 Intent" value={solver.assignedIntentId ?? "未分配"} />{Object.entries(solver.budgetUsage).map(([key, value]) => <Item key={key} label={key} value={String(value)} />)}</dl><SkillSummary solver={solver} /></>; }
+function Overview({ solver, store }: { solver: RuntimeSolver; store?: RuntimeStore }) {
+  const intent = solver.assignedIntentId && store ? store.intentsById[solver.assignedIntentId] : undefined;
+  const tools = list(solver.toolPolicySummary.allowed_capabilities).map(String);
+  const tokens = Number(solver.budgetUsage.input_tokens ?? 0) + Number(solver.budgetUsage.output_tokens ?? 0);
+  const turns = Number(solver.budgetUsage.turns ?? 0);
+  const maxTurns = Number(store?.session.maxTurns ?? 0);
+  return <div className="inspector-summary">
+    <Block label="当前阶段">
+      <div className="inspector-stage">
+        <b>{intent?.title ?? solver.assignedIntentId ?? "未分配 Intent"}</b>
+        <StatusBadge value={intent?.status ?? solver.status} />
+      </div>
+      <p>{solver.currentSummary || "当前没有摘要"}</p>
+    </Block>
+
+    <Block label="所属 Solver">
+      <div className="inspector-owner">
+        <span aria-hidden="true">{solver.solverId.replace(/^solver[_-]/, "").charAt(0).toUpperCase()}</span>
+        <b>{solver.orchestrationRole} · {solver.specialties.join(" / ") || "通用"}</b>
+      </div>
+    </Block>
+
+    <Block label="工具">
+      {/* Capped at four: the rail is 268px tall-limited and the Tools tab lists
+          the full allow-list one click away. */}
+      {tools.length
+        ? <ul className="inspector-tools">
+          {tools.slice(0, 2).map((name) => <li key={name}>{name}</li>)}
+          {tools.length > 2 ? <li className="inspector-more">另有 {tools.length - 2} 项</li> : null}
+        </ul>
+        : <p>未投影允许能力</p>}
+    </Block>
+
+    {/* 预算 and Token are one block: both are a single figure, and the rail has
+        to fit seven sections without a scroller. */}
+    <Block label="预算 / Token">
+      <p>{turns} 回合{maxTurns ? `（上限 ${maxTurns}）` : ""} · {solver.budgetUsage.tool_calls ?? 0} 次工具调用</p>
+      <b className="inspector-figure">{tokens.toLocaleString("en-US")} Token</b>
+      {/* The per-Solver cap is not projected, so the bar tracks the task budget. */}
+      <TokenBar used={tokens} total={Number(store?.session.taskBudgetUsage.input_tokens ?? 0) + Number(store?.session.taskBudgetUsage.output_tokens ?? 0)} />
+    </Block>
+
+    {/* 状态 is not repeated here — the panel header already carries the badge. */}
+    <Block label="关联对象">
+      {/* 定义 is already the sub-line of the panel title, and the Skill snapshot
+          has its own tab — repeating either here only costs rail height. */}
+      <dl className="solver-summary-list">
+        <Item label="父 Solver" value={solver.parentSolverId ?? "无"} />
+        <Item label="当前 Intent" value={solver.assignedIntentId ?? "未分配"} />
+        <Item label="最后更新" value={String(solver.timestamps.updated_at ?? solver.timestamps.created_at ?? "—")} />
+      </dl>
+    </Block>
+  </div>;
+}
+
+function Block({ label, children }: { label: string; children: React.ReactNode }) {
+  return <section className="inspector-block"><h4>{label}</h4>{children}</section>;
+}
+
+function TokenBar({ used, total }: { used: number; total: number }) {
+  if (!total) return null;
+  const percent = Math.min(100, Math.round(used / total * 100));
+  return <div className="inspector-bar"><i><em style={{ width: `${percent}%` }} /></i><small>{percent}%</small></div>;
+}
 
 function Transcript({ solver, store }: { solver: RuntimeSolver; store?: RuntimeStore }) {
   const [mode, setMode] = useState<"concise" | "protocol">("concise");

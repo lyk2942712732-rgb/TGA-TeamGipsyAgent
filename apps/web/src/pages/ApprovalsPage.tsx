@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronLeft, ChevronRight, ExternalLink, RotateCcw } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
+import { CalendarDays } from "lucide-react";
 import {
   decideGlobalApproval,
   fetchGlobalApprovals,
@@ -9,16 +9,19 @@ import {
   type ApprovalStatus,
   type GlobalApproval,
 } from "../api/operations-query-adapter";
-import { ApprovalCard } from "../components/ui/ApprovalCard";
 import { ConfirmDialog } from "../components/ui/ConfirmDialog";
+import { DetailTabs, type DetailTab } from "../components/ui/DetailTabs";
 import { EmptyState } from "../components/ui/EmptyState";
-import { EntityDrawer } from "../components/ui/EntityDrawer";
 import { ErrorState } from "../components/ui/ErrorState";
-import { FilterBar } from "../components/ui/FilterBar";
 import { LoadingSkeleton } from "../components/ui/LoadingSkeleton";
-import { PageHeader } from "../components/ui/PageHeader";
-import { RiskBadge } from "../components/ui/RiskBadge";
-import { StatusBadge } from "../shared/StatusBadge";
+import { Pagination } from "../components/ui/CatalogTable";
+import {
+  approvalFilterItems,
+  approvalMeta,
+  approvalViewItems,
+  samplePendingCount,
+  type ApprovalView,
+} from "./approvals-view";
 
 const STATUSES: Array<{ id: ApprovalStatus; label: string }> = [
   { id: "pending", label: "待处理" },
@@ -29,143 +32,237 @@ const STATUSES: Array<{ id: ApprovalStatus; label: string }> = [
 const PAGE_SIZE = 12;
 
 export function ApprovalsPage() {
-  const navigate = useNavigate();
   const client = useQueryClient();
   const [params, setParams] = useSearchParams();
-  const [selected, setSelected] = useState<GlobalApproval | null>(null);
-  const [decision, setDecision] = useState<"approve" | "reject" | null>(null);
+  const [pending, setPending] = useState<{ approval: ApprovalView; decision: "approve" | "reject" } | null>(null);
   const [message, setMessage] = useState("");
+  const [sampleStatuses, setSampleStatuses] = useState<Record<string, ApprovalStatus>>({});
+
+  const page = Math.max(1, Number(params.get("page") ?? 1) || 1);
   const query = useMemo<ApprovalQuery>(() => ({
     status: validStatus(params.get("status")),
     taskId: params.get("task_id") || undefined,
     solverId: params.get("solver_id") || undefined,
-    intentId: params.get("intent_id") || undefined,
     risk: params.get("risk") || undefined,
     capability: params.get("capability") || undefined,
     deadline: params.get("deadline") || undefined,
-    page: Math.max(1, Number(params.get("page") || 1) || 1),
+    page,
     limit: PAGE_SIZE,
-  }), [params]);
-  useEffect(() => {
-    if (params.has("status") && params.has("page")) return;
-    const next = new URLSearchParams(params);
-    if (!next.has("status")) next.set("status", query.status);
-    if (!next.has("page")) next.set("page", String(query.page));
-    setParams(next, { replace: true });
-  }, [params, query.page, query.status, setParams]);
-  const approvals = useQuery({
-    queryKey: ["global-approvals", query],
-    queryFn: () => fetchGlobalApprovals(query),
-  });
-  const mutation = useMutation({
-    mutationFn: ({ item, value }: { item: GlobalApproval; value: "approve" | "reject" }) => decideGlobalApproval(item, value),
-    onSuccess: async (_value, variables) => {
-      setMessage(variables.value === "approve" ? "已提交一次性批准" : "已拒绝该操作");
-      setDecision(null);
-      setSelected(null);
-      await client.invalidateQueries({ queryKey: ["global-approvals"] });
+  }), [params, page]);
+
+  const approvals = useQuery({ queryKey: ["approvals", query], queryFn: () => fetchGlobalApprovals(query) });
+  const realItems = approvals.data?.items ?? [];
+  const items = useMemo(() => approvalViewItems(realItems, query, sampleStatuses), [realItems, query, sampleStatuses]);
+  const filterItems = useMemo(() => approvalFilterItems(realItems, sampleStatuses), [realItems, sampleStatuses]);
+  const total = Math.max(approvals.data?.total ?? 0, items.length);
+
+  const decide = useMutation({
+    mutationFn: ({ approval, decision }: { approval: GlobalApproval; decision: "approve" | "reject" }) =>
+      decideGlobalApproval(approval, decision),
+    onSuccess: async (_result, variables) => {
+      setMessage(variables.decision === "approve" ? "已提交一次性批准" : "已提交拒绝决定");
+      setPending(null);
+      await client.invalidateQueries({ queryKey: ["approvals"] });
       await client.invalidateQueries({ queryKey: ["dashboard"] });
+    },
+    onError: (error) => {
+      setMessage(error instanceof Error ? error.message : "审批提交失败");
+      setPending(null);
     },
   });
 
-  const update = (key: string, value?: string, resetPage = true) => {
+  const update = (key: string, value: string) => {
     const next = new URLSearchParams(params);
     if (value) next.set(key, value); else next.delete(key);
-    if (resetPage) next.delete("page");
-    setParams(next, { replace: true });
+    if (key !== "page") next.delete("page");
+    setParams(next);
   };
-  const clear = () => setParams({ status: query.status, page: "1" }, { replace: true });
-  const item = decision ? selected : null;
 
-  return <section className="page-stack approvals-page">
-    <PageHeader
-      eyebrow="GOVERNANCE / APPROVALS"
-      title="全局审批中心"
-      description="审查受控 Action 的影响与替代方案；决策仍由任务级审批状态机执行。"
-      breadcrumbs={[{ label: "TGA", href: "/" }, { label: "审批中心" }]}
-    />
-    <div className="approval-tabs" role="tablist" aria-label="审批状态">{STATUSES.map((tab) => <button
-      key={tab.id}
-      type="button"
-      role="tab"
-      aria-selected={query.status === tab.id}
-      className={query.status === tab.id ? "active" : ""}
-      onClick={() => update("status", tab.id)}
-    >{tab.label}</button>)}</div>
+  const pendingTotal = query.status === "pending" ? total : samplePendingCount(sampleStatuses);
+  const tabs: DetailTab[] = STATUSES.map((status) => ({
+    id: status.id,
+    label: status.id === "pending" ? `${status.label}（${pendingTotal}）` : status.label,
+  }));
 
-    <FilterBar resultCount={approvals.data?.total} actions={<button className="secondary-button" onClick={clear}><RotateCcw size={13} />重置</button>}>
-      <label>Task<input value={query.taskId ?? ""} placeholder="Task ID" onChange={(event) => update("task_id", event.target.value)} /></label>
-      <label>Solver<input value={query.solverId ?? ""} placeholder="Solver ID" onChange={(event) => update("solver_id", event.target.value)} /></label>
-      <label>Intent<input value={query.intentId ?? ""} placeholder="Intent ID" onChange={(event) => update("intent_id", event.target.value)} /></label>
-      <label>Risk<select value={query.risk ?? ""} onChange={(event) => update("risk", event.target.value)}><option value="">全部</option><option value="passive">被动</option><option value="active">主动</option><option value="destructive">破坏性</option></select></label>
-      <label>Capability<input value={query.capability ?? ""} placeholder="精确 Capability" onChange={(event) => update("capability", event.target.value)} /></label>
-      <label>截止时间<select value={query.deadline ?? ""} onChange={(event) => update("deadline", event.target.value)}><option value="">全部</option><option value="overdue">已超时</option><option value="24h">24 小时内</option><option value="7d">7 天内</option><option value="none">无截止时间</option></select></label>
-    </FilterBar>
+  const confirmDecision = () => {
+    if (!pending) return;
+    if (pending.approval.sample) {
+      setSampleStatuses((current) => ({
+        ...current,
+        [pending.approval.approval_id]: pending.decision === "approve" ? "approved" : "rejected",
+      }));
+      setMessage(pending.decision === "approve" ? "已提交一次性批准" : "已提交拒绝决定");
+      setPending(null);
+      return;
+    }
+    decide.mutate(pending);
+  };
 
-    {message ? <p className="approval-feedback" role="status">{message}</p> : null}
-    {mutation.isError ? <p className="inline-error" role="alert">{mutation.error instanceof Error ? mutation.error.message : "审批操作失败"}</p> : null}
-    {approvals.isLoading ? <LoadingSkeleton label="正在读取审批队列" rows={8} /> : null}
-    {approvals.isError ? <ErrorState title="审批队列加载失败" description={approvals.error instanceof Error ? approvals.error.message : "无法读取审批聚合"} actionLabel="重试" onAction={() => void approvals.refetch()} /> : null}
-    {approvals.data && !approvals.data.items.length ? <EmptyState label={`当前筛选下没有${STATUSES.find((tab) => tab.id === query.status)?.label ?? ""}审批。`} /> : null}
-    {approvals.data?.items.length ? <div className="global-approval-grid">{approvals.data.items.map((approval) => <ApprovalCard
-      key={approval.approval_id}
-      title={approval.capability}
-      status={approval.status}
-      risk={approval.risk}
-      details={<ApprovalSummary item={approval} />}
-      rationale={<><b>Rationale</b>{approval.rationale || "未提供"}</>}
-      actions={<>
-        <button className="text-button" onClick={() => setSelected(approval)}>查看详情</button>
-        <button className="secondary-button" onClick={() => navigate(`/tasks/${encodeURIComponent(approval.task_id)}`)}>任务上下文 <ExternalLink size={12} /></button>
-        {query.status === "pending" ? <><button className="danger-button" disabled={!approval.decision_allowed || mutation.isPending} title={approval.decision_block_reason ?? "拒绝该操作"} onClick={() => { setSelected(approval); setDecision("reject"); }}>拒绝</button><button disabled={!approval.decision_allowed || mutation.isPending} title={approval.decision_block_reason ?? "仅批准本次"} onClick={() => { setSelected(approval); setDecision("approve"); }}>批准本次</button></> : null}
+  return <div className="ref-page approval-page">
+    <header className="ref-page-head">
+      <div>
+        <h1>审批中心</h1>
+        <p>需要您审批的高风险操作</p>
+      </div>
+    </header>
+
+    <DetailTabs tabs={tabs} active={query.status} onSelect={(id) => update("status", id)} size="lg" />
+
+    <section className="ref-filter-row" aria-label="筛选审批">
+      <select aria-label="任务筛选" value={params.get("task_id") ?? ""} onChange={(event) => update("task_id", event.target.value)}>
+        <option value="">所有任务</option>
+        {[...new Set(filterItems.map((item) => item.task_id))].map((value) => (
+          <option key={value} value={value}>{filterItems.find((item) => item.task_id === value)?.task_name || value}</option>
+        ))}
+      </select>
+      <select aria-label="风险筛选" value={params.get("risk") ?? ""} onChange={(event) => update("risk", event.target.value)}>
+        <option value="">所有风险</option>
+        <option value="passive">被动观察</option>
+        <option value="active">主动交互</option>
+        <option value="destructive">破坏性</option>
+      </select>
+      <select aria-label="Solver 筛选" value={params.get("solver_id") ?? ""} onChange={(event) => update("solver_id", event.target.value)}>
+        <option value="">所有 Solver</option>
+        {[...new Set(filterItems.map((item) => item.solver_id))].map((value) => <option key={value} value={value}>{value}</option>)}
+      </select>
+      <select aria-label="Capability 筛选" value={params.get("capability") ?? ""} onChange={(event) => update("capability", event.target.value)}>
+        <option value="">Capability</option>
+        {[...new Set(filterItems.map((item) => item.capability))].map((value) => <option key={value} value={value}>{value}</option>)}
+      </select>
+      <label className="approval-date-filter">
+        <span>{params.get("deadline") || "截止时间"}</span>
+        <CalendarDays size={14} aria-hidden="true" />
+        <input
+          type="date"
+          aria-label="截止时间筛选"
+          value={params.get("deadline") ?? ""}
+          onChange={(event) => update("deadline", event.target.value)}
+        />
+      </label>
+    </section>
+
+    {message ? <p className="settings-message" role="status">{message}</p> : null}
+
+    {approvals.isError && items.length ? <p className="approval-data-note" role="status">实时审批队列暂不可用，正在显示参考数据。</p> : null}
+
+    {approvals.isLoading && !items.length ? <LoadingSkeleton label="正在读取审批队列" rows={5} />
+      : approvals.isError && !items.length ? <ErrorState
+        description={approvals.error instanceof Error ? approvals.error.message : "无法读取审批队列"}
+        actionLabel="重试"
+        onAction={() => void approvals.refetch()}
+      />
+      : !items.length ? <EmptyState
+        title="当前筛选下没有待处理审批。"
+        description="Worker 提交高风险操作后，会在这里等待你的裁决。"
+      />
+      : <>
+        <div className="approval-list ref-fill">
+          {items.map((item) => <ApprovalRecord
+            key={item.approval_id}
+            approval={item}
+            busy={decide.isPending}
+            onDecide={(decision) => setPending({ approval: item, decision })}
+          />)}
+        </div>
+        {total > PAGE_SIZE ? <Pagination
+          total={total}
+          pageSize={PAGE_SIZE}
+          page={page}
+          onPage={(value) => update("page", String(value))}
+        /> : null}
       </>}
-    />)}</div> : null}
-
-    {approvals.data ? <footer className="approval-pagination"><span>第 {query.page} 页 · 共 {approvals.data.total} 项</span><div><button className="secondary-button" aria-label="上一页" disabled={(query.page ?? 1) <= 1} onClick={() => update("page", String((query.page ?? 1) - 1), false)}><ChevronLeft size={14} /></button><button className="secondary-button" aria-label="下一页" disabled={!approvals.data.next_offset} onClick={() => update("page", String((query.page ?? 1) + 1), false)}><ChevronRight size={14} /></button></div></footer> : null}
-
-    <EntityDrawer
-      open={Boolean(selected) && !decision}
-      title={selected?.capability ?? "审批详情"}
-      description={selected ? `${selected.task_name} · ${selected.action_id}` : undefined}
-      onClose={() => setSelected(null)}
-      footer={selected ? <button className="secondary-button" onClick={() => navigate(`/tasks/${encodeURIComponent(selected.task_id)}`)}>打开任务上下文</button> : undefined}
-    >{selected ? <ApprovalDetail item={selected} /> : null}</EntityDrawer>
 
     <ConfirmDialog
-      open={Boolean(item && decision)}
-      title={decision === "approve" ? "批准本次操作？" : "拒绝该操作？"}
-      description={decision === "approve" ? "仅批准当前 Action ID，不修改全局策略或任务授权范围。" : "拒绝后任务级状态机会记录结果并恢复相应执行上下文。"}
-      confirmLabel={decision === "approve" ? "批准本次" : "确认拒绝"}
-      danger={decision === "reject"}
-      busy={mutation.isPending}
-      details={item ? <div className="approval-confirm-summary"><b>{item.capability}</b><span>{item.target}</span><RiskBadge value={item.risk} /></div> : null}
-      onCancel={() => setDecision(null)}
-      onConfirm={() => { if (item && decision) mutation.mutate({ item, value: decision }); }}
+      open={pending !== null}
+      title={pending?.decision === "approve" ? "批准本次操作？" : "拒绝该操作？"}
+      description={pending
+        ? `${pending.approval.capability} → ${pending.approval.target}。该决定会立即写入治理审计记录。`
+        : ""}
+      confirmLabel={pending?.decision === "approve" ? "批准一次" : "确认拒绝"}
+      danger={pending?.decision === "reject"}
+      busy={decide.isPending}
+      onConfirm={confirmDecision}
+      onCancel={() => setPending(null)}
     />
-  </section>;
+  </div>;
 }
 
-function ApprovalSummary({ item }: { item: GlobalApproval }) {
-  return <dl className="approval-summary"><Row label="Task" value={item.task_name} /><Row label="Solver" value={item.solver_id || "未投影"} /><Row label="Intent" value={item.intent_id || "Task scope"} /><Row label="Target" value={item.target} /><Row label="Expires" value={formatDate(item.expires_at)} /></dl>;
+function ApprovalRecord({ approval, busy, onDecide }: {
+  approval: ApprovalView;
+  busy: boolean;
+  onDecide: (decision: "approve" | "reject") => void;
+}) {
+  const meta = approvalMeta(approval);
+  return <article className="approval-record" data-sample={approval.sample || undefined}>
+    <header>
+      <div className="approval-title">
+        <h2>{meta.title}</h2>
+        <span className={`approval-risk-chip ${meta.riskLabel === "高风险" ? "tone-danger" : "tone-warning"}`}>{meta.riskLabel}</span>
+        <span className="approval-category-chip">{meta.categoryLabel}</span>
+      </div>
+    </header>
+
+    <div className="approval-columns">
+      <dl className="field-grid">
+        <Row label="任务" value={approval.task_name || approval.task_id} />
+        <Row label="Solver" value={approval.solver_id} />
+        <Row label="目标" value={<code className="cell-mono">{approval.target}</code>} />
+        <Row label="原因" value={approval.rationale} />
+        <Row label="影响范围" value={effectSummary(approval.effect) || approval.expected_outcome || "—"} />
+      </dl>
+      <dl className="field-grid">
+        <Row label="可逆性" value={REVERSIBILITY_LABELS[approval.reversibility] ?? approval.reversibility} />
+        <Row label="替代方案" value={approval.alternative_analysis || approval.alternatives.join("；") || "—"} />
+        <Row label="请求时间" value={formatDate(approval.created_at, approval.sample)} />
+        <Row label="截止时间" value={meta.deadlineLabel ?? (approval.expires_at ? formatDate(approval.expires_at) : "—")} />
+      </dl>
+    </div>
+
+    {approval.status === "pending" ? <footer className="approval-actions">
+      {approval.decision_allowed ? null
+        : <p className="approval-blocked">{approval.decision_block_reason ?? "当前不可裁决"}</p>}
+      <button
+        className="ref-secondary-button"
+        disabled={busy || !approval.decision_allowed}
+        onClick={() => onDecide("reject")}
+      >拒绝</button>
+      <button
+        className="ref-primary-button"
+        disabled={busy || !approval.decision_allowed}
+        onClick={() => onDecide("approve")}
+      >批准一次</button>
+    </footer> : null}
+  </article>;
 }
 
-function ApprovalDetail({ item }: { item: GlobalApproval }) {
-  return <div className="approval-detail"><div className="approval-detail-badges"><StatusBadge value={item.status} /><RiskBadge value={item.risk} /></div><dl>
-    <Row label="Task" value={`${item.task_name} (${item.task_id})`} />
-    <Row label="Solver" value={item.solver_id || "未投影"} />
-    <Row label="Intent" value={item.intent_id || "Task scope"} />
-    <Row label="Action" value={`${item.action_kind} · ${item.action_id}`} />
-    <Row label="Capability" value={item.capability} />
-    <Row label="Target" value={item.target} />
-    <Row label="Effect" value={String(item.effect.description ?? "未提供")} />
-    <Row label="Rationale" value={item.rationale || "未提供"} />
-    <Row label="Expected Outcome" value={item.expected_outcome || "未提供"} />
-    <Row label="Alternative Analysis" value={item.alternative_analysis || item.alternatives.join("；") || "未提供"} />
-    <Row label="Reversibility" value={item.reversibility} />
-    <Row label="Expires At" value={formatDate(item.expires_at)} />
-  </dl>{item.decision_block_reason ? <p className="approval-block-reason">{item.decision_block_reason}</p> : null}</div>;
+function Row({ label, value }: { label: string; value: React.ReactNode }) {
+  return <div className="field-grid-row"><dt>{label}</dt><dd>{value}</dd></div>;
 }
 
-function Row({ label, value }: { label: string; value: string }) { return <div><dt>{label}</dt><dd>{value}</dd></div>; }
-function validStatus(value: string | null): ApprovalStatus { return STATUSES.some((item) => item.id === value) ? value as ApprovalStatus : "pending"; }
-function formatDate(value?: string | null) { return value ? new Date(value).toLocaleString("zh-CN") : "无截止时间"; }
+const REVERSIBILITY_LABELS: Record<string, string> = {
+  reversible: "可逆", irreversible: "不可逆", uncertain: "不确定", not_applicable: "不适用",
+};
+
+const EFFECT_SCOPES: Record<string, string> = {
+  none: "无副作用", session: "本次会话", workspace: "任务工作区", target: "目标系统",
+};
+
+/** ActionEffect is the reviewable side-effect declaration attached to an Action. */
+function effectSummary(effect: Record<string, unknown>): string {
+  const scope = EFFECT_SCOPES[String(effect?.scope ?? "")] ?? "";
+  const description = typeof effect?.description === "string" ? effect.description : "";
+  return [scope, description].filter(Boolean).join("：");
+}
+
+function validStatus(value: string | null): ApprovalStatus {
+  return STATUSES.some((status) => status.id === value) ? value as ApprovalStatus : "pending";
+}
+
+function formatDate(value?: string | null, includeYear = false): string {
+  if (!value) return "—";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value
+    : includeYear
+      ? date.toLocaleString("zh-CN", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }).replace(/\//g, "-")
+      : date.toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+}

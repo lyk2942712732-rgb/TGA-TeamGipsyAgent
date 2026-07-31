@@ -1,12 +1,18 @@
 import { useLocation, useNavigate } from "react-router-dom";
+import { ToastProvider } from "../components/ui/Toast";
 import { TaskRuntimePage } from "../features/runtime/TaskRuntimePage";
 import { ApprovalsPage } from "../pages/ApprovalsPage";
 import { DashboardRoute } from "../pages/DashboardRoute";
+import { KnowledgeBasesPage } from "../pages/KnowledgeBasesPage";
 import { NewTaskPage } from "../pages/NewTaskPage";
 import { ModelsPage } from "../pages/ModelsPage";
-import { ProductCatalogPage } from "../pages/ProductCatalogPage";
+import { PoliciesPage } from "../pages/PoliciesPage";
+import { ReportsPage } from "../pages/ReportsPage";
+import { ResourcesPage } from "../pages/ResourcesPage";
 import { SkillsPage } from "../pages/SkillsPage";
+import { SolversPage } from "../pages/SolversPage";
 import { SystemPage } from "../pages/SystemPage";
+import { TeamsPage } from "../pages/TeamsPage";
 import { CapabilitiesPage } from "../pages/ToolsPage";
 import { TaskDetailPage } from "../pages/TaskDetailPage";
 import { TaskListPage } from "../pages/TaskListPage";
@@ -18,9 +24,11 @@ export function RuntimeApp() {
   const navigate = useNavigate();
   const route = readRoute(location.pathname);
 
-  return <AppShell route={route}>
-    <RoutePage route={route} navigate={navigate} />
-  </AppShell>;
+  return <ToastProvider>
+    <AppShell route={route}>
+      <RoutePage route={route} navigate={navigate} />
+    </AppShell>
+  </ToastProvider>;
 }
 
 function RoutePage({ route, navigate }: { route: AppRoute; navigate: (path: string) => void }) {
@@ -34,12 +42,12 @@ function RoutePage({ route, navigate }: { route: AppRoute; navigate: (path: stri
   if (route.page === "models") return <ModelsPage />;
   if (route.page === "tools") return <CapabilitiesPage />;
   if (route.page === "skills") return <SkillsPage />;
-  if (route.page === "resources") return <ProductCatalogPage kind="resources" />;
-  if (route.page === "reports") return <ProductCatalogPage kind="reports" />;
-  if (route.page === "knowledge-bases") return <ProductCatalogPage kind="knowledge-bases" />;
-  if (route.page === "teams") return <ProductCatalogPage kind="teams" />;
-  if (route.page === "solvers") return <ProductCatalogPage kind="solvers" />;
-  if (route.page === "policies") return <ProductCatalogPage kind="policies" />;
+  if (route.page === "resources") return <ResourcesPage />;
+  if (route.page === "reports") return <ReportsPage />;
+  if (route.page === "knowledge-bases") return <KnowledgeBasesPage />;
+  if (route.page === "teams") return <TeamsPage />;
+  if (route.page === "solvers") return <SolversPage />;
+  if (route.page === "policies") return <PoliciesPage />;
   if (route.page === "system") return <SystemPage />;
   return <NotFoundPage navigate={navigate} />;
 }

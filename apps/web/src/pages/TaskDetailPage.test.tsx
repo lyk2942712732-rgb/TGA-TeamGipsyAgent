@@ -29,19 +29,31 @@ describe("TaskDetailPage lazy queries", () => {
     mocks.fetchTaskHistory.mockResolvedValue({ events: [], latest_seq: 0, has_more: false });
   });
 
-  it("loads only lightweight detail on first open", async () => {
+  it("loads only what 概览 renders on first open", async () => {
     renderPage();
     expect(await screen.findByRole("heading", { name: "Alpha task" })).toBeInTheDocument();
     expect(mocks.fetchTaskDetail).toHaveBeenCalledTimes(1);
-    expect(mocks.fetchTaskTeam).not.toHaveBeenCalled(); expect(mocks.fetchTaskInputs).not.toHaveBeenCalled(); expect(mocks.fetchTaskEvidence).not.toHaveBeenCalled(); expect(mocks.fetchTaskHistory).not.toHaveBeenCalled();
+    // 概览 shows 关键发现 and 最近事件, so those two projections load with it.
+    await waitFor(() => expect(mocks.fetchTaskEvidence).toHaveBeenCalledTimes(1));
+    expect(mocks.fetchTaskHistory).toHaveBeenCalledTimes(1);
+    // Team and inputs are not on 概览 and must stay lazy.
+    expect(mocks.fetchTaskTeam).not.toHaveBeenCalled();
+    expect(mocks.fetchTaskInputs).not.toHaveBeenCalled();
   });
 
-  it("loads each secondary projection only when its tab opens", async () => {
+  it("loads team and input projections only when their tab opens", async () => {
     const user = userEvent.setup(); renderPage(); await screen.findByRole("heading", { name: "Alpha task" });
     await user.click(screen.getByRole("tab", { name: /团队/ })); await waitFor(() => expect(mocks.fetchTaskTeam).toHaveBeenCalledTimes(1));
     expect(mocks.fetchTaskInputs).not.toHaveBeenCalled();
     await user.click(screen.getByRole("tab", { name: /输入/ })); await waitFor(() => expect(mocks.fetchTaskInputs).toHaveBeenCalledTimes(1));
-    await user.click(screen.getByRole("tab", { name: /结果/ })); await waitFor(() => expect(mocks.fetchTaskEvidence).toHaveBeenCalledTimes(1));
-    await user.click(screen.getByRole("tab", { name: /历史/ })); await waitFor(() => expect(mocks.fetchTaskHistory).toHaveBeenCalledTimes(1));
+  });
+
+  it("shows elapsed run time and intent progress from the lifecycle projection", async () => {
+    const { container } = renderPage();
+    await screen.findByRole("heading", { name: "Alpha task" });
+    const cards = container.querySelectorAll(".task-stat-card");
+    expect(cards).toHaveLength(5);
+    expect(cards[0]).toHaveTextContent("已运行 1 分钟");
+    expect(cards[1]).toHaveTextContent("1 / 2 步骤已完成");
   });
 });

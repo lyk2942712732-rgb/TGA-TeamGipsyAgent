@@ -1,1 +1,0 @@
-{"version": 1, "servers": {"sleep": {"transport": "stdio", "stdio": {"source": "local_process", "command": "D:\\python\\python.exe", "args": ["-c", "import time; time.sleep(30)"]}, "visibility": {"risk": "passive"}}}}

@@ -37,6 +37,11 @@ vi.stubGlobal("URL", { createObjectURL: vi.fn(() => "blob:preview"), revokeObjec
 
 import { NewTaskPage } from "./NewTaskPage";
 
+async function fillRequiredGoalFields(user: ReturnType<typeof userEvent.setup>) {
+  await user.type(screen.getByLabelText("任务名称"), "测试安全任务");
+  await user.type(screen.getByLabelText("Objective"), "验证目标并输出可复核的证据");
+}
+
 describe("NewTaskPage multimodal input flow", () => {
   beforeEach(() => vi.clearAllMocks());
 
@@ -44,7 +49,7 @@ describe("NewTaskPage multimodal input flow", () => {
     const user = userEvent.setup();
     render(<NewTaskPage onCreated={vi.fn()} />);
     await user.click(screen.getByRole("button", { name: /任务提示与材料/ }));
-    expect(screen.getByText(/多模态输入/)).toBeInTheDocument();
+    expect(screen.getByText("任务提示与材料")).toBeInTheDocument();
     expect(screen.getByLabelText("任务提示词")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "选择文件" })).toBeInTheDocument();
     expect(screen.queryByText("Hint 附件")).toBeNull();
@@ -93,6 +98,7 @@ describe("NewTaskPage multimodal input flow", () => {
     const user = userEvent.setup();
     const onCreated = vi.fn();
     render(<NewTaskPage onCreated={onCreated} />);
+    await fillRequiredGoalFields(user);
     await user.click(screen.getByRole("button", { name: /任务提示与材料/ }));
     const input = document.querySelector<HTMLInputElement>('input[type="file"]')!;
     await user.upload(input, new File(["task"], "task.txt", { type: "text/plain" }));
@@ -104,7 +110,7 @@ describe("NewTaskPage multimodal input flow", () => {
     expect(screen.getByText("任务特征匹配：web")).toBeInTheDocument();
     expect(await screen.findByTestId("preflight-passed")).toHaveTextContent("全部检查通过");
     expect(mocks.previewTaskSkills).toHaveBeenCalledWith(expect.objectContaining({
-      mode: "ctf", prompt: "Analyze carefully", fileNames: ["task.txt"], executionPolicy: expect.any(Object),
+      mode: "penetration_test", prompt: "Analyze carefully", fileNames: ["task.txt"], executionPolicy: expect.any(Object),
     }));
     expect(screen.queryByText("disabled")).toBeNull();
     await user.click(screen.getByRole("button", { name: "创建任务并开始" }));
@@ -121,16 +127,17 @@ describe("NewTaskPage multimodal input flow", () => {
   it("manually selects Skills from scene groups and sends the selection to the backend", async () => {
     const user = userEvent.setup();
     render(<NewTaskPage onCreated={vi.fn()} />);
+    await fillRequiredGoalFields(user);
     await user.click(screen.getByRole("button", { name: /任务提示与材料/ }));
     await user.type(screen.getByLabelText("任务提示词"), "Inspect the web target");
-    await user.click(screen.getByRole("button", { name: /创建摘要/ }));
+    await user.click(screen.getByRole("button", { name: "团队和模型" }));
     await screen.findByText("web-recon");
     await user.click(screen.getByRole("button", { name: "手动选择" }));
     const dialog = await screen.findByRole("dialog", { name: "手动选择 Skills" });
     expect(within(dialog).getByText("CTF 解题")).toBeInTheDocument();
     expect(within(dialog).getByText("逆向分析")).toBeInTheDocument();
     expect(within(dialog).getByText("binary-triage")).toBeInTheDocument();
-    const web = within(dialog).getByRole("checkbox", { name: "web-recon（CTF 解题）" });
+    const web = within(dialog).getByRole("checkbox", { name: "web-recon（渗透测试）" });
     if (web.checked) await user.click(web);
     await user.click(web);
     expect(within(dialog).getByRole("checkbox", { name: "binary-triage（逆向分析）" })).toBeDisabled();
@@ -138,6 +145,7 @@ describe("NewTaskPage multimodal input flow", () => {
     await waitFor(() => expect(mocks.previewTaskSkills).toHaveBeenCalledWith(expect.objectContaining({ selectedSkills: ["web-recon"] })));
     expect(await screen.findByRole("button", { name: "恢复自动匹配" })).toBeInTheDocument();
 
+    await user.click(screen.getByRole("button", { name: /创建摘要/ }));
     await user.click(screen.getByRole("button", { name: "创建任务并开始" }));
     await waitFor(() => expect(mocks.createTask).toHaveBeenCalledWith(expect.objectContaining({ selectedSkills: ["web-recon"] })));
   });
@@ -145,6 +153,7 @@ describe("NewTaskPage multimodal input flow", () => {
   it("allows a prompt without requiring an attachment", async () => {
     const user = userEvent.setup();
     render(<NewTaskPage onCreated={vi.fn()} />);
+    await fillRequiredGoalFields(user);
     await user.click(screen.getByRole("button", { name: /任务提示与材料/ }));
     await user.type(screen.getByLabelText("任务提示词"), "Review the supplied target and explain the first verification step.");
     await user.click(screen.getByRole("button", { name: /创建摘要/ }));
@@ -159,6 +168,7 @@ describe("NewTaskPage multimodal input flow", () => {
     mocks.preflightTask.mockRejectedValueOnce(new Error("Model verification is stale"));
     const user = userEvent.setup();
     render(<NewTaskPage onCreated={vi.fn()} />);
+    await fillRequiredGoalFields(user);
     await user.click(screen.getByRole("button", { name: /任务提示与材料/ }));
     await user.type(screen.getByLabelText("任务提示词"), "Inspect the target");
     await user.click(screen.getByRole("button", { name: /创建摘要/ }));
@@ -173,7 +183,7 @@ describe("NewTaskPage multimodal input flow", () => {
     await user.click(screen.getByRole("button", { name: /任务提示与材料/ }));
     await user.upload(document.querySelector<HTMLInputElement>('input[type="file"]')!, new File(["x"], "old.txt"));
     await screen.findByText("old.txt");
-    await user.click(screen.getByRole("button", { name: "重置" }));
+    await user.click(screen.getByRole("button", { name: "取消" }));
     expect(screen.queryByText("old.txt")).toBeNull();
     expect(mocks.deleteStagedInput).toHaveBeenCalled();
   });

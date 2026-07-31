@@ -1,1 +1,0 @@
-challenge result: CTF{input_artifact_provenance}

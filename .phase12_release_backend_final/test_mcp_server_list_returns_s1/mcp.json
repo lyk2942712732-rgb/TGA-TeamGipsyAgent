@@ -1,1 +1,0 @@
-{"version":1,"servers":{"broken":{"transport":"stdio","stdio":{"source":"local_process","command":"x"},"visibility":{"modes":["not-a-mode"]}}}}

@@ -15,11 +15,18 @@ describe("Phase 11 command workbench components", () => {
     expect(screen.getByRole("progressbar", { name: "总体进度" })).toHaveAttribute("value", "1");
     expect(screen.getByText("4 活动 / 1 完成 / 1 阻塞")).toBeInTheDocument();
     expect(screen.getByText("2", { selector: "dd" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "暂停全部" }));
-    fireEvent.click(screen.getByRole("button", { name: "审批中心 (2)" }));
+
+    // Reference 05 collapses the task controls into the 任务操作 menu.
+    expect(screen.queryByRole("button", { name: "暂停全部" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /任务操作/ }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "暂停全部" }));
+    fireEvent.click(screen.getByRole("button", { name: /任务操作/ }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "审批中心 (2)" }));
     expect(onControl).toHaveBeenCalledWith("pause");
     expect(onApprovals).toHaveBeenCalledOnce();
-    expect(screen.getByRole("link", { name: "报告" })).toHaveAttribute("target", "_blank");
+
+    fireEvent.click(screen.getByRole("button", { name: /任务操作/ }));
+    expect(screen.getByRole("menuitem", { name: "报告" })).toHaveAttribute("target", "_blank");
   });
 
   it("shows two parallel workers with independent running and approval states", () => {

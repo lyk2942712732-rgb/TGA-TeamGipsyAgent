@@ -1,1 +1,0 @@
-{"action_id": "action_123", "capability": "shell.exec", "status": "blocked", "error": {"code": "UNKNOWN_CAPABILITY", "message": "capability is not registered: shell.exec", "retryable": false}}

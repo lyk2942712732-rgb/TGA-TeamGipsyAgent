@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import threading
-import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -18,15 +17,11 @@ from tga.infrastructure.persistence import (
 )
 from tga.infrastructure.workspace import SolverWorkspaceService
 from tga.runtime.knowledge import KnowledgePromotionService
-from tga.runtime.manager import Manager
-from tga.runtime.agents.session_runner import SolverOutcome
 from tga.runtime.orchestration import TaskOrchestrator
 from tga.runtime.scheduling import (
     BudgetManager,
     CancellationToken,
     SolverLeaseManager,
-    SolverRunCompletion,
-    SolverRunPool,
     SolverScheduler,
     TaskScheduler,
     NetworkBudgetLimiter,
@@ -95,155 +90,6 @@ def test_dispatches_two_independent_workers_but_serial_mode_remains_configurable
         assert orchestrator.dispatch_ready() == ()
     finally:
         bundle.close()
-
-
-def test_solver_run_pool_executes_workers_with_real_overlap(tmp_path: Path) -> None:
-    task = _task("parallel_run_pool")
-    database_path, bundle, orchestrator, state = _seed_orchestrator(tmp_path, task)
-    _add_intent(orchestrator, state.supervisor_solver_id, "peer")
-    assignments = orchestrator.dispatch_ready()
-    assert len(assignments) == 2
-    runs = tuple(bundle.orchestration.list_solver_runs(task.id))
-    assert len(runs) == 2 and {run.state for run in runs} == {"queued"}
-    bundle.close()
-
-    barrier = threading.Barrier(2, timeout=5)
-    simultaneously_running: list[str] = []
-    lock = threading.Lock()
-
-    def execute(run, context):
-        with lock:
-            simultaneously_running.append(run.id)
-        barrier.wait()
-        context.assert_active()
-        return SolverRunCompletion(
-            state="completed", result_id=f"result_{run.id}", value=run.id
-        )
-
-    pool = SolverRunPool(
-        repository_factory=lambda: PersistenceBundle.open(database_path),
-        owner_id="runtime_a",
-        max_active_workers=2,
-        lease_ttl_seconds=10,
-    )
-    completions = pool.run(task.id, runs, execute)
-
-    assert len(completions) == 2
-    assert len(simultaneously_running) == 2
-    verified = PersistenceBundle.open(database_path)
-    try:
-        persisted = verified.orchestration.list_solver_runs(task.id)
-        assert {run.state for run in persisted} == {"completed"}
-        events = verified.events.list_agent_events(task.id)
-        assert sum(event.type == "SOLVER_RUN_STARTED" for event in events) == 2
-        assert sum(event.type == "SOLVER_RUN_COMPLETED" for event in events) == 2
-    finally:
-        verified.close()
-
-
-def test_manager_worker_batch_uses_parallel_solver_runs(
-    tmp_path: Path, monkeypatch,
-) -> None:
-    task = _task("parallel_manager_batch")
-    database_path, bundle, orchestrator, state = _seed_orchestrator(tmp_path, task)
-    _add_intent(orchestrator, state.supervisor_solver_id, "peer")
-    orchestrator.dispatch_ready()
-    runs = tuple(bundle.orchestration.list_solver_runs(task.id))
-    bundle.close()
-
-    barrier = threading.Barrier(2, timeout=5)
-    entered: list[str] = []
-    lock = threading.Lock()
-
-    class BarrierRunner:
-        def __init__(self, **kwargs):
-            self.task = kwargs["task"]
-            self.solver_id = kwargs["solver_id"]
-
-        def run(self):
-            with lock:
-                entered.append(self.solver_id)
-            barrier.wait()
-            return SolverOutcome(
-                task_id=self.task.id,
-                solver_id=self.solver_id,
-                status="completed",
-            )
-
-    monkeypatch.setattr("tga.runtime.manager.SolverRunner", BarrierRunner)
-    manager = Manager(
-        run_root=tmp_path,
-        model_client=object(),
-        executor=object(),
-    )
-    completions = manager._run_worker_batch(
-        task=task,
-        database_path=database_path,
-        client=object(),
-        runs=runs,
-        max_active_workers=2,
-    )
-
-    assert len(entered) == 2
-    assert {item.state for item in completions} == {"completed"}
-
-
-def test_manager_worker_batch_limits_concurrent_model_calls(
-    tmp_path: Path, monkeypatch,
-) -> None:
-    task = _task("parallel_manager_model_limit").model_copy(
-        update={
-            "execution_budget": {
-                "max_active_workers": 2,
-                "max_total_solvers": 8,
-                "max_concurrent_model_calls": 1,
-            }
-        }
-    )
-    database_path, bundle, orchestrator, state = _seed_orchestrator(tmp_path, task)
-    _add_intent(orchestrator, state.supervisor_solver_id, "peer")
-    orchestrator.dispatch_ready()
-    runs = tuple(bundle.orchestration.list_solver_runs(task.id))
-    bundle.close()
-
-    active = 0
-    maximum_active = 0
-    lock = threading.Lock()
-
-    class CountingRunner:
-        def __init__(self, **kwargs):
-            self.task = kwargs["task"]
-            self.solver_id = kwargs["solver_id"]
-
-        def run(self):
-            nonlocal active, maximum_active
-            with lock:
-                active += 1
-                maximum_active = max(maximum_active, active)
-            time.sleep(0.05)
-            with lock:
-                active -= 1
-            return SolverOutcome(
-                task_id=self.task.id,
-                solver_id=self.solver_id,
-                status="completed",
-            )
-
-    monkeypatch.setattr("tga.runtime.manager.SolverRunner", CountingRunner)
-    completions = Manager(
-        run_root=tmp_path,
-        model_client=object(),
-        executor=object(),
-    )._run_worker_batch(
-        task=task,
-        database_path=database_path,
-        client=object(),
-        runs=runs,
-        max_active_workers=2,
-    )
-
-    assert len(completions) == 2
-    assert maximum_active == 1
 
 
 def test_two_connections_claim_different_intents_and_same_intent_has_one_winner(
@@ -508,45 +354,6 @@ def test_solver_scoped_approval_does_not_pause_other_worker_or_task(tmp_path: Pa
         bundle.close()
 
 
-def test_approval_releases_run_lease_and_requeues_fenced_continuation(
-    tmp_path: Path,
-) -> None:
-    task = _task("parallel_approval_run")
-    _, bundle, orchestrator, _ = _seed_orchestrator(tmp_path, task)
-    try:
-        assignment = orchestrator.dispatch_ready()[0]
-        run = bundle.orchestration.list_solver_runs(task.id)[0]
-        leased = bundle.orchestration.claim_solver_run(
-            run.id, "runner_a", ttl_seconds=60, expected_version=run.version
-        )
-        assert leased is not None
-        bundle.orchestration.start_solver_run(
-            run.id, "runner_a", leased.fencing_token
-        )
-        SolverApprovalCoordinator(bundle.database).await_approval(
-            solver_id=assignment.solver_id, intent_id=assignment.intent_id
-        )
-        waiting = bundle.orchestration.suspend_solver_run_for_approval(
-            run.id, "runner_a", leased.fencing_token
-        )
-        assert waiting.state == "waiting_approval"
-        assert waiting.lease_owner is None and waiting.lease_expires_at is None
-
-        SolverApprovalCoordinator(bundle.database).resolve(
-            solver_id=assignment.solver_id, intent_id=assignment.intent_id
-        )
-        resumed = bundle.orchestration.get_solver_run(run.id)
-        assert resumed is not None and resumed.state == "retry_queued"
-        assert resumed.fencing_token == leased.fencing_token
-        reclaimed = bundle.orchestration.claim_solver_run(
-            run.id, "runner_b", ttl_seconds=60, expected_version=resumed.version
-        )
-        assert reclaimed is not None
-        assert reclaimed.fencing_token == leased.fencing_token + 1
-    finally:
-        bundle.close()
-
-
 def test_task_token_budget_is_shared_across_parallel_solvers(tmp_path: Path) -> None:
     task = _task("parallel_budget").model_copy(update={
         "execution_budget": {
@@ -597,9 +404,6 @@ def test_cancellation_invalidates_runner_lease_and_rejects_late_worker_result(
         orchestrator.cancel(reason="concurrent_cancel")
 
         assert not SolverLeaseManager(bundle.solvers).is_valid(lease)
-        cancelled_run = bundle.orchestration.list_solver_runs(task.id)[0]
-        assert cancelled_run.state == "cancelled"
-        assert cancelled_run.error_code == "TASK_CANCELLED"
         with pytest.raises(PersistenceConflict, match="lease|cancel",):
             orchestrator.submit_worker_result(
                 WorkerResult(
@@ -636,36 +440,6 @@ def test_failed_intent_retry_uses_new_solver_and_attempt(tmp_path: Path) -> None
         assert second.attempt == 2
         assert second.solver_id != first.solver_id
         assert second.solver_id.endswith("_a2")
-    finally:
-        bundle.close()
-
-
-def test_expired_solver_run_recovers_as_new_fenced_attempt(tmp_path: Path) -> None:
-    task = _task("parallel_run_recovery")
-    _, bundle, orchestrator, _ = _seed_orchestrator(tmp_path, task)
-    try:
-        first = orchestrator.dispatch_ready()[0]
-        run = bundle.orchestration.list_solver_runs(task.id)[0]
-        start = datetime(2026, 7, 30, tzinfo=UTC)
-        leased = bundle.orchestration.claim_solver_run(
-            run.id, "crashed_runner", ttl_seconds=5,
-            expected_version=run.version, now=start,
-        )
-        assert leased is not None
-        bundle.orchestration.start_solver_run(
-            run.id, "crashed_runner", leased.fencing_token,
-            now=start + timedelta(seconds=1),
-        )
-
-        orchestrator.recover()
-
-        runs = bundle.orchestration.list_solver_runs(task.id)
-        assert len(runs) == 2
-        expired = next(item for item in runs if item.id == run.id)
-        retry = next(item for item in runs if item.id != run.id)
-        assert expired.state == "expired"
-        assert retry.state == "queued" and retry.attempt == 2
-        assert retry.solver_id != first.solver_id
     finally:
         bundle.close()
 

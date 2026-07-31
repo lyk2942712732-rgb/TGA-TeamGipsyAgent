@@ -11,7 +11,6 @@ import (
 	"os/exec"
 	"sort"
 	"strings"
-	"sync"
 )
 
 type Grant struct {
@@ -21,15 +20,13 @@ type Grant struct {
 
 type Policy struct {
 	nftPath string
-	mu      sync.Mutex
-	grants  map[string][]Grant
 }
 
 func New(nftPath string) *Policy {
 	if nftPath == "" {
 		nftPath = "/usr/sbin/nft"
 	}
-	return &Policy{nftPath: nftPath, grants: make(map[string][]Grant)}
+	return &Policy{nftPath: nftPath}
 }
 
 func (p *Policy) Available(ctx context.Context) bool {
@@ -37,10 +34,7 @@ func (p *Policy) Available(ctx context.Context) bool {
 }
 
 func (p *Policy) Apply(ctx context.Context, taskID, bridge string, gateways []string, grants []Grant) error {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	merged := mergeGrants(p.grants[taskID], grants)
-	rules, err := Render(taskID, bridge, gateways, merged)
+	rules, err := Render(taskID, bridge, gateways, grants)
 	if err != nil {
 		return err
 	}
@@ -67,13 +61,10 @@ func (p *Policy) Apply(ctx context.Context, taskID, bridge string, gateways []st
 	if output, err := exec.CommandContext(ctx, p.nftPath, "--file", name).CombinedOutput(); err != nil {
 		return fmt.Errorf("nft apply failed: %s: %w", bytes.TrimSpace(output), err)
 	}
-	p.grants[taskID] = merged
 	return nil
 }
 
 func (p *Policy) Delete(ctx context.Context, taskID string) error {
-	p.mu.Lock()
-	defer p.mu.Unlock()
 	file, err := os.CreateTemp("", "tga-nft-delete-*.nft")
 	if err != nil {
 		return err
@@ -91,54 +82,7 @@ func (p *Policy) Delete(ctx context.Context, taskID string) error {
 	if err != nil {
 		return fmt.Errorf("nft delete failed: %s: %w", bytes.TrimSpace(output), err)
 	}
-	delete(p.grants, taskID)
 	return nil
-}
-
-func mergeGrants(existing, additional []Grant) []Grant {
-	portsByCIDR := make(map[string]map[uint32]struct{}, len(existing)+len(additional))
-	pingByCIDR := make(map[string]bool, len(existing)+len(additional))
-	for _, grant := range append(append([]Grant(nil), existing...), additional...) {
-		if len(grant.Ports) == 0 {
-			pingByCIDR[grant.CIDR] = true
-			continue
-		}
-		ports := portsByCIDR[grant.CIDR]
-		if ports == nil {
-			ports = make(map[uint32]struct{})
-			portsByCIDR[grant.CIDR] = ports
-		}
-		for _, port := range grant.Ports {
-			ports[port] = struct{}{}
-		}
-	}
-	cidrs := make([]string, 0, len(portsByCIDR)+len(pingByCIDR))
-	seen := make(map[string]struct{})
-	for cidr := range portsByCIDR {
-		seen[cidr] = struct{}{}
-		cidrs = append(cidrs, cidr)
-	}
-	for cidr := range pingByCIDR {
-		if _, ok := seen[cidr]; !ok {
-			cidrs = append(cidrs, cidr)
-		}
-	}
-	sort.Strings(cidrs)
-	merged := make([]Grant, 0, len(cidrs)*2)
-	for _, cidr := range cidrs {
-		if pingByCIDR[cidr] {
-			merged = append(merged, Grant{CIDR: cidr})
-		}
-		if values := portsByCIDR[cidr]; len(values) > 0 {
-			ports := make([]uint32, 0, len(values))
-			for port := range values {
-				ports = append(ports, port)
-			}
-			sort.Slice(ports, func(i, j int) bool { return ports[i] < ports[j] })
-			merged = append(merged, Grant{CIDR: cidr, Ports: ports})
-		}
-	}
-	return merged
 }
 
 func Render(taskID, bridge string, gateways []string, grants []Grant) (string, error) {

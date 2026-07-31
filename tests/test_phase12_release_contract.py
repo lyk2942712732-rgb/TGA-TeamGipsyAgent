@@ -14,7 +14,7 @@ REQUIRED_DOCUMENTS = {
     "docs/architecture/FRONTEND_WORKBENCH.md": ("Team Explorer", "Intent", "Replay"),
     "docs/architecture/LEGACY_CLEANUP_REPORT.md": ("MemoryEntry", "StrategyCard", "migration-only"),
     "docs/performance/BASELINE.md": ("Snapshot", "SSE", "10k"),
-    "docs/RELEASE_NOTES_V6.md": ("schema v6", "Cutover", "verification"),
+    "docs/releases/RELEASE_NOTES_V6.md": ("schema v6", "Cutover", "verification"),
 }
 
 

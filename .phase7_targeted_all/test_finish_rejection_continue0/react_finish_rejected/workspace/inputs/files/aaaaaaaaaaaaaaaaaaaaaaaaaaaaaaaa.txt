@@ -1,1 +1,0 @@
-Evidence: CTF{finish_rejection_continues}

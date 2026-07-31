@@ -56,21 +56,6 @@ class SolverApprovalCoordinator:
                     },
                     solver_id=solver_id,
                 )
-        resumed_run = self.repositories.orchestration.resume_solver_run_after_approval(
-            solver_id, intent_id
-        )
-        if resumed_run is not None and solver is not None:
-            self.repositories.events.append_agent_event(
-                solver.task_id,
-                "SOLVER_RUN_RETRY_QUEUED",
-                {
-                    "run_id": resumed_run.id,
-                    "reason": "approval_resolved",
-                    "attempt": resumed_run.attempt,
-                },
-                solver_id=solver_id,
-                intent_id=intent_id,
-            )
 
 
 __all__ = ["SolverApprovalCoordinator"]

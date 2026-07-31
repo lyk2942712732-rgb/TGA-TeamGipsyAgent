@@ -1,87 +1,265 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Check, Grid2X2, List, Plus, Search } from "lucide-react";
+import { Grid2X2, List, Plus, Search, SlidersHorizontal } from "lucide-react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { fetchTaskList, taskListQueryString } from "../api/task-query-adapter";
+import { fetchTaskList } from "../api/task-query-adapter";
 import type { TaskListItem } from "../api/tasks";
-import { DataTable } from "../components/ui/DataTable";
-import { EmptyState } from "../components/ui/EmptyState";
+import { CatalogTable, Pagination, usePage, type Column } from "../components/ui/CatalogTable";
 import { ErrorState } from "../components/ui/ErrorState";
-import { FilterBar } from "../components/ui/FilterBar";
 import { LoadingSkeleton } from "../components/ui/LoadingSkeleton";
-import { PageHeader } from "../components/ui/PageHeader";
-import { StatusBadge } from "../shared/StatusBadge";
+import { useToast } from "../components/ui/Toast";
 import { statusLabel } from "../shared/status";
 import { MODE_PROFILES, TASK_MODES } from "../modes";
+import { padRows } from "./sample";
+
+/**
+ * 任务 (reference image 02).
+ *
+ * `/api/v2/tasks` supplies every column except 严重度 — the task summary has no
+ * aggregated finding severity, so real rows show a dash there.  Sample rows
+ * carry the reference image's tasks and cannot be opened.
+ */
 
 const STATUSES = ["created", "running", "paused", "awaiting_approval", "blocked", "completed", "failed", "cancelled"];
 
+type TaskRow = {
+  taskId: string;
+  displayId: string;
+  name: string;
+  mode: string;
+  status: string;
+  percent: number;
+  solversActive: number;
+  solversTotal: number | null;
+  approvals: number;
+  severity: "高" | "中" | "低" | null;
+  updatedAt: string;
+  sample: boolean;
+};
+
+const SAMPLE_ROWS: TaskRow[] = [
+  sample("T-20240520-001", "Web API 安全测试", "penetration_test", "running", 47, 2, 5, 1, "高", "29 分钟前"),
+  sample("T-20240520-002", "内网渗透评估", "penetration_test", "running", 62, 2, 7, 1, "高", "1 小时前"),
+  sample("T-20240520-003", "样本逆向分析", "reverse_engineering", "awaiting_approval", 31, 1, 4, 2, "中", "1 小时前"),
+  sample("T-20240520-004", "应急响应分析", "incident_response", "running", 78, 4, 6, 0, "高", "2 小时前"),
+  sample("T-20240520-005", "超权限测试验证", "vulnerability_research", "completed", 100, 0, 0, 0, "中", "昨天"),
+  sample("T-20240520-006", "CTF 题目 2024", "ctf", "blocked", 0, 0, 0, 2, "低", "昨天"),
+];
+
+const STATUS_TONES: Record<string, string> = {
+  running: "tone-ok", completed: "tone-ok",
+  awaiting_approval: "tone-warn", paused: "tone-warn", created: "tone-muted", queued: "tone-muted",
+  blocked: "tone-danger", failed: "tone-danger", cancelled: "tone-muted",
+};
+const SEVERITY_TONES: Record<string, string> = { 高: "tone-danger", 中: "tone-warn", 低: "tone-ok" };
+
 export function TaskListPage() {
   const navigate = useNavigate();
+  const toast = useToast();
   const [params, setParams] = useSearchParams();
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+
   const query = params.get("query") ?? "";
   const mode = params.get("mode") ?? "";
   const status = params.get("status") ?? "";
   const attention = params.get("needs_attention");
   const view = params.get("view") === "cards" ? "cards" : "list";
-  const offset = Math.max(0, Number(params.get("offset") ?? 0) || 0);
-  const filters = useMemo(() => ({ query, mode: mode || undefined, status: status || undefined, needsAttention: attention === null ? undefined : attention === "true", offset, limit: 100 }), [query, mode, status, attention, offset]);
+
+  const filters = useMemo(() => ({
+    query,
+    mode: mode || undefined,
+    status: status || undefined,
+    needsAttention: attention === null ? undefined : attention === "true",
+    offset: 0,
+    limit: 100,
+  }), [query, mode, status, attention]);
+
   const tasks = useQuery({ queryKey: ["task-list", filters], queryFn: () => fetchTaskList(filters) });
+
+  const rows = useMemo(() => {
+    const real = (tasks.data?.tasks ?? []).map(toRow);
+    return padRows(real, SAMPLE_ROWS, SAMPLE_ROWS.length, (row) => row.name);
+  }, [tasks.data]);
+
+  const visible = usePage(rows, pageSize, page);
 
   const update = (key: string, value: string) => {
     const next = new URLSearchParams(params);
     if (value) next.set(key, value); else next.delete(key);
-    if (key !== "offset" && key !== "view") next.delete("offset");
     setParams(next);
+    setPage(1);
   };
-  const clear = () => setParams(view === "cards" ? new URLSearchParams("view=cards") : new URLSearchParams());
-  const rows = tasks.data?.tasks ?? [];
 
-  return <section className="page-stack task-list-page">
-    <PageHeader
-      eyebrow="WORKSPACE / TASKS"
-      title="任务"
-      description="按生命周期浏览任务，先查看详情，再进入实时运行或只读回放。"
-      breadcrumbs={[{ label: "TGA", href: "/" }, { label: "任务" }]}
-      actions={<button className="primary-action" onClick={() => navigate("/tasks/new")}><Plus size={16} />创建任务</button>}
-    />
-    <FilterBar resultCount={tasks.data?.total ?? rows.length} actions={<>
-      <button className={view === "list" ? "view-toggle active" : "view-toggle"} aria-label="列表视图" aria-pressed={view === "list"} onClick={() => update("view", "list")}><List size={15} /></button>
-      <button className={view === "cards" ? "view-toggle active" : "view-toggle"} aria-label="卡片视图" aria-pressed={view === "cards"} onClick={() => update("view", "cards")}><Grid2X2 size={15} /></button>
-    </>}>
-      <label className="task-search-field"><Search size={14} aria-hidden="true" /><span className="sr-only">搜索任务</span><input aria-label="搜索任务" value={query} placeholder="搜索名称或 Task ID" onChange={(event) => update("query", event.target.value)} /></label>
-      <label>TaskMode<select aria-label="TaskMode" value={mode} onChange={(event) => update("mode", event.target.value)}><option value="">全部模式</option>{TASK_MODES.map((item) => <option key={item} value={item}>{MODE_PROFILES[item].label}</option>)}</select></label>
-      <label>状态<select aria-label="任务状态" value={status} onChange={(event) => update("status", event.target.value)}><option value="">全部状态</option>{STATUSES.map((item) => <option key={item} value={item}>{statusLabel(item)}</option>)}</select></label>
-      <label>处理状态<select aria-label="需要处理" value={attention ?? ""} onChange={(event) => update("needs_attention", event.target.value)}><option value="">全部任务</option><option value="true">需要处理</option><option value="false">无需处理</option></select></label>
-      {(query || mode || status || attention !== null) ? <button className="text-button" onClick={clear}>清除筛选</button> : null}
-    </FilterBar>
-    {tasks.isLoading ? <LoadingSkeleton label="正在读取任务列表" rows={7} /> : null}
-    {tasks.isError ? <ErrorState title="任务列表加载失败" description={tasks.error instanceof Error ? tasks.error.message : "无法读取任务列表"} actionLabel="重试" onAction={() => void tasks.refetch()} /> : null}
-    {!tasks.isLoading && !tasks.isError && !rows.length ? <EmptyState title={query || mode || status || attention !== null ? "没有匹配的任务" : "还没有任务"} description={query || mode || status || attention !== null ? "尝试清除筛选条件，或创建新的任务。" : "创建第一个任务后，它会出现在这里。"} action={<button className="primary-action" onClick={() => navigate("/tasks/new")}><Plus size={15} />创建第一个任务</button>} /> : null}
-    {!tasks.isLoading && !tasks.isError && rows.length ? view === "list" ? <TaskTable rows={rows} onOpen={(id) => navigate(`/tasks/${encodeURIComponent(id)}`)} onRuntime={(id) => navigate(`/tasks/${encodeURIComponent(id)}/runtime`)} onReplay={(id) => navigate(`/tasks/${encodeURIComponent(id)}/replay`)} /> : <TaskCardGrid rows={rows} onOpen={(id) => navigate(`/tasks/${encodeURIComponent(id)}`)} onRuntime={(id) => navigate(`/tasks/${encodeURIComponent(id)}/runtime`)} onReplay={(id) => navigate(`/tasks/${encodeURIComponent(id)}/replay`)} /> : null}
-    {!tasks.isLoading && !tasks.isError && (offset > 0 || tasks.data?.next_offset != null) ? <nav className="task-pagination" aria-label="任务分页"><button disabled={offset === 0} onClick={() => update("offset", String(Math.max(0, offset - 100)))}>上一页</button><span>第 {Math.floor(offset / 100) + 1} 页</span><button disabled={tasks.data?.next_offset == null} onClick={() => update("offset", String(tasks.data?.next_offset ?? offset))}>下一页</button></nav> : null}
-  </section>;
+  const open = (row: TaskRow) => {
+    if (row.sample) return toast.notify(`${row.name}：样例数据，该任务尚未创建`);
+    navigate(`/tasks/${encodeURIComponent(row.taskId)}`);
+  };
+
+  const columns: Array<Column<TaskRow>> = [
+    {
+      id: "name", header: "任务名称",
+      render: (row) => <span className="task-name-cell">
+        <strong>{row.name}</strong>
+        <small>#{row.displayId}</small>
+      </span>,
+    },
+    { id: "mode", header: "模式", render: (row) => <span className="cell-muted">{modeLabel(row.mode)}</span> },
+    { id: "status", header: "状态", render: (row) => <span className={`ref-chip ${STATUS_TONES[row.status] ?? "tone-muted"}`}>{statusLabel(row.status)}</span> },
+    {
+      id: "progress", header: "进度",
+      render: (row) => <div className="task-progress">
+        <span>{row.percent}%</span>
+        <i><em style={{ width: `${row.percent}%` }} /></i>
+      </div>,
+    },
+    {
+      id: "solvers", header: "Solver",
+      render: (row) => row.solversTotal === null ? String(row.solversActive) : `${row.solversActive}/${row.solversTotal}`,
+      align: "center",
+    },
+    { id: "approvals", header: "审批", render: (row) => row.approvals, align: "center" },
+    {
+      id: "severity", header: "严重度",
+      render: (row) => row.severity
+        ? <span className={`ref-chip ${SEVERITY_TONES[row.severity]}`}>{row.severity}</span>
+        : <span className="field-empty">—</span>,
+    },
+    { id: "updated", header: "更新时间 ↓", render: (row) => <span className="cell-muted">{row.updatedAt}</span> },
+  ];
+
+  return <div className="ref-page">
+    <header className="ref-page-head">
+      <div>
+        <h1>任务</h1>
+        <p>管理和查看所有任务</p>
+      </div>
+      <button className="ref-primary-button" onClick={() => navigate("/tasks/new")}><Plus size={16} />创建任务</button>
+    </header>
+
+    <label className="ref-search is-wide">
+      <Search size={16} aria-hidden="true" />
+      <input
+        aria-label="搜索任务"
+        placeholder="搜索任务名称/ID/标签..."
+        value={query}
+        onChange={(event) => update("query", event.target.value)}
+      />
+    </label>
+
+    <section className="ref-filter-row" aria-label="筛选任务">
+      <select aria-label="模式筛选" value={mode} onChange={(event) => update("mode", event.target.value)}>
+        <option value="">所有模式</option>
+        {TASK_MODES.map((value) => <option key={value} value={value}>{modeLabel(value)}</option>)}
+      </select>
+      <select aria-label="状态筛选" value={status} onChange={(event) => update("status", event.target.value)}>
+        <option value="">所有状态</option>
+        {STATUSES.map((value) => <option key={value} value={value}>{statusLabel(value)}</option>)}
+      </select>
+      <select aria-label="处理状态筛选" value={attention ?? ""} onChange={(event) => update("needs_attention", event.target.value)}>
+        <option value="">需要我处理</option>
+        <option value="true">仅需要处理</option>
+        <option value="false">无需处理</option>
+      </select>
+      <button className="ref-filter-button" onClick={() => toast.notifyUnavailable("更多筛选")}>
+        <SlidersHorizontal size={15} />更多筛选
+      </button>
+      <div className="view-toggle push-end" role="group" aria-label="视图切换">
+        <button className={view === "list" ? "active" : ""} aria-pressed={view === "list"}
+          aria-label="列表视图" onClick={() => update("view", "")}><List size={15} /></button>
+        <button className={view === "cards" ? "active" : ""} aria-pressed={view === "cards"}
+          aria-label="卡片视图" onClick={() => update("view", "cards")}><Grid2X2 size={15} /></button>
+      </div>
+    </section>
+
+    {tasks.isLoading ? <LoadingSkeleton label="正在读取任务列表" rows={6} />
+      : tasks.isError ? <ErrorState
+        description={tasks.error instanceof Error ? tasks.error.message : "无法读取任务列表"}
+        actionLabel="重试"
+        onAction={() => void tasks.refetch()}
+      />
+      : <>
+        {view === "cards"
+          ? <div className="task-card-grid ref-fill">
+            {visible.map((row) => <TaskCard key={row.taskId} task={row} onOpen={() => open(row)} />)}
+          </div>
+          : <CatalogTable
+            fill
+            label="任务列表"
+            columns={columns}
+            rows={visible}
+            rowKey={(row) => row.taskId}
+            onSelect={open}
+            emptyLabel="没有匹配的任务"
+          />}
+        <Pagination total={rows.length} pageSize={pageSize} page={page} onPage={setPage} onPageSize={(size) => { setPageSize(size); setPage(1); }} />
+      </>}
+  </div>;
 }
 
-function TaskTable({ rows, onOpen, onRuntime, onReplay }: { rows: TaskListItem[]; onOpen: (id: string) => void; onRuntime: (id: string) => void; onReplay: (id: string) => void }) {
-  return <DataTable label="任务列表" rows={rows} rowKey={(row) => row.task_id} onRowClick={(row) => onOpen(row.task_id)} columns={[
-    { id: "name", header: "任务", render: (row) => <div className="task-cell"><strong>{row.name || row.task_id}</strong><code>{row.task_id}</code></div> },
-    { id: "mode", header: "模式", render: (row) => MODE_PROFILES[row.mode]?.label ?? row.mode },
-    { id: "status", header: "状态", render: (row) => <StatusBadge value={row.status} /> },
-    { id: "progress", header: "Intent", render: (row) => <span>{row.intent_completed ?? 0} / {row.intent_total ?? "-"}</span> },
-    { id: "solver", header: "Solver", render: (row) => row.active_solvers ?? "-" },
-    { id: "approval", header: "待处理", render: (row) => row.needs_attention ? <span className="attention-mark"><Check size={13} />{row.pending_approvals ? `${row.pending_approvals} 项审批` : "需要处理"}</span> : "-" },
-    { id: "updated", header: "更新时间", render: (row) => formatDate(row.updated_at || row.created_at) },
-    { id: "actions", header: "操作", render: (row) => <div className="task-row-actions"><button onClick={(event) => { event.stopPropagation(); onOpen(row.task_id); }}>打开</button><button onClick={(event) => { event.stopPropagation(); onRuntime(row.task_id); }}>运行</button><button onClick={(event) => { event.stopPropagation(); onReplay(row.task_id); }}>回放</button></div> },
-  ]} />;
+function TaskCard({ task, onOpen }: { task: TaskRow; onOpen: () => void }) {
+  return <article className="task-ref-card">
+    <header>
+      <span className={`ref-chip ${STATUS_TONES[task.status] ?? "tone-muted"}`}>{statusLabel(task.status)}</span>
+      <span className="ref-chip tone-muted">{modeLabel(task.mode)}</span>
+    </header>
+    <button className="task-ref-card-main" onClick={onOpen}>
+      <h3>{task.name}</h3>
+      <p>#{task.displayId}</p>
+    </button>
+    <div className="task-ref-card-stats">
+      <span><b>{task.solversTotal === null ? task.solversActive : `${task.solversActive}/${task.solversTotal}`}</b>Solver</span>
+      <span><b>{task.approvals}</b>审批</span>
+      <span><b>{task.severity ?? "—"}</b>严重度</span>
+      <span><b>{task.percent}%</b>进度</span>
+    </div>
+    <div className="task-progress"><span>{task.percent}%</span><i><em style={{ width: `${task.percent}%` }} /></i></div>
+  </article>;
 }
 
-function TaskCardGrid({ rows, onOpen, onRuntime, onReplay }: { rows: TaskListItem[]; onOpen: (id: string) => void; onRuntime: (id: string) => void; onReplay: (id: string) => void }) {
-  return <div className="task-list-card-grid">{rows.map((row) => <article className="task-list-card" key={row.task_id}>
-    <header><div><StatusBadge value={row.status} /><code>{row.task_id}</code></div><span>{MODE_PROFILES[row.mode]?.label ?? row.mode}</span></header>
-    <button className="task-list-card-main" onClick={() => onOpen(row.task_id)}><h2>{row.name || row.task_id}</h2><p>{row.target_summary || "本地输入任务"}</p><div><span>Intent <b>{row.intent_completed ?? 0}/{row.intent_total ?? "-"}</b></span><span>Solver <b>{row.active_solvers ?? "-"}</b></span><span>结果 <b>{row.findings ?? 0}</b></span></div></button>
-    <footer><small>{formatDate(row.updated_at || row.created_at)}</small><div><button onClick={() => onRuntime(row.task_id)}>进入运行</button><button onClick={() => onReplay(row.task_id)}>回放</button></div></footer>
-  </article>)}</div>;
+function toRow(task: TaskListItem): TaskRow {
+  const total = task.intent_total ?? 0;
+  const done = task.intent_completed ?? 0;
+  return {
+    taskId: task.task_id,
+    displayId: task.task_id,
+    name: task.name,
+    mode: task.mode,
+    status: task.status,
+    percent: total ? Math.round(done / total * 100) : 0,
+    solversActive: task.active_solvers ?? 0,
+    // The list projection has no team size and no aggregated finding severity.
+    solversTotal: null,
+    approvals: task.pending_approvals ?? 0,
+    severity: null,
+    updatedAt: formatDate(task.updated_at ?? task.created_at),
+    sample: false,
+  };
 }
 
-function formatDate(value?: string) { return value ? new Date(value).toLocaleString("zh-CN", { dateStyle: "short", timeStyle: "short" }) : "尚未更新"; }
+function sample(
+  displayId: string, name: string, mode: string, status: string, percent: number,
+  solversActive: number, solversTotal: number, approvals: number,
+  severity: TaskRow["severity"], updatedAt: string,
+): TaskRow {
+  return {
+    taskId: `sample-${displayId}`, displayId, name, mode, status, percent,
+    solversActive, solversTotal, approvals, severity, updatedAt, sample: true,
+  };
+}
+
+function modeLabel(mode: string): string {
+  return MODE_PROFILES[mode as keyof typeof MODE_PROFILES]?.label ?? mode;
+}
+
+function formatDate(value?: string): string {
+  if (!value) return "—";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  const minutes = Math.floor((Date.now() - date.getTime()) / 60000);
+  if (minutes < 1) return "刚刚";
+  if (minutes < 60) return `${minutes} 分钟前`;
+  if (minutes < 1440) return `${Math.floor(minutes / 60)} 小时前`;
+  if (minutes < 2880) return "昨天";
+  return date.toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+}

@@ -18,6 +18,65 @@ export async function fetchProductCatalog(kind: ProductCatalogKind, query = ""):
   return requestJson<ProductCatalogResult>(`/api/v2/catalog/${kind}?${params.toString()}`);
 }
 
+/**
+ * Solver Definition registry, served verbatim by `/api/v2/catalog/solvers`.
+ * Fields map 1:1 to `tga.domain.solver.definitions.SolverDefinition`; anything
+ * the reference design shows but this shape lacks is marked unimplemented.
+ */
+export type SolverBudget = {
+  max_turns?: number;
+  max_input_tokens?: number;
+  max_output_tokens?: number;
+  max_tool_calls?: number;
+  max_artifacts?: number;
+  deadline?: string | null;
+};
+
+export type SolverDefinitionRecord = {
+  id: string;
+  version: string;
+  orchestration_role: "supervisor" | "worker" | "reviewer" | "reporter";
+  specialties: string[];
+  supported_modes: string[];
+  supported_subtypes: string[];
+  system_prompt_template: string;
+  default_skill_tags: string[];
+  required_skill_names: string[];
+  required_capabilities: string[];
+  allowed_tool_groups: string[];
+  tool_policy_profile: string;
+  accepted_intent_kinds: string[];
+  output_contract: { name: string; required_fields: string[] };
+  default_budget: SolverBudget;
+  completion_authority: string;
+  content_sha256: string;
+};
+
+export async function fetchSolverDefinitions(query = ""): Promise<{ items: SolverDefinitionRecord[]; total: number }> {
+  const result = await fetchProductCatalog("solvers", query);
+  return { items: result.items as unknown as SolverDefinitionRecord[], total: result.total };
+}
+
+/** Team templates, served verbatim by `/api/v2/catalog/teams`. */
+export type TeamTemplateRecord = {
+  mode: string;
+  supervisor_definition_id: string;
+  required_solver_definition_ids: string[];
+  available_solver_definition_ids: string[];
+  reviewer_definition_id: string;
+  reporter_definition_id: string;
+  spawn_rules: Array<{ trigger: string; definition_id: string; max_instances: number }>;
+  max_active_workers: number;
+  max_total_solvers: number;
+  completion_policy: Record<string, boolean>;
+  content_sha256: string;
+};
+
+export async function fetchTeamTemplates(query = ""): Promise<{ items: TeamTemplateRecord[]; total: number }> {
+  const result = await fetchProductCatalog("teams", query);
+  return { items: result.items as unknown as TeamTemplateRecord[], total: result.total };
+}
+
 export type ResourceTab = "artifacts" | "evidence" | "findings" | "knowledge";
 
 export type ResourceSearchQuery = {
@@ -255,7 +314,7 @@ export async function fetchSystemHealth(): Promise<SystemHealthResult> {
         "mcp",
         "MCP Servers",
         tools.configured ? (tools.status === "error" ? "degraded" : "available") : "unavailable",
-        tools.configured ? `${Array.isArray(tools.records) ? tools.records.length : 0} 个健康记录` : "未配置 MCP Catalog Runner",
+        tools.configured ? `${Array.isArray(tools.records) ? tools.records.length : 0} 个已配置` : "未配置 MCP Catalog Runner",
         null,
         null,
         null,

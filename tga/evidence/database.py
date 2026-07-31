@@ -26,7 +26,7 @@ class Database:
         self.conn = sqlite3.connect(self.db_path)
         self._tx_depth = 0
         self._tx_rollback_only = False
-        self.conn.execute("PRAGMA busy_timeout = 5000")
+        self.conn.execute("PRAGMA busy_timeout = 1000")
         self.conn.execute("PRAGMA foreign_keys = ON")
         self.conn.execute("PRAGMA journal_mode = WAL")
         self.conn.execute("PRAGMA synchronous = NORMAL")

@@ -59,7 +59,7 @@
     },
     "RuntimeSnapshotResponse": {
       "additionalProperties": false,
-      "properties": ["actions", "approvals", "artifact_indexes", "artifacts", "challenge", "context_metrics", "events", "events_page", "evidence_claims", "findings", "flags", "global_plan", "http_sessions", "intents", "knowledge", "latest_seq", "observer", "retrieval_runs", "schema_version", "session", "solver_runs", "solvers", "task", "task_common_skill_snapshot", "team", "worker_results"],
+      "properties": ["actions", "approvals", "artifact_indexes", "artifacts", "challenge", "context_metrics", "events", "events_page", "evidence_claims", "findings", "flags", "global_plan", "http_sessions", "intents", "knowledge", "latest_seq", "observer", "retrieval_runs", "schema_version", "session", "solvers", "task", "task_common_skill_snapshot", "team", "worker_results"],
       "required": ["task", "session", "team", "events_page", "latest_seq"]
     },
     "SolverControlRequest": {

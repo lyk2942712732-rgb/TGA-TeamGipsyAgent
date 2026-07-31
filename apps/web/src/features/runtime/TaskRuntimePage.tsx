@@ -41,11 +41,11 @@ export function TaskRuntimePage({ taskId, mode = "runtime" }: { taskId: string; 
     {notice ? <div className="runtime-sync-notice" role="status">{notice}<button onClick={() => setNotice(null)}>关闭</button></div> : null}
     <div className="runtime-mobile-switches"><button aria-expanded={drawer === "team"} onClick={() => setDrawer(drawer === "team" ? null : "team")}>团队</button><button aria-expanded={drawer === "inspector"} onClick={() => setDrawer(drawer === "inspector" ? null : "inspector")}>检查器</button></div>
     <div className="task-runtime-layout">
-      <div className="runtime-side runtime-team-side" data-open={drawer === "team"}><TeamExplorer store={viewStore} selectedSolverId={selectedSolverId} onSelect={(solverId) => { setSelection({ solverId }); setDrawer(null); }} /></div>
+      <div className="runtime-side runtime-team-side" data-open={drawer === "team"}><TeamExplorer store={viewStore} selectedSolverId={selectedSolverId} onSelect={(solverId) => { setSelection({ solverId }); setDrawer(null); }} onDetails={() => { setSelection({ tab: "overview" }); setDrawer(null); }} /></div>
       <main><TaskWorkspaceTabs store={viewStore} tab={selection.tab} selectedSolverId={selectedSolverId} selectedIntentId={selection.intentId} readonly={mode === "replay"} onChanged={refresh} onTab={(tab: RuntimeTab) => setSelection({ tab })} onSolver={(solverId) => setSelection({ solverId })} onIntent={(intentId) => setSelection({ intentId, solverId: viewStore.intentsById[intentId]?.assignedSolverId ?? selection.solverId })} /></main>
       <div className="runtime-side runtime-inspector-side" data-open={drawer === "inspector"}><SolverInspector store={viewStore} solver={selectedSolver ?? null} /></div>
     </div>
-    <GlobalActionDock store={viewStore} mode={mode} onRefresh={refresh} onOpenApprovals={() => setSelection({ tab: "approvals" })} />
+    <GlobalActionDock store={viewStore} mode={mode} onRefresh={refresh} onOpenApprovals={() => setSelection({ tab: "approvals" })} onIntervention={() => setInterventionOpen(true)} />
     <InterventionDialog store={store} open={interventionOpen && mode === "runtime"} onClose={() => setInterventionOpen(false)} onSubmitted={refresh} />
   </section>;
 }

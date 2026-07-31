@@ -1,1 +1,0 @@
-{"version": 1, "servers": {"fail": {"transport": "stdio", "stdio": {"source": "local_process", "command": "D:\\python\\python.exe", "args": ["C:\\Users\\lyk\\Desktop\\tga\\TGA-TeamGipsyAgent\\tests\\fixtures\\failing_mcp_server.py", "rpc-error"]}, "timeoutSeconds": 1, "toolTimeoutSeconds": 1, "visibility": {"risk": "passive"}}}}

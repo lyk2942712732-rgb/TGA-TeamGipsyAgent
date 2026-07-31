@@ -156,7 +156,7 @@ def test_v6_runtime_snapshot_is_task_level_bounded_and_multi_solver(
 
     assert payload["schema_version"] == 6
     assert set(payload) >= {
-        "task", "session", "team", "solvers", "solver_runs", "intents", "worker_results",
+        "task", "session", "team", "solvers", "intents", "worker_results",
         "global_plan", "knowledge", "artifacts", "evidence_claims", "findings",
         "actions", "approvals", "retrieval_runs", "events", "events_page",
         "latest_seq",
@@ -168,12 +168,6 @@ def test_v6_runtime_snapshot_is_task_level_bounded_and_multi_solver(
         "supervisor", "worker"
     }
     assert all("definition_id" in item and "budget_usage" in item for item in payload["solvers"])
-    run_page = TestClient(app).get(
-        f"/api/v2/tasks/{ids['task_id']}/solver-runs?offset=0&limit=1"
-    )
-    assert run_page.status_code == 200
-    assert run_page.json()["schema_version"] == 6
-    assert run_page.json()["limit"] == 1
     assert len(payload["events"]) <= 100
     assert payload["events_page"]["has_more"] is True
     event_seqs = [item["seq"] for item in payload["events"]]

@@ -11,7 +11,6 @@ from tga.application.projections.models import (
     IntentPage,
     RuntimeSnapshotResponse,
     SolverResponse,
-    SolverRunPage,
     TaskDetailResponse,
     TeamResponse,
 )
@@ -31,11 +30,6 @@ class RuntimeQueries:
     def solver(self, task_id: str, solver_id: str) -> SolverResponse:
         return SolverResponse.model_validate(
             self.backend.solver_projection(task_id, solver_id)
-        )
-
-    def solver_runs(self, task_id: str, *, offset: int, limit: int) -> SolverRunPage:
-        return SolverRunPage.model_validate(
-            self.backend.solver_run_page(task_id, offset=offset, limit=limit)
         )
 
     def intents(self, task_id: str, *, offset: int, limit: int) -> IntentPage:

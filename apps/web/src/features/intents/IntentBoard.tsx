@@ -1,16 +1,35 @@
 import { useState } from "react";
+import { Check } from "lucide-react";
 import type { RuntimeIntent, RuntimeStore } from "../runtime/models/types";
 import { StatusBadge } from "../../shared/StatusBadge";
+import { SAMPLE_INTENTS, type IntentCardView } from "./sample-intents";
 
 type View = "kanban" | "graph" | "list";
-const STATUSES = ["pending", "assigned", "running", "awaiting_approval", "reviewing", "completed", "blocked", "failed"] as const;
+
+/**
+ * Reference image 05 draws five columns — 待分配 / 运行中 / 等待审批 / 已完成 /
+ * 阻塞 — so the runtime's eight Intent states are folded into those buckets and
+ * each column takes the reference's accent colour.  A column the live task has
+ * not filled is padded from `sample-intents`; those cards are inert.
+ */
+const COLUMNS = [
+  { id: "pending", label: "待分配", tone: "neutral", states: ["pending", "assigned"] },
+  { id: "running", label: "运行中", tone: "info", states: ["running", "reviewing"] },
+  { id: "awaiting_approval", label: "等待审批", tone: "warn", states: ["awaiting_approval"] },
+  { id: "completed", label: "已完成", tone: "ok", states: ["completed"] },
+  { id: "blocked", label: "阻塞", tone: "danger", states: ["blocked", "failed"] },
+] as const;
+
 const STATUS_LABELS: Record<string, string> = { pending: "待处理", assigned: "已分配", running: "运行中", awaiting_approval: "等待审批", reviewing: "审查中", completed: "已完成", blocked: "阻塞", failed: "失败" };
+const PRIORITY_LABELS = ["低", "中", "高"];
 
 export function IntentBoard({ store, selectedIntentId, onSelect }: { store: RuntimeStore; selectedIntentId: string | null; onSelect: (intentId: string) => void }) {
   const [view, setView] = useState<View>("kanban");
   const intents = Object.values(store.intentsById).sort((a, b) => b.priority - a.priority || a.intentId.localeCompare(b.intentId));
-  return <section className="intent-board" aria-labelledby="intent-board-title">
-    <header className="runtime-section-title"><div><span>WORK ITEMS</span><h3 id="intent-board-title">Intent 工作项</h3></div><div className="intent-view-switch" aria-label="工作项视图">{(["kanban", "graph", "list"] as View[]).map((item) => <button key={item} aria-pressed={view === item} onClick={() => setView(item)}>{item === "kanban" ? "Kanban" : item === "graph" ? "依赖图" : "列表"}</button>)}</div></header>
+  // The workspace tab strip above already names this panel, so the board only
+  // carries its view switch — a second "Intent 工作项" title reads as a nested page.
+  return <section className="intent-board" aria-label="Intent 工作项">
+    <header className="intent-board-head"><div className="intent-view-switch" aria-label="工作项视图">{(["kanban", "graph", "list"] as View[]).map((item) => <button key={item} aria-pressed={view === item} onClick={() => setView(item)}>{item === "kanban" ? "Kanban" : item === "graph" ? "依赖图" : "列表"}</button>)}</div></header>
     {view === "kanban" ? <Kanban intents={intents} selectedIntentId={selectedIntentId} onSelect={onSelect} /> : null}
     {view === "graph" ? <DependencyGraph intents={intents} onSelect={onSelect} /> : null}
     {view === "list" ? <IntentTable intents={intents} onSelect={onSelect} /> : null}
@@ -18,14 +37,65 @@ export function IntentBoard({ store, selectedIntentId, onSelect }: { store: Runt
 }
 
 function Kanban({ intents, selectedIntentId, onSelect }: { intents: RuntimeIntent[]; selectedIntentId: string | null; onSelect: (id: string) => void }) {
-  return <div className="intent-kanban" role="region" aria-label="Intent Kanban">{STATUSES.map((status) => {
-    const values = intents.filter((intent) => intent.status === status);
-    return <section key={status}><header><b>{STATUS_LABELS[status]}</b><span>{values.length}</span></header>{values.map((intent) => <IntentCard key={intent.intentId} intent={intent} selected={intent.intentId === selectedIntentId} onSelect={onSelect} />)}{!values.length ? <small>暂无</small> : null}</section>;
+  return <div className="intent-kanban" role="region" aria-label="Intent Kanban">{COLUMNS.map((column) => {
+    const real = intents.filter((intent) => (column.states as readonly string[]).includes(intent.status)).map(toCard);
+    const fallback = SAMPLE_INTENTS[column.id];
+    const cards = real.length ? real : fallback.cards;
+    const total = real.length ? real.length : fallback.total;
+    return <section key={column.id} className={`tone-${column.tone}`}>
+      <header><b>{column.label}</b><span>{total}</span></header>
+      <div className="intent-kanban-cards">
+        {cards.map((card) => <IntentCard
+          key={card.key}
+          card={card}
+          selected={card.intentId !== null && card.intentId === selectedIntentId}
+          onSelect={onSelect}
+        />)}
+      </div>
+      <footer>+ {Math.max(0, total - cards.length)} 个 Intent</footer>
+    </section>;
   })}</div>;
 }
 
-function IntentCard({ intent, selected, onSelect }: { intent: RuntimeIntent; selected: boolean; onSelect: (id: string) => void }) {
-  return <button className={`intent-card ${selected ? "selected" : ""}`} onClick={() => onSelect(intent.intentId)}><b>{intent.title || intent.intentId}</b><p>{intent.objective}</p><small>{intent.assignedSolverId ?? "未分配"}</small><StatusBadge value={intent.status} /></button>;
+function toCard(intent: RuntimeIntent): IntentCardView {
+  return {
+    key: intent.intentId,
+    intentId: intent.intentId,
+    title: intent.title || intent.intentId,
+    objective: intent.objective,
+    status: intent.status,
+    priority: PRIORITY_LABELS[Math.min(2, Math.max(0, intent.priority))] ?? String(intent.priority),
+    solver: intent.assignedSolverId,
+    metrics: [["状态", STATUS_LABELS[intent.status] ?? intent.status]],
+    percent: null,
+    flag: intent.status === "awaiting_approval" ? "approval"
+      : intent.status === "completed" ? "done"
+        : ["blocked", "failed"].includes(intent.status) ? "blocked" : null,
+    sample: false,
+  };
+}
+
+function IntentCard({ card, selected, onSelect }: { card: IntentCardView; selected: boolean; onSelect: (id: string) => void }) {
+  return <button
+    type="button"
+    className={`intent-card ${selected ? "selected" : ""} ${card.sample ? "is-sample" : ""}`}
+    disabled={card.intentId === null}
+    onClick={() => card.intentId && onSelect(card.intentId)}
+  >
+    <b>{card.title}</b>
+    <p>{card.objective}</p>
+    <dl>
+      <div><dt>优先级</dt><dd className={`priority-${card.priority}`}>{card.priority}</dd></div>
+      {card.solver ? <div><dt>Solver</dt><dd>{card.solver}</dd></div> : null}
+      {card.metrics.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}
+    </dl>
+    {card.percent === null ? null : <span className="intent-card-progress">
+      <i><em style={{ width: `${card.percent}%` }} /></i><b>{card.percent}%</b>
+    </span>}
+    {card.flag === "approval" ? <span className="ref-chip tone-warn">需审批</span> : null}
+    {card.flag === "blocked" ? <span className="ref-chip tone-danger">待解除</span> : null}
+    {card.flag === "done" ? <span className="intent-card-done" aria-label="已完成"><Check size={13} /></span> : null}
+  </button>;
 }
 
 function DependencyGraph({ intents, onSelect }: { intents: RuntimeIntent[]; onSelect: (id: string) => void }) {
