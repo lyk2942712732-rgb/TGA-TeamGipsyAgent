@@ -1,1 +1,0 @@
-{"name":"demo","mode":"ctf","task_entry_url":"http://127.0.0.1:1/","goal":"solve","flag_format":"flag\\{[^}]+\\}","execution_policy":{"preset":"custom","network":{"access":"task_sources","seed_origins":["http://127.0.0.1:1"],"deny_private_networks":false,"deny_loopback":false,"deny_link_local":false}}}

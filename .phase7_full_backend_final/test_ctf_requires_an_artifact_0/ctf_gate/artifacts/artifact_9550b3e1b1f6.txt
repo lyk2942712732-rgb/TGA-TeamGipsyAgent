@@ -1,1 +1,0 @@
-result CTF{real_evidence}
