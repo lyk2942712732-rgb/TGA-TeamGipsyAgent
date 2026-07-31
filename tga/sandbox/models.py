@@ -61,6 +61,9 @@ class SandboxProfile(BaseModel):
     network_mode: Literal["none", "public_http", "target_allowlist", "remote"] = "none"
     web_allow_hosts: tuple[str, ...] = ()
     allow_net_raw: bool = False
+    allow_ptrace: bool = False
+    allowed_executables: tuple[str, ...] = ()
+    toolset_digest: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
     limits: ResourceLimits = Field(default_factory=ResourceLimits)
 
     @field_validator("id")
@@ -70,12 +73,24 @@ class SandboxProfile(BaseModel):
             raise ValueError("invalid sandbox profile id")
         return value
 
+    @field_validator("allowed_executables")
+    @classmethod
+    def valid_executables(cls, values: tuple[str, ...]) -> tuple[str, ...]:
+        if len(values) != len(set(values)):
+            raise ValueError("allowed executables must be unique")
+        for value in values:
+            if not IDENTIFIER.fullmatch(value):
+                raise ValueError(f"invalid allowed executable: {value!r}")
+        return values
+
     @model_validator(mode="after")
     def validate_provider(self) -> "SandboxProfile":
         if self.provider != "remote_http" and not self.image:
             raise ValueError("local sandbox profiles require a pinned image")
         if self.allow_net_raw and self.provider != "sandboxd":
             raise ValueError("NET_RAW is only supported by sandboxd profiles")
+        if self.allow_ptrace and self.provider != "sandboxd":
+            raise ValueError("SYS_PTRACE is only supported by sandboxd profiles")
         if self.network_mode == "target_allowlist" and self.provider != "sandboxd":
             raise ValueError("target allowlists require sandboxd")
         if self.network_mode != "public_http" and self.web_allow_hosts:
@@ -98,13 +113,16 @@ class SandboxHandle(BaseModel):
     instance_id: str
     task_id: str
     solver_id: str
+    solver_run_id: str
     profile_id: str
     provider: Literal["docker_sandbox", "sandboxd"]
     config_digest: str = Field(pattern=r"^[a-f0-9]{64}$")
+    image_digest: str = Field(pattern=r"^[a-f0-9]{64}$")
+    toolset_digest: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
     fencing_token: int = Field(ge=1)
     state: SandboxState = SandboxState.READY
 
-    @field_validator("instance_id", "task_id", "solver_id")
+    @field_validator("instance_id", "task_id", "solver_id", "solver_run_id")
     @classmethod
     def valid_identifier(cls, value: str) -> str:
         if not IDENTIFIER.fullmatch(value):

@@ -1,0 +1,16 @@
+{
+    "profile_id":  "ctf-web-v1",
+    "tools":  {
+                  "python3":  "image-managed",
+                  "curl":  "image-managed",
+                  "http":  "image-managed",
+                  "ffuf":  "image-managed",
+                  "feroxbuster":  "image-managed",
+                  "gobuster":  "image-managed",
+                  "nuclei":  "image-managed",
+                  "sqlmap":  "image-managed",
+                  "dalfox":  "image-managed",
+                  "jwt_tool":  "image-managed",
+                  "wafw00f":  "image-managed"
+              }
+}

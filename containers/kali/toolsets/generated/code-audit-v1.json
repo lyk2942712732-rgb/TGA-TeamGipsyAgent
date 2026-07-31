@@ -1,0 +1,13 @@
+{
+    "profile_id":  "code-audit-v1",
+    "tools":  {
+                  "python3":  "image-managed",
+                  "semgrep":  "image-managed",
+                  "codeql":  "image-managed",
+                  "bandit":  "image-managed",
+                  "gosec":  "image-managed",
+                  "eslint":  "image-managed",
+                  "trivy":  "image-managed",
+                  "syft":  "image-managed"
+              }
+}

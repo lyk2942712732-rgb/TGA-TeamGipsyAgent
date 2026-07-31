@@ -32,6 +32,23 @@ def process_spec(capability: str, arguments: dict[str, Any], timeout: int) -> Pr
     return adapter(arguments, timeout)
 
 
+def _sandbox_exec(arguments: dict[str, Any], timeout: int) -> ProcessSpec:
+    executable = str(arguments["executable"])
+    argv = tuple(str(item) for item in arguments.get("argv") or ())
+    for token in argv:
+        normalized = token.replace("\\", "/")
+        path = PurePosixPath(normalized)
+        if path.is_absolute() or PureWindowsPath(token).is_absolute() or ".." in path.parts:
+            raise ValueError(
+                "sandbox.exec argv paths must remain relative to the SolverRun workspace"
+            )
+    return ProcessSpec(
+        argv=(executable, *argv),
+        logical_workspace="solver",
+        timeout_seconds=min(int(arguments.get("timeout") or timeout), timeout),
+    )
+
+
 def _workspace_shell(arguments: dict[str, Any], timeout: int) -> ProcessSpec:
     command = str(arguments["command"])
     if any(value in command for value in ("\n", "\r", "\x00")):
@@ -386,6 +403,7 @@ def _network_target(value: str) -> str:
 
 
 ADAPTERS: dict[str, Adapter] = {
+    "sandbox.exec": _sandbox_exec,
     "workspace.shell": _workspace_shell,
     "workspace.python": _workspace_python,
     "workspace.write": _workspace_write,

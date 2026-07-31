@@ -28,7 +28,8 @@
                                   "workspace.write",
                                   "workspace.python",
                                   "workspace.shell",
-                                  "artifact.inspect"
+                                  "artifact.inspect",
+                                  "sandbox.exec"
                               ],
     "allowed_tool_groups":  [
                                 "control",
@@ -56,5 +57,7 @@
                            "max_artifacts":  96,
                            "deadline":  null
                        },
-    "completion_authority":  "worker_only"
+    "completion_authority":  "worker_only",
+    "sandbox_profile_id":  "ctf-pwn-v1",
+    "sandbox_required":  true
 }

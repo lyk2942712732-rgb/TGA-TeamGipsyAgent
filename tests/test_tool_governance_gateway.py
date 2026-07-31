@@ -64,7 +64,7 @@ def _solver(definition_id: str, *capabilities: str, profile: str = "test"):
     ), definition
 
 
-def _catalog(task: TGATask) -> RuntimeToolCatalog:
+def _catalog(task: TGATask, definition_id: str = "ctf-web-solver") -> RuntimeToolCatalog:
     registry = build_default_registry()
     tool_names = {
         f"tga_{item['name'].replace('.', '_')}": item["name"]
@@ -72,6 +72,7 @@ def _catalog(task: TGATask) -> RuntimeToolCatalog:
     }
     return RuntimeToolCatalog.from_runtime(
         task=task,
+        solver_definition=SolverDefinitionRegistry.builtin().require(definition_id),
         registry=registry,
         tool_names=tool_names,
         mcp_snapshot=SimpleNamespace(function_tools=lambda: [], routes={}),

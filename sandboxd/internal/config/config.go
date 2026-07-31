@@ -27,13 +27,16 @@ type Limits struct {
 }
 
 type Profile struct {
-	ID            string   `json:"id"`
-	Provider      string   `json:"provider"`
-	Image         string   `json:"image"`
-	NetworkMode   string   `json:"network_mode"`
-	WebAllowHosts []string `json:"web_allow_hosts"`
-	AllowNetRaw   bool     `json:"allow_net_raw"`
-	Limits        Limits   `json:"limits"`
+	ID                 string   `json:"id"`
+	Provider           string   `json:"provider"`
+	Image              string   `json:"image"`
+	NetworkMode        string   `json:"network_mode"`
+	WebAllowHosts      []string `json:"web_allow_hosts"`
+	AllowNetRaw        bool     `json:"allow_net_raw"`
+	AllowPtrace        bool     `json:"allow_ptrace"`
+	AllowedExecutables []string `json:"allowed_executables"`
+	ToolsetDigest      string   `json:"toolset_digest"`
+	Limits             Limits   `json:"limits"`
 }
 
 type Tool struct {
@@ -110,12 +113,28 @@ func Load(path string) (*Config, error) {
 			return nil, fmt.Errorf("invalid profile %q", key)
 		}
 		if profile.Provider == "sandboxd" {
-			if !pinnedImage.MatchString(profile.Image) || profile.NetworkMode != "target_allowlist" {
+			if !pinnedImage.MatchString(profile.Image) || (profile.NetworkMode != "none" && profile.NetworkMode != "target_allowlist") {
 				return nil, fmt.Errorf("sandboxd profile %q is not pinned or isolated", key)
+			}
+			if !regexp.MustCompile(`^[a-f0-9]{64}$`).MatchString(profile.ToolsetDigest) {
+				return nil, fmt.Errorf("sandboxd profile %q requires a toolset digest", key)
 			}
 		}
 		if profile.AllowNetRaw && profile.Provider != "sandboxd" {
 			return nil, fmt.Errorf("profile %q grants NET_RAW outside sandboxd", key)
+		}
+		if profile.AllowPtrace && profile.Provider != "sandboxd" {
+			return nil, fmt.Errorf("profile %q grants SYS_PTRACE outside sandboxd", key)
+		}
+		seenExecutables := map[string]struct{}{}
+		for _, executable := range profile.AllowedExecutables {
+			if !identifier.MatchString(executable) {
+				return nil, fmt.Errorf("profile %q has invalid allowed executable", key)
+			}
+			if _, exists := seenExecutables[executable]; exists {
+				return nil, fmt.Errorf("profile %q repeats an allowed executable", key)
+			}
+			seenExecutables[executable] = struct{}{}
 		}
 		if profile.Limits.TimeoutSeconds == 0 {
 			profile.Limits.TimeoutSeconds = 300

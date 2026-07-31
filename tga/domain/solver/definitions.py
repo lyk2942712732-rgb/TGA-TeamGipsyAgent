@@ -43,6 +43,10 @@ class SolverDefinition(BaseModel):
     required_skill_names: tuple[str, ...] = Field(default_factory=tuple, max_length=3)
     required_capabilities: tuple[str, ...] = Field(default_factory=tuple, max_length=64)
     allowed_tool_groups: tuple[ToolGroup, ...] = Field(default_factory=tuple, max_length=4)
+    sandbox_profile_id: str | None = Field(
+        default=None, pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$"
+    )
+    sandbox_required: bool = False
     tool_policy_profile: str = Field(min_length=1, max_length=128)
     accepted_intent_kinds: tuple[str, ...] = Field(min_length=1, max_length=64)
     output_contract: SolverOutputContract
@@ -67,6 +71,10 @@ class SolverDefinition(BaseModel):
             raise ValueError("Worker cannot own task completion authority")
         if self.completion_authority == "worker_only" and self.orchestration_role != "worker":
             raise ValueError("worker_only completion authority is valid only for workers")
+        if self.sandbox_required and not self.sandbox_profile_id:
+            raise ValueError("sandbox_required SolverDefinition must assign a sandbox profile")
+        if self.sandbox_profile_id and "execution" not in self.allowed_tool_groups:
+            raise ValueError("sandbox profile requires the execution tool group")
         return self
 
     def supports(self, *, mode: TaskMode, subtype: str | None = None) -> bool:
@@ -79,4 +87,3 @@ __all__ = [
     "CompletionAuthority", "OrchestrationRole", "SolverDefinition",
     "SolverOutputContract", "ToolGroup",
 ]
-

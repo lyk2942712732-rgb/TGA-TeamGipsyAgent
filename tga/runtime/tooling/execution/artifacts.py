@@ -26,7 +26,11 @@ class ArtifactIngestionService:
         artifact_ids = list(dict.fromkeys(result.artifact_ids))
         for produced in result.produced_files:
             path = Path(produced.path).resolve()
-            workspace_root = (Path(self.root).parent / "solvers" / request.solver_id).resolve()
+            workspace_root = (
+                Path(self.root).parent
+                / ("solver-runs" if request.solver_run_id else "solvers")
+                / (request.solver_run_id or request.solver_id)
+            ).resolve()
             try:
                 path.relative_to(workspace_root)
             except ValueError:
@@ -43,7 +47,7 @@ class ArtifactIngestionService:
                 suffix=path.suffix or ".bin",
                 identity_context=f"{request.action_id}:{path.relative_to(workspace_root).as_posix()}",
             )
-            self._register(artifact, request)
+            self._register(artifact, request, result.execution_metadata)
             artifact_ids.append(artifact.id)
 
         if request.backend in {"sandbox", "remote_mcp"}:
@@ -74,7 +78,7 @@ class ArtifactIngestionService:
                 suffix=".json",
                 identity_context=request.action_id,
             )
-            self._register(artifact, request)
+            self._register(artifact, request, result.execution_metadata)
             artifact_ids.insert(0, artifact.id)
 
         artifact_ids = list(dict.fromkeys(artifact_ids))
@@ -108,7 +112,13 @@ class ArtifactIngestionService:
         )
         return result.model_copy(update={"artifact_ids": artifact_ids})
 
-    def _register(self, artifact, request: AuthorizedExecutionRequest) -> None:
+    def _register(
+        self,
+        artifact,
+        request: AuthorizedExecutionRequest,
+        execution_metadata: dict | None = None,
+    ) -> None:
+        metadata = execution_metadata or {}
         record = ArtifactRecord.model_validate({
             **artifact.model_dump(mode="json"),
             "provenance": {
@@ -118,6 +128,8 @@ class ArtifactIngestionService:
                 "sandbox_config_digest": request.sandbox_config_digest,
                 "solver_run_id": request.solver_run_id,
                 "fencing_token": request.fencing_token,
+                "image_digest": metadata.get("image_digest"),
+                "toolset_digest": metadata.get("toolset_digest"),
             },
         })
         existing = self.store.get_artifact(record.id)

@@ -158,7 +158,7 @@ def _policy_decision(
         return PolicyDecision(allowed=True)
     if normalized == "workspace.write":
         return PolicyDecision(allowed=True)
-    if normalized in {"workspace.python", "workspace.shell", "workspace.binary", "process.execute"}:
+    if normalized in {"workspace.python", "workspace.shell", "workspace.binary", "process.execute", "sandbox.exec"}:
         if policy.local_compute.mode == "disabled":
             return deny("LOCAL_COMPUTE_DISABLED", "local compute is disabled", "local_compute.mode=isolated")
         if not sandboxed:

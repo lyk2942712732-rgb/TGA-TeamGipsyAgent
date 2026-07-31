@@ -1,0 +1,15 @@
+{
+    "profile_id":  "poc-reproduction-v1",
+    "tools":  {
+                  "python3":  "image-managed",
+                  "git":  "image-managed",
+                  "gcc":  "image-managed",
+                  "clang":  "image-managed",
+                  "make":  "image-managed",
+                  "cmake":  "image-managed",
+                  "gdb":  "image-managed",
+                  "curl":  "image-managed",
+                  "qemu-x86_64":  "image-managed",
+                  "patchelf":  "image-managed"
+              }
+}

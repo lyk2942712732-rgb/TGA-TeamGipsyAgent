@@ -9,12 +9,16 @@ on:
       - "tga/runtime/scheduler.py"
       - "apps/api/main.py"
       - "sandboxd/**"
+      - "containers/kali/**"
       - "config/sandbox.json"
       - "sandboxd/api/**"
       - "scripts/generate_sandbox_proto.py"
+      - "scripts/kali_build_matrix.py"
+      - "scripts/validate_kali_image.py"
       - "tests/test_capabilities.py"
       - "tests/test_nmap_mcp.py"
       - "tests/test_runtime_scheduler.py"
+      - "tests/test_kali_images.py"
   push:
     branches: [main]
 
@@ -59,39 +63,33 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
-      - name: Resolve immutable upstream images
-        id: bases
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Resolve immutable Kali base
+        id: base
         shell: bash
         run: |
           docker pull kalilinux/kali-rolling
-          docker pull docker.io/docker/sandbox-templates:shell-docker
           echo "kali=$(docker image inspect kalilinux/kali-rolling --format '{{index .RepoDigests 0}}')" >> "$GITHUB_OUTPUT"
-          echo "sbx=$(docker image inspect docker.io/docker/sandbox-templates:shell-docker --format '{{index .RepoDigests 0}}')" >> "$GITHUB_OUTPUT"
-      - name: Build sandbox images
+      - name: Build Solver images
         shell: bash
         run: |
-          for target in offline web network; do
+          docker build \
+            --build-arg KALI_BASE="${{ steps.base.outputs.kali }}" \
+            --tag tga-kali-base:pr containers/kali/base
+          while read -r solver profile image context; do
             docker build \
-              --build-arg KALI_BASE="${{ steps.bases.outputs.kali }}" \
-              --target "$target" \
-              --tag "tga-kali-$target:pr" \
-              --file sandboxd/Dockerfile sandboxd
-          done
-          docker build \
-            --build-arg KALI_BASE="${{ steps.bases.outputs.kali }}" \
-            --tag tga-nmap-mcp:pr \
-            --file sandboxd/images/nmap-mcp/Dockerfile sandboxd/images/nmap-mcp
-          docker build \
-            --build-arg SBX_BASE="${{ steps.bases.outputs.sbx }}" \
-            --tag tga-sbx-template:pr \
-            --file sandboxd/images/sbx-template/Dockerfile sandboxd/images/sbx-template
-      - name: Verify image users and package-manager cleanup
+              --build-arg BASE_IMAGE=tga-kali-base:pr \
+              --tag "$image:pr" \
+              "containers/kali/$context"
+          done < <(python scripts/kali_build_matrix.py)
+      - name: Validate Solver image contracts
         shell: bash
         run: |
-          test "$(docker image inspect tga-nmap-mcp:pr --format '{{.Config.User}}')" = "10001:10001"
-          for image in tga-kali-offline:pr tga-kali-web:pr tga-kali-network:pr tga-nmap-mcp:pr; do
-            test -z "$(docker run --rm --entrypoint sh "$image" -c 'find /var/lib/apt/lists -mindepth 1 -print -quit')"
-          done
+          while read -r solver profile image context; do
+            python scripts/validate_kali_image.py --image "$image:pr" --profile "$profile"
+          done < <(python scripts/kali_build_matrix.py)
       - uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
         with:
           version: v0.71.0
@@ -99,7 +97,11 @@ jobs:
       - name: Scan images and generate SBOMs
         shell: bash
         run: |
-          for image in tga-kali-offline:pr tga-kali-web:pr tga-kali-network:pr tga-nmap-mcp:pr tga-sbx-template:pr; do
+          images=(tga-kali-base:pr)
+          while read -r solver profile image context; do
+            images+=("$image:pr")
+          done < <(python scripts/kali_build_matrix.py)
+          for image in "${images[@]}"; do
             name="${image%%:*}"
             trivy image --exit-code 1 --ignore-unfixed --severity CRITICAL "$image"
             syft "$image" -o "spdx-json=$name.spdx.json"

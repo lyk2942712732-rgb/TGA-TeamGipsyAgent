@@ -435,6 +435,7 @@ def test_worker_submit_result_routes_through_gateway_without_legacy_execution(tm
         }
         catalog = RuntimeToolCatalog.from_runtime(
             task=task,
+            solver_definition=definition,
             registry=registry,
             tool_names=tool_names,
             mcp_snapshot=SimpleNamespace(function_tools=lambda: [], routes={}),
@@ -624,6 +625,7 @@ def test_worker_context_and_gateway_hide_unassigned_task_inputs(tmp_path: Path) 
         registry = build_default_registry()
         catalog = RuntimeToolCatalog.from_runtime(
             task=task,
+            solver_definition=definition,
             registry=registry,
             tool_names={
                 f"tga_{item['name'].replace('.', '_')}": item["name"]

@@ -40,6 +40,7 @@ class SandboxProvider(Protocol):
         *,
         task_id: str,
         solver_id: str,
+        solver_run_id: str,
         profile_id: str,
         fencing_token: int,
         idempotency_key: str,

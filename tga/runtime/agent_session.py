@@ -88,7 +88,10 @@ class AgentSessionRunner:
         self.solver_lease = solver_lease
         self.execution_context = execution_context
         self.workspace = SolverSessionState(
-            run_root=run_root, task_id=task.id, solver_id=self.solver_id
+            run_root=run_root,
+            task_id=task.id,
+            solver_id=self.solver_id,
+            solver_run_id=(execution_context.run_id if execution_context else None),
         ).workspace
         self.workspace.mkdir(parents=True, exist_ok=True)
         self.mcp_manager = mcp_manager or MCPManager(cache_path=run_root / "mcp-cache.json")
@@ -786,6 +789,7 @@ class AgentSessionRunner:
         self.retrieval_policy = self._retrieval_policy_for(solver)
         catalog = RuntimeToolCatalog.from_runtime(
             task=self.task,
+            solver_definition=definition,
             registry=self.registry,
             tool_names=self.tool_by_name,
             mcp_snapshot=self.mcp_snapshot,

@@ -175,7 +175,7 @@ class Manager:
                 )
             current = store.get_session(task.id)
             if current is not None and current.status in {"completed", "cancelled", "failed"}:
-                self._release_existing_sandbox(store, task.id)
+                self._release_sandboxes(store, task.id)
             return TaskRuntimeService(run_root=self.run_root).runtime_snapshot(task.id)
         finally:
             if should_close:
@@ -216,6 +216,7 @@ class Manager:
 
         def execute(run, context) -> SolverRunCompletion:
             worker_store = EvidenceStore(database_path)
+            retain_sandbox = False
             try:
                 context.assert_active()
                 executor = self.executor or self._default_executor(
@@ -239,6 +240,7 @@ class Manager:
                 )
                 context.assert_active()
                 outcome = runner.run()
+                retain_sandbox = outcome.status == "awaiting_approval"
                 context.assert_active()
                 state = {
                     "completed": "completed",
@@ -253,6 +255,10 @@ class Manager:
                     value=outcome,
                 )
             finally:
+                if not retain_sandbox:
+                    self._release_sandboxes(
+                        worker_store, task.id, solver_run_id=run.id
+                    )
                 worker_store.close()
 
         return SolverRunPool(
@@ -345,7 +351,7 @@ class Manager:
                             solver_id=str(pending.get("solver_id") or "") or None,
                         )
                     session = lifecycle.cancel(reason="user_cancelled")
-                self._release_existing_sandbox(store, task_id)
+                self._release_sandboxes(store, task_id)
             elif action in {"approve_action", "reject_action"} and action_id:
                 governance = PersistenceBundle(store).tool_governance
                 pending = governance.get_action(action_id)
@@ -680,14 +686,22 @@ class Manager:
             execution_context=execution_context,
         )
 
-    def _release_existing_sandbox(self, store: EvidenceStore, task_id: str) -> None:
+    def _release_sandboxes(
+        self,
+        store: EvidenceStore,
+        task_id: str,
+        *,
+        solver_run_id: str | None = None,
+    ) -> None:
         from tga.sandbox import DockerSandboxProvider, SandboxManager, SandboxdProvider, load_sandbox_config
         from tga.sandbox.repository import SandboxInstanceRepository
 
         config, _ = load_sandbox_config()
         repository = SandboxInstanceRepository(store)
-        handle = repository.get_active(task_id)
-        if handle is None:
+        handles = repository.list_active(
+            task_id=task_id, solver_run_id=solver_run_id
+        )
+        if not handles:
             return
         manager = SandboxManager(
             config=config,
@@ -698,7 +712,8 @@ class Manager:
             repository=repository,
             event_repository=store,
         )
-        manager.release(handle)
+        for handle in handles:
+            manager.release(handle)
 
     def _open_mcp_sandbox_process(self, task: TGATask, server, workspace: Path | None):
         from tga.sandbox import DockerSandboxProvider, SandboxManager, SandboxdProvider, load_sandbox_config
@@ -715,11 +730,25 @@ class Manager:
             if execution_context is not None:
                 execution_context.assert_active()
                 fencing = execution_context.fencing_token
+                solver_run_id = execution_context.run_id
             else:
-                fencing = (
-                    PersistenceBundle(store).solvers.lease_fencing_token(solver_id)
-                    or 1
+                repositories = PersistenceBundle(store)
+                active = next(
+                    (
+                        run
+                        for run in reversed(repositories.orchestration.list_solver_runs(task.id))
+                        if run.solver_id == solver_id
+                        and run.state in {"leased", "running", "waiting_approval"}
+                    ),
+                    None,
                 )
+                if active is None:
+                    raise SandboxError(
+                        "sandbox MCP requires an active SolverRun",
+                        code="SOLVER_RUN_ID_REQUIRED",
+                    )
+                fencing = active.fencing_token or 1
+                solver_run_id = active.id
             config, _ = load_sandbox_config()
             manager = SandboxManager(
                 config=config,
@@ -736,6 +765,7 @@ class Manager:
             handle = manager.acquire(
                 task_id=task.id,
                 solver_id=solver_id,
+                solver_run_id=solver_run_id,
                 profile_id=profile_id,
                 fencing_token=fencing,
                 idempotency_key=f"mcp:{task.id}:{solver_id}:{profile_id}",

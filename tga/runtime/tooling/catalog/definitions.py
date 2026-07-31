@@ -41,7 +41,9 @@ class RuntimeToolCatalog(BaseModel):
         )
 
     @classmethod
-    def from_runtime(cls, *, task: TGATask, registry, tool_names, mcp_snapshot):
+    def from_runtime(
+        cls, *, task: TGATask, solver_definition, registry, tool_names, mcp_snapshot
+    ):
         values: list[ToolCatalogEntry] = []
         snapshot = {item["name"]: item for item in registry.snapshot()["capabilities"]}
         specialty_map = {
@@ -73,7 +75,9 @@ class RuntimeToolCatalog(BaseModel):
                 risk=item.get("risk") or "active",
                 specialties=specialty_map.get(capability, ()),
                 execution_profile_id=(
-                    "default-kali" if tool_class == "execution" else None
+                    solver_definition.sandbox_profile_id
+                    if tool_class == "execution"
+                    else None
                 ),
                 max_read_chars=262_144 if tool_class == "resource_read" else None,
             ))

@@ -214,6 +214,9 @@ apps/web/dist/
 # Ruff stuff:
 .ruff_cache/
 
+# Local Go build cache used by sandboxd verification
+sandboxd/.gocache-codex/
+
 # PyPI configuration file
 .pypirc
 

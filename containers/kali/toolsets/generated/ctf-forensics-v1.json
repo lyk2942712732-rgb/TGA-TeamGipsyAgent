@@ -1,0 +1,19 @@
+{
+    "profile_id":  "ctf-forensics-v1",
+    "tools":  {
+                  "python3":  "image-managed",
+                  "binwalk":  "image-managed",
+                  "foremost":  "image-managed",
+                  "bulk_extractor":  "image-managed",
+                  "exiftool":  "image-managed",
+                  "steghide":  "image-managed",
+                  "zsteg":  "image-managed",
+                  "pngcheck":  "image-managed",
+                  "tshark":  "image-managed",
+                  "vol.py":  "image-managed",
+                  "pdf-parser":  "image-managed",
+                  "pdfid":  "image-managed",
+                  "olevba":  "image-managed",
+                  "scalpel":  "image-managed"
+              }
+}

@@ -92,6 +92,31 @@ class WorkspaceShellArguments(StrictArguments):
     timeout: int = Field(default=60, ge=1, le=300)
 
 
+class SandboxNetworkTarget(StrictArguments):
+    host: str = Field(min_length=1, max_length=253)
+    ports: list[int] = Field(default_factory=list, max_length=128)
+
+
+class SandboxExecArguments(StrictArguments):
+    executable: str = Field(
+        min_length=1,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$",
+    )
+    argv: list[str] = Field(default_factory=list, max_length=255)
+    timeout: int = Field(default=120, ge=1, le=7200)
+    network_targets: list[SandboxNetworkTarget] = Field(default_factory=list, max_length=64)
+
+    @model_validator(mode="after")
+    def validate_values(self) -> "SandboxExecArguments":
+        if any("\x00" in value for value in self.argv):
+            raise ValueError("sandbox.exec argv may not contain NUL")
+        for target in self.network_targets:
+            if not target.ports or any(port < 1 or port > 65535 for port in target.ports):
+                raise ValueError("sandbox.exec network target requires valid ports")
+        return self
+
+
 class ArtifactInspectArguments(StrictArguments):
     artifact_id: str = Field(pattern=r"^artifact_[a-f0-9]{12}$")
     query: str | None = Field(default=None, max_length=256)

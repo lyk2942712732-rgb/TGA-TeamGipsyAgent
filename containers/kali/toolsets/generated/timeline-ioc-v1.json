@@ -1,0 +1,14 @@
+{
+    "profile_id":  "timeline-ioc-v1",
+    "tools":  {
+                  "python3":  "image-managed",
+                  "log2timeline.py":  "image-managed",
+                  "psort.py":  "image-managed",
+                  "chainsaw":  "image-managed",
+                  "hayabusa":  "image-managed",
+                  "sigma":  "image-managed",
+                  "evtx_dump":  "image-managed",
+                  "jq":  "image-managed",
+                  "rg":  "image-managed"
+              }
+}

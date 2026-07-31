@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from types import SimpleNamespace
 from typing import Any
 
 from tga.contracts import TGATask
@@ -107,6 +108,7 @@ class ProviderCapabilityProbe:
         }
         return ToolDefinitionBuilder(
             task=task,
+            solver_definition=SimpleNamespace(sandbox_profile_id=None),
             registry=registry,
             tool_names=names,
             mcp_snapshot=MCPCatalogSnapshot(version="provider_probe"),

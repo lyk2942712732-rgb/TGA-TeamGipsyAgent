@@ -8,9 +8,10 @@ import json
 class ToolDefinitionBuilder:
     """Generate provider schemas from the immutable SolverToolManifest."""
 
-    def __init__(self, *, manifest=None, task=None, registry=None, tool_names=None, mcp_snapshot=None):
+    def __init__(self, *, manifest=None, task=None, solver_definition=None, registry=None, tool_names=None, mcp_snapshot=None):
         self.manifest = manifest
         self.task = task
+        self.solver_definition = solver_definition
         self.registry = registry
         self.tool_names = tool_names or {}
         self.mcp_snapshot = mcp_snapshot
@@ -35,12 +36,13 @@ class ToolDefinitionBuilder:
         return tools
 
     def _probe_entries(self):
-        if self.task is None or self.registry is None or self.mcp_snapshot is None:
+        if self.task is None or self.solver_definition is None or self.registry is None or self.mcp_snapshot is None:
             raise ValueError("manifest is required for runtime tool definitions")
         from tga.runtime.tooling.catalog import RuntimeToolCatalog
 
         return RuntimeToolCatalog.from_runtime(
             task=self.task,
+            solver_definition=self.solver_definition,
             registry=self.registry,
             tool_names=self.tool_names,
             mcp_snapshot=self.mcp_snapshot,

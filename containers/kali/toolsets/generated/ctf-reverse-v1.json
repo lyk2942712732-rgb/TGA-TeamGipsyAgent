@@ -1,0 +1,16 @@
+{
+    "profile_id":  "ctf-reverse-v1",
+    "tools":  {
+                  "python3":  "image-managed",
+                  "analyzeHeadless":  "image-managed",
+                  "radare2":  "image-managed",
+                  "rizin":  "image-managed",
+                  "capa":  "image-managed",
+                  "jadx":  "image-managed",
+                  "apktool":  "image-managed",
+                  "objdump":  "image-managed",
+                  "readelf":  "image-managed",
+                  "yara":  "image-managed",
+                  "binwalk":  "image-managed"
+              }
+}

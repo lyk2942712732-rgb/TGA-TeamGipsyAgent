@@ -1,13 +1,19 @@
 package runtime
 
 import (
+	"archive/tar"
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -26,6 +32,7 @@ const (
 	LabelManaged = "tga.sandbox.managed"
 	LabelTask    = "tga.sandbox.task"
 	LabelSolver  = "tga.sandbox.solver"
+	LabelRun     = "tga.sandbox.solver-run"
 	LabelProfile = "tga.sandbox.profile"
 	LabelDigest  = "tga.sandbox.config"
 	LabelFencing = "tga.sandbox.fencing"
@@ -36,6 +43,7 @@ type Instance struct {
 	ID           string
 	TaskID       string
 	SolverID     string
+	SolverRunID  string
 	ProfileID    string
 	ConfigDigest string
 	FencingToken uint64
@@ -105,11 +113,11 @@ func (r *Runtime) Close() error { return r.docker.Close() }
 
 func (r *Runtime) Acquire(
 	ctx context.Context,
-	taskID, solverID, profileID, digest string,
+	taskID, solverID, solverRunID, profileID, digest string,
 	fencing uint64,
 ) (Instance, bool, error) {
-	if !config.ValidIdentifier(taskID) || !config.ValidIdentifier(solverID) {
-		return Instance{}, false, errors.New("invalid task or solver id")
+	if !config.ValidIdentifier(taskID) || !config.ValidIdentifier(solverID) || !config.ValidIdentifier(solverRunID) {
+		return Instance{}, false, errors.New("invalid task, solver, or SolverRun id")
 	}
 	profile, err := r.config.Profile(profileID)
 	if err != nil {
@@ -120,29 +128,53 @@ func (r *Runtime) Acquire(
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	existing, err := r.byTask(ctx, taskID)
+	existing, err := r.bySolverRun(ctx, taskID, solverID, solverRunID)
 	if err != nil {
 		return Instance{}, false, err
 	}
 	if existing.ID != "" {
 		if existing.ConfigDigest != digest || existing.ProfileID != profileID {
-			return Instance{}, false, errors.New("active task sandbox conflicts with request")
+			return Instance{}, false, errors.New("active SolverRun sandbox conflicts with request")
 		}
 		if fencing < existing.FencingToken {
 			return Instance{}, false, errors.New("stale fencing token")
 		}
+		if err := r.writeFencingToken(taskID, solverRunID, fencing); err != nil {
+			return Instance{}, false, fmt.Errorf("persist fencing token: %w", err)
+		}
+		existing.FencingToken = fencing
 		return existing, true, nil
 	}
 	workspace, err := r.config.Workspace(taskID)
 	if err != nil {
 		return Instance{}, false, err
 	}
-	if err := os.MkdirAll(workspace, 0o750); err != nil {
+	runWorkspace := filepath.Join(workspace, "solver-runs", solverRunID)
+	for _, path := range []string{workspace, filepath.Join(workspace, "solver-runs")} {
+		if err := os.MkdirAll(path, 0o750); err != nil {
+			return Instance{}, false, err
+		}
+	}
+	for _, path := range []string{filepath.Join(workspace, "inputs"), filepath.Join(workspace, "shared")} {
+		if err := os.MkdirAll(path, 0o755); err != nil {
+			return Instance{}, false, err
+		}
+		if err := os.Chmod(path, 0o755); err != nil {
+			return Instance{}, false, err
+		}
+	}
+	if err := os.Chmod(filepath.Join(workspace, "solver-runs"), 0o711); err != nil {
 		return Instance{}, false, err
 	}
-	labels := labels(taskID, solverID, profileID, digest, fencing)
+	if err := os.MkdirAll(runWorkspace, 0o750); err != nil {
+		return Instance{}, false, err
+	}
+	if err := prepareRunWorkspace(runWorkspace); err != nil {
+		return Instance{}, false, err
+	}
+	labels := labels(taskID, solverID, solverRunID, profileID, digest, fencing)
 	labels[LabelKind] = "sandbox"
-	networkName, bridgeName := taskNetwork(taskID)
+	networkName, bridgeName := runNetwork(taskID, solverRunID)
 	networkCreated, err := r.docker.NetworkCreate(ctx, networkName, client.NetworkCreateOptions{
 		Driver:  "bridge",
 		Options: map[string]string{"com.docker.network.bridge.name": bridgeName},
@@ -154,6 +186,9 @@ func (r *Runtime) Acquire(
 	caps := []string{}
 	if profile.AllowNetRaw {
 		caps = append(caps, "NET_RAW")
+	}
+	if profile.AllowPtrace {
+		caps = append(caps, "SYS_PTRACE")
 	}
 	memory := profile.Limits.MemoryBytes
 	if memory == 0 {
@@ -187,15 +222,17 @@ func (r *Runtime) Acquire(
 				NanoCPUs:  cpu,
 				PidsLimit: &pids,
 			},
-			Mounts: []mount.Mount{{
-				Type: mount.TypeBind, Source: workspace, Target: "/workspace",
-			}},
+			Mounts: []mount.Mount{
+				{Type: mount.TypeBind, Source: runWorkspace, Target: "/workspace/solver"},
+				{Type: mount.TypeBind, Source: filepath.Join(workspace, "inputs"), Target: "/workspace/inputs", ReadOnly: true},
+				{Type: mount.TypeBind, Source: filepath.Join(workspace, "shared"), Target: "/workspace/shared", ReadOnly: true},
+			},
 			Tmpfs: map[string]string{"/tmp": "rw,noexec,nosuid,size=67108864,mode=1777"},
 		},
 		NetworkingConfig: &network.NetworkingConfig{EndpointsConfig: map[string]*network.EndpointSettings{
 			networkName: {},
 		}},
-		Name: "tga-" + taskID,
+		Name: containerName(taskID, solverRunID),
 	})
 	if err != nil {
 		_, _ = r.docker.NetworkRemove(context.Background(), networkCreated.ID, client.NetworkRemoveOptions{})
@@ -206,10 +243,114 @@ func (r *Runtime) Acquire(
 		_, _ = r.docker.NetworkRemove(context.Background(), networkCreated.ID, client.NetworkRemoveOptions{})
 		return Instance{}, false, err
 	}
+	if err := r.verifyToolset(ctx, created.ID, profile); err != nil {
+		_, _ = r.docker.ContainerRemove(context.Background(), created.ID, client.ContainerRemoveOptions{Force: true})
+		_, _ = r.docker.NetworkRemove(context.Background(), networkCreated.ID, client.NetworkRemoveOptions{})
+		return Instance{}, false, err
+	}
+	if err := r.writeFencingToken(taskID, solverRunID, fencing); err != nil {
+		_, _ = r.docker.ContainerRemove(context.Background(), created.ID, client.ContainerRemoveOptions{Force: true})
+		_, _ = r.docker.NetworkRemove(context.Background(), networkCreated.ID, client.NetworkRemoveOptions{})
+		return Instance{}, false, fmt.Errorf("persist fencing token: %w", err)
+	}
 	return Instance{
-		ID: created.ID, TaskID: taskID, SolverID: solverID, ProfileID: profileID,
+		ID: created.ID, TaskID: taskID, SolverID: solverID, SolverRunID: solverRunID, ProfileID: profileID,
 		ConfigDigest: digest, FencingToken: fencing, CreatedAt: time.Now().UTC().Format(time.RFC3339Nano),
 	}, false, nil
+}
+
+type toolsetManifest struct {
+	ProfileID string            `json:"profile_id"`
+	Tools     map[string]string `json:"tools"`
+}
+
+func (r *Runtime) verifyToolset(ctx context.Context, instanceID string, profile config.Profile) error {
+	result, err := r.docker.CopyFromContainer(ctx, instanceID, client.CopyFromContainerOptions{
+		SourcePath: "/opt/tga/toolset.json",
+	})
+	if err != nil {
+		return fmt.Errorf("read image toolset: %w", err)
+	}
+	defer result.Content.Close()
+	reader := tar.NewReader(result.Content)
+	if _, err := reader.Next(); err != nil {
+		return fmt.Errorf("read image toolset archive: %w", err)
+	}
+	raw, err := io.ReadAll(io.LimitReader(reader, 1<<20))
+	if err != nil {
+		return fmt.Errorf("read image toolset content: %w", err)
+	}
+	if err := validateToolset(raw, profile); err != nil {
+		return err
+	}
+	return r.verifyExecutables(ctx, instanceID, profile.AllowedExecutables)
+}
+
+func (r *Runtime) verifyExecutables(ctx context.Context, instanceID string, executables []string) error {
+	payload, err := json.Marshal(executables)
+	if err != nil {
+		return err
+	}
+	const script = `import json, shutil, sys
+missing = [name for name in json.loads(sys.argv[1]) if shutil.which(name) is None]
+if missing:
+    print("missing executables: " + ", ".join(missing), file=sys.stderr)
+    raise SystemExit(1)`
+	response, err := r.docker.ExecCreate(ctx, instanceID, client.ExecCreateOptions{
+		Cmd:          []string{"/usr/bin/python3", "-I", "-c", script, string(payload)},
+		AttachStdout: true,
+		AttachStderr: true,
+	})
+	if err != nil {
+		return fmt.Errorf("create image executable verification: %w", err)
+	}
+	attached, err := r.docker.ExecAttach(ctx, response.ID, client.ExecAttachOptions{})
+	if err != nil {
+		return fmt.Errorf("attach image executable verification: %w", err)
+	}
+	defer attached.Close()
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	if _, err := stdcopy.StdCopy(&stdout, &stderr, attached.Reader); err != nil && !errors.Is(err, io.EOF) {
+		return fmt.Errorf("read image executable verification: %w", err)
+	}
+	inspected, err := r.docker.ExecInspect(ctx, response.ID, client.ExecInspectOptions{})
+	if err != nil {
+		return fmt.Errorf("inspect image executable verification: %w", err)
+	}
+	if inspected.ExitCode != 0 {
+		detail := strings.TrimSpace(stderr.String())
+		if detail == "" {
+			detail = strings.TrimSpace(stdout.String())
+		}
+		return fmt.Errorf("image executable verification failed: %s", detail)
+	}
+	return nil
+}
+
+func validateToolset(raw []byte, profile config.Profile) error {
+	sum := sha256.Sum256(raw)
+	if hex.EncodeToString(sum[:]) != profile.ToolsetDigest {
+		return errors.New("image toolset digest does not match sandbox profile")
+	}
+	var manifest toolsetManifest
+	decoder := json.NewDecoder(strings.NewReader(string(raw)))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&manifest); err != nil {
+		return fmt.Errorf("decode image toolset: %w", err)
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return errors.New("image toolset must contain exactly one JSON object")
+	}
+	if manifest.ProfileID != profile.ID {
+		return errors.New("image toolset profile id does not match sandbox profile")
+	}
+	for _, executable := range profile.AllowedExecutables {
+		if _, ok := manifest.Tools[executable]; !ok {
+			return fmt.Errorf("image toolset is missing allowed executable %q", executable)
+		}
+	}
+	return nil
 }
 
 func (r *Runtime) Exec(
@@ -398,8 +539,8 @@ func (r *Runtime) openToolProcess(
 	if profile.AllowNetRaw {
 		caps = append(caps, "NET_RAW")
 	}
-	networkName, _ := taskNetwork(instance.TaskID)
-	toolLabels := labels(instance.TaskID, spec.SolverID, instance.ProfileID, instance.ConfigDigest, fencing)
+	networkName, _ := runNetwork(instance.TaskID, instance.SolverRunID)
+	toolLabels := labels(instance.TaskID, spec.SolverID, instance.SolverRunID, instance.ProfileID, instance.ConfigDigest, fencing)
 	toolLabels[LabelKind] = "tool"
 	created, err := r.docker.ContainerCreate(ctx, client.ContainerCreateOptions{
 		Config: &container.Config{
@@ -426,9 +567,11 @@ func (r *Runtime) openToolProcess(
 				NanoCPUs:  int64(profile.Limits.CPUCount * 1_000_000_000),
 				PidsLimit: &profile.Limits.PidsLimit,
 			},
-			Mounts: []mount.Mount{{
-				Type: mount.TypeBind, Source: root, Target: "/workspace",
-			}},
+			Mounts: []mount.Mount{
+				{Type: mount.TypeBind, Source: filepath.Join(root, "solver-runs", instance.SolverRunID), Target: "/workspace/solver"},
+				{Type: mount.TypeBind, Source: filepath.Join(root, "inputs"), Target: "/workspace/inputs", ReadOnly: true},
+				{Type: mount.TypeBind, Source: filepath.Join(root, "shared"), Target: "/workspace/shared", ReadOnly: true},
+			},
 			Tmpfs: map[string]string{"/tmp": "rw,noexec,nosuid,size=67108864,mode=1777"},
 		},
 		NetworkingConfig: &network.NetworkingConfig{EndpointsConfig: map[string]*network.EndpointSettings{
@@ -549,7 +692,11 @@ func (r *Runtime) Inspect(ctx context.Context, instanceID string, fencing uint64
 	if err != nil {
 		return Instance{}, 0, err
 	}
-	return instanceFromLabels(info.Container.ID, info.Container.Config.Labels, info.Container.Created), 0, nil
+	instance := instanceFromLabels(info.Container.ID, info.Container.Config.Labels, info.Container.Created)
+	if current, err := r.readFencingToken(instance.TaskID, instance.SolverRunID); err == nil {
+		instance.FencingToken = current
+	}
+	return instance, 0, nil
 }
 
 func (r *Runtime) Destroy(ctx context.Context, instanceID string, fencing uint64) error {
@@ -563,13 +710,16 @@ func (r *Runtime) Destroy(ctx context.Context, instanceID string, fencing uint64
 	if err != nil {
 		return err
 	}
-	if failures := r.removeTaskTools(ctx, instance.TaskID); len(failures) > 0 {
+	if failures := r.removeRunTools(ctx, instance.TaskID, instance.SolverRunID); len(failures) > 0 {
 		return failures[0]
 	}
 	if _, err := r.docker.ContainerRemove(ctx, instanceID, client.ContainerRemoveOptions{Force: true, RemoveVolumes: true}); err != nil {
 		return err
 	}
-	name, _ := taskNetwork(instance.TaskID)
+	if err := r.removeFencingToken(instance.TaskID, instance.SolverRunID); err != nil {
+		return err
+	}
+	name, _ := runNetwork(instance.TaskID, instance.SolverRunID)
 	_, err = r.docker.NetworkRemove(ctx, name, client.NetworkRemoveOptions{})
 	return err
 }
@@ -606,7 +756,10 @@ func (r *Runtime) Reconcile(ctx context.Context, valid map[string]struct{}, befo
 		if _, err := r.docker.ContainerRemove(ctx, value.ID, client.ContainerRemoveOptions{Force: true, RemoveVolumes: true}); err != nil {
 			failures = append(failures, err)
 		} else {
-			networkName, _ := taskNetwork(instance.TaskID)
+			if err := r.removeFencingToken(instance.TaskID, instance.SolverRunID); err != nil {
+				failures = append(failures, err)
+			}
+			networkName, _ := runNetwork(instance.TaskID, instance.SolverRunID)
 			if _, err := r.docker.NetworkRemove(ctx, networkName, client.NetworkRemoveOptions{}); err != nil {
 				failures = append(failures, err)
 			}
@@ -632,20 +785,26 @@ func (r *Runtime) Health(ctx context.Context) (HealthInfo, error) {
 	}, nil
 }
 
-func (r *Runtime) byTask(ctx context.Context, taskID string) (Instance, error) {
+func (r *Runtime) bySolverRun(ctx context.Context, taskID, solverID, solverRunID string) (Instance, error) {
 	args := client.Filters{}.
 		Add("label", LabelManaged+"=true").
 		Add("label", LabelTask+"="+taskID).
+		Add("label", LabelSolver+"="+solverID).
+		Add("label", LabelRun+"="+solverRunID).
 		Add("label", LabelKind+"=sandbox")
 	listed, err := r.docker.ContainerList(ctx, client.ContainerListOptions{All: true, Filters: args})
 	if err != nil || len(listed.Items) == 0 {
 		return Instance{}, err
 	}
 	if len(listed.Items) > 1 {
-		return Instance{}, errors.New("multiple active sandboxes for task")
+		return Instance{}, errors.New("multiple active sandboxes for SolverRun")
 	}
 	value := listed.Items[0]
-	return instanceFromLabels(value.ID, value.Labels, time.Unix(value.Created, 0).UTC().Format(time.RFC3339Nano)), nil
+	instance := instanceFromLabels(value.ID, value.Labels, time.Unix(value.Created, 0).UTC().Format(time.RFC3339Nano))
+	if current, err := r.readFencingToken(taskID, solverRunID); err == nil {
+		instance.FencingToken = current
+	}
+	return instance, nil
 }
 
 func (r *Runtime) validate(ctx context.Context, id string, fencing uint64) error {
@@ -658,16 +817,85 @@ func (r *Runtime) validate(ctx context.Context, id string, fencing uint64) error
 		info.Container.Config.Labels[LabelKind] != "sandbox" {
 		return errors.New("container is not managed by this configuration")
 	}
-	if fencing != instance.FencingToken {
+	currentFencing, err := r.readFencingToken(instance.TaskID, instance.SolverRunID)
+	if err != nil {
+		return fmt.Errorf("read fencing token: %w", err)
+	}
+	if fencing != currentFencing {
 		return errors.New("stale fencing token")
 	}
 	return nil
 }
 
-func (r *Runtime) removeTaskTools(ctx context.Context, taskID string) []error {
+func (r *Runtime) fencingPath(taskID, solverRunID string) (string, error) {
+	workspace, err := r.config.Workspace(taskID)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(workspace, ".fencing", solverRunID+".token"), nil
+}
+
+func (r *Runtime) writeFencingToken(taskID, solverRunID string, fencing uint64) error {
+	path, err := r.fencingPath(taskID, solverRunID)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+		return err
+	}
+	temporary := path + ".tmp-" + strconv.FormatUint(fencing, 10)
+	if err := os.WriteFile(temporary, []byte(strconv.FormatUint(fencing, 10)+"\n"), 0o600); err != nil {
+		return err
+	}
+	if err := os.Rename(temporary, path); err != nil {
+		_ = os.Remove(temporary)
+		return err
+	}
+	return nil
+}
+
+func prepareRunWorkspace(path string) error {
+	if err := os.Chmod(path, 0o750); err != nil {
+		return err
+	}
+	if err := os.Chown(path, 10001, 10001); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (r *Runtime) readFencingToken(taskID, solverRunID string) (uint64, error) {
+	path, err := r.fencingPath(taskID, solverRunID)
+	if err != nil {
+		return 0, err
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return 0, err
+	}
+	value, err := strconv.ParseUint(strings.TrimSpace(string(raw)), 10, 64)
+	if err != nil || value == 0 {
+		return 0, errors.New("invalid fencing token")
+	}
+	return value, nil
+}
+
+func (r *Runtime) removeFencingToken(taskID, solverRunID string) error {
+	path, err := r.fencingPath(taskID, solverRunID)
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
+}
+
+func (r *Runtime) removeRunTools(ctx context.Context, taskID, solverRunID string) []error {
 	args := client.Filters{}.
 		Add("label", LabelManaged+"=true").
 		Add("label", LabelTask+"="+taskID).
+		Add("label", LabelRun+"="+solverRunID).
 		Add("label", LabelKind+"=tool")
 	listed, err := r.docker.ContainerList(ctx, client.ContainerListOptions{All: true, Filters: args})
 	if err != nil {
@@ -682,9 +910,10 @@ func (r *Runtime) removeTaskTools(ctx context.Context, taskID string) []error {
 	return failures
 }
 
-func labels(task, solver, profile, digest string, fencing uint64) map[string]string {
+func labels(task, solver, solverRun, profile, digest string, fencing uint64) map[string]string {
 	return map[string]string{
 		LabelManaged: "true", LabelTask: task, LabelSolver: solver,
+		LabelRun:     solverRun,
 		LabelProfile: profile, LabelDigest: digest, LabelFencing: fmt.Sprint(fencing),
 	}
 }
@@ -692,7 +921,7 @@ func labels(task, solver, profile, digest string, fencing uint64) map[string]str
 func instanceFromLabels(id string, values map[string]string, created string) Instance {
 	var fencing uint64
 	_, _ = fmt.Sscan(values[LabelFencing], &fencing)
-	return Instance{ID: id, TaskID: values[LabelTask], SolverID: values[LabelSolver],
+	return Instance{ID: id, TaskID: values[LabelTask], SolverID: values[LabelSolver], SolverRunID: values[LabelRun],
 		ProfileID: values[LabelProfile], ConfigDigest: values[LabelDigest],
 		FencingToken: fencing, CreatedAt: created}
 }
@@ -719,7 +948,7 @@ func workspace(logical, solverID string) string {
 	case "task_shared":
 		return "/workspace/shared"
 	default:
-		return "/workspace/solvers/" + solverID
+		return "/workspace/solver"
 	}
 }
 
@@ -732,7 +961,7 @@ func (r *Runtime) NetworkPolicyContext(
 	if err != nil {
 		return "", nil, err
 	}
-	networkName, bridge := taskNetwork(instance.TaskID)
+	networkName, bridge := runNetwork(instance.TaskID, instance.SolverRunID)
 	inspected, err := r.docker.NetworkInspect(ctx, networkName, client.NetworkInspectOptions{})
 	if err != nil {
 		return "", nil, fmt.Errorf("inspect task network: %w", err)
@@ -749,10 +978,15 @@ func (r *Runtime) NetworkPolicyContext(
 	return bridge, gateways, nil
 }
 
-func taskNetwork(taskID string) (string, string) {
-	sum := sha256.Sum256([]byte(taskID))
+func runNetwork(taskID, solverRunID string) (string, string) {
+	sum := sha256.Sum256([]byte(taskID + "\x00" + solverRunID))
 	suffix := fmt.Sprintf("%x", sum[:6])
 	return "tga-net-" + suffix, "tga" + suffix
+}
+
+func containerName(taskID, solverRunID string) string {
+	sum := sha256.Sum256([]byte(taskID + "\x00" + solverRunID))
+	return fmt.Sprintf("tga-%x", sum[:12])
 }
 
 type frameWriter struct{ write func([]byte) error }

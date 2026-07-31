@@ -1,4 +1,4 @@
-"""SQLite persistence for task-scoped sandbox desired state."""
+"""SQLite persistence for SolverRun-scoped sandbox desired state."""
 
 from __future__ import annotations
 
@@ -13,21 +13,38 @@ from tga.sandbox.models import SandboxHandle, SandboxState
 class SandboxInstanceRepository:
     database: object
 
-    def get_active(self, task_id: str) -> SandboxHandle | None:
+    def get_active(
+        self, *, task_id: str, solver_id: str, solver_run_id: str
+    ) -> SandboxHandle | None:
         row = self.database.conn.execute(
-            "SELECT * FROM sandbox_instances WHERE task_id=? "
-            "AND state IN ('acquiring','ready','released') ORDER BY created_at DESC LIMIT 1",
-            (task_id,),
+            "SELECT * FROM sandbox_instances WHERE task_id=? AND solver_id=? "
+            "AND solver_run_id=? AND state IN ('acquiring','ready') "
+            "ORDER BY created_at DESC LIMIT 1",
+            (task_id, solver_id, solver_run_id),
         ).fetchone()
         return self._handle(row) if row else None
+
+    def list_active(
+        self, *, task_id: str, solver_run_id: str | None = None
+    ) -> tuple[SandboxHandle, ...]:
+        sql = (
+            "SELECT * FROM sandbox_instances WHERE task_id=? "
+            "AND state IN ('acquiring','ready')"
+        )
+        params: tuple[str, ...] = (task_id,)
+        if solver_run_id is not None:
+            sql += " AND solver_run_id=?"
+            params += (solver_run_id,)
+        rows = self.database.conn.execute(sql + " ORDER BY created_at", params).fetchall()
+        return tuple(self._handle(row) for row in rows)
 
     def put(self, handle: SandboxHandle) -> None:
         now = utc_now()
         self.database.conn.execute(
             "INSERT INTO sandbox_instances("
-            "instance_id,task_id,solver_id,profile_id,provider,config_digest,"
-            "fencing_token,state,created_at,updated_at"
-            ") VALUES (?,?,?,?,?,?,?,?,?,?) "
+            "instance_id,task_id,solver_id,solver_run_id,profile_id,provider,config_digest,"
+            "image_digest,toolset_digest,fencing_token,state,created_at,updated_at"
+            ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) "
             "ON CONFLICT(instance_id) DO UPDATE SET "
             "solver_id=excluded.solver_id,profile_id=excluded.profile_id,"
             "fencing_token=excluded.fencing_token,state=excluded.state,updated_at=excluded.updated_at",
@@ -35,9 +52,12 @@ class SandboxInstanceRepository:
                 handle.instance_id,
                 handle.task_id,
                 handle.solver_id,
+                handle.solver_run_id,
                 handle.profile_id,
                 handle.provider,
                 handle.config_digest,
+                handle.image_digest,
+                handle.toolset_digest,
                 handle.fencing_token,
                 handle.state.value,
                 now,
@@ -73,13 +93,17 @@ class SandboxInstanceRepository:
 
     @staticmethod
     def _handle(row) -> SandboxHandle:
+        legacy_identity = f"legacy-{row['instance_id']}"[:128]
         return SandboxHandle(
             instance_id=row["instance_id"],
             task_id=row["task_id"],
             solver_id=row["solver_id"],
+            solver_run_id=row["solver_run_id"] or legacy_identity,
             profile_id=row["profile_id"],
             provider=row["provider"],
             config_digest=row["config_digest"],
+            image_digest=row["image_digest"] or "0" * 64,
+            toolset_digest=row["toolset_digest"],
             fencing_token=row["fencing_token"],
             state=row["state"],
         )

@@ -52,5 +52,7 @@
                            "max_artifacts":  24,
                            "deadline":  null
                        },
-    "completion_authority":  "none"
+    "completion_authority":  "none",
+    "sandbox_profile_id":  null,
+    "sandbox_required":  false
 }

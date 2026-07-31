@@ -26,7 +26,6 @@
     "allowed_tool_groups":  [
                                 "control",
                                 "resource_read",
-                                "execution",
                                 "retrieval"
                             ],
     "tool_policy_profile":  "containment-advisor-governed",
@@ -49,5 +48,7 @@
                            "max_artifacts":  96,
                            "deadline":  null
                        },
-    "completion_authority":  "worker_only"
+    "completion_authority":  "worker_only",
+    "sandbox_profile_id":  null,
+    "sandbox_required":  false
 }

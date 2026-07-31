@@ -31,7 +31,8 @@
                                   "binwalk.analyze",
                                   "yara.scan",
                                   "radare2.analyze",
-                                  "artifact.inspect"
+                                  "artifact.inspect",
+                                  "sandbox.exec"
                               ],
     "allowed_tool_groups":  [
                                 "control",
@@ -60,5 +61,7 @@
                            "max_artifacts":  96,
                            "deadline":  null
                        },
-    "completion_authority":  "worker_only"
+    "completion_authority":  "worker_only",
+    "sandbox_profile_id":  "ctf-reverse-v1",
+    "sandbox_required":  true
 }

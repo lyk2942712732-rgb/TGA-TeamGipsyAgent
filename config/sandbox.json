@@ -1,42 +1,632 @@
 {
-  "version": 1,
-  "runtime": "disabled",
-  "terminal_grace_seconds": 900,
-  "reconcile_interval_seconds": 60,
-  "docker_sandbox": {
-    "executable": "sbx",
-    "task_root": "runs",
-    "template": "docker.io/docker/sandbox-templates:shell-docker@sha256:REPLACE_WITH_RELEASE_DIGEST",
-    "min_version": "0.34.0",
-    "max_version_exclusive": "0.35.0"
-  },
-  "sandboxd": {
-    "socket_path": "/run/tga-sandboxd/sandboxd.sock",
-    "rpc_timeout_seconds": 10,
-    "protocol_major": 1,
-    "run_root": "/var/lib/tga/runs",
-    "allowed_client_uids": []
-  },
-  "tools": {},
-  "profiles": {
-    "default-kali": {
-      "id": "default-kali",
-      "provider": "sandboxd",
-      "image": "ghcr.io/team-gipsy/tga-kali-default@sha256:REPLACE_WITH_RELEASE_DIGEST",
-      "network_mode": "target_allowlist",
-      "allow_net_raw": false,
-      "limits": {
-        "timeout_seconds": 600,
-        "max_output_bytes": 262144,
-        "memory_bytes": 1073741824,
-        "cpu_count": 2.0,
-        "pids_limit": 512
-      }
-    },
-    "remote-http": {
-      "id": "remote-http",
-      "provider": "remote_http",
-      "network_mode": "remote"
-    }
-  }
+    "version":  1,
+    "runtime":  "disabled",
+    "terminal_grace_seconds":  900,
+    "reconcile_interval_seconds":  60,
+    "docker_sandbox":  {
+                           "executable":  "sbx",
+                           "task_root":  "runs",
+                           "template":  "docker.io/docker/sandbox-templates:shell-docker@sha256:REPLACE_WITH_RELEASE_DIGEST",
+                           "min_version":  "0.34.0",
+                           "max_version_exclusive":  "0.35.0"
+                       },
+    "sandboxd":  {
+                     "socket_path":  "/run/tga-sandboxd/sandboxd.sock",
+                     "rpc_timeout_seconds":  10,
+                     "protocol_major":  1,
+                     "run_root":  "/var/lib/tga/runs",
+                     "allowed_client_uids":  [
+
+                                             ]
+                 },
+    "tools":  {
+
+              },
+    "profiles":  {
+                     "architecture-analysis-v1":  {
+                                                      "id":  "architecture-analysis-v1",
+                                                      "provider":  "sandboxd",
+                                                      "image":  "ghcr.io/team-gipsy/tga-kali-architecture-analyst@sha256:REPLACE_WITH_RELEASE_DIGEST",
+                                                      "network_mode":  "none",
+                                                      "allow_net_raw":  false,
+                                                      "allow_ptrace":  false,
+                                                      "allowed_executables":  [
+                                                                                  "python3",
+                                                                                  "rg",
+                                                                                  "ctags",
+                                                                                  "cloc",
+                                                                                  "tree",
+                                                                                  "dot",
+                                                                                  "semgrep"
+                                                                              ],
+                                                      "toolset_digest":  "fa8ceafa1f15891cb94a0c343e23dc1a8beefbe6a79e7e1234ed2e7d73a14365",
+                                                      "limits":  {
+                                                                     "timeout_seconds":  900,
+                                                                     "max_output_bytes":  1048576,
+                                                                     "memory_bytes":  4294967296,
+                                                                     "cpu_count":  2,
+                                                                     "pids_limit":  1024
+                                                                 }
+                                                  },
+                     "binary-triage-v1":  {
+                                              "id":  "binary-triage-v1",
+                                              "provider":  "sandboxd",
+                                              "image":  "ghcr.io/team-gipsy/tga-kali-binary-triage-solver@sha256:REPLACE_WITH_RELEASE_DIGEST",
+                                              "network_mode":  "none",
+                                              "allow_net_raw":  false,
+                                              "allow_ptrace":  false,
+                                              "allowed_executables":  [
+                                                                          "python3",
+                                                                          "file",
+                                                                          "strings",
+                                                                          "checksec",
+                                                                          "yara",
+                                                                          "capa",
+                                                                          "exiftool",
+                                                                          "binwalk",
+                                                                          "radare2"
+                                                                      ],
+                                              "toolset_digest":  "81cb15a5d9550867857cd8f55be667f910ffb5165e33c17d95a40f7d4fbd30c0",
+                                              "limits":  {
+                                                             "timeout_seconds":  900,
+                                                             "max_output_bytes":  1048576,
+                                                             "memory_bytes":  8589934592,
+                                                             "cpu_count":  4,
+                                                             "pids_limit":  1024
+                                                         }
+                                          },
+                     "ctf-classifier-v1":  {
+                                               "id":  "ctf-classifier-v1",
+                                               "provider":  "sandboxd",
+                                               "image":  "ghcr.io/team-gipsy/tga-kali-ctf-classifier@sha256:REPLACE_WITH_RELEASE_DIGEST",
+                                               "network_mode":  "none",
+                                               "allow_net_raw":  false,
+                                               "allow_ptrace":  false,
+                                               "allowed_executables":  [
+                                                                           "file",
+                                                                           "strings",
+                                                                           "exiftool",
+                                                                           "binwalk",
+                                                                           "yara",
+                                                                           "tshark",
+                                                                           "zsteg",
+                                                                           "pngcheck",
+                                                                           "pdfid",
+                                                                           "checksec"
+                                                                       ],
+                                               "toolset_digest":  "ab8f37937359b3bf7284ee76af6036833f0926e708c033468f540ec0601f95ec",
+                                               "limits":  {
+                                                              "timeout_seconds":  900,
+                                                              "max_output_bytes":  1048576,
+                                                              "memory_bytes":  4294967296,
+                                                              "cpu_count":  2,
+                                                              "pids_limit":  1024
+                                                          }
+                                           },
+                     "code-audit-v1":  {
+                                           "id":  "code-audit-v1",
+                                           "provider":  "sandboxd",
+                                           "image":  "ghcr.io/team-gipsy/tga-kali-code-audit@sha256:REPLACE_WITH_RELEASE_DIGEST",
+                                           "network_mode":  "none",
+                                           "allow_net_raw":  false,
+                                           "allow_ptrace":  false,
+                                           "allowed_executables":  [
+                                                                       "python3",
+                                                                       "semgrep",
+                                                                       "codeql",
+                                                                       "bandit",
+                                                                       "gosec",
+                                                                       "eslint",
+                                                                       "trivy",
+                                                                       "syft"
+                                                                   ],
+                                           "toolset_digest":  "e28f2f0e6c6764143fa426633b7a57d452f3ff893a3228b5d0339ec31a382543",
+                                           "limits":  {
+                                                          "timeout_seconds":  900,
+                                                          "max_output_bytes":  1048576,
+                                                          "memory_bytes":  4294967296,
+                                                          "cpu_count":  2,
+                                                          "pids_limit":  1024
+                                                      }
+                                       },
+                     "crash-triage-v1":  {
+                                             "id":  "crash-triage-v1",
+                                             "provider":  "sandboxd",
+                                             "image":  "ghcr.io/team-gipsy/tga-kali-crash-triage@sha256:REPLACE_WITH_RELEASE_DIGEST",
+                                             "network_mode":  "none",
+                                             "allow_net_raw":  false,
+                                             "allow_ptrace":  true,
+                                             "allowed_executables":  [
+                                                                         "python3",
+                                                                         "gdb",
+                                                                         "lldb",
+                                                                         "casr-cli",
+                                                                         "llvm-symbolizer",
+                                                                         "addr2line",
+                                                                         "valgrind"
+                                                                     ],
+                                             "toolset_digest":  "19a6e91df064ea39174460cb308133b4f0bb020ea4418c97883a6261c52ede95",
+                                             "limits":  {
+                                                            "timeout_seconds":  900,
+                                                            "max_output_bytes":  1048576,
+                                                            "memory_bytes":  8589934592,
+                                                            "cpu_count":  4,
+                                                            "pids_limit":  1024
+                                                        }
+                                         },
+                     "ctf-crypto-v1":  {
+                                           "id":  "ctf-crypto-v1",
+                                           "provider":  "sandboxd",
+                                           "image":  "ghcr.io/team-gipsy/tga-kali-ctf-crypto@sha256:REPLACE_WITH_RELEASE_DIGEST",
+                                           "network_mode":  "none",
+                                           "allow_net_raw":  false,
+                                           "allow_ptrace":  false,
+                                           "allowed_executables":  [
+                                                                       "python3",
+                                                                       "sage",
+                                                                       "gp",
+                                                                       "openssl"
+                                                                   ],
+                                           "toolset_digest":  "1fe6b1accc43f3ed10888b0327fac484319d26176235de09b42a2db718ad8968",
+                                           "limits":  {
+                                                          "timeout_seconds":  900,
+                                                          "max_output_bytes":  1048576,
+                                                          "memory_bytes":  8589934592,
+                                                          "cpu_count":  4,
+                                                          "pids_limit":  1024
+                                                      }
+                                       },
+                     "ctf-forensics-v1":  {
+                                              "id":  "ctf-forensics-v1",
+                                              "provider":  "sandboxd",
+                                              "image":  "ghcr.io/team-gipsy/tga-kali-ctf-forensics@sha256:REPLACE_WITH_RELEASE_DIGEST",
+                                              "network_mode":  "none",
+                                              "allow_net_raw":  false,
+                                              "allow_ptrace":  false,
+                                              "allowed_executables":  [
+                                                                          "python3",
+                                                                          "binwalk",
+                                                                          "foremost",
+                                                                          "bulk_extractor",
+                                                                          "exiftool",
+                                                                          "steghide",
+                                                                          "zsteg",
+                                                                          "pngcheck",
+                                                                          "tshark",
+                                                                          "vol.py",
+                                                                          "pdf-parser",
+                                                                          "pdfid",
+                                                                          "olevba",
+                                                                          "scalpel"
+                                                                      ],
+                                              "toolset_digest":  "e32cc9e02a64f2b1fddee14a6a26778a3fb395f1a4828a4a0d5b1fe7271e679e",
+                                              "limits":  {
+                                                             "timeout_seconds":  900,
+                                                             "max_output_bytes":  1048576,
+                                                             "memory_bytes":  8589934592,
+                                                             "cpu_count":  4,
+                                                             "pids_limit":  1024
+                                                         }
+                                          },
+                     "ctf-pwn-v1":  {
+                                        "id":  "ctf-pwn-v1",
+                                        "provider":  "sandboxd",
+                                        "image":  "ghcr.io/team-gipsy/tga-kali-ctf-pwn@sha256:REPLACE_WITH_RELEASE_DIGEST",
+                                        "network_mode":  "target_allowlist",
+                                        "allow_net_raw":  false,
+                                        "allow_ptrace":  true,
+                                        "allowed_executables":  [
+                                                                    "python3",
+                                                                    "gdb",
+                                                                    "checksec",
+                                                                    "ROPgadget",
+                                                                    "ropper",
+                                                                    "one_gadget",
+                                                                    "patchelf",
+                                                                    "qemu-x86_64",
+                                                                    "gcc",
+                                                                    "clang",
+                                                                    "make",
+                                                                    "objdump",
+                                                                    "readelf",
+                                                                    "strace"
+                                                                ],
+                                        "toolset_digest":  "d23149948996d7b3ef912bc66e43df7c1dc8b5c83dd524bab8443d398b4e42ed",
+                                        "limits":  {
+                                                       "timeout_seconds":  900,
+                                                       "max_output_bytes":  1048576,
+                                                       "memory_bytes":  8589934592,
+                                                       "cpu_count":  4,
+                                                       "pids_limit":  1024
+                                                   }
+                                    },
+                     "ctf-reverse-v1":  {
+                                            "id":  "ctf-reverse-v1",
+                                            "provider":  "sandboxd",
+                                            "image":  "ghcr.io/team-gipsy/tga-kali-ctf-reverse@sha256:REPLACE_WITH_RELEASE_DIGEST",
+                                            "network_mode":  "none",
+                                            "allow_net_raw":  false,
+                                            "allow_ptrace":  false,
+                                            "allowed_executables":  [
+                                                                        "python3",
+                                                                        "analyzeHeadless",
+                                                                        "radare2",
+                                                                        "rizin",
+                                                                        "capa",
+                                                                        "jadx",
+                                                                        "apktool",
+                                                                        "objdump",
+                                                                        "readelf",
+                                                                        "yara",
+                                                                        "binwalk"
+                                                                    ],
+                                            "toolset_digest":  "4b2cf60c9f89b69a91e16d24f0b3ec0202caca6ccec773fe71f95f510db8b057",
+                                            "limits":  {
+                                                           "timeout_seconds":  900,
+                                                           "max_output_bytes":  1048576,
+                                                           "memory_bytes":  8589934592,
+                                                           "cpu_count":  4,
+                                                           "pids_limit":  1024
+                                                       }
+                                        },
+                     "ctf-web-v1":  {
+                                        "id":  "ctf-web-v1",
+                                        "provider":  "sandboxd",
+                                        "image":  "ghcr.io/team-gipsy/tga-kali-ctf-web@sha256:REPLACE_WITH_RELEASE_DIGEST",
+                                        "network_mode":  "target_allowlist",
+                                        "allow_net_raw":  false,
+                                        "allow_ptrace":  false,
+                                        "allowed_executables":  [
+                                                                    "python3",
+                                                                    "curl",
+                                                                    "http",
+                                                                    "ffuf",
+                                                                    "feroxbuster",
+                                                                    "gobuster",
+                                                                    "nuclei",
+                                                                    "sqlmap",
+                                                                    "dalfox",
+                                                                    "jwt_tool",
+                                                                    "wafw00f"
+                                                                ],
+                                        "toolset_digest":  "e6f814baee9076efc95bf5530c0c2aa0b2da917c53bbb352f8be511b7afa2c43",
+                                        "limits":  {
+                                                       "timeout_seconds":  900,
+                                                       "max_output_bytes":  1048576,
+                                                       "memory_bytes":  4294967296,
+                                                       "cpu_count":  2,
+                                                       "pids_limit":  1024
+                                                   }
+                                    },
+                     "dynamic-analysis-v1":  {
+                                                 "id":  "dynamic-analysis-v1",
+                                                 "provider":  "sandboxd",
+                                                 "image":  "ghcr.io/team-gipsy/tga-kali-dynamic-analysis@sha256:REPLACE_WITH_RELEASE_DIGEST",
+                                                 "network_mode":  "none",
+                                                 "allow_net_raw":  false,
+                                                 "allow_ptrace":  true,
+                                                 "allowed_executables":  [
+                                                                             "python3",
+                                                                             "gdb",
+                                                                             "lldb",
+                                                                             "strace",
+                                                                             "ltrace",
+                                                                             "rr",
+                                                                             "valgrind",
+                                                                             "qemu-x86_64",
+                                                                             "frida"
+                                                                         ],
+                                                 "toolset_digest":  "66ccc38af8454b221dd4d4ea76e7d67f0e73f0302fe1d13e29f38aad88664e8d",
+                                                 "limits":  {
+                                                                "timeout_seconds":  900,
+                                                                "max_output_bytes":  1048576,
+                                                                "memory_bytes":  8589934592,
+                                                                "cpu_count":  4,
+                                                                "pids_limit":  1024
+                                                            }
+                                             },
+                     "dynamic-fuzzing-v1":  {
+                                                "id":  "dynamic-fuzzing-v1",
+                                                "provider":  "sandboxd",
+                                                "image":  "ghcr.io/team-gipsy/tga-kali-dynamic-fuzzing@sha256:REPLACE_WITH_RELEASE_DIGEST",
+                                                "network_mode":  "none",
+                                                "allow_net_raw":  false,
+                                                "allow_ptrace":  false,
+                                                "allowed_executables":  [
+                                                                            "python3",
+                                                                            "afl-fuzz",
+                                                                            "clang",
+                                                                            "honggfuzz",
+                                                                            "radamsa"
+                                                                        ],
+                                                "toolset_digest":  "1bdfc1a4ced981750820250773ddd60d928fc51f9081f5fe158d762e9c3605e0",
+                                                "limits":  {
+                                                               "timeout_seconds":  900,
+                                                               "max_output_bytes":  1048576,
+                                                               "memory_bytes":  12884901888,
+                                                               "cpu_count":  4,
+                                                               "pids_limit":  1024
+                                                           }
+                                            },
+                     "evidence-triage-v1":  {
+                                                "id":  "evidence-triage-v1",
+                                                "provider":  "sandboxd",
+                                                "image":  "ghcr.io/team-gipsy/tga-kali-evidence-triage@sha256:REPLACE_WITH_RELEASE_DIGEST",
+                                                "network_mode":  "none",
+                                                "allow_net_raw":  false,
+                                                "allow_ptrace":  false,
+                                                "allowed_executables":  [
+                                                                            "python3",
+                                                                            "file",
+                                                                            "exiftool",
+                                                                            "hashdeep",
+                                                                            "yara",
+                                                                            "binwalk",
+                                                                            "strings",
+                                                                            "jq",
+                                                                            "rg"
+                                                                        ],
+                                                "toolset_digest":  "4121218d710312c3471de3664ddf08b3a14eaa9149008ec40576bdaa8e7639ef",
+                                                "limits":  {
+                                                               "timeout_seconds":  900,
+                                                               "max_output_bytes":  1048576,
+                                                               "memory_bytes":  4294967296,
+                                                               "cpu_count":  2,
+                                                               "pids_limit":  1024
+                                                           }
+                                            },
+                     "network-forensics-v1":  {
+                                                  "id":  "network-forensics-v1",
+                                                  "provider":  "sandboxd",
+                                                  "image":  "ghcr.io/team-gipsy/tga-kali-network-forensics@sha256:REPLACE_WITH_RELEASE_DIGEST",
+                                                  "network_mode":  "none",
+                                                  "allow_net_raw":  false,
+                                                  "allow_ptrace":  false,
+                                                  "allowed_executables":  [
+                                                                              "python3",
+                                                                              "tshark",
+                                                                              "zeek",
+                                                                              "tcpdump",
+                                                                              "ngrep",
+                                                                              "tcpflow",
+                                                                              "capinfos",
+                                                                              "editcap",
+                                                                              "mergecap"
+                                                                          ],
+                                                  "toolset_digest":  "6d7f2e7c33d7254fb329924ca017933aba572cf5abb5f6df6a0535efde5bda1b",
+                                                  "limits":  {
+                                                                 "timeout_seconds":  900,
+                                                                 "max_output_bytes":  1048576,
+                                                                 "memory_bytes":  8589934592,
+                                                                 "cpu_count":  4,
+                                                                 "pids_limit":  1024
+                                                             }
+                                              },
+                     "logic-recovery-v1":  {
+                                               "id":  "logic-recovery-v1",
+                                               "provider":  "sandboxd",
+                                               "image":  "ghcr.io/team-gipsy/tga-kali-logic-recovery@sha256:REPLACE_WITH_RELEASE_DIGEST",
+                                               "network_mode":  "none",
+                                               "allow_net_raw":  false,
+                                               "allow_ptrace":  false,
+                                               "allowed_executables":  [
+                                                                           "python3",
+                                                                           "diffoscope",
+                                                                           "jq",
+                                                                           "yq"
+                                                                       ],
+                                               "toolset_digest":  "9226f27da0ea1d28fcac4d2e0602152e378a42a81991da0887a0688ce98b6fd0",
+                                               "limits":  {
+                                                              "timeout_seconds":  900,
+                                                              "max_output_bytes":  1048576,
+                                                              "memory_bytes":  8589934592,
+                                                              "cpu_count":  4,
+                                                              "pids_limit":  1024
+                                                          }
+                                           },
+                     "malware-analysis-v1":  {
+                                                 "id":  "malware-analysis-v1",
+                                                 "provider":  "sandboxd",
+                                                 "image":  "ghcr.io/team-gipsy/tga-kali-malware-analysis@sha256:REPLACE_WITH_RELEASE_DIGEST",
+                                                 "network_mode":  "none",
+                                                 "allow_net_raw":  false,
+                                                 "allow_ptrace":  false,
+                                                 "allowed_executables":  [
+                                                                             "python3",
+                                                                             "capa",
+                                                                             "floss",
+                                                                             "yara",
+                                                                             "pefile",
+                                                                             "lief",
+                                                                             "radare2",
+                                                                             "analyzeHeadless",
+                                                                             "vol.py"
+                                                                         ],
+                                                 "toolset_digest":  "6beb2b3db8235d058f2167fcea2e65c649917b12e4faf48a807e5372e4a41899",
+                                                 "limits":  {
+                                                                "timeout_seconds":  900,
+                                                                "max_output_bytes":  1048576,
+                                                                "memory_bytes":  8589934592,
+                                                                "cpu_count":  4,
+                                                                "pids_limit":  1024
+                                                            }
+                                             },
+                     "poc-reproduction-v1":  {
+                                                 "id":  "poc-reproduction-v1",
+                                                 "provider":  "sandboxd",
+                                                 "image":  "ghcr.io/team-gipsy/tga-kali-poc-reproduction@sha256:REPLACE_WITH_RELEASE_DIGEST",
+                                                 "network_mode":  "target_allowlist",
+                                                 "allow_net_raw":  false,
+                                                 "allow_ptrace":  true,
+                                                 "allowed_executables":  [
+                                                                             "python3",
+                                                                             "git",
+                                                                             "gcc",
+                                                                             "clang",
+                                                                             "make",
+                                                                             "cmake",
+                                                                             "gdb",
+                                                                             "curl",
+                                                                             "qemu-x86_64",
+                                                                             "patchelf"
+                                                                         ],
+                                                 "toolset_digest":  "9b300ee068d38d4fe89569c96a53b2fb2a1f88e07ee02c79dc01280d90bfa886",
+                                                 "limits":  {
+                                                                "timeout_seconds":  900,
+                                                                "max_output_bytes":  1048576,
+                                                                "memory_bytes":  6442450944,
+                                                                "cpu_count":  4,
+                                                                "pids_limit":  1024
+                                                            }
+                                             },
+                     "static-analysis-v1":  {
+                                                "id":  "static-analysis-v1",
+                                                "provider":  "sandboxd",
+                                                "image":  "ghcr.io/team-gipsy/tga-kali-static-analysis@sha256:REPLACE_WITH_RELEASE_DIGEST",
+                                                "network_mode":  "none",
+                                                "allow_net_raw":  false,
+                                                "allow_ptrace":  false,
+                                                "allowed_executables":  [
+                                                                            "python3",
+                                                                            "analyzeHeadless",
+                                                                            "radare2",
+                                                                            "rizin",
+                                                                            "clang",
+                                                                            "objdump",
+                                                                            "readelf",
+                                                                            "checksec",
+                                                                            "yara",
+                                                                            "capa",
+                                                                            "binwalk"
+                                                                        ],
+                                                "toolset_digest":  "b558fcfa9d2b9cdd372d672900bd2863db232865b9623532e3c037b4db43d0c3",
+                                                "limits":  {
+                                                               "timeout_seconds":  900,
+                                                               "max_output_bytes":  1048576,
+                                                               "memory_bytes":  8589934592,
+                                                               "cpu_count":  4,
+                                                               "pids_limit":  1024
+                                                           }
+                                            },
+                     "pentest-surface-v1":  {
+                                                "id":  "pentest-surface-v1",
+                                                "provider":  "sandboxd",
+                                                "image":  "ghcr.io/team-gipsy/tga-kali-surface-mapper@sha256:REPLACE_WITH_RELEASE_DIGEST",
+                                                "network_mode":  "target_allowlist",
+                                                "allow_net_raw":  false,
+                                                "allow_ptrace":  false,
+                                                "allowed_executables":  [
+                                                                            "python3",
+                                                                            "nmap",
+                                                                            "naabu",
+                                                                            "httpx",
+                                                                            "subfinder",
+                                                                            "dnsx",
+                                                                            "ffuf",
+                                                                            "feroxbuster",
+                                                                            "nuclei",
+                                                                            "whatweb",
+                                                                            "wafw00f",
+                                                                            "dig",
+                                                                            "whois"
+                                                                        ],
+                                                "toolset_digest":  "91f0a60f818bd4435451ea24f1fd89a64a49be416f00b1afa31da5306cf44999",
+                                                "limits":  {
+                                                               "timeout_seconds":  900,
+                                                               "max_output_bytes":  1048576,
+                                                               "memory_bytes":  4294967296,
+                                                               "cpu_count":  2,
+                                                               "pids_limit":  1024
+                                                           }
+                                            },
+                     "timeline-ioc-v1":  {
+                                             "id":  "timeline-ioc-v1",
+                                             "provider":  "sandboxd",
+                                             "image":  "ghcr.io/team-gipsy/tga-kali-timeline-ioc@sha256:REPLACE_WITH_RELEASE_DIGEST",
+                                             "network_mode":  "none",
+                                             "allow_net_raw":  false,
+                                             "allow_ptrace":  false,
+                                             "allowed_executables":  [
+                                                                         "python3",
+                                                                         "log2timeline.py",
+                                                                         "psort.py",
+                                                                         "chainsaw",
+                                                                         "hayabusa",
+                                                                         "sigma",
+                                                                         "evtx_dump",
+                                                                         "jq",
+                                                                         "rg"
+                                                                     ],
+                                             "toolset_digest":  "bb8762375861e2d448905d2ffc54bfa52b8e23c3865b5f42251697095a9cdf56",
+                                             "limits":  {
+                                                            "timeout_seconds":  900,
+                                                            "max_output_bytes":  1048576,
+                                                            "memory_bytes":  8589934592,
+                                                            "cpu_count":  4,
+                                                            "pids_limit":  1024
+                                                        }
+                                         },
+                     "pentest-validation-v1":  {
+                                                   "id":  "pentest-validation-v1",
+                                                   "provider":  "sandboxd",
+                                                   "image":  "ghcr.io/team-gipsy/tga-kali-vulnerability-validator@sha256:REPLACE_WITH_RELEASE_DIGEST",
+                                                   "network_mode":  "target_allowlist",
+                                                   "allow_net_raw":  false,
+                                                   "allow_ptrace":  false,
+                                                   "allowed_executables":  [
+                                                                               "python3",
+                                                                               "curl",
+                                                                               "http",
+                                                                               "nuclei",
+                                                                               "sqlmap",
+                                                                               "dalfox",
+                                                                               "commix",
+                                                                               "jwt_tool",
+                                                                               "openssl"
+                                                                           ],
+                                                   "toolset_digest":  "ba77b9b39d1efbd195a9265a6c00236a972f995c73da5f5b2904fc0c21c47770",
+                                                   "limits":  {
+                                                                  "timeout_seconds":  900,
+                                                                  "max_output_bytes":  1048576,
+                                                                  "memory_bytes":  4294967296,
+                                                                  "cpu_count":  2,
+                                                                  "pids_limit":  1024
+                                                              }
+                                               },
+                     "pentest-web-api-v1":  {
+                                                "id":  "pentest-web-api-v1",
+                                                "provider":  "sandboxd",
+                                                "image":  "ghcr.io/team-gipsy/tga-kali-web-api-analyst@sha256:REPLACE_WITH_RELEASE_DIGEST",
+                                                "network_mode":  "target_allowlist",
+                                                "allow_net_raw":  false,
+                                                "allow_ptrace":  false,
+                                                "allowed_executables":  [
+                                                                            "python3",
+                                                                            "curl",
+                                                                            "http",
+                                                                            "mitmproxy",
+                                                                            "arjun",
+                                                                            "kr",
+                                                                            "ffuf",
+                                                                            "nuclei",
+                                                                            "sqlmap",
+                                                                            "jwt_tool",
+                                                                            "graphql-cop",
+                                                                            "wafw00f"
+                                                                        ],
+                                                "toolset_digest":  "8a450b422bf5efc6dfa5c8099dff40a31100d949e16cfe7868a358f5e9bb5583",
+                                                "limits":  {
+                                                               "timeout_seconds":  900,
+                                                               "max_output_bytes":  1048576,
+                                                               "memory_bytes":  4294967296,
+                                                               "cpu_count":  2,
+                                                               "pids_limit":  1024
+                                                           }
+                                            },
+                     "remote-http":  {
+                                         "id":  "remote-http",
+                                         "provider":  "remote_http",
+                                         "network_mode":  "remote"
+                                     }
+                 }
 }

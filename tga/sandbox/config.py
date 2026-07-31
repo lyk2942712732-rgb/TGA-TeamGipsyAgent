@@ -95,6 +95,12 @@ class SandboxConfig(BaseModel):
                 and not re.search(r"@sha256:[a-f0-9]{64}$", profile.image or "")
             ):
                 raise ValueError(f"enforced profile {key!r} requires a digest-pinned image")
+            if (
+                self.runtime == "enforced"
+                and profile.provider != "remote_http"
+                and profile.toolset_digest is None
+            ):
+                raise ValueError(f"enforced profile {key!r} requires a toolset digest")
         for tool_id, tool in self.tools.items():
             if not re.fullmatch(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$", tool_id):
                 raise ValueError(f"invalid sandbox tool id {tool_id!r}")

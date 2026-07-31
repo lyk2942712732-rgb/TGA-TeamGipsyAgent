@@ -210,12 +210,10 @@ class KaliSandboxBackend:
         manager,
         task,
         workspace: str | Path,
-        default_profile_id: str = "default-kali",
     ) -> None:
         self.manager = manager
         self.task = task
         self.workspace = Path(workspace).resolve()
-        self.default_profile_id = default_profile_id
 
     def execute(self, request: AuthorizedExecutionRequest) -> ExecutionResult:
         started = _now()
@@ -235,16 +233,39 @@ class KaliSandboxBackend:
                 "The authorized request was frozen against a different sandbox configuration.",
                 started_at=started,
             )
+        if not request.execution_profile_id:
+            return _failure(
+                request,
+                "SANDBOX_PROFILE_NOT_ASSIGNED",
+                "The SolverDefinition has no sandbox profile assigned.",
+                started_at=started,
+            )
+        if not request.solver_run_id:
+            return _failure(
+                request,
+                "SOLVER_RUN_ID_REQUIRED",
+                "Sandbox execution requires a durable SolverRun identity.",
+                started_at=started,
+            )
         try:
-            profile_id = request.execution_profile_id or self.default_profile_id
+            profile_id = request.execution_profile_id
+            profile = self.manager.config.profile(profile_id)
+            if request.capability == "sandbox.exec":
+                executable = str(request.arguments.get("executable") or "")
+                if executable not in profile.allowed_executables:
+                    raise SandboxError(
+                        f"executable {executable!r} is not allowed by profile {profile_id}",
+                        code="EXECUTABLE_NOT_ALLOWED",
+                    )
             handle = self.manager.acquire(
                 task_id=request.task_id,
                 solver_id=request.solver_id,
+                solver_run_id=request.solver_run_id,
                 profile_id=profile_id,
                 fencing_token=request.fencing_token or 1,
                 idempotency_key=request.idempotency_key,
             )
-            timeout = self.manager.config.profile(profile_id).limits.timeout_seconds
+            timeout = profile.limits.timeout_seconds
             self._validate_workspace_paths(request)
             spec = process_spec(request.capability, request.arguments, timeout)
             if request.capability in {
@@ -263,6 +284,10 @@ class KaliSandboxBackend:
                     )
                 spec = spec.model_copy(update={
                     "network_grants": network_grants,
+                })
+            elif request.capability == "sandbox.exec":
+                spec = spec.model_copy(update={
+                    "network_grants": self._declared_network_grants(request),
                 })
             before = self._output_snapshot()
             frames, raw = self.manager.exec(handle, spec)
@@ -307,6 +332,9 @@ class KaliSandboxBackend:
                     "sandbox_profile_id": handle.profile_id,
                     "sandbox_provider": handle.provider,
                     "sandbox_config_digest": handle.config_digest,
+                    "solver_run_id": handle.solver_run_id,
+                    "image_digest": handle.image_digest,
+                    "toolset_digest": handle.toolset_digest,
                     "fencing_token": handle.fencing_token,
                     "timed_out": raw.timed_out,
                     "truncated": raw.truncated,
@@ -325,7 +353,11 @@ class KaliSandboxBackend:
     def _network_grants(
         self, request: AuthorizedExecutionRequest
     ) -> tuple[NetworkGrant, ...]:
-        profile_id = request.execution_profile_id or self.default_profile_id
+        profile_id = request.execution_profile_id
+        if not profile_id:
+            raise SandboxError(
+                "sandbox profile is not assigned", code="SANDBOX_PROFILE_NOT_ASSIGNED"
+            )
         profile = self.manager.config.profile(profile_id)
         if profile.provider != "sandboxd" or profile.network_mode != "target_allowlist":
             raise SandboxError(
@@ -350,6 +382,45 @@ class KaliSandboxBackend:
             )
             for address in addresses
         )
+
+    def _declared_network_grants(
+        self, request: AuthorizedExecutionRequest
+    ) -> tuple[NetworkGrant, ...]:
+        values = request.arguments.get("network_targets") or ()
+        if not values:
+            return ()
+        profile = self.manager.config.profile(str(request.execution_profile_id))
+        if profile.provider != "sandboxd" or profile.network_mode != "target_allowlist":
+            raise SandboxError(
+                "sandbox.exec network targets require a target_allowlist profile",
+                code="NETWORK_POLICY_UNSUPPORTED",
+            )
+        grants: list[NetworkGrant] = []
+        for value in values:
+            host = str(value.get("host") or "")
+            ports = tuple(int(item) for item in value.get("ports") or ())
+            try:
+                addresses = [ipaddress.ip_address(host)]
+            except ValueError:
+                policy = self.task.execution_policy.network
+                urls = [f"https://{host}", f"http://{host}"]
+                resolved = None
+                for url in urls:
+                    try:
+                        resolved = authorize_url(url, policy)
+                        break
+                    except (PermissionError, ValueError):
+                        continue
+                if resolved is None:
+                    raise PermissionError("network target is outside the task allowlist")
+                addresses = [ipaddress.ip_address(item) for item in resolved]
+            for address in addresses:
+                enforce_address_policy(address, self.task.execution_policy.network)
+                grants.append(NetworkGrant(
+                    cidr=f"{address}/{32 if address.version == 4 else 128}",
+                    ports=ports,
+                ))
+        return tuple(grants)
 
     def _validate_workspace_paths(
         self, request: AuthorizedExecutionRequest

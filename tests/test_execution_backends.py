@@ -18,6 +18,7 @@ from tga.contracts import (
     TGATask,
 )
 from tga.evidence.store import EvidenceStore
+from tga.infrastructure.solver_definitions.registry import SolverDefinitionRegistry
 from tga.runtime.tooling.catalog import RuntimeToolCatalog
 from tga.runtime.tooling.execution import (
     ArtifactIngestionService,
@@ -44,11 +45,13 @@ def _config(*, runtime: str = "enforced") -> SandboxConfig:
             "allowed_client_uids": [1001],
         },
         "profiles": {
-            "default-kali": {
-                "id": "default-kali",
+            "ctf-web-v1": {
+                "id": "ctf-web-v1",
                 "provider": "sandboxd",
                 "image": "example.invalid/kali@sha256:" + "a" * 64,
                 "network_mode": "target_allowlist",
+                "allowed_executables": ["python3", "curl", "ffuf", "nuclei"],
+                "toolset_digest": "b" * 64,
                 "limits": {"timeout_seconds": 60},
             },
         },
@@ -86,7 +89,7 @@ def _request(**updates) -> AuthorizedExecutionRequest:
         "solver_id": "solver_execution",
         "solver_run_id": "run_execution",
         "intent_id": "intent_execution",
-        "execution_profile_id": "default-kali",
+        "execution_profile_id": "ctf-web-v1",
         "sandbox_config_digest": "a" * 64,
         "fencing_token": 7,
         "idempotency_key": "execution-once",
@@ -109,9 +112,12 @@ class _FakeManager:
             instance_id="sandbox_execution",
             task_id=values["task_id"],
             solver_id=values["solver_id"],
+            solver_run_id=values["solver_run_id"],
             profile_id=values["profile_id"],
             provider="sandboxd",
             config_digest=self.config.digest,
+            image_digest="a" * 64,
+            toolset_digest="b" * 64,
             fencing_token=values["fencing_token"],
             state=SandboxState.READY,
         )
@@ -140,7 +146,9 @@ def test_catalog_routes_each_capability_to_one_backend() -> None:
         input_schema={"type": "object", "properties": {}},
     )
     catalog = RuntimeToolCatalog.from_runtime(
-        task=_task(), registry=registry, tool_names=tool_names,
+        task=_task(),
+        solver_definition=SolverDefinitionRegistry.builtin().require("ctf-web-solver"),
+        registry=registry, tool_names=tool_names,
         mcp_snapshot=SimpleNamespace(routes=(remote,)),
     )
     by_capability = {}
@@ -160,7 +168,7 @@ def test_authorized_request_is_frozen_and_carries_execution_identity() -> None:
     request = _request()
     assert request.solver_run_id == "run_execution"
     assert request.fencing_token == 7
-    assert request.execution_profile_id == "default-kali"
+    assert request.execution_profile_id == "ctf-web-v1"
     assert request.sandbox_config_digest == "a" * 64
     with pytest.raises(Exception):
         request.arguments = {}
@@ -186,13 +194,41 @@ def test_kali_backend_executes_typed_process_and_collects_outputs(tmp_path: Path
     ).execute(_request(sandbox_config_digest=config.digest))
 
     assert result.status == "succeeded"
-    assert manager.acquire_calls[0]["profile_id"] == "default-kali"
+    assert manager.acquire_calls[0]["profile_id"] == "ctf-web-v1"
+    assert manager.acquire_calls[0]["solver_run_id"] == "run_execution"
     assert manager.acquire_calls[0]["fencing_token"] == 7
     assert manager.specs[0].argv[0:3] == ("python3", "-I", "-c")
     assert result.produced_files == (
         ProducedFile(path=str((tmp_path / "outputs" / "result.txt").resolve())),
     )
     assert result.execution_metadata["sandbox_instance_id"] == "sandbox_execution"
+    assert result.execution_metadata["image_digest"] == "a" * 64
+
+
+def test_kali_backend_rejects_missing_profile_without_default_fallback(tmp_path: Path) -> None:
+    config = _config()
+    manager = _FakeManager(config, tmp_path)
+    result = KaliSandboxBackend(manager=manager, task=_task(), workspace=tmp_path).execute(
+        _request(execution_profile_id=None, sandbox_config_digest=config.digest)
+    )
+
+    assert result.error and result.error.code == "SANDBOX_PROFILE_NOT_ASSIGNED"
+    assert manager.acquire_calls == []
+
+
+def test_sandbox_exec_enforces_profile_executable_allowlist(tmp_path: Path) -> None:
+    config = _config()
+    manager = _FakeManager(config, tmp_path)
+    result = KaliSandboxBackend(manager=manager, task=_task(), workspace=tmp_path).execute(
+        _request(
+            capability="sandbox.exec",
+            arguments={"executable": "gdb", "argv": ["--version"]},
+            sandbox_config_digest=config.digest,
+        )
+    )
+
+    assert result.error and result.error.code == "EXECUTABLE_NOT_ALLOWED"
+    assert manager.acquire_calls == []
 
 
 def test_kali_backend_applies_request_scoped_network_grant(
@@ -289,7 +325,7 @@ def test_artifact_ingestion_is_the_single_execution_output_boundary(tmp_path: Pa
     try:
         store.create_task(task)
         workspace = (
-            tmp_path / "runs" / task.id / "workspace" / "solvers" / "solver_execution"
+            tmp_path / "runs" / task.id / "workspace" / "solver-runs" / "run_execution"
         )
         output = workspace / "outputs" / "result.txt"
         output.parent.mkdir(parents=True, exist_ok=True)
@@ -315,6 +351,10 @@ def test_artifact_ingestion_is_the_single_execution_output_boundary(tmp_path: Pa
         assert {record.kind for record in records if record is not None} == {
             "file", "tool_output",
         }
+        assert all(
+            record.provenance["solver_run_id"] == "run_execution"
+            for record in records if record is not None
+        )
         events = store.list_agent_events(task.id, limit=None)
         assert [event.type for event in events[-2:]] == [
             "ARTIFACTS_INGESTED", "EXECUTION_BACKEND_COMPLETED",

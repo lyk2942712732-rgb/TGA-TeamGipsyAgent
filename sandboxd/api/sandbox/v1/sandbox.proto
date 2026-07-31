@@ -47,6 +47,7 @@ message AcquireRequest {
   string config_digest = 4;
   uint64 fencing_token = 5;
   string idempotency_key = 6;
+  string solver_run_id = 7;
 }
 
 message AcquireResponse {
@@ -54,6 +55,8 @@ message AcquireResponse {
   string config_digest = 2;
   uint64 fencing_token = 3;
   bool reused = 4;
+  string image_digest = 5;
+  string toolset_digest = 6;
 }
 
 message ProcessSpec {

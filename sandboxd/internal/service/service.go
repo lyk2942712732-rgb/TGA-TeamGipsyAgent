@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"strings"
 	"sync"
 	"time"
 
@@ -61,7 +62,7 @@ func (s *Service) Health(ctx context.Context, request *sandboxv1.HealthRequest) 
 
 func (s *Service) Acquire(ctx context.Context, request *sandboxv1.AcquireRequest) (*sandboxv1.AcquireResponse, error) {
 	instance, reused, err := s.runtime.Acquire(
-		ctx, request.TaskId, request.SolverId, request.ProfileId,
+		ctx, request.TaskId, request.SolverId, request.SolverRunId, request.ProfileId,
 		request.ConfigDigest, request.FencingToken,
 	)
 	if err != nil {
@@ -70,7 +71,18 @@ func (s *Service) Acquire(ctx context.Context, request *sandboxv1.AcquireRequest
 	return &sandboxv1.AcquireResponse{
 		InstanceId: instance.ID, ConfigDigest: instance.ConfigDigest,
 		FencingToken: instance.FencingToken, Reused: reused,
+		ImageDigest:   imageDigest(s.config.Profiles[request.ProfileId].Image),
+		ToolsetDigest: s.config.Profiles[request.ProfileId].ToolsetDigest,
 	}, nil
+}
+
+func imageDigest(image string) string {
+	const marker = "@sha256:"
+	index := strings.LastIndex(image, marker)
+	if index < 0 {
+		return ""
+	}
+	return image[index+len(marker):]
 }
 
 func (s *Service) Exec(request *sandboxv1.ExecRequest, stream sandboxv1.SandboxService_ExecServer) error {
@@ -247,6 +259,18 @@ func processSpec(value *sandboxv1.ProcessSpec, profile config.Profile, solverID 
 	}
 	if !config.ValidIdentifier(solverID) {
 		return runtimepkg.ProcessSpec{}, errors.New("invalid solver id")
+	}
+	if len(value.Argv) > 0 {
+		allowed := false
+		for _, executable := range profile.AllowedExecutables {
+			if value.Argv[0] == executable {
+				allowed = true
+				break
+			}
+		}
+		if !allowed {
+			return runtimepkg.ProcessSpec{}, errors.New("executable is not allowed by sandbox profile")
+		}
 	}
 	timeout := value.TimeoutSeconds
 	if timeout == 0 || int(timeout) > profile.Limits.TimeoutSeconds {

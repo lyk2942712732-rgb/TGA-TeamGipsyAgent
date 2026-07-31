@@ -389,9 +389,12 @@ CREATE TABLE IF NOT EXISTS sandbox_instances (
     instance_id TEXT PRIMARY KEY,
     task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
     solver_id TEXT NOT NULL,
+    solver_run_id TEXT NOT NULL REFERENCES solver_runs(id) ON DELETE CASCADE,
     profile_id TEXT NOT NULL,
     provider TEXT NOT NULL CHECK(provider IN ('docker_sandbox','sandboxd')),
     config_digest TEXT NOT NULL,
+    image_digest TEXT NOT NULL,
+    toolset_digest TEXT,
     fencing_token INTEGER NOT NULL CHECK(fencing_token >= 1),
     state TEXT NOT NULL CHECK(state IN (
         'acquiring','ready','released','destroying','destroyed','failed'
@@ -683,9 +686,9 @@ CREATE INDEX IF NOT EXISTS idx_v6_findings_task_status ON findings(task_id, stat
 CREATE INDEX IF NOT EXISTS idx_v6_agent_events_task_seq ON agent_events(task_id, seq);
 CREATE INDEX IF NOT EXISTS idx_v6_approvals_task_status ON approvals(task_id, status, created_at);
 CREATE INDEX IF NOT EXISTS idx_v6_governed_actions_owner ON governed_actions(task_id, solver_id, intent_id, status);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_v6_sandbox_active_task
-ON sandbox_instances(task_id)
-WHERE state IN ('acquiring','ready','released','destroying');
+CREATE UNIQUE INDEX IF NOT EXISTS uq_active_solver_run_sandbox
+ON sandbox_instances(task_id,solver_id,solver_run_id)
+WHERE state IN ('acquiring','ready');
 CREATE INDEX IF NOT EXISTS idx_v6_sandbox_cleanup
 ON sandbox_instances(state,destroy_after);
 CREATE INDEX IF NOT EXISTS idx_v6_governed_actions_semantic ON governed_actions(task_id, solver_id, semantic_fingerprint, status);

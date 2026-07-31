@@ -13,6 +13,7 @@ from .schemas import (
     NmapScanArguments,
     NucleiScanArguments,
     Radare2AnalyzeArguments,
+    SandboxExecArguments,
     WorkspacePythonArguments,
     WorkspaceReadArguments,
     WorkspaceShellArguments,
@@ -66,6 +67,7 @@ def build_default_registry() -> CapabilityRegistry:
     register(CapabilitySpec(name="workspace.write", description="Write a file in this solver's private workspace.", kind="workspace", risk="active", modes=all_modes, parameter_schema={}, budget_key="workspace"), WorkspaceWriteArguments)
     register(CapabilitySpec(name="workspace.python", description="Run a bounded Python helper in the Solver workspace.", kind="workspace", risk="active", modes=["ctf", "incident_response", "vulnerability_research", "reverse_engineering"], parameter_schema={}, budget_key="python"), WorkspacePythonArguments)
     register(CapabilitySpec(name="workspace.shell", description="Run a command in this Solver's private workspace and persist stdout/stderr.", kind="workspace", risk="active", modes=all_modes, parameter_schema={}, budget_key="shell"), WorkspaceShellArguments)
+    register(CapabilitySpec(name="sandbox.exec", description="Execute one profile-allowlisted binary with a direct argv vector.", kind="tool", risk="active", modes=all_modes, parameter_schema={}, budget_key="sandbox_exec"), SandboxExecArguments)
     register(CapabilitySpec(name="artifact.inspect", description="Read a bounded excerpt of an existing artifact.", kind="workspace", risk="passive", modes=all_modes, parameter_schema={}, budget_key="artifact"), ArtifactInspectArguments)
     register(CapabilitySpec(name="nmap.scan", description="Run a bounded TCP connect scan in the Kali sandbox.", kind="tool", risk="active", modes=["penetration_test", "ctf"], parameter_schema={}, budget_key="network_scan"), NmapScanArguments)
     register(CapabilitySpec(name="ffuf.directory_scan", description="Run bounded content discovery in the Kali sandbox.", kind="tool", risk="active", modes=["penetration_test", "ctf", "vulnerability_research"], parameter_schema={}, budget_key="web_scan"), FfufDirectoryScanArguments)

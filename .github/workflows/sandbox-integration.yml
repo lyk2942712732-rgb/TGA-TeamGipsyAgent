@@ -5,6 +5,7 @@ on:
     paths:
       - "tga/sandbox/**"
       - "sandboxd/**"
+      - "containers/kali/**"
       - "config/sandbox.json"
       - "scripts/check_sandbox_host.sh"
       - "scripts/sandbox_integration_test.sh"
