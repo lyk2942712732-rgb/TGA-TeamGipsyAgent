@@ -18,6 +18,8 @@ from tga.application.projections.models import (
     SessionAggregate,
     SolverResponse,
     SolverProjection,
+    SolverRunProjection,
+    SolverRunPage,
     TeamProjection,
     TeamResponse,
     TaskSummaryProjection,
@@ -33,7 +35,7 @@ __all__ = [
     "FindingProjection", "IntentPage", "IntentProjection",
     "KnowledgeProjection",
     "RetrievalRunProjection", "RuntimeSnapshotResponse", "SessionAggregate",
-    "SessionProjection", "SolverProjection", "SolverResponse",
+    "SessionProjection", "SolverProjection", "SolverResponse", "SolverRunPage", "SolverRunProjection",
     "TaskProjectionQueries", "TaskSummaryProjection", "TeamProjection",
     "TeamResponse", "TimelineProjection", "WorkerResultProjection",
 ]

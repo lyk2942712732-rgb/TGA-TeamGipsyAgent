@@ -11,6 +11,7 @@ from tga.domain.solver.results import (
     WorkerCoverage,
     WorkerResult,
 )
+from tga.domain.solver.runs import SolverRun, SolverRunState
 from tga.domain.solver.status import SolverInstanceStatus, WorkerResultStatus
 from tga.domain.solver.team_runtime import TaskOrchestratorStatus, TeamRuntimeState
 from tga.domain.solver.leases import SolverLease, TaskOrchestratorLease
@@ -20,5 +21,5 @@ __all__ = [
     "ReportResult", "ReviewResult", "SolverDefinition", "SolverError", "SolverInstance", "SolverInstanceStatus",
     "SolverOutputContract", "SolverTimestamps", "ToolPolicySnapshot", "WorkerCoverage",
     "SolverLease", "TaskOrchestratorLease", "TaskOrchestratorStatus",
-    "TeamRuntimeState", "WorkerResult", "WorkerResultStatus",
+    "SolverRun", "SolverRunState", "TeamRuntimeState", "WorkerResult", "WorkerResultStatus",
 ]

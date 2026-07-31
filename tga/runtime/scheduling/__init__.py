@@ -1,5 +1,4 @@
-"""Runtime scheduling package."""
-"""Durable bounded scheduling primitives."""
+"""Durable bounded runtime scheduling primitives."""
 
 from tga.runtime.scheduling.concurrency import (
     CancellationError,
@@ -14,9 +13,16 @@ from tga.runtime.scheduling.schedulers import (
     TaskRunContext,
     TaskScheduler,
 )
+from tga.runtime.scheduling.run_pool import (
+    DurableSolverRunContext,
+    SolverRunCompletion,
+    SolverRunPool,
+)
 
 __all__ = [
     "BudgetManager", "NetworkBudgetLimiter", "NetworkPermit", "CancellationError", "CancellationToken", "ConcurrencyLimiter",
+    "DurableSolverRunContext",
     "SolverLeaseManager", "SolverRunContext", "SolverScheduler",
+    "SolverRunCompletion", "SolverRunPool",
     "TaskLeaseManager", "TaskRunContext", "TaskScheduler",
 ]

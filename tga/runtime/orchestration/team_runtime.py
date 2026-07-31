@@ -14,6 +14,7 @@ from tga.capabilities.registry import build_default_registry
 from tga.domain.planning import GlobalPlan, Intent, LocalPlan, LocalPlanStep
 from tga.domain.solver import (
     SolverAssignment,
+    SolverRun,
     TeamRuntimeState,
     ToolPolicySnapshot,
 )
@@ -208,6 +209,31 @@ class TeamRuntime:
             accepted_at=now,
         )
         self.repositories.orchestration.save_assignment(assignment)
+        run = SolverRun(
+            id=f"run_{assignment.id}",
+            task_id=self.task.id,
+            solver_id=solver.id,
+            assignment_id=assignment.id,
+            intent_id=intent.id,
+            orchestration_role="worker",
+            attempt=attempt,
+            state="queued",
+            created_at=now,
+            updated_at=now,
+        )
+        self.repositories.orchestration.create_solver_run(run)
+        self.repositories.events.append_agent_event(
+            self.task.id,
+            "SOLVER_RUN_QUEUED",
+            {
+                "run_id": run.id,
+                "assignment_id": assignment.id,
+                "intent_id": intent.id,
+                "attempt": attempt,
+            },
+            solver_id=solver.id,
+            intent_id=intent.id,
+        )
         self.repositories.events.append_agent_event(
             self.task.id,
             "SOLVER_ASSIGNED",

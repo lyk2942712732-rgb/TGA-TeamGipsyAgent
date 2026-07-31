@@ -18,6 +18,7 @@ from tga.application.projections.models import (
     IntentPage,
     RuntimeSnapshotResponse,
     SolverResponse,
+    SolverRunPage,
     TeamResponse,
 )
 from tga.models.bootstrap import model_config_status
@@ -52,6 +53,17 @@ def get_team(task_id: str):
 @router.get("/tasks/{task_id}/solvers/{solver_id}", response_model=SolverResponse)
 def get_solver(task_id: str, solver_id: str):
     return _query(lambda: _runtime_queries().solver(task_id, solver_id))
+
+
+@router.get("/tasks/{task_id}/solver-runs", response_model=SolverRunPage)
+def get_solver_runs(
+    task_id: str,
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=50, ge=1, le=200),
+):
+    return _query(
+        lambda: _runtime_queries().solver_runs(task_id, offset=offset, limit=limit)
+    )
 
 
 @router.get("/tasks/{task_id}/intents", response_model=IntentPage)

@@ -1,9 +1,27 @@
 package network
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 )
+
+func TestMergeGrantsIsMonotonicAndDeterministic(t *testing.T) {
+	merged := mergeGrants(
+		[]Grant{{CIDR: "203.0.113.0/24", Ports: []uint32{443}}},
+		[]Grant{
+			{CIDR: "198.51.100.10/32"},
+			{CIDR: "203.0.113.0/24", Ports: []uint32{80, 443}},
+		},
+	)
+	want := []Grant{
+		{CIDR: "198.51.100.10/32"},
+		{CIDR: "203.0.113.0/24", Ports: []uint32{80, 443}},
+	}
+	if !reflect.DeepEqual(want, merged) {
+		t.Fatalf("unexpected merged grants: want %#v, got %#v", want, merged)
+	}
+}
 
 func TestRenderIsTaskScopedAndDefaultDeny(t *testing.T) {
 	rules, err := Render(

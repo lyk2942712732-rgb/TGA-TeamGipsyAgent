@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"sync"
 	"time"
 
 	sandboxv1 "github.com/team-gipsy/tga-sandboxd/api/sandbox/v1"
@@ -21,10 +22,20 @@ type Service struct {
 	config  *config.Config
 	runtime *runtimepkg.Runtime
 	network *network.Policy
+	locksMu sync.Mutex
+	locks   map[string]*taskExecutionLock
+}
+
+type taskExecutionLock struct {
+	mu   sync.RWMutex
+	refs int
 }
 
 func New(cfg *config.Config, runtime *runtimepkg.Runtime, policy *network.Policy) *Service {
-	return &Service{config: cfg, runtime: runtime, network: policy}
+	return &Service{
+		config: cfg, runtime: runtime, network: policy,
+		locks: make(map[string]*taskExecutionLock),
+	}
 }
 
 func (s *Service) Health(ctx context.Context, request *sandboxv1.HealthRequest) (*sandboxv1.HealthResponse, error) {
@@ -63,6 +74,8 @@ func (s *Service) Acquire(ctx context.Context, request *sandboxv1.AcquireRequest
 }
 
 func (s *Service) Exec(request *sandboxv1.ExecRequest, stream sandboxv1.SandboxService_ExecServer) error {
+	releaseExecution := s.lockTaskExecution(request.InstanceId, false)
+	defer releaseExecution()
 	profile, err := s.profileForInstance(stream.Context(), request.InstanceId, request.FencingToken)
 	if err != nil {
 		return err
@@ -103,6 +116,8 @@ func (s *Service) OpenProcess(stream sandboxv1.SandboxService_OpenProcessServer)
 	if start == nil {
 		return errors.New("first process message must be start")
 	}
+	releaseExecution := s.lockTaskExecution(start.InstanceId, false)
+	defer releaseExecution()
 	profile, err := s.profileForInstance(stream.Context(), start.InstanceId, start.FencingToken)
 	if err != nil {
 		return err
@@ -185,6 +200,8 @@ func (s *Service) Inspect(ctx context.Context, request *sandboxv1.InspectRequest
 }
 
 func (s *Service) Destroy(ctx context.Context, request *sandboxv1.DestroyRequest) (*sandboxv1.Empty, error) {
+	releaseExecution := s.lockTaskExecution(request.InstanceId, true)
+	defer releaseExecution()
 	if err := s.runtime.Destroy(ctx, request.InstanceId, request.FencingToken); err != nil {
 		return nil, err
 	}
@@ -273,3 +290,33 @@ func commandAvailable(ctx context.Context, name string) bool {
 	return exec.CommandContext(ctx, name, "--version").Run() == nil
 }
 func fileExists(path string) bool { _, err := os.Stat(path); return err == nil }
+
+func (s *Service) lockTaskExecution(instanceID string, exclusive bool) func() {
+	s.locksMu.Lock()
+	lock := s.locks[instanceID]
+	if lock == nil {
+		lock = &taskExecutionLock{}
+		s.locks[instanceID] = lock
+	}
+	lock.refs++
+	s.locksMu.Unlock()
+
+	if exclusive {
+		lock.mu.Lock()
+	} else {
+		lock.mu.RLock()
+	}
+	return func() {
+		if exclusive {
+			lock.mu.Unlock()
+		} else {
+			lock.mu.RUnlock()
+		}
+		s.locksMu.Lock()
+		lock.refs--
+		if lock.refs == 0 {
+			delete(s.locks, instanceID)
+		}
+		s.locksMu.Unlock()
+	}
+}
