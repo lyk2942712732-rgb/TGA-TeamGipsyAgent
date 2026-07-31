@@ -11,7 +11,6 @@ from pydantic import BaseModel, Field, model_validator
 
 from tga.domain.governance.models import ExecutionPolicy
 from tga.modes import TaskMode, normalize_mode
-from tga.skills.models import SkillBundleSnapshot
 
 
 ResourceRole = Literal["target", "hint"]
@@ -310,7 +309,6 @@ class TGATask(BaseModel):
     execution_policy: ExecutionPolicy | None = None
     model_snapshot: ModelSnapshot | None = None
     agent_prompt_snapshot: dict[str, Any] | None = None
-    skill_bundle_snapshot: SkillBundleSnapshot | None = None
     execution_budget: dict[str, int] = Field(default_factory=dict)
     insecure_tls_origins: list[str] = Field(default_factory=list, max_length=8)
     schema_version: int = 6

@@ -26,11 +26,12 @@ from tga.runtime.agents.transcript import RepositorySolverTranscript
 from tga.runtime.agents.model_loop import ModelLoop
 from tga.runtime.agents.recovery import ApprovalRecovery
 from tga.infrastructure.persistence import PersistenceBundle
-from tga.runtime.tooling import ToolDefinitionBuilder, ToolDispatcher
+from tga.runtime.tooling import ToolDefinitionBuilder
+from tga.runtime.tooling.governance.approvals import SolverApprovalCoordinator
+from tga.runtime.tooling.execution_adapter import ExecutionPipelineAdapter
 from tga.infrastructure.solver_definitions.registry import SolverDefinitionRegistry
 from tga.runtime.tooling.catalog import RuntimeToolCatalog
 from tga.runtime.tooling.catalog.manifest_builder import ToolManifestBuilder
-from tga.runtime.tooling.legacy import LegacyToolPipelineAdapter
 from tga.runtime.tooling.requests import ActionContext
 from tga.runtime.tooling.routing import GatewayToolDispatcher, ToolGovernanceGateway
 from tga.runtime.orchestration import TaskOrchestrator
@@ -43,7 +44,7 @@ from tga.tools.mcp_registry import MCPCatalogSnapshot
 from tga.modes import mode_profile
 
 
-COMPLETION_TOOLS = {"finish_session", "propose_task_completion"}
+COMPLETION_TOOLS = {"propose_task_completion", "submit_worker_result"}
 
 
 class AgentSessionRunner:
@@ -99,7 +100,6 @@ class AgentSessionRunner:
             repository=self.persistence.transcripts,
             task_id=task.id,
             solver_id=self.solver_id,
-            mirror_path=self.session_dir / "messages.json",
         )
         self.messages = self.transcript.read()
         self.model_loop = ModelLoop(client)
@@ -114,13 +114,7 @@ class AgentSessionRunner:
             ),
         )
         self.consecutive_idle_turns = 0
-        self.legacy_dispatcher = ToolDispatcher(
-            capability_handler=self.handlers.capability.handle,
-            input_handler=self.handlers.inputs.handle,
-            mcp_handler=self.handlers.mcp.handle,
-            completion_handler=self.handlers.completion.handle,
-            direct_mcp_names=self.handlers.mcp.direct_names,
-        )
+        self.execution_adapter = ExecutionPipelineAdapter(handlers=self.handlers)
         self._refresh_tool_governance()
 
     def run(self) -> SessionOutcome:
@@ -492,6 +486,7 @@ class AgentSessionRunner:
                 turn_count=current.turn_count,
             )
         )
+        solver = self.persistence.solvers.get_solver(self.solver_id)
         self.coordinator.release_resources(
             task_id=self.task.id,
             solver_id=self.solver_id,
@@ -499,6 +494,9 @@ class AgentSessionRunner:
             handlers=self.handlers,
             executor=self.executor,
             mcp_manager=self.mcp_manager,
+            close_shared_mcp=bool(
+                solver is not None and solver.orchestration_role == "supervisor"
+            ),
         )
         return outcome
 
@@ -615,10 +613,6 @@ class AgentSessionRunner:
             intent=intent,
             catalog=catalog,
         )
-        adapter = LegacyToolPipelineAdapter(
-            dispatcher=self.legacy_dispatcher,
-            handlers=self.handlers,
-        )
         control_handlers = self.task_orchestrator.gateway_control_handlers(
             self.solver_id
         )
@@ -630,7 +624,7 @@ class AgentSessionRunner:
             task=self.task,
             manifest=self.tool_manifest,
             repository=self.persistence.tool_governance,
-            legacy_adapter=adapter,
+            execution_adapter=self.execution_adapter,
             control_handlers=control_handlers,
             resource_handlers=self.task_orchestrator.gateway_resource_handlers(
                 self.solver_id
@@ -650,6 +644,18 @@ class AgentSessionRunner:
                 )
             ),
             artifact_result_handler=self.handlers.state.plan_knowledge.index_artifacts,
+            approval_pending_handler=lambda action: SolverApprovalCoordinator(
+                self.store
+            ).await_approval(
+                solver_id=action.context.solver_id,
+                intent_id=action.context.intent_id,
+            ),
+            approval_resolved_handler=lambda action: SolverApprovalCoordinator(
+                self.store
+            ).resolve(
+                solver_id=action.context.solver_id,
+                intent_id=action.context.intent_id,
+            ),
         )
         self.dispatcher = GatewayToolDispatcher(
             gateway=self.tool_gateway,
@@ -783,7 +789,6 @@ class AgentSessionRunner:
     def _consume_resolved_approval(self) -> None:
         ApprovalRecovery(
             store=self.store,
-            handlers=self.handlers,
             messages=self.messages,
             save=self._save_messages,
             gateway=self.tool_gateway,

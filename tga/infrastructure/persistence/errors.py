@@ -1,4 +1,4 @@
-"""Shared persistence conflict types used by current and compatibility adapters."""
+"""Shared deterministic persistence conflict types."""
 
 
 class PersistenceConflict(RuntimeError):

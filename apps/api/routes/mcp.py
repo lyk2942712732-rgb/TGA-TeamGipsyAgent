@@ -16,23 +16,15 @@ from urllib.parse import unquote
 from fastapi import APIRouter, HTTPException, Request
 
 from tga.contracts import ExecutionPolicy, LocalComputeExecutionPolicy, MCPCapabilitySnapshot, MCPCapabilityTool, NetworkExecutionPolicy, TGATask
-from tga.tools.mcp_config import MCPServerConfig, delete_mcp_server, load_mcp_config, patch_mcp_server, set_mcp_server_enabled, upsert_mcp_server
+from tga.tools.mcp_config import MCPServerConfig, delete_mcp_server, load_mcp_config, patch_mcp_server, upsert_mcp_server
 from tga.tools.mcp_importer import DEFAULT_MAX_PACKAGE_BYTES, MCPImageImporter, MCPImportError
 from tga.tools.mcp_manager import MCPManager
 from tga.tools.mcp_policy import redact_sensitive
 
-from apps.api.routes.support import MCPEnabledRequest, MCPMethodTestRequest, _catalog_runner, _run_root
+from apps.api.routes.support import MCPMethodTestRequest, _catalog_runner, _run_root
 
 router = APIRouter(tags=["mcp"])
 _audit_lock = threading.Lock()
-
-
-@router.post("/tools/mcp/refresh")
-def refresh_mcp_catalog() -> dict[str, Any]:
-    """Refresh discovery now; active LLM turns retain their prior snapshot."""
-    manager = _catalog_runner()
-    manager.refresh()
-    return manager.status_snapshot()
 
 
 def _public_server_config(server: MCPServerConfig) -> dict[str, Any]:
@@ -136,7 +128,18 @@ def update_mcp_server(server_id: str, payload: dict[str, Any]) -> dict[str, Any]
 
 @router.delete("/mcp/servers/{server_id}")
 def delete_managed_mcp_server(server_id: str) -> dict[str, Any]:
-    return remove_mcp_server(server_id)
+    manager = _catalog_runner()
+    config, _ = _load_mcp_config_for_api(manager)
+    if server_id not in config.servers:
+        raise HTTPException(status_code=404, detail=f"MCP server is not configured: {server_id}")
+    try:
+        removed = delete_mcp_server(manager.config_path, server_id)
+    except (OSError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not removed:
+        raise HTTPException(status_code=404, detail=f"MCP server is not configured: {server_id}")
+    manager.refresh()
+    return {"deleted": True, "server_id": server_id, "image_deleted": False}
 
 
 @router.post("/mcp/servers/{server_id}/test")
@@ -332,44 +335,6 @@ def inspect_local_mcp_image(image: str) -> dict[str, Any]:
     return {"image": image, "local": True, "details": details[0] if details else {}}
 
 
-@router.delete("/tools/mcp/{server_id}")
-def remove_mcp_server(server_id: str) -> dict[str, Any]:
-    """Remove one explicit server entry; the underlying Docker image is retained."""
-    manager = _catalog_runner()
-    try:
-        removed = delete_mcp_server(manager.config_path, server_id)
-    except (OSError, ValueError) as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    if not removed:
-        raise HTTPException(status_code=404, detail=f"MCP server is not configured: {server_id}")
-    manager.refresh()
-    return {
-        "deleted": True,
-        "server_id": server_id,
-        "image_deleted": False,
-        "catalog": manager.status_snapshot(),
-    }
-
-
-@router.patch("/tools/mcp/{server_id}/enabled")
-def change_mcp_server_enabled(server_id: str, request: MCPEnabledRequest) -> dict[str, Any]:
-    """Enable or disable one configured server and refresh dynamic discovery."""
-    manager = _catalog_runner()
-    try:
-        enabled = set_mcp_server_enabled(manager.config_path, server_id, request.enabled)
-    except KeyError as exc:
-        raise HTTPException(status_code=404, detail=f"MCP server is not configured: {server_id}") from exc
-    except (OSError, ValueError) as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    manager.refresh()
-    return {
-        "server_id": server_id,
-        "enabled": enabled,
-        "catalog": manager.status_snapshot(),
-    }
-
-
-@router.post("/tools/mcp/import")
 @router.post("/mcp/images/import")
 async def import_mcp_package(request: Request) -> dict[str, Any]:
     """Build/load one operator-selected MCP package and add it to mcp.json.

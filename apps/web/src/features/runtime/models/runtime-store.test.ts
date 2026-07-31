@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import { normalizeRuntimeSnapshot } from "./normalize";
-import { projectLegacyRuntimeView } from "./legacy-view";
 import {
   selectActiveSolvers,
   selectConfirmedFindings,
@@ -72,25 +71,11 @@ describe("Phase 10 normalized runtime store", () => {
     expect(selectKnowledgeConflicts(store).map((item) => item.knowledgeId)).toEqual(["knowledge-conflict"]);
   });
 
-  it("adapts schema-v5 once at the boundary instead of leaking schema checks", () => {
-    const store = normalizeRuntimeSnapshot({
+  it("rejects schema v5 instead of entering a runtime fallback", () => {
+    expect(() => normalizeRuntimeSnapshot({
       schema_version: 5,
       task: { id: "legacy", name: "Legacy", mode: "ctf", goal: "replay", schema_version: 5 },
       session: { task_id: "legacy", status: "completed", active_solver_id: "main", turn_count: 4, max_turns: 8 },
-      intents: [], artifacts: [], findings: [], memory: [], strategy_cards: [],
-      agent_events: [{ schema_version: 5, id: "legacy-event", task_id: "legacy", seq: 1, type: "SESSION_STOPPED", solver_id: "main", payload: { status: "completed" }, created_at: "" }],
-      latest_seq: 1,
-    });
-    expect(store.schemaVersion).toBe(5);
-    expect(store.legacy).toBe(true);
-    expect(selectSupervisor(store)?.solverId).toBe("main");
-    expect(store.eventsBySeq[1].type).toBe("SESSION_STOPPED");
-  });
-
-  it("keeps the old Runtime page available through one compatibility view", () => {
-    const view = projectLegacyRuntimeView(normalizeRuntimeSnapshot(v6Snapshot()));
-    expect(view.task.id).toBe("task");
-    expect(view.solvers.map((item) => item.id)).toEqual(["supervisor", "worker-a", "worker-b"]);
-    expect(view.latest_seq).toBe(2);
+    })).toThrow();
   });
 });

@@ -32,10 +32,6 @@ class ToolManifestBuilder:
             solver.tool_policy_snapshot.allowed_tool_groups
         )
         allowed_capabilities = set(solver.tool_policy_snapshot.allowed_capabilities)
-        compatibility_supervisor = (
-            role == "supervisor"
-            and solver.tool_policy_snapshot.profile == "phase5-single-solver-compatibility"
-        )
         values: list[ToolCatalogEntry] = []
         for entry in catalog.entries:
             if entry.tool_class not in allowed_groups:
@@ -53,13 +49,9 @@ class ToolManifestBuilder:
                 } and entry.capability not in allowed_capabilities:
                     continue
             elif entry.tool_class == "execution":
-                if role != "worker" and not compatibility_supervisor:
+                if role != "worker":
                     continue
                 if entry.capability not in allowed_capabilities and not entry.capability.startswith("mcp:"):
-                    continue
-                if entry.capability == "mcp.gateway" and not any(
-                    item.startswith("mcp:") for item in allowed_capabilities
-                ):
                     continue
                 if entry.capability == "http.request" and task.execution_policy.network.access == "disabled":
                     continue
@@ -69,7 +61,7 @@ class ToolManifestBuilder:
                     set(entry.specialties).intersection(solver.specialties)
                 )
                 required = entry.capability in definition.required_capabilities
-                if not specialty_match and not required and not compatibility_supervisor:
+                if not specialty_match and not required:
                     continue
             elif entry.tool_class == "retrieval":
                 if entry.capability != "retrieval.search":

@@ -6,10 +6,10 @@ from pydantic import BaseModel
 
 from tga.domain.evidence.claims import EvidenceClaim
 from tga.domain.evidence.findings import Finding
-from tga.domain.evidence.legacy_models import ArtifactRecord, Finding as LegacyFinding
+from tga.migrations.evidence_models import LegacyArtifactRecord, LegacyFinding
 from tga.domain.evidence.locators import EvidenceLocator
 from tga.domain.knowledge.items import KnowledgeItem
-from tga.domain.legacy.converters import (
+from tga.migrations.converters import (
     artifact_record_to_artifact,
     legacy_finding_to_evidence,
     memory_entry_to_knowledge,
@@ -19,7 +19,7 @@ from tga.domain.legacy.converters import (
 from tga.domain.planning.global_plan import GlobalPlan
 from tga.domain.planning.intents import Intent, IntentDependency
 from tga.domain.planning.local_plan import LocalPlan, LocalPlanStep
-from tga.domain.solver.legacy_models import MemoryEntry, StrategyCard, StrategyStep
+from tga.migrations.legacy_models import MemoryEntry, StrategyCard, StrategyStep
 from tga.domain.task.hints import TaskHint
 from tga.domain.task.spec import TaskDirective, TaskSpec
 
@@ -296,7 +296,7 @@ def test_memory_converters_never_infer_verification() -> None:
 
 
 def test_artifact_and_finding_converters_use_conservative_legacy_provenance() -> None:
-    artifact = artifact_record_to_artifact(ArtifactRecord(
+    artifact = artifact_record_to_artifact(LegacyArtifactRecord(
         id="artifact_1",
         task_id="task_1",
         intent_id=None,

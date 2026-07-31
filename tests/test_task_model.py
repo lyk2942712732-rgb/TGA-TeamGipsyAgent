@@ -32,9 +32,10 @@ def test_current_persisted_task_is_read_without_mutation(tmp_path):
         (payload["id"], json.dumps(payload), utc_now()),
     )
     store.conn.commit()
-    snapshot = store.task_snapshot(payload["id"])
-    assert snapshot["task"]["mode"] == "vulnerability_research"
-    assert snapshot["task"]["flag_format"] is None
+    persisted = store.get_task(payload["id"])
+    assert persisted is not None
+    assert persisted.mode == "vulnerability_research"
+    assert persisted.flag_format is None
     store.close()
 
 

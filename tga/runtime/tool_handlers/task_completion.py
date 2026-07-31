@@ -13,7 +13,7 @@ from tga.evidence.database import utc_now
 from tga.infrastructure.persistence import PersistenceBundle
 from tga.runtime.completion_validators import (
     CompletionValidationContext,
-    FinishSubmission,
+    TaskCompletionSubmission,
     validator_for,
 )
 from tga.runtime.coordinator import SessionOutcome
@@ -37,10 +37,6 @@ class TaskCompletionHandler:
         self.solver_id = state.solver_id
         self.remote_flag_verifier = state.remote_flag_verifier
         self.artifacts = artifacts
-
-    def handle(self, *, arguments: dict[str, Any]) -> dict[str, Any]:
-        """Compatibility entry for the model-visible `finish_session` tool."""
-        return self.propose_task_completion(arguments)
 
     def propose_task_completion(self, arguments: dict[str, Any]) -> dict[str, Any]:
         session = self.store.get_session(self.task.id)
@@ -71,14 +67,14 @@ class TaskCompletionHandler:
         )
         try:
             if self.task.mode != "ctf" and "flag" in arguments:
-                raise ValueError("flag is not a valid finish_session field outside CTF mode")
-            submission = FinishSubmission.model_validate(arguments)
+                raise ValueError("flag is not a valid task completion proposal field outside CTF mode")
+            submission = TaskCompletionSubmission.model_validate(arguments)
         except Exception as exc:
             result = {
                 "accepted": False,
                 "code": "INVALID_FINISH_SUBMISSION",
                 "message": _safe(str(exc))[:1_200],
-                "missing": ["valid finish_session arguments"],
+                "missing": ["valid task completion proposal arguments"],
                 "evidence_artifact_ids": cited,
                 "retryable": True,
                 "details": {},
@@ -167,7 +163,7 @@ class TaskCompletionHandler:
     def _record_validated_completion(
         self,
         *,
-        submission: FinishSubmission,
+        submission: TaskCompletionSubmission,
         validator_code: str,
         proof_id: str,
     ) -> None:

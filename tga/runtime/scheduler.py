@@ -11,6 +11,7 @@ from typing import Callable
 from uuid import uuid4
 
 from tga.evidence.store import EvidenceStore
+from tga.infrastructure.persistence import PersistenceBundle
 from tga.runtime.coordinator import SessionCoordinator
 from tga.runtime.approvals import expire_pending_approvals
 from tga.runtime.errors import RuntimeConfigurationError
@@ -85,10 +86,12 @@ class RuntimeScheduler:
                 try:
                     task = store.get_task(task_id)
                     session = store.get_session(task_id)
-                    pending = next((
-                        item for item in store.list_actions(task_id)
-                        if item.get("status") == "pending_approval"
-                    ), None)
+                    pending = next(
+                        iter(PersistenceBundle(store).tool_governance.list_actions(
+                            task_id, status="pending_approval", limit=1
+                        )),
+                        None,
+                    )
                 finally:
                     store.close()
             except Exception:
@@ -144,18 +147,28 @@ class RuntimeScheduler:
         store = EvidenceStore(db_path)
         try:
             session = store.get_session(task_id)
-            pending = next((item for item in store.list_actions(task_id) if item.get("status") == "pending_approval"), None)
+            governance = PersistenceBundle(store).tool_governance
+            pending = next(
+                (
+                    item for item in governance.list_actions(
+                        task_id, status="pending_approval", limit=1
+                    )
+                ),
+                None,
+            )
+            approval = (
+                governance.get_approval_for_action(str(pending.get("id") or ""))
+                if pending is not None else None
+            )
         finally:
             store.close()
-        scoped_v6 = bool(pending and pending.get("governed_action_id"))
         if (
             session is None
             or pending is None
-            or (session.status != "awaiting_approval" and not scoped_v6)
         ):
             return
         action_id = str(pending.get("id") or "")
-        raw_expiry = str(pending.get("approval_expires_at") or "")
+        raw_expiry = str((approval or {}).get("payload", {}).get("expires_at") or "")
         try:
             expires_at = datetime.fromisoformat(raw_expiry.replace("Z", "+00:00"))
         except ValueError:
@@ -243,10 +256,11 @@ class RuntimeScheduler:
             session = store.get_session(task_id)
             if session is None or session.status in {"completed", "cancelled", "failed"}:
                 return
-            solver_id = session.active_solver_id
-            if solver_id is None:
-                main = next((item for item in store.list_solvers(task_id) if item.role == "main"), None)
-                solver_id = main.id if main is not None else None
+            repositories = PersistenceBundle(store)
+            orchestration = repositories.orchestration.get_state(task_id)
+            solver_id = session.active_solver_id or (
+                orchestration.supervisor_solver_id if orchestration is not None else None
+            )
             message = _redact_error(str(exc))[:1000]
             if isinstance(exc, RuntimeConfigurationError):
                 SessionCoordinator(store).stop(
@@ -262,6 +276,10 @@ class RuntimeScheduler:
                         "retryable": exc.retryable,
                     },
                 )
+                self._mark_runtime_failure(
+                    repositories, task_id, solver_id=solver_id,
+                    solver_status="blocked", orchestration_status="blocked",
+                )
                 return
             SessionCoordinator(store).stop(
                 task_id=task_id,
@@ -271,8 +289,41 @@ class RuntimeScheduler:
                 turn_count=session.turn_count,
                 error={"code": "BACKGROUND_RUNTIME_FAILED", "message": message},
             )
+            self._mark_runtime_failure(
+                repositories, task_id, solver_id=solver_id,
+                solver_status="failed", orchestration_status="failed",
+            )
         finally:
             store.close()
+
+    @staticmethod
+    def _mark_runtime_failure(
+        repositories: PersistenceBundle,
+        task_id: str,
+        *,
+        solver_id: str | None,
+        solver_status: str,
+        orchestration_status: str,
+    ) -> None:
+        with repositories.transaction():
+            if solver_id is not None:
+                solver = repositories.solvers.get_solver(solver_id)
+                if solver is not None and str(solver.status) not in {
+                    "completed", "failed", "cancelled",
+                }:
+                    repositories.solvers.update_solver_status(
+                        solver_id, solver_status
+                    )
+            state = repositories.orchestration.get_state(task_id)
+            if state is not None and state.status not in {
+                "completed", "failed", "cancelled",
+            }:
+                repositories.orchestration.save_state(state.model_copy(update={
+                    "status": orchestration_status,
+                    "updated_at": datetime.now(UTC).isoformat().replace(
+                        "+00:00", "Z"
+                    ),
+                }))
 
 
 def _redact_error(value: str) -> str:

@@ -1,27 +1,15 @@
-"""Backward-compatible exports for the pre-domain-module contract surface.
+"""Stable public exports for current application contracts."""
 
-Canonical definitions now live under :mod:`tga.domain`.  Keep importing from
-this module while callers migrate gradually; every name below is the same
-Python object exported by its canonical module.
-"""
-
-from tga.domain.evidence.legacy_models import (
-    AgentEvent,
+from tga.domain.events import AgentEvent
+from tga.domain.evidence.indexes import (
     ArtifactIndex,
+    ArtifactSegment,
+    ExtractionStatus,
+)
+from tga.domain.evidence.records import (
     ArtifactKind,
     ArtifactRecord,
-    ArtifactSegment,
-    DecisionPhase,
-    DecisionTrace,
-    ExtractionStatus,
-    Finding,
-    FindingStatus,
-    Intent,
-    IntentKind,
-    IntentStatus,
-    Severity,
-    WorkerResult,
-    WorkerStatus,
+    CandidateFindingRecord,
 )
 from tga.domain.governance.models import (
     ActionEffect,
@@ -36,21 +24,12 @@ from tga.domain.governance.models import (
     RiskLevel,
     TGAError,
 )
-from tga.domain.solver.legacy_models import (
+from tga.domain.runtime.models import (
     ChallengeContract,
     ChallengeStatus,
     ContextMetric,
-    MemoryEntry,
-    MemoryKind,
     SessionRecord,
     SessionStatus,
-    SolverRecord,
-    SolverRole,
-    SolverStatus,
-    StrategyCard,
-    StrategySource,
-    StrategyStatus,
-    StrategyStep,
 )
 from tga.domain.task.models import (
     CtfModeConfig,

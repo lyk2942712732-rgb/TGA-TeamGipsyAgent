@@ -1,43 +1,55 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter } from "react-router-dom";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { MemoryRouter, useLocation } from "react-router-dom";
+import { describe, expect, it, vi } from "vitest";
 
-const mocks = vi.hoisted(() => ({ fetchTasks: vi.fn(), getLLMSettings: vi.fn(), deleteTask: vi.fn() }));
-vi.mock("../api/tasks", async (original) => ({ ...await original<typeof import("../api/tasks")>(), ...mocks }));
-vi.mock("../pages/DashboardPage", () => ({ DashboardPage: () => <div>dashboard</div> }));
+const apiMocks = vi.hoisted(() => ({ fetchTasks: vi.fn(), getLLMSettings: vi.fn() }));
+vi.mock("../api/tasks", async (original) => ({ ...await original<typeof import("../api/tasks")>(), ...apiMocks }));
+vi.mock("../pages/DashboardRoute", () => ({ DashboardRoute: () => <div>dashboard route</div> }));
+vi.mock("../pages/ApprovalsPage", () => ({ ApprovalsPage: () => <div>global approvals</div> }));
 vi.mock("../pages/NewTaskPage", () => ({ NewTaskPage: () => <div>new task</div> }));
-vi.mock("../pages/SessionRuntimePage", () => ({ SessionRuntimePage: () => <div>runtime</div> }));
-vi.mock("../pages/SettingsPages", () => ({ CapabilitiesPage: () => null, ModelsPage: () => null, SkillsPage: () => null }));
-vi.mock("../pages/SystemPromptPage", () => ({ SystemPromptPage: () => null }));
+vi.mock("../pages/TaskListPage", () => ({ TaskListPage: () => <div>task list</div> }));
+vi.mock("../pages/TaskDetailPage", () => ({ TaskDetailPage: ({ taskId }: { taskId: string }) => <div>task detail {taskId}</div> }));
+vi.mock("../features/runtime/TaskRuntimePage", () => ({ TaskRuntimePage: () => <div>task runtime</div> }));
+vi.mock("../pages/ToolsPage", () => ({ CapabilitiesPage: () => <div>tools</div> }));
+vi.mock("../pages/ModelsPage", () => ({ ModelsPage: () => <div>models</div> }));
+vi.mock("../pages/SkillsPage", () => ({ SkillsPage: () => <div>skills</div> }));
 
 import { RuntimeApp } from "./RuntimeApp";
 
-describe("RuntimeApp scene task navigation", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    mocks.getLLMSettings.mockResolvedValue({ configured: true });
-    mocks.fetchTasks.mockResolvedValue({ tasks: [
-      ...Array.from({ length: 8 }, (_, index) => ({ task_id: `ctf_${index}`, name: `CTF task ${index}`, mode: "ctf", status: "completed", target: "", created_at: "", flags: 0, findings: 0, artifacts: 0 })),
-      { task_id: "reverse_1", name: "Reverse task", mode: "reverse_engineering", status: "running", target: "", created_at: "", flags: 0, findings: 0, artifacts: 0 },
-    ] });
+function LocationProbe() {
+  const location = useLocation();
+  return <output data-testid="location">{location.pathname}</output>;
+}
+
+describe("RuntimeApp product shell", () => {
+  it("renders thirteen static product entries without loading tasks or model settings", () => {
+    render(<MemoryRouter initialEntries={["/resources"]}><RuntimeApp /></MemoryRouter>);
+
+    const navigation = screen.getByRole("navigation", { name: "主导航" });
+    expect(navigation.querySelectorAll("button")).toHaveLength(13);
+    expect(screen.getByRole("button", { name: "首页" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "任务" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Tools & MCP" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "系统状态" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "资源" })).toBeInTheDocument();
+    expect(apiMocks.fetchTasks).not.toHaveBeenCalled();
+    expect(apiMocks.getLLMSettings).not.toHaveBeenCalled();
   });
 
-  it("groups every task by scene and independently collapses each scene", async () => {
+  it("navigates through the shell without turning navigation into a data query", async () => {
     const user = userEvent.setup();
-    render(<MemoryRouter initialEntries={["/"]}><RuntimeApp /></MemoryRouter>);
-    await waitFor(() => expect(mocks.fetchTasks).toHaveBeenCalled());
-    expect(screen.getByRole("button", { name: /新建任务/ })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Skills/ })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /System Prompt/ })).toBeInTheDocument();
-    const ctfGroup = screen.getByRole("button", { name: /CTF 解题.*8/ });
-    const reverseGroup = screen.getByRole("button", { name: /逆向分析.*1/ });
-    expect(screen.getByTitle("CTF task 7")).toBeInTheDocument();
-    expect(screen.getByTitle("Reverse task")).toBeInTheDocument();
-    await user.click(ctfGroup);
-    expect(ctfGroup).toHaveAttribute("aria-expanded", "false");
-    expect(screen.queryByTitle("CTF task 7")).toBeNull();
-    expect(screen.getByTitle("Reverse task")).toBeInTheDocument();
-    expect(within(reverseGroup).getByText("1")).toBeInTheDocument();
+    render(<MemoryRouter initialEntries={["/resources"]}><RuntimeApp /></MemoryRouter>);
+
+    await user.click(screen.getByRole("button", { name: "审批" }));
+    expect(screen.getByText("global approvals")).toBeInTheDocument();
+    expect(apiMocks.fetchTasks).not.toHaveBeenCalled();
+    expect(apiMocks.getLLMSettings).not.toHaveBeenCalled();
+  });
+
+  it("returns an explicit removed-route result for legacy Session URLs", () => {
+    render(<MemoryRouter initialEntries={["/sessions/task%20one/replay?tab=evidence"]}><RuntimeApp /><LocationProbe /></MemoryRouter>);
+    expect(screen.getByRole("heading", { name: "此入口不存在" })).toBeInTheDocument();
+    expect(screen.getByTestId("location")).toHaveTextContent("/sessions/task%20one/replay");
   });
 });

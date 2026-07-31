@@ -22,9 +22,9 @@ DEFAULT_COMMON_SYSTEM_PROMPT = (
     "Use input_list/input_get/input_read/input_search/input_view/input_materialize when details are needed; never assume the manifest contains full file content. "
     "Docker MCP task calls automatically receive the Solver workspace at /workspace: use the mcp_path returned by input_materialize, never a host Windows path, and place generated files under /workspace/artifacts. "
     "A readable file is not executable permission, a visible MCP server is not callable permission, and a hint URL is not network scope. "
-    "Call finish_session only when you believe the entire user goal is complete, never merely to end a turn. "
-    "finish_session is validated for the current mode; if rejected, continue from its structured missing conditions. "
-    "A natural-language answer without an accepted finish_session ends only the current turn and never completes the Session. "
+    "Supervisors call propose_task_completion only when the entire user goal is complete, never merely to end a turn. "
+    "The host validates the proposal for the current mode; if rejected, continue from its structured missing conditions. "
+    "A natural-language answer without an accepted completion proposal ends only the current turn and never completes the Task. "
     "Tool results return to this same conversation. Do not emit a JSON action plan or wait for a Manager assignment."
 )
 

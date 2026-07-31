@@ -1,36 +1,24 @@
-"""Runtime tooling package with a phase-1 compatibility bridge."""
+"""Schema-v6 runtime tool definitions."""
 
 from __future__ import annotations
 
-import importlib.util
-import sys
-from pathlib import Path
+import json
 
 
-_MODULE_NAME = "tga.runtime._legacy_tooling"
-_LEGACY_PATH = Path(__file__).resolve().parent.parent / "tooling.py"
-_spec = importlib.util.spec_from_file_location(_MODULE_NAME, _LEGACY_PATH)
-if _spec is None or _spec.loader is None:  # pragma: no cover - invalid installation
-    raise ImportError(f"cannot load legacy runtime tooling from {_LEGACY_PATH}")
-_legacy = importlib.util.module_from_spec(_spec)
-sys.modules[_MODULE_NAME] = _legacy
-_spec.loader.exec_module(_legacy)
-
-ToolExecutionResponse = _legacy.ToolExecutionResponse
 class ToolDefinitionBuilder:
-    """Generate schemas from a Solver manifest, with a non-v6 probe fallback."""
+    """Generate provider schemas from the immutable SolverToolManifest."""
 
-    def __init__(self, *, manifest=None, **legacy_kwargs):
+    def __init__(self, *, manifest=None, task=None, registry=None, tool_names=None, mcp_snapshot=None):
         self.manifest = manifest
-        self.legacy_kwargs = legacy_kwargs
+        self.task = task
+        self.registry = registry
+        self.tool_names = tool_names or {}
+        self.mcp_snapshot = mcp_snapshot
 
     def build(self):
-        if self.manifest is None:
-            return _legacy.ToolDefinitionBuilder(**self.legacy_kwargs).build()
-        import json
-
+        entries = self.manifest.entries if self.manifest is not None else self._probe_entries()
         tools = []
-        for entry in self.manifest.entries:
+        for entry in entries:
             parameters = json.loads(json.dumps(entry.parameters))
             parameters.setdefault("type", "object")
             properties = parameters.setdefault("properties", {})
@@ -45,6 +33,18 @@ class ToolDefinitionBuilder:
                 },
             })
         return tools
+
+    def _probe_entries(self):
+        if self.task is None or self.registry is None or self.mcp_snapshot is None:
+            raise ValueError("manifest is required for runtime tool definitions")
+        from tga.runtime.tooling.catalog import RuntimeToolCatalog
+
+        return RuntimeToolCatalog.from_runtime(
+            task=self.task,
+            registry=self.registry,
+            tool_names=self.tool_names,
+            mcp_snapshot=self.mcp_snapshot,
+        ).entries
 
     @staticmethod
     def governance_schema():
@@ -71,6 +71,4 @@ class ToolDefinitionBuilder:
             },
         }
 
-ToolDispatcher = _legacy.ToolDispatcher
-
-__all__ = ["ToolDefinitionBuilder", "ToolDispatcher", "ToolExecutionResponse"]
+__all__ = ["ToolDefinitionBuilder"]

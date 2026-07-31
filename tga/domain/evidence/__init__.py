@@ -3,14 +3,12 @@
 from tga.domain.evidence.artifacts import Artifact
 from tga.domain.evidence.claims import EvidenceClaim, EvidenceClaimStatus
 from tga.domain.evidence.findings import Finding, FindingStatus, Severity
-from tga.domain.evidence.legacy_models import (
-    ArtifactRecord as LegacyArtifactRecord,
-    Finding as LegacyFinding,
-)
 from tga.domain.evidence.locators import EvidenceLocator, LocatorKind
+from tga.domain.evidence.indexes import ArtifactIndex, ArtifactSegment, ExtractionStatus
+from tga.domain.evidence.records import ArtifactKind, ArtifactRecord, CandidateFindingRecord
 
 __all__ = [
-    "Artifact", "EvidenceClaim", "EvidenceClaimStatus", "EvidenceLocator",
-    "Finding", "FindingStatus", "LegacyArtifactRecord", "LegacyFinding",
-    "LocatorKind", "Severity",
+    "Artifact", "ArtifactIndex", "ArtifactKind", "ArtifactRecord", "ArtifactSegment",
+    "CandidateFindingRecord", "EvidenceClaim", "EvidenceClaimStatus", "EvidenceLocator",
+    "ExtractionStatus", "Finding", "FindingStatus", "LocatorKind", "Severity",
 ]

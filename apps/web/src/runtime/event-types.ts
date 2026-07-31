@@ -1,65 +1,5 @@
 import type { TaskMode } from "../modes";
-import type { ExecutionPolicy, ModeConfig } from "../api/tasks";
 export type { TaskMode } from "../modes";
-
-export type SessionStatus = "created" | "running" | "paused" | "awaiting_approval" | "blocked" | "completed" | "failed" | "cancelled";
-export type ActionStatus = "proposed" | "pending_approval" | "approved" | "running" | "succeeded" | "failed" | "blocked" | "cancelled" | "rejected";
-export type MemoryKind = "fact" | "evidence" | "failure_boundary" | "hint" | "constraint" | "decision";
-export type StrategyStatus = "pending" | "testing" | "succeeded" | "failed" | "blocked";
-
-export type SessionFile = { id: string; original_name: string; stored_name: string; relative_path: string; mime_type: string; size: number; sha256: string; kind: "task_input"; media_kind: "image" | "text" | "document" | "archive" | "binary" | "other"; container_path?: string; purpose?: string };
-export type SkillSnapshot = { name: string; version: string; origin: "builtin" | "custom"; modes: TaskMode[]; capabilities: string[]; tags: string[]; body: string; content_sha256: string; score: number; selection_reasons: string[] };
-export type SkillBundleSnapshot = { schema_version: 1; selector: string; query_summary: string; skills: SkillSnapshot[]; total_chars: number };
-export type RuntimeTask = { id: string; name: string; mode: TaskMode; prompt: string; files: SessionFile[]; task_entry_url?: string | null; goal?: string; schema_version?: number; model_snapshot?: { provider: string; model: string; verification_id: string; verified_at: string }; mcp_capabilities?: { catalog_version: string; server_ids: string[]; tools: Array<{ provider_name: string; server_id: string; method: string; description?: string }> }; skill_bundle_snapshot?: SkillBundleSnapshot; mode_config?: ModeConfig; execution_policy?: ExecutionPolicy };
-export type RuntimeSolver = { id: string; role: "main"; status: string; model_name?: string; started_at?: string | null; finished_at?: string | null };
-export type ChallengeView = { status: "unknown" | "active" | "solved" | "blocked" | "expired"; completion_proof_artifact_id?: string | null; status_reason: string };
-export type MemoryEntry = { id: string; kind: MemoryKind; content: string; artifact_ids: string[]; source: string; supersedes_id?: string | null; created_at?: string; updated_at?: string };
-export type StrategyStep = { id: string; title: string; instructions: string; expected_request: string; success_marker: string; failure_conditions: string[]; next_step_id?: string | null; risk: "passive" | "active" | "destructive"; status: StrategyStatus; action_ids: string[]; evidence_artifact_ids: string[]; last_result: string };
-export type StrategyCard = { id: string; task_id: string; title: string; summary: string; claims: string[]; prerequisites: string[]; target_version_checks: string[]; status: StrategyStatus; active_step_id?: string | null; sources: Array<{ hint_id?: string | null; url?: string | null; artifact_id?: string | null; extraction_status: "not_requested" | "blocked_out_of_scope" | "failed" | "extracted"; source_refs: string[] }>; steps: StrategyStep[]; created_at?: string; updated_at?: string };
-export type RuntimeArtifact = { id: string; task_id?: string; kind: string; path: string; sha256?: string; tool?: string | null; target?: string | null; input_id?: string | null; provenance?: Record<string, unknown>; created_at?: string; excerpt?: string; status?: number; method?: string; truncated?: boolean };
-export type ActionEffect = { scope: "none" | "session" | "workspace" | "target"; persistence: "none" | "temporary" | "persistent"; reversibility: "not_applicable" | "reversible" | "uncertain" | "irreversible"; category: "authentication" | "submission" | "file_write" | "resource_create" | "resource_modify" | "resource_delete" | "containment" | "destructive_scan"; description: string };
-export type RuntimeAction = { id: string; solver_id?: string; capability: string; target: string; actual_target?: string | null; input_id?: string | null; target_ref?: string | null; authorization?: Record<string, unknown>; provenance?: Record<string, unknown>; status: ActionStatus; risk?: "passive" | "active" | "destructive"; strategy_card_id?: string | null; strategy_step_id?: string | null; rationale?: string; expected_outcome?: string; retry_reason?: string; alternative_analysis?: string; effect?: ActionEffect; approval_expires_at?: string | null; summary?: string; artifact_ids: string[]; error?: { code?: string; message?: string } | null; created_at?: string; updated_at?: string; arguments?: Record<string, unknown> };
-export type ConfirmedFlag = { value: string; evidence_artifact_id: string; created_at?: string };
-export type RuntimeFinding = { id: string; title: string; target: string; severity: string; status: "candidate" | "confirmed" | "rejected"; evidence_artifact_id?: string | null; evidence_excerpt?: string | null; remediation?: string | null };
-export type SkillRef = { name: string; version?: string; source?: string; content_sha256?: string; selection_reasons?: string[] };
-
-export type EventPayload = Record<string, unknown> & {
-  action_id?: string; capability?: string; target?: string; status?: string; summary?: string; rationale?: string; reason?: string; value?: string; kind?: string; code?: string;
-  evidence_artifact_id?: string; artifact_id?: string; artifact_ids?: string[]; finding_id?: string; role?: string; model_name?: string;
-  max_turns?: number; action?: string; error?: { code?: string; message?: string; phase?: string; retryable?: boolean; server?: string; method?: string; trace_id?: string };
-  skills?: SkillRef[]; count?: number; memory_id?: string; content?: string; source?: string; last_result?: string; decision?: string; risk?: string; message?: string;
-  strategy_advice?: string; strategy_card_id?: string; strategy_step_id?: string; expected_outcome?: string; retry_reason?: string;
-  alternative_analysis?: string; effect?: ActionEffect; approval_expires_at?: string;
-  card_status?: StrategyStatus; active_step_id?: string | null;
-  runtime?: string; tool_call_id?: string; tool_name?: string; arguments?: Record<string, unknown>; artifacts?: Array<{ artifact_id: string; content?: string }>;
-  tool_kind?: string; mcp_server?: string; mcp_method?: string; trace_id?: string; catalog_version?: string; execution_location?: string;
-  duration_ms?: number; timings?: Record<string, number>; truncated?: boolean; artifact_truncated?: boolean; retryable?: boolean; phase?: string;
-  mode?: TaskMode; validator_code?: string; missing?: string[]; evidence_artifact_ids?: string[]; turn?: number; terminal?: boolean;
-  input_tokens?: number; output_tokens?: number; coverage?: string[]; limitations?: string[]; claims?: Array<Record<string, unknown>>; structured_result?: Record<string, unknown>;
-  artifact?: RuntimeArtifact;
-  memory?: MemoryEntry;
-  strategy_card?: StrategyCard;
-};
-export type AgentEventType = string;
-export type RuntimeEvent = { schema_version?: number; id: string; task_id: string; seq: number; type: AgentEventType; solver_id?: string | null; intent_id?: string | null; payload: EventPayload; created_at: string };
-export type RuntimeSnapshot = {
-  schema_version?: number;
-  task: RuntimeTask;
-  session: { status: SessionStatus; turn_count: number; max_turns: number; active_solver_id?: string | null; stop_reason?: string | null; started_at?: string | null; finished_at?: string | null };
-  solvers: RuntimeSolver[];
-  challenge: ChallengeView;
-  runtime: { memory: MemoryEntry[]; strategy_cards: StrategyCard[] };
-  actions: RuntimeAction[];
-  flags: ConfirmedFlag[];
-  findings: RuntimeFinding[];
-  artifacts: RuntimeArtifact[];
-  artifact_indexes?: Array<{ artifact_id: string; document_type: string; extraction_status: string; summary: string; segment_count: number; source_refs: string[] }>;
-  http_sessions?: Array<{ profile: string; active?: boolean; origin?: string; origin_count: number; request_count: number; rebuild_count: number; reused?: boolean; cross_process_recovery: boolean }>;
-  observer?: { directives: Array<Record<string, unknown>> };
-  context_metrics?: Array<{ turn: number; audit_message_count: number; working_message_count: number; working_chars: number; summary_hits: number; artifact_retrievals: number; provider_input_tokens?: number; provider_output_tokens?: number }>;
-  events: RuntimeEvent[];
-  latest_seq: number;
-};
 
 export type Capability = { name: string; availability: string; risk: string; modes: TaskMode[]; tools?: Array<{ tool_id: string; availability: string; detail?: string }> };
 export type MCPTool = { tool_id: string; provider_name?: string; risk: string; modes?: TaskMode[]; methods: Array<{ name: string; description?: string; input_schema?: Record<string, unknown> }> };
@@ -67,15 +7,11 @@ export type MCPCatalog = { availability: string; reason?: string; tools: MCPTool
 export type MCPHealthRecord = { tool?: string; server?: string; status?: string; detail?: string; configured?: boolean; enabled?: boolean; reachable?: boolean; discovered?: boolean; visible_for_task?: number | null; runnable?: boolean | null; last_call_at?: string | null; last_call_method?: string | null; last_call_duration_ms?: number | null; last_call_error?: { code?: string; message?: string } | null; tools?: number; transport?: "stdio" | "streamable_http"; protocol_version?: string; server_info?: Record<string, unknown>; discovered_at?: string | null; image?: string | null; endpoint?: string | null; workspace_access?: { mode?: "automatic" | "remote" | "host_process"; mounted_on_task_call?: boolean; container_path?: string; read_only?: boolean; artifacts_path?: string; artifacts_writable?: boolean }; error?: { code?: string; message?: string; phase?: string; retryable?: boolean } | null };
 export type MCPHealth = { configured: boolean; checked_at?: string; records: MCPHealthRecord[] };
 export type MCPImportResult = { server_id: string; image: string; images?: string[]; requires_selection?: boolean; source_type: "docker-image" | "docker-build" | string; config_path: string; config_action: "created" | "updated" | string; build_log?: string; catalog?: MCPHealth };
-export type MCPDeleteResult = { deleted: boolean; server_id: string; image_deleted: false; catalog: MCPHealth };
-export type MCPEnabledResult = { server_id: string; enabled: boolean; catalog: MCPHealth };
 export type MCPServerConfig = { enabled: boolean; transport: "stdio" | "streamable_http"; enabledTools?: string[]; stdio?: { source: "docker_image" | "local_process"; image?: string; command?: string; args?: string[]; docker?: { memory?: string | null; cpus?: number | null; pidsLimit?: number | null; network?: string; readOnly?: boolean; capDropAll?: boolean; noNewPrivileges?: boolean } } | null; http?: { url: string; verifyTls: boolean; headers?: Record<string, string>; secretRefs?: Record<string, string>; proxyUrl?: string | null; allowSameOriginRedirects?: boolean } | null };
 export type MCPManagedServer = { id: string; config: MCPServerConfig; status?: MCPHealthRecord | null };
 export type MCPServerTools = { server_id: string; status: string; protocol_version?: string; server_info?: Record<string, unknown>; error?: { code?: string; message?: string } | null; tools: Array<{ name: string; description?: string; input_schema?: Record<string, unknown>; enabled: boolean }> };
 export type CapabilityCatalog = { capabilities: Capability[]; tools: MCPCatalog };
 
-// Phase-10 feature types are re-exported under explicit names while the old
-// RuntimeSnapshot surface remains available to the feature-flagged page.
 export type {
   RuntimeApproval,
   RuntimeBudgetUsage,

@@ -9,9 +9,9 @@ from tga.application.projections.models import (
     EventPage,
     EvidencePageResponse,
     IntentPage,
-    LegacyRuntimeSnapshotResponse,
     RuntimeSnapshotResponse,
     SolverResponse,
+    TaskDetailResponse,
     TeamResponse,
 )
 from tga.runtime.service import TaskRuntimeService
@@ -21,11 +21,8 @@ class RuntimeQueries:
     def __init__(self, *, run_root: str | Path) -> None:
         self.backend = TaskRuntimeService(run_root=run_root)
 
-    def snapshot(self, task_id: str) -> RuntimeSnapshotResponse | LegacyRuntimeSnapshotResponse:
-        payload = self.backend.runtime_snapshot(task_id)
-        if int(payload.get("schema_version") or 0) == 5:
-            return LegacyRuntimeSnapshotResponse.model_validate(payload)
-        return RuntimeSnapshotResponse.model_validate(payload)
+    def snapshot(self, task_id: str) -> RuntimeSnapshotResponse:
+        return RuntimeSnapshotResponse.model_validate(self.backend.runtime_snapshot(task_id))
 
     def team(self, task_id: str) -> TeamResponse:
         return TeamResponse.model_validate(self.backend.team_projection(task_id))
@@ -44,6 +41,12 @@ class RuntimeQueries:
         return EvidencePageResponse.model_validate(
             self.backend.evidence_page(task_id, offset=offset, limit=limit)
         )
+
+    def task_detail(self, task_id: str) -> TaskDetailResponse:
+        return TaskDetailResponse.model_validate(self.backend.task_detail(task_id))
+
+    def task_definition(self, task_id: str) -> dict:
+        return self.backend.task_definition(task_id)
 
     def approvals(
         self, task_id: str, *, offset: int, limit: int, status: str | None
@@ -72,8 +75,15 @@ class RuntimeQueries:
     def artifact_index(self, task_id: str, artifact_id: str):
         return self.backend.artifact_index(task_id, artifact_id)
 
-    def tasks(self) -> list[dict]:
-        return self.backend.list_tasks()
+    def tasks(
+        self, *, query: str = "", mode: str | None = None,
+        status: str | None = None, needs_attention: bool | None = None,
+        offset: int = 0, limit: int | None = None,
+    ) -> dict:
+        return self.backend.list_tasks(
+            query=query, mode=mode, status=status,
+            needs_attention=needs_attention, offset=offset, limit=limit,
+        )
 
     def report(self, task_id: str) -> str:
         return self.backend.render_report(task_id)

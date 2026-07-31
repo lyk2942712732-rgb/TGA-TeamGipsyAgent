@@ -62,6 +62,20 @@ def _build_parser() -> argparse.ArgumentParser:
     resume_parser.add_argument("task_id")
     resume_parser.add_argument("--run-root", default="runs")
 
+    migrate_parser = subparsers.add_parser(
+        "migrate", help="Plan, apply, or verify the offline schema-v5 to schema-v6 migration"
+    )
+    migrate_parser.add_argument("--db", required=True, type=Path, help="Path to evidence.db")
+    migrate_operation = migrate_parser.add_mutually_exclusive_group(required=True)
+    migrate_operation.add_argument("--dry-run", action="store_true")
+    migrate_operation.add_argument("--apply", action="store_true")
+    migrate_operation.add_argument("--verify", action="store_true")
+    migrate_parser.add_argument(
+        "--backup", action="store_true",
+        help="Explicit backup-first acknowledgement; apply always creates backups",
+    )
+    migrate_parser.add_argument("--report", type=Path, default=None)
+
     go_parser = subparsers.add_parser("go", help="Launch the local TGA desktop window")
     go_parser.add_argument("--host", default="127.0.0.1")
     go_parser.add_argument("--port", type=int, default=8123)
@@ -95,6 +109,18 @@ def main(argv: list[str] | None = None) -> int:
             return launch_web(host=args.host, port=args.port, build=not args.no_build)
         except DesktopLaunchError as exc:
             parser.error(str(exc))
+    if args.command == "migrate":
+        from tga.migrations.schema_v5_to_v6 import main as migration_main
+
+        migration_args = ["--db", str(args.db)]
+        migration_args.append(
+            "--verify" if args.verify else "--apply" if args.apply else "--dry-run"
+        )
+        if args.backup:
+            migration_args.append("--backup")
+        if args.report is not None:
+            migration_args.extend(("--report", str(args.report)))
+        return migration_main(migration_args)
     if args.command == "create":
         try:
             task = load_task_config(args.config)

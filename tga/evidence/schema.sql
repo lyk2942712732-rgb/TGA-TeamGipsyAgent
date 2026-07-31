@@ -10,7 +10,8 @@ CREATE TABLE IF NOT EXISTS intents (
     payload_json TEXT NOT NULL,
     status TEXT NOT NULL,
     created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
+    updated_at TEXT NOT NULL,
+    schema_version INTEGER NOT NULL DEFAULT 6
 );
 
 CREATE TABLE IF NOT EXISTS artifacts (
@@ -18,16 +19,8 @@ CREATE TABLE IF NOT EXISTS artifacts (
     task_id TEXT NOT NULL,
     intent_id TEXT,
     payload_json TEXT NOT NULL,
-    created_at TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS events (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    task_id TEXT NOT NULL,
-    intent_id TEXT,
-    type TEXT NOT NULL,
-    payload_json TEXT NOT NULL,
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    schema_version INTEGER NOT NULL DEFAULT 6
 );
 
 CREATE TABLE IF NOT EXISTS findings (
@@ -37,7 +30,8 @@ CREATE TABLE IF NOT EXISTS findings (
     status TEXT NOT NULL,
     evidence_artifact_id TEXT,
     created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
+    updated_at TEXT NOT NULL,
+    schema_version INTEGER NOT NULL DEFAULT 6
 );
 
 CREATE TABLE IF NOT EXISTS flags (
@@ -63,70 +57,6 @@ CREATE TABLE IF NOT EXISTS sessions (
     mcp_catalog_version TEXT NOT NULL DEFAULT ''
 );
 
-CREATE TABLE IF NOT EXISTS solvers (
-    id TEXT PRIMARY KEY,
-    task_id TEXT NOT NULL,
-    role TEXT NOT NULL,
-    status TEXT NOT NULL,
-    model_name TEXT NOT NULL DEFAULT '',
-    parent_solver_id TEXT,
-    started_at TEXT,
-    finished_at TEXT
-);
-
-CREATE TABLE IF NOT EXISTS memory_entries (
-    id TEXT PRIMARY KEY,
-    task_id TEXT NOT NULL,
-    kind TEXT NOT NULL,
-    content TEXT NOT NULL,
-    artifact_ids_json TEXT NOT NULL DEFAULT '[]',
-    source TEXT NOT NULL,
-    supersedes_id TEXT,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS actions (
-    id TEXT PRIMARY KEY,
-    task_id TEXT NOT NULL,
-    solver_id TEXT NOT NULL,
-    intent_id TEXT,
-    local_plan_step_id TEXT,
-    execution_policy_snapshot_id TEXT,
-    solver_tool_policy_snapshot_id TEXT,
-    governed_action_id TEXT,
-    kind TEXT NOT NULL,
-    capability TEXT NOT NULL,
-    target TEXT NOT NULL,
-    arguments_json TEXT NOT NULL,
-    rationale TEXT NOT NULL,
-    risk TEXT NOT NULL,
-    strategy_card_id TEXT,
-    strategy_step_id TEXT,
-    expected_outcome TEXT NOT NULL DEFAULT '',
-    retry_reason TEXT NOT NULL DEFAULT '',
-    alternative_analysis TEXT NOT NULL DEFAULT '',
-    effect_json TEXT NOT NULL DEFAULT '{}',
-    approval_expires_at TEXT,
-    input_id TEXT,
-    target_ref TEXT,
-    actual_target TEXT,
-    authorization_json TEXT NOT NULL DEFAULT '{}',
-    provenance_json TEXT NOT NULL DEFAULT '{}',
-    status TEXT NOT NULL,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS strategy_cards (
-    id TEXT PRIMARY KEY,
-    task_id TEXT NOT NULL,
-    payload_json TEXT NOT NULL,
-    status TEXT NOT NULL,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
-);
-
 CREATE TABLE IF NOT EXISTS artifact_indexes (
     artifact_id TEXT PRIMARY KEY,
     task_id TEXT NOT NULL,
@@ -140,18 +70,6 @@ CREATE TABLE IF NOT EXISTS context_metrics (
     solver_id TEXT NOT NULL,
     turn INTEGER NOT NULL,
     payload_json TEXT NOT NULL,
-    created_at TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS action_results (
-    action_id TEXT PRIMARY KEY,
-    summary TEXT NOT NULL,
-    artifact_ids_json TEXT NOT NULL DEFAULT '[]',
-    facts_json TEXT NOT NULL DEFAULT '[]',
-    leads_json TEXT NOT NULL DEFAULT '[]',
-    flags_json TEXT NOT NULL DEFAULT '[]',
-    findings_json TEXT NOT NULL DEFAULT '[]',
-    error_json TEXT,
     created_at TEXT NOT NULL
 );
 
@@ -187,8 +105,5 @@ CREATE TABLE IF NOT EXISTS challenge_contracts (
 );
 
 CREATE INDEX IF NOT EXISTS idx_agent_events_task_seq ON agent_events(task_id, seq);
-CREATE INDEX IF NOT EXISTS idx_memory_entries_task_created ON memory_entries(task_id, created_at);
-CREATE INDEX IF NOT EXISTS idx_actions_task_created ON actions(task_id, created_at);
-CREATE INDEX IF NOT EXISTS idx_strategy_cards_task_updated ON strategy_cards(task_id, updated_at);
 CREATE INDEX IF NOT EXISTS idx_artifact_indexes_task_created ON artifact_indexes(task_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_context_metrics_task_turn ON context_metrics(task_id, solver_id, turn);

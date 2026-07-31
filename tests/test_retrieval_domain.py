@@ -23,9 +23,10 @@ from tga.domain.retrieval import (
     RetrievalRequest,
     RetrievalRun,
 )
+from tga.domain.task.spec import TaskSpec
 from tga.infrastructure.persistence import PersistenceBundle
 from tga.infrastructure.retrieval import StructuredDocumentParser
-from tga.runtime.agents.single_solver_adapter import SingleSolverProvisioner
+from tga.runtime.orchestration import TaskOrchestrator
 from tga.runtime.context import ContextBuilder
 from tga.runtime.retrieval import (
     RetrievalEvidenceBridge,
@@ -481,7 +482,10 @@ def test_task_artifact_hit_only_bridges_to_candidate_evidence_and_not_verified_k
     knowledge_base = KnowledgeBase(id="kb_artifacts", name="Artifacts", owner=owner, created_at=NOW)
     try:
         bundle.tasks.create_task(task)
-        SingleSolverProvisioner(bundle).ensure(task=task, solver_id="solver_main")
+        bundle.tasks.save_task_spec(TaskSpec(task_id=task.id, objective=task.goal))
+        state = TaskOrchestrator(task=task, repositories=bundle).bootstrap()
+        solver_id = state.supervisor_solver_id
+        assert solver_id is not None
         artifact = Artifact(
             id="artifact_retrieved", task_id=task.id, kind="http_response",
             path="artifact.txt", sha256=_digest("response confirms marker"),
@@ -504,16 +508,16 @@ def test_task_artifact_hit_only_bridges_to_candidate_evidence_and_not_verified_k
         pack = RetrievalService(bundle.retrieval).retrieve(
             RetrievalRequest(
                 id="request_artifact", owner=OwnerScope(
-                    scope="solver", task_id=task.id, solver_id="solver_main"
+                    scope="solver", task_id=task.id, solver_id=solver_id
                 ),
-                task_id=task.id, solver_id="solver_main", query="marker",
+                task_id=task.id, solver_id=solver_id, query="marker",
                 index_snapshot_id=snapshot.id, channels=("task_artifact",),
                 knowledge_base_ids=(knowledge_base.id,), created_at=NOW,
             ), _policy(),
         )
         claim = RetrievalEvidenceBridge(bundle).create_candidate_claim(
             item=pack.items[0], statement="The response contains the marker.",
-            solver_id="solver_main",
+            solver_id=solver_id,
         )
         assert claim.status == "candidate"
         assert claim.artifact_id == artifact.id
@@ -525,20 +529,20 @@ def test_task_artifact_hit_only_bridges_to_candidate_evidence_and_not_verified_k
                 id="knowledge_rag_direct", task_id=task.id, scope="task",
                 status="verified", kind="hypothesis", content="RAG said so",
                 source_retrieval_run_ids=[pack.retrieval_run_id],
-                created_by_solver_id="solver_main", created_at=NOW,
+                created_by_solver_id=solver_id, created_at=NOW,
             )
         candidate = KnowledgeItem(
             id="knowledge_rag_candidate", task_id=task.id, scope="task",
             status="candidate", kind="hypothesis", content="RAG candidate only",
             source_retrieval_run_ids=[pack.retrieval_run_id],
-            created_by_solver_id="solver_main", created_at=NOW,
+            created_by_solver_id=solver_id, created_at=NOW,
         )
         bundle.knowledge.add_knowledge(candidate)
         with pytest.raises(ValidationError):
             bundle.knowledge.review_knowledge(
                 candidate.id,
                 status="verified",
-                reviewer_solver_id="solver_main",
+                reviewer_solver_id=solver_id,
                 reviewed_at=NOW,
             )
     finally:
@@ -596,7 +600,12 @@ def test_context_builder_injects_bounded_labeled_untrusted_reference(tmp_path: P
     knowledge_base = KnowledgeBase(id="kb_context", name="Context", owner=global_owner, created_at=NOW)
     try:
         bundle.tasks.create_task(task)
-        solver = SingleSolverProvisioner(bundle).ensure(task=task, solver_id="solver_main")
+        bundle.tasks.save_task_spec(TaskSpec(task_id=task.id, objective=task.goal))
+        state = TaskOrchestrator(task=task, repositories=bundle).bootstrap()
+        solver_id = state.supervisor_solver_id
+        assert solver_id is not None
+        solver = bundle.solvers.get_solver(solver_id)
+        assert solver is not None
         intent = Intent(
             id=f"intent_initial_{task.id}", task_id=task.id, title="Find reference",
             objective="find reference", status="running", assigned_solver_id=solver.id,

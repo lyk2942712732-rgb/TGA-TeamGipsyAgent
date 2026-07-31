@@ -28,19 +28,11 @@ class GatewayToolDispatcher:
         raw_intent = arguments.pop("_tga", {})
         if not isinstance(raw_intent, dict):
             return self._error("INVALID_MODEL_TOOL_INTENT", "_tga must be an object")
-        # One release-window compatibility for existing clients; the canonical
-        # v6 field and generated schema are `proposed_effect`.
-        if "effect" in raw_intent and "proposed_effect" not in raw_intent:
-            raw_intent["proposed_effect"] = raw_intent.pop("effect")
         try:
             model_intent = ModelToolIntent.model_validate(raw_intent)
         except ValidationError as exc:
             return self._error("INVALID_MODEL_TOOL_INTENT", str(exc)[:1_000])
         context = self.action_context()
-        if provider_name == "finish_session" and context.orchestration_role == "supervisor":
-            # Accepted for persisted Phase-5 transcripts, but never emitted in
-            # a schema-v6 SolverToolManifest.
-            provider_name = "propose_task_completion"
         try:
             request = ToolRequest(
                 provider_tool_name=provider_name,

@@ -22,9 +22,14 @@ def events_by_type(snapshot: dict[str, Any], *types: str) -> list[dict[str, Any]
 
 
 def runtime_events(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
-    """Use the v2 session's authoritative per-task sequence."""
-    events = snapshot.get("events") if snapshot.get("schema_version") == 2 else snapshot.get("agent_events")
-    return sorted(events or [], key=lambda item: (int(item.get("seq") or 0), str(item.get("created_at") or "")))
+    """Use the schema-v6 Snapshot's authoritative per-Task sequence."""
+    return sorted(
+        snapshot.get("events") or [],
+        key=lambda item: (
+            int(item.get("seq") or 0),
+            str(item.get("created_at") or ""),
+        ),
+    )
 
 
 def runtime_actions(snapshot: dict[str, Any]) -> list[dict[str, Any]]:

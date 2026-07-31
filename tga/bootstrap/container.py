@@ -1,9 +1,4 @@
-"""Central construction of current infrastructure and runtime services.
-
-The container deliberately returns legacy implementations in phase 1. It is
-the replacement seam for later application-port adapters and owns no global
-mutable state.
-"""
+"""Central construction of current infrastructure and runtime services."""
 
 from __future__ import annotations
 

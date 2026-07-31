@@ -16,7 +16,6 @@ from tga.application.projections.models import (
     ApprovalPage,
     EvidencePageResponse,
     IntentPage,
-    LegacyRuntimeSnapshotResponse,
     RuntimeSnapshotResponse,
     SolverResponse,
     TeamResponse,
@@ -27,7 +26,6 @@ from tga.runtime.service import UnsupportedTaskSchemaError
 
 from apps.api.routes.support import (
     ControlRequest,
-    HintRequest,
     StartRequest,
     _application_commands,
     _runtime_queries,
@@ -40,7 +38,7 @@ router = APIRouter(tags=["sessions"])
 
 @router.get(
     "/tasks/{task_id}/session",
-    response_model=RuntimeSnapshotResponse | LegacyRuntimeSnapshotResponse,
+    response_model=RuntimeSnapshotResponse,
 )
 def get_session(task_id: str) -> dict[str, Any]:
     return _snapshot(task_id)
@@ -124,24 +122,6 @@ def control(task_id: str, payload: ControlRequest) -> dict[str, Any]:
     if result.get("accepted") and payload.action in {"resume", "approve_action", "reject_action"}:
         result["scheduled"] = _schedule_runtime_runner(task_id)
     return result
-
-
-@router.post("/tasks/{task_id}/hints")
-def add_hint(task_id: str, payload: HintRequest) -> dict[str, Any]:
-    result = _command(lambda: _application_commands().intervention(
-        task_id,
-        InterventionRequest(kind="hint", content=payload.content, scope="task"),
-    ))
-    return {
-        "schema_version": 6,
-        "task_id": task_id,
-        "accepted": bool(result.get("accepted")),
-        "status": result.get("status"),
-        "intervention_id": result["intervention"]["id"],
-        "hint_id": result.get("hint_id"),
-        "deprecated": True,
-        "replacement": f"/api/v2/tasks/{task_id}/interventions",
-    }
 
 
 @router.post("/tasks/{task_id}/interventions")

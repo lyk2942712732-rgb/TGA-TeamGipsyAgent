@@ -9,7 +9,7 @@ from pydantic import BaseModel, ValidationError
 from tga.contracts import ModelSnapshot, TGATask
 from tga.domain.planning.intents import Intent
 from tga.domain.skills.models import SolverSkillSnapshot
-from tga.domain.skills.compatibility import legacy_skill_bundle_to_task_common
+from tga.migrations.skill_bundles import legacy_skill_bundle_to_task_common
 from tga.domain.solver.definitions import SolverDefinition
 from tga.domain.solver.instances import ToolPolicySnapshot
 from tga.domain.solver.results import WorkerResult

@@ -1,35 +1,75 @@
-import { useState } from "react";
-import type { TaskListItem } from "../api/tasks";
-import { EmptyState, statusLabel } from "../components/ui/EmptyState";
-import { MODE_PROFILES, TASK_MODES, type TaskMode } from "../modes";
+import { Activity, Bot, CircleAlert, Clock3, Play, ShieldCheck } from "lucide-react";
+import type { DashboardResponse, OperationalTaskSummary } from "../api/operations-query-adapter";
+import { EmptyState } from "../components/ui/EmptyState";
+import { MetricCard } from "../components/ui/MetricCard";
+import { PageHeader } from "../components/ui/PageHeader";
+import { RiskBadge } from "../components/ui/RiskBadge";
+import { StatusBadge } from "../shared/StatusBadge";
+import { MODE_PROFILES } from "../modes";
 
-export function DashboardPage({ tasks, onNew, onOpen, onDelete }: { tasks: TaskListItem[]; onNew: () => void; onOpen: (id: string) => void; onDelete: (id: string) => Promise<void> }) {
-  const [confirmDelete, setConfirmDelete] = useState<TaskListItem | null>(null);
-  const [deleting, setDeleting] = useState(false);
-  const [error, setError] = useState("");
-  const counts = ["running", "paused", "awaiting_approval", "blocked", "completed"].map((status) => ({ status, count: tasks.filter((item) => item.status === status).length }));
-  const grouped = Object.fromEntries(TASK_MODES.map((mode) => [mode, tasks.filter((task) => task.mode === mode)])) as Record<TaskMode, TaskListItem[]>;
-  const remove = async () => { if (!confirmDelete) return; setDeleting(true); setError(""); try { await onDelete(confirmDelete.task_id); setConfirmDelete(null); } catch (reason) { setError(reason instanceof Error ? reason.message : "删除任务失败"); } finally { setDeleting(false); } };
+export function DashboardPage({ value, onNew, onTask, onRuntime, onApprovals }: {
+  value: DashboardResponse;
+  onNew: () => void;
+  onTask: (taskId: string) => void;
+  onRuntime: (taskId: string) => void;
+  onApprovals: (taskId?: string) => void;
+}) {
+  const metric = (key: keyof DashboardResponse["metrics"]) => value.metrics[key] ?? "暂不可用";
+  return <section className="page-stack operations-dashboard">
+    <PageHeader
+      eyebrow="OPERATIONS / OVERVIEW"
+      title="运营总览"
+      description="聚合运行状态、人工处理队列与最近结果；任务执行细节仍在各自工作区中按需加载。"
+      breadcrumbs={[{ label: "TGA", href: "/" }, { label: "运营总览" }]}
+      actions={<button onClick={onNew}>新建任务</button>}
+    />
+    <div className="operations-metrics">
+      <MetricCard label="运行中任务" value={metric("running_tasks")} detail="当前 Session 状态" icon={Activity} tone="info" />
+      <MetricCard label="等待审批" value={metric("pending_approvals")} detail="真实待处理审批" icon={ShieldCheck} tone="warning" />
+      <MetricCard label="等待用户输入" value={metric("awaiting_user_input")} detail="Orchestration 状态" icon={Clock3} tone="warning" />
+      <MetricCard label="阻塞任务" value={metric("blocked_tasks")} detail="需要检查原因" icon={CircleAlert} tone="danger" />
+      <MetricCard label="活动 Solver" value={metric("active_solvers")} detail="运行及等待中的实例" icon={Bot} tone="success" />
+    </div>
 
-  return <section className="page-stack dashboard-page">
-    <header className="page-title"><div><span className="eyebrow">任务中心</span><h1>任务总览</h1><p>集中查看任务状态、执行轮次、证据产物和最新运行事件。</p></div><button onClick={onNew}>新建任务</button></header>
-    <div className="metric-grid">{counts.map((item) => <article className={`metric-card status-${item.status}`} key={item.status}><span>{statusLabel(item.status)}</span><strong>{item.count}</strong><small>{metricHint(item.status)}</small></article>)}</div>
-    {error ? <div className="inline-error" role="alert">{error}</div> : null}
-    <div className="dashboard-scene-stack">{TASK_MODES.map((mode, index) => <section className="surface dashboard-scene-section" key={mode} aria-labelledby={`dashboard-scene-${mode}`}>
-      <div className="dashboard-scene-head"><div><span>0{index + 1}</span><div><h2 id={`dashboard-scene-${mode}`}>{MODE_PROFILES[mode].label}</h2><p>{MODE_PROFILES[mode].description}</p></div></div><b>{grouped[mode].length} 个任务</b></div>
-      {grouped[mode].length ? <div className="task-card-grid">{grouped[mode].map((task) => <TaskCard key={task.task_id} task={task} onOpen={onOpen} onDelete={setConfirmDelete} />)}</div> : <EmptyState label={`“${MODE_PROFILES[mode].label}”场景暂无任务。`} />}
-    </section>)}</div>
-    {confirmDelete ? <div className="dialog-backdrop" role="presentation"><section className="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="delete-task-title"><h2 id="delete-task-title">删除历史任务？</h2><p>将永久删除“{confirmDelete.name || confirmDelete.task_id}”的任务会话、运行事件、证据产物和报告，无法恢复。</p><div><button className="secondary-button" disabled={deleting} onClick={() => setConfirmDelete(null)}>返回</button><button className="danger-button" disabled={deleting} onClick={() => void remove()}>{deleting ? "正在删除…" : "确认删除"}</button></div></section></div> : null}
+    <div className="operations-primary-grid">
+      <section className="operations-panel attention-panel">
+        <header><div><span>ACTION REQUIRED</span><h2>需要你的处理</h2></div><button className="text-button" onClick={() => onApprovals()}>打开审批中心</button></header>
+        {value.needs_attention.length ? <div className="attention-list">{value.needs_attention.map((item) => <button key={item.id} onClick={() => item.kind === "approval" ? onApprovals(item.task_id) : onTask(item.task_id)}>
+          <span className={`attention-kind kind-${item.kind}`}>{item.kind === "approval" ? "审批" : item.kind === "user_input" ? "输入" : "阻塞"}</span>
+          <div><strong>{item.title}</strong><p>{item.task_name} · {item.description}</p><small>{formatDate(item.updated_at)}</small></div>
+          <div className="attention-badges"><StatusBadge value={item.status} />{item.risk ? <RiskBadge value={item.risk} /> : null}</div>
+        </button>)}</div> : <EmptyState label="当前没有需要人工处理的任务。" />}
+      </section>
+      <section className="operations-panel system-summary">
+        <header><div><span>SYSTEM SIGNALS</span><h2>系统状态摘要</h2></div></header>
+        <div>{value.system_status.map((item) => <article key={item.id}><StatusBadge value={item.status} /><div><strong>{item.label}</strong><small>{item.detail}</small></div></article>)}</div>
+      </section>
+    </div>
+
+    <section className="operations-panel">
+      <header><div><span>ACTIVE WORK</span><h2>活动任务</h2></div><a href="/tasks">查看全部任务</a></header>
+      {value.active_tasks.length ? <div className="operations-task-grid">{value.active_tasks.map((task) => <TaskSummaryCard key={task.task_id} task={task} onOpen={onTask} onRuntime={onRuntime} />)}</div> : <EmptyState label="当前没有活动任务。" />}
+    </section>
+
+    <section className="operations-panel recent-results">
+      <header><div><span>RECENT OUTCOMES</span><h2>最近完成</h2></div></header>
+      {value.recent_completed.length ? <div className="recent-result-list">{value.recent_completed.map((task) => <button key={task.task_id} onClick={() => onTask(task.task_id)}><StatusBadge value={task.status} /><div><strong>{task.name}</strong><small>{task.findings} 个确认结果 · {task.artifacts} 个 Artifact · {formatDate(task.updated_at)}</small></div></button>)}</div> : <EmptyState label="尚无最近完成任务或确认结果。" />}
+    </section>
   </section>;
 }
 
-function TaskCard({ task, onOpen, onDelete }: { task: TaskListItem; onOpen: (id: string) => void; onDelete: (task: TaskListItem) => void }) {
-  const turns = task.turn_count ?? 0;
-  const maxTurns = task.max_turns ?? 0;
-  const progress = maxTurns ? Math.min(100, Math.round(turns / maxTurns * 100)) : 0;
-  const entry = task.task_entry_url || task.target_summary || "本地输入任务";
-  return <article className="task-card"><button className="task-card-open" onClick={() => onOpen(task.task_id)}><div className="task-card-title"><span className={`status-badge ${task.status}`}>{statusLabel(task.status)}</span><small>{task.task_id}</small></div><h3>{task.name || task.task_id}</h3><p title={entry}>{entry}</p><div className="task-health"><span><b>{task.active_solvers ?? 0}</b>执行单元</span><span><b>{task.artifacts}</b>证据产物</span>{task.mode === "ctf" ? <span><b>{task.flags}</b>已确认 Flag</span> : null}<span><b>{task.findings}</b>已确认发现</span></div><div className="budget-row"><span>执行轮次 {turns}/{maxTurns || "—"}</span><span>{progress}%</span></div><div className="budget-track"><i style={{ width: `${progress}%` }} /></div><small className="latest-event">{task.latest_event ? `事件 #${task.latest_event.seq ?? "—"} · ${eventTypeLabel(task.latest_event.type ?? "")}` : "尚无运行事件"}</small></button><footer><small>{task.updated_at ? new Date(task.updated_at).toLocaleString("zh-CN") : "等待更新"}</small><button className="task-delete danger-button" disabled={task.status === "running"} title={task.status === "running" ? "运行中的任务需先取消" : "删除历史任务"} onClick={() => onDelete(task)}>删除</button></footer></article>;
+function TaskSummaryCard({ task, onOpen, onRuntime }: { task: OperationalTaskSummary; onOpen: (id: string) => void; onRuntime: (id: string) => void }) {
+  const mode = MODE_PROFILES[task.mode as keyof typeof MODE_PROFILES];
+  const progress = task.intent_total ? Math.round(task.intent_completed / task.intent_total * 100) : 0;
+  return <article className="operations-task-card">
+    <header><StatusBadge value={task.status} /><small>{mode?.label ?? task.mode}</small></header>
+    <button className="operations-task-main" onClick={() => onOpen(task.task_id)}><h3>{task.name}</h3><p>{task.task_id}</p></button>
+    <div className="operations-task-stats"><span><b>{task.intent_completed}/{task.intent_total || "-"}</b>Intent</span><span><b>{task.active_solvers}</b>Solver</span><span><b>{task.findings}</b>Finding</span></div>
+    <div className="operations-progress"><span>Intent 进度</span><b>{progress}%</b><i><em style={{ width: `${progress}%` }} /></i></div>
+    <footer><small>{task.latest_event?.type ?? "等待运行事件"}</small><button className="secondary-button" onClick={() => onRuntime(task.task_id)}><Play size={13} />进入运行</button></footer>
+  </article>;
 }
 
-function metricHint(status: string) { return ({ running: "正在执行受控动作", paused: "等待人工继续", awaiting_approval: "等待审批高影响动作", blocked: "需要提示或策略调整", completed: "已通过服务端完成判定" } as Record<string, string>)[status] ?? ""; }
-function eventTypeLabel(type: string) { return ({ PROVIDER_RESPONSE_DISCARDED: "模型响应已丢弃", SESSION_STOPPED: "任务会话已停止", HTTP_SESSION_STATUS: "HTTP 会话状态", FINISH_ACCEPTED: "完成校验通过", AGENT_FINISHED: "任务执行结束", TOOL_EXECUTION_END: "工具执行结束", RUNTIME_ERROR: "运行时错误" } as Record<string, string>)[type] ?? (type || "未知事件"); }
+function formatDate(value: string) {
+  return value ? new Date(value).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }) : "暂无时间";
+}

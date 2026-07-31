@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
+
+from tga.application.projections.models import TaskDetailResponse
 
 from tga.modes import mode_profiles_payload, normalize_mode
 from tga.runtime.task_creation import (
@@ -13,6 +15,7 @@ from tga.runtime.task_creation import (
     available_capabilities,
     build_mcp_capability_snapshot,
 )
+from tga.runtime.service import UnsupportedTaskSchemaError
 from tga.skills.context import SkillContextAssembler
 from tga.skills.selection import SkillSelectionRequest, SkillSelector
 
@@ -41,6 +44,7 @@ def create_task(payload: CreateTaskRequest) -> dict[str, Any]:
             file_ids=payload.input.file_ids,
             execution_policy=payload.execution_policy,
             selected_skill_names=tuple(payload.selected_skills) if payload.selected_skills is not None else None,
+            preflight_fingerprint=payload.preflight_fingerprint,
         ), mcp_manager=_catalog_runner(), schedule=_schedule_runtime_runner)
     except TaskCreationError as exc:
         status = 409 if exc.code in {"MODEL_NOT_CONFIGURED", "MODEL_NOT_VERIFIED", "SESSION_EXISTS", "SESSION_START_REJECTED"} else 422
@@ -51,6 +55,46 @@ def create_task(payload: CreateTaskRequest) -> dict[str, Any]:
         "status": result.status,
         "scheduled": result.scheduled,
         "mcp_capabilities": result.mcp_capabilities.model_dump(mode="json"),
+    }
+
+
+@router.post("/tasks/preflight")
+def preflight_task(payload: CreateTaskRequest) -> dict[str, Any]:
+    try:
+        result = _application_commands().preflight_task(CreateTaskCommand(
+            task_id=payload.id,
+            name=payload.name,
+            mode=payload.mode,
+            goal=payload.goal,
+            mode_options=payload.mode_options,
+            input_text=payload.input.text,
+            file_ids=payload.input.file_ids,
+            execution_policy=payload.execution_policy,
+            selected_skill_names=tuple(payload.selected_skills) if payload.selected_skills is not None else None,
+        ), mcp_manager=_catalog_runner())
+    except TaskCreationError as exc:
+        status = 409 if exc.code in {
+            "MODEL_NOT_CONFIGURED", "MODEL_NOT_VERIFIED", "SESSION_EXISTS"
+        } else 422
+        raise HTTPException(
+            status_code=status,
+            detail={"code": exc.code, "message": str(exc)},
+        ) from exc
+    return {
+        "fingerprint": result.fingerprint,
+        "task_id": result.task.id,
+        "checks": list(result.checks),
+        "skill_snapshot": {
+            "selector": result.task_common_skills.selector,
+            "count": len(result.task_common_skills.skills),
+            "content_sha256": result.skill_fingerprint,
+        },
+        "mcp_catalog_version": result.task.mcp_capabilities.catalog_version,
+        "model_verification_id": (
+            result.task.model_snapshot.verification_id
+            if result.task.model_snapshot is not None
+            else ""
+        ),
     }
 
 
@@ -80,8 +124,35 @@ def preview_task_skills(payload: SkillPreviewRequest) -> dict[str, Any]:
 
 
 @router.get("/tasks")
-def list_tasks() -> dict[str, list[dict[str, Any]]]:
-    return {"tasks": _runtime_queries().tasks()}
+def list_tasks(
+    query: str = Query(default="", max_length=255),
+    mode: str | None = None,
+    status: str | None = None,
+    needs_attention: bool | None = None,
+    offset: int = Query(default=0, ge=0),
+    limit: int | None = Query(default=None, ge=1, le=200),
+) -> dict[str, Any]:
+    return _runtime_queries().tasks(
+        query=query, mode=mode, status=status,
+        needs_attention=needs_attention, offset=offset, limit=limit,
+    )
+
+
+@router.get("/tasks/{task_id}", response_model=TaskDetailResponse)
+def get_task_detail(task_id: str) -> TaskDetailResponse:
+    try:
+        return _runtime_queries().task_detail(task_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="task not found") from exc
+    except UnsupportedTaskSchemaError as exc:
+        raise HTTPException(status_code=409, detail={
+            "code": exc.code,
+            "message": str(exc),
+            "schema_version": exc.schema_version,
+            "required_schema_version": 6,
+        }) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.delete("/tasks/{task_id}")

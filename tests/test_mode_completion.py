@@ -13,11 +13,13 @@ from tga.evidence.store import EvidenceStore
 from tga.modes import MODE_PROFILES, TASK_MODES
 from tga.runtime.completion_validators import (
     CompletionValidationContext,
-    FinishSubmission,
-    finish_tool_schema,
+    TaskCompletionSubmission,
+    task_completion_tool_schema,
     validator_for,
 )
 from tga.runtime.coordinator import SessionCoordinator
+from tga.runtime.orchestration import TaskOrchestrator
+from tga.infrastructure.persistence import PersistenceBundle
 from tga.runtime.prompts import build_agent_system_prompt
 from tga.capabilities.registry import build_default_registry
 from tga.skills.selection import SkillSelectionRequest, SkillSelector
@@ -42,7 +44,14 @@ def _context(tmp_path, task: TGATask, *, text: str = "evidence"):
     store = EvidenceStore(root / "evidence.db")
     store.create_task(task)
     coordinator = SessionCoordinator(store)
-    _, agent_id = coordinator.ensure_runtime(task=task, max_turns=4)
+    state = TaskOrchestrator(
+        task=task, repositories=PersistenceBundle(store)
+    ).bootstrap()
+    agent_id = state.supervisor_solver_id
+    assert agent_id is not None
+    coordinator.ensure_session(
+        task=task, max_turns=4, supervisor_solver_id=agent_id
+    )
     coordinator.start(task_id=task.id, solver_id=agent_id)
     artifacts = ArtifactStore(root / "artifacts")
     artifact = artifacts.save_text(
@@ -91,10 +100,10 @@ def test_mode_registry_matches_mcp_defaults_persisted_config_and_frontend_contra
 
 
 def test_finish_schema_is_strict_and_exposes_flag_only_for_ctf():
-    assert finish_tool_schema("ctf")["additionalProperties"] is False
-    assert "flag" in finish_tool_schema("ctf")["properties"]
+    assert task_completion_tool_schema("ctf")["additionalProperties"] is False
+    assert "flag" in task_completion_tool_schema("ctf")["properties"]
     for mode in TASK_MODES[1:]:
-        schema = finish_tool_schema(mode)
+        schema = task_completion_tool_schema(mode)
         assert schema["additionalProperties"] is False
         assert "flag" not in schema["properties"]
 
@@ -124,11 +133,11 @@ def test_ctf_requires_an_artifact_backed_non_placeholder_flag(tmp_path):
     store, artifact, context = _context(tmp_path, task, text="result CTF{real_evidence}")
     validator = validator_for(task.mode)
 
-    missing = validator.validate(context=context, submission=FinishSubmission(summary="done"))
-    fake = validator.validate(context=context, submission=FinishSubmission(
+    missing = validator.validate(context=context, submission=TaskCompletionSubmission(summary="done"))
+    fake = validator.validate(context=context, submission=TaskCompletionSubmission(
         summary="done", flag="CTF{real_evidence}", evidence_artifact_ids=["artifact_fabricated"],
     ))
-    accepted = validator.validate(context=context, submission=FinishSubmission(
+    accepted = validator.validate(context=context, submission=TaskCompletionSubmission(
         summary="done", flag="CTF{real_evidence}", evidence_artifact_ids=[artifact.id],
     ))
 
@@ -136,10 +145,10 @@ def test_ctf_requires_an_artifact_backed_non_placeholder_flag(tmp_path):
     assert fake.accepted is False and fake.code == "INVALID_EVIDENCE_REFERENCE"
     assert accepted.accepted is True and accepted.code == "CTF_FLAG_VERIFIED"
     assert accepted.evidence_artifact_ids == [artifact.id]
-    assert store.task_snapshot(task.id)["flags"] == [{
+    assert store.list_flags(task.id) == [{
         "value": "CTF{real_evidence}",
         "evidence_artifact_id": artifact.id,
-        "created_at": store.task_snapshot(task.id)["flags"][0]["created_at"],
+        "created_at": store.list_flags(task.id)[0]["created_at"],
     }]
     store.close()
 
@@ -147,13 +156,13 @@ def test_ctf_requires_an_artifact_backed_non_placeholder_flag(tmp_path):
 def test_configured_remote_flag_verifier_is_the_final_ctf_oracle(tmp_path):
     task = _task("ctf_remote", "ctf")
     store, artifact, context = _context(tmp_path, task, text="result CTF{remote_result}")
-    submission = FinishSubmission(
+    submission = TaskCompletionSubmission(
         summary="done", flag="CTF{remote_result}", evidence_artifact_ids=[artifact.id],
     )
     context.remote_flag_verifier = lambda _task, _flag: False
     rejected = validator_for(task.mode).validate(context=context, submission=submission)
     assert rejected.code == "CTF_REMOTE_FLAG_REJECTED"
-    assert store.task_snapshot(task.id)["flags"] == []
+    assert store.list_flags(task.id) == []
 
     context.remote_flag_verifier = lambda _task, _flag: True
     accepted = validator_for(task.mode).validate(context=context, submission=submission)
@@ -172,7 +181,7 @@ def test_finish_rejects_an_artifact_owned_by_another_task(tmp_path):
     store.add_artifact(foreign)
     result = validator_for(task.mode).validate(
         context=context,
-        submission=FinishSubmission(
+        submission=TaskCompletionSubmission(
             summary="tested", evidence_artifact_ids=[foreign.id],
             coverage=["authorized surface"], limitations=["one environment"],
         ),
@@ -187,7 +196,7 @@ def test_penetration_test_can_complete_with_evidence_and_no_findings(tmp_path):
     store, artifact, context = _context(tmp_path, task, text="requests and response comparison")
     result = validator_for(task.mode).validate(
         context=context,
-        submission=FinishSubmission(
+        submission=TaskCompletionSubmission(
             summary="No vulnerability was confirmed.",
             evidence_artifact_ids=[artifact.id],
             coverage=["public routes", "authorization checks"],
@@ -195,7 +204,7 @@ def test_penetration_test_can_complete_with_evidence_and_no_findings(tmp_path):
         ),
     )
     assert result.accepted is True
-    assert not store.task_snapshot(task.id)["flags"]
+    assert not store.list_flags(task.id)
     store.close()
 
 
@@ -204,7 +213,7 @@ def test_non_ctf_validator_does_not_accept_a_flag_field(tmp_path):
     store, artifact, context = _context(tmp_path, task)
     result = validator_for(task.mode).validate(
         context=context,
-        submission=FinishSubmission(
+        submission=TaskCompletionSubmission(
             summary="tested", flag="CTF{irrelevant}", evidence_artifact_ids=[artifact.id],
             coverage=["surface"], limitations=["fixture"],
         ),
@@ -233,7 +242,7 @@ def test_key_security_claims_without_claim_evidence_are_rejected(tmp_path, mode,
     store, artifact, context = _context(tmp_path, task)
     result = validator_for(task.mode).validate(
         context=context,
-        submission=FinishSubmission(
+        submission=TaskCompletionSubmission(
             summary="conclusion", evidence_artifact_ids=[artifact.id],
             coverage=["relevant inputs"], limitations=["bounded fixture"], claims=claims,
         ),
@@ -253,7 +262,7 @@ def test_reverse_engineering_without_analysis_artifact_is_rejected(tmp_path):
     )
     result = validator_for(task.mode).validate(
         context=context,
-        submission=FinishSubmission(
+        submission=TaskCompletionSubmission(
             summary="recovered algorithm", coverage=["entry function"],
             claims=[{"kind": "recovered_result", "statement": "algorithm recovered"}],
         ),

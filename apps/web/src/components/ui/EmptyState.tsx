@@ -1,3 +1,26 @@
-export function EmptyState({ label }: { label: string }) { return <div className="empty-state">{label}</div>; }
+import { Inbox, type LucideIcon } from "lucide-react";
+import type { ReactNode } from "react";
+import { statusLabel } from "../../shared/status";
 
-export function statusLabel(status: string) { return ({ running: "运行中", paused: "已暂停", awaiting_approval: "等待审批", blocked: "被阻止", completed: "已完成", failed: "失败", cancelled: "已取消", created: "已创建" } as Record<string, string>)[status] ?? status; }
+export function EmptyState({
+  label,
+  title,
+  description,
+  icon: Icon = Inbox,
+  action,
+}: {
+  label?: string;
+  title?: string;
+  description?: string;
+  icon?: LucideIcon;
+  action?: ReactNode;
+}) {
+  if (label && !title && !description && !action) return <div className="empty-state">{label}</div>;
+  return <section className="empty-state empty-state-v2" aria-live="polite">
+    <span className="empty-state-icon"><Icon size={20} aria-hidden="true" /></span>
+    <div><h2>{title ?? label ?? "暂无数据"}</h2>{description ? <p>{description}</p> : null}</div>
+    {action ? <div className="empty-state-action">{action}</div> : null}
+  </section>;
+}
+
+export { statusLabel };

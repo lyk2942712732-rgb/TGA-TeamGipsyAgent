@@ -141,6 +141,10 @@ def test_new_database_has_schema_v6_tables_and_indexes(tmp_path) -> None:
             "index_bindings", "retrieval_runs", "retrieval_hits",
             "idx_v6_agent_events_task_seq",
         }.issubset(names)
+        assert not names.intersection({
+            "solvers", "memory_entries", "actions", "strategy_cards",
+            "events", "action_results",
+        })
     finally:
         bundle.close()
 

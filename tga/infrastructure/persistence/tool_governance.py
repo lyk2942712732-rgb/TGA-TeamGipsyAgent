@@ -80,6 +80,20 @@ class SqliteToolGovernanceRepository:
         ).fetchone()
         return self.get_action(row["id"]) if row else None
 
+    def list_actions(
+        self, task_id: str, *, status: str | None = None, limit: int = 100
+    ) -> list[dict[str, Any]]:
+        bounded = max(1, min(int(limit), 1_000))
+        sql = "SELECT id FROM governed_actions WHERE task_id=?"
+        parameters: list[Any] = [task_id]
+        if status:
+            sql += " AND status=?"
+            parameters.append(status)
+        sql += " ORDER BY created_at DESC,id DESC LIMIT ?"
+        parameters.append(bounded)
+        rows = self.conn.execute(sql, parameters).fetchall()
+        return [item for row in reversed(rows) if (item := self.get_action(str(row["id"]))) is not None]
+
     def transition(self, action_id: str, status: str, *, expected_status: str) -> dict[str, Any]:
         if status not in ACTION_TRANSITIONS.get(expected_status, set()):
             raise ActionTransitionConflict(
@@ -579,6 +593,22 @@ class SqliteToolGovernanceRepository:
             return None
         return {**dict(row), "payload": json.loads(row["payload_json"])}
 
+    def list_approvals(
+        self, task_id: str, *, status: str | None = None, limit: int = 100
+    ) -> list[dict[str, Any]]:
+        bounded = max(1, min(int(limit), 1_000))
+        sql = "SELECT * FROM approvals WHERE task_id=?"
+        parameters: list[Any] = [task_id]
+        if status:
+            sql += " AND status=?"
+            parameters.append(status)
+        sql += " ORDER BY created_at,id LIMIT ?"
+        parameters.append(bounded)
+        return [
+            {**dict(row), "payload": json.loads(row["payload_json"])}
+            for row in self.conn.execute(sql, parameters).fetchall()
+        ]
+
     def decide_approval(self, action_id: str, status: str, *, expected_status: str = "pending") -> None:
         row = self.conn.execute(
             "SELECT id,payload_json,version,status FROM approvals WHERE action_id=? ORDER BY created_at DESC LIMIT 1",
@@ -600,14 +630,5 @@ class SqliteToolGovernanceRepository:
         if cursor.rowcount != 1:
             raise PersistenceConflict(f"approval changed concurrently: {action_id}")
         self.database._commit()
-
-    def legacy_approval_expiry(self, action_id: str) -> str | None:
-        row = self.conn.execute(
-            "SELECT approval_expires_at FROM actions WHERE id=?", (action_id,)
-        ).fetchone()
-        if row is None:
-            return None
-        return str(row["approval_expires_at"] or "") or None
-
 
 __all__ = ["ACTION_TRANSITIONS", "SqliteToolGovernanceRepository"]

@@ -1,0 +1,19 @@
+{
+  "counts": {
+    "action_results": 0,
+    "actions": 0,
+    "events": 0,
+    "memory_entries": 0,
+    "solvers": 0,
+    "strategy_cards": 0
+  },
+  "source_schema": 5,
+  "tables": {
+    "action_results": [],
+    "actions": [],
+    "events": [],
+    "memory_entries": [],
+    "solvers": [],
+    "strategy_cards": []
+  }
+}

@@ -43,6 +43,13 @@ class RuntimeCommands:
             schedule=schedule,
         ).create(command)
 
+    def preflight_task(self, command: CreateTaskCommand, *, mcp_manager):
+        return TaskCreationService(
+            run_root=self.backend.run_root,
+            mcp_manager=mcp_manager,
+            schedule=lambda _task_id: False,
+        ).preflight(command)
+
     def delete_task(self, task_id: str) -> None:
         self.backend.delete_task(task_id)
 

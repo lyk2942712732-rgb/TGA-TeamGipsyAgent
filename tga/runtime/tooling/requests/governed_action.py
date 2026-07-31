@@ -37,6 +37,7 @@ class GovernedAction(BaseModel):
     capability: str
     normalized_arguments: dict[str, Any] = Field(default_factory=dict)
     resolved_target: str | None = None
+    execution_metadata: dict[str, Any] = Field(default_factory=dict)
     rationale: str = Field(default="", max_length=500)
     expected_outcome: str = Field(default="", max_length=500)
     retry_reason: str | None = Field(default=None, max_length=500)

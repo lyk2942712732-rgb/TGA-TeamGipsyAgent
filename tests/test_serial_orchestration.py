@@ -464,7 +464,7 @@ def test_worker_submit_result_routes_through_gateway_without_legacy_execution(tm
             task=task,
             manifest=manifest,
             repository=bundle.tool_governance,
-            legacy_adapter=adapter,
+            execution_adapter=adapter,
             control_handlers=orchestrator.gateway_control_handlers(solver.id),
             allowed_resource_ids=assignment.allowed_resources,
         )
@@ -637,7 +637,7 @@ def test_worker_context_and_gateway_hide_unassigned_task_inputs(tmp_path: Path) 
             task=task,
             manifest=manifest,
             repository=bundle.tool_governance,
-            legacy_adapter=adapter,
+            execution_adapter=adapter,
             control_handlers=orchestrator.gateway_control_handlers(solver.id),
             allowed_resource_ids=assignment.allowed_resources,
         )

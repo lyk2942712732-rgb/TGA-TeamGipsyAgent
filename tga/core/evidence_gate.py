@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from tga.contracts import Finding, TGATask
+from tga.contracts import CandidateFindingRecord, TGATask
 from tga.network_policy import authorize_url
 
 
 def finding_ok(
-    finding: Finding,
+    finding: CandidateFindingRecord,
     *,
     task: TGATask,
     artifact_text: str | None,

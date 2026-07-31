@@ -201,8 +201,7 @@ type EntitySequence = {
 };
 
 export type RuntimeStore = {
-  schemaVersion: 5 | 6;
-  legacy: boolean;
+  schemaVersion: 6;
   task: RuntimeTask;
   taskCommonSkillSnapshot?: Record<string, unknown>;
   session: RuntimeSession;
@@ -227,16 +226,6 @@ export type RuntimeStore = {
   latestSeq: number;
   eventHistoryHasMore: boolean;
   entitySequence: EntitySequence;
-};
-
-export type LegacyV5RuntimeSnapshot = {
-  schema_version: 5;
-  task: Record<string, unknown>;
-  session: Record<string, unknown> | null;
-  agent_events?: unknown[];
-  events?: unknown[];
-  latest_seq?: number;
-  [key: string]: unknown;
 };
 
 export type SolverTreeNode = { solver: RuntimeSolver; children: SolverTreeNode[] };

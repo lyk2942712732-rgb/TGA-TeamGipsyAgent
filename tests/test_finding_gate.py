@@ -1,4 +1,4 @@
-from tga.contracts import Finding, TGATask
+from tga.contracts import CandidateFindingRecord, TGATask
 from tga.core.evidence_gate import finding_ok
 from tests.runtime_fixtures import execution_policy
 
@@ -15,12 +15,12 @@ def _task():
 
 
 def test_finding_without_artifact_rejected():
-    finding = Finding(id="finding_1", task_id="task_1", title="xss", target="http://127.0.0.1:8080", severity="medium")
+    finding = CandidateFindingRecord(id="finding_1", task_id="task_1", title="xss", target="http://127.0.0.1:8080", severity="medium")
     assert not finding_ok(finding, task=_task(), artifact_text=None)
 
 
 def test_finding_with_evidence_passes():
-    finding = Finding(
+    finding = CandidateFindingRecord(
         id="finding_1",
         task_id="task_1",
         title="xss",

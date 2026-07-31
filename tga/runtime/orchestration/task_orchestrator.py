@@ -798,6 +798,7 @@ class TaskOrchestrator:
         return {
             "ok": assignment is not None,
             "status": "queued" if assignment else "blocked",
+            "terminal": assignment is not None,
             "assignment": assignment.model_dump(mode="json") if assignment else None,
         }
 
@@ -817,7 +818,10 @@ class TaskOrchestrator:
             if role == "reviewer"
             else self.request_report(supervisor_solver_id=supervisor_id)
         )
-        return {"ok": True, "solver_id": solver.id, "status": str(solver.status)}
+        return {
+            "ok": True, "terminal": True,
+            "solver_id": solver.id, "status": str(solver.status),
+        }
 
     def _gateway_confirm_finding(self, solver_id: str, args: dict[str, Any]) -> dict[str, Any]:
         result = self.confirm_finding(
@@ -914,21 +918,6 @@ class TaskOrchestrator:
             "ok": True, "terminal": True, "status": "completed",
             "report_result_id": result_id,
         }
-
-    def ensure_compatibility_supervisor(self, *, solver_id: str, model_name: str = ""):
-        """Phase-5 facade seam retained for existing Manager callers."""
-        from tga.runtime.agents.single_solver_adapter import SingleSolverProvisioner
-
-        return SingleSolverProvisioner(self.repositories).ensure(
-            task=self.task, solver_id=solver_id, model_name=model_name
-        )
-
-    def run_compatibility_solver(self, **runner_kwargs):
-        """Execute the release-window single Supervisor behind the facade."""
-        from tga.runtime.agents.session_runner import SolverRunner
-
-        runner = SolverRunner(task=self.task, **runner_kwargs)
-        return runner, runner.run()
 
     def _require_role(self, solver_id: str, role: str, *, label: str):
         solver = self.repositories.solvers.get_solver(solver_id)

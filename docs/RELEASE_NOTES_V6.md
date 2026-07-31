@@ -2,33 +2,23 @@
 
 ## Highlights
 
-- TaskOrchestrator with durable Supervisor, Worker, Reviewer and Reporter.
-- serial and bounded two-Worker Intent scheduling.
-- scoped Knowledge and separate Artifact/EvidenceClaim/Finding semantics.
-- governed tools with Approval queue, budgets, idempotency and resource locks.
-- four-scope, multi-KnowledgeBase Retrieval.
-- Task command frontend with five mode scenes and read-only Replay.
+- TaskOrchestrator coordinates durable Supervisor, Worker, Reviewer, and Reporter identities.
+- Intent scheduling supports serial execution and at most two independent Workers.
+- ToolGovernanceGateway is the only model-initiated execution boundary.
+- Artifact, EvidenceClaim, Finding, and scoped Knowledge have separate authority semantics.
+- The product exposes one schema-v6 Task Runtime and one formal route table.
 
-## Compatibility
+## One-time Cutover
 
-Schema v6 is the default. Schema v5 remains read-only for Snapshot/Event replay.
-The single-Agent frontend and legacy models are compatibility surfaces, not v6
-authorities. Explicit migration is optional, offline, dry-run by default,
-backup-first and idempotent.
+Schema v6 is the only application, API, persistence, and Runtime schema. Schema v5 is
+rejected with a Migration Required response and is readable only by the explicit offline
+migration tool. There is no online compatibility adapter, replay fallback, dual read, or
+dual write. Old Session pages, routes, Runtime models, feature flags, completion aliases,
+and tool-dispatch paths were physically deleted.
 
 ## Security and verification
 
-Hint, Skill and RAG cannot widen authorization. Worker completion is forbidden,
-Reviewer/Reporter policy is role-scoped, high-impact Actions require one-time
-Approval, remote MCP has no workspace mount, and public Events redact secrets.
-Release verification uses offline fixtures and records actual commands/results
-in `docs/performance/BASELINE.md` and the Phase-12 handoff.
-
-## Verified release gate
-
-- backend: 374 passed, 2 skipped;
-- frontend unit/component: 94 passed across 26 files;
-- browser E2E: 11 passed across all five modes and both desktop/mobile widths;
-- production frontend build: passed;
-- schema-v5 migration: dry-run non-mutation, apply/backup, rollback, CLI and
-  idempotency tests passed.
+Hint, Skill, and RAG cannot widen authorization. Workers cannot complete Tasks, Reporters
+cannot confirm Findings, and high-impact Actions require one-time Approval. Verification
+includes backend tests, frontend tests/build, browser E2E, route checks, repository-wide
+Cutover searches, migration rollback tests, and five responsive viewport checks.

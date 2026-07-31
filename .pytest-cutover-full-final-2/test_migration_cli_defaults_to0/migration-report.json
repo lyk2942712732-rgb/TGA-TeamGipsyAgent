@@ -1,0 +1,27 @@
+{
+  "backup": "C:\\Users\\lyk\\Desktop\\tga\\TGA-TeamGipsyAgent\\.pytest-cutover-full-final-2\\test_migration_cli_defaults_to0\\evidence.db.v5-backup-20260731T030210429637Z-91f916ba",
+  "database": "C:\\Users\\lyk\\Desktop\\tga\\TGA-TeamGipsyAgent\\.pytest-cutover-full-final-2\\test_migration_cli_defaults_to0\\evidence.db",
+  "dry_run": false,
+  "evidence_policy": "legacy evidence and findings remain candidate/legacy; confirmation is never inferred",
+  "legacy_counts": {
+    "action_results": 0,
+    "actions": 0,
+    "agent_events": 1,
+    "artifacts": 0,
+    "events": 0,
+    "findings": 0,
+    "memory_entries": 0,
+    "solvers": 0,
+    "strategy_cards": 0
+  },
+  "legacy_runtime_archive": "C:\\Users\\lyk\\Desktop\\tga\\TGA-TeamGipsyAgent\\.pytest-cutover-full-final-2\\test_migration_cli_defaults_to0\\evidence.db.runtime-v5-archive-20260731T030210429637Z-7c786b32.json",
+  "migrated": true,
+  "report": "C:\\Users\\lyk\\Desktop\\tga\\TGA-TeamGipsyAgent\\.pytest-cutover-full-final-2\\test_migration_cli_defaults_to0\\migration-report.json",
+  "rollback": "source is atomically replaced only after validation; backups are retained",
+  "source_schema": 5,
+  "status": "applied",
+  "target_schema": 6,
+  "task_id": "legacy_1",
+  "task_json_backup": "C:\\Users\\lyk\\Desktop\\tga\\TGA-TeamGipsyAgent\\.pytest-cutover-full-final-2\\test_migration_cli_defaults_to0\\evidence.db.task-json-v5-backup-20260731T030210429637Z-446f1bec.json",
+  "would_migrate": true
+}
