@@ -16,7 +16,8 @@ from tga.runtime.completion_validators import (
     TaskCompletionSubmission,
     validator_for,
 )
-from tga.runtime.coordinator import SessionOutcome
+from tga.runtime.coordinator import SessionCoordinator, SessionOutcome
+from tga.runtime.completion_service import TaskCompletionService
 
 
 def _safe(content: str) -> str:
@@ -94,25 +95,76 @@ class TaskCompletionHandler:
             )
             return {"ok": False, "terminal": False, "validation": result, **result}
 
-        result_model = validator_for(self.task.mode).validate(
-            context=CompletionValidationContext(
-                task=self.task,
-                solver_id=self.solver_id,
-                store=self.store,
-                artifact_text=self.artifacts.text,
-                remote_flag_verifier=self.remote_flag_verifier,
-            ),
-            submission=submission,
+        validation_context = CompletionValidationContext(
+            task=self.task,
+            solver_id=self.solver_id,
+            store=self.store,
+            artifact_text=self.artifacts.text,
+            remote_flag_verifier=self.remote_flag_verifier,
         )
-        result = result_model.model_dump(mode="json")
+        result_model_holder: dict[str, Any] = {}
+
+        def validate(proposal: dict[str, Any]) -> dict[str, Any]:
+            del proposal
+            result_model = validator_for(self.task.mode).validate(
+                context=validation_context,
+                submission=submission,
+            )
+            result_model_holder["value"] = result_model
+            return result_model.model_dump(mode="json")
+
+        result = TaskCompletionService(
+            task=self.task,
+            store=self.store,
+        ).complete(
+            solver_id=self.solver_id,
+            proposal=arguments,
+            validate=validate,
+            finalize_validated=lambda _result: self._record_validated_completion(
+                submission=submission,
+                validator_code=result_model_holder["value"].code,
+                proof_id=(result_model_holder["value"].evidence_artifact_ids[0]
+                          if result_model_holder["value"].evidence_artifact_ids else ""),
+            ),
+            session_completion=lambda _result: SessionCoordinator(self.store).complete(
+                task_id=self.task.id,
+                summary=_safe(submission.summary),
+                evidence_artifact_ids=result_model_holder["value"].evidence_artifact_ids,
+                turn_count=turn,
+                solver_id=self.solver_id,
+                details={
+                    "coverage": [_safe(item) for item in submission.coverage],
+                    "limitations": [_safe(item) for item in submission.limitations],
+                    "claims": [item.model_dump(mode="json") for item in submission.claims],
+                    "structured_result": {
+                        "flag": submission.flag,
+                        "proof_artifact_id": (
+                            result_model_holder["value"].evidence_artifact_ids[0]
+                            if result_model_holder["value"].evidence_artifact_ids else ""
+                        ),
+                        "verification": result_model_holder["value"].details.get("verification")
+                        or "completion_validator",
+                    } if submission.flag else {},
+                    "validator_code": result_model_holder["value"].code,
+                    "terminal": True,
+                },
+            ),
+        )
+        result_model = result_model_holder.get("value")
+        if not result.get("accepted"):
+            result = {
+                **result,
+                "missing": result.get("missing") or [],
+                "evidence_artifact_ids": result.get("evidence_artifact_ids") or cited,
+            }
         event_payload = self._event(
             turn=turn,
-            code=result_model.code,
-            missing=result_model.missing,
-            evidence_artifact_ids=result_model.evidence_artifact_ids,
-            terminal=result_model.accepted,
+            code=str(result.get("code") or (result_model.code if result_model else "COMPLETION_REJECTED")),
+            missing=list(result.get("missing") or (result_model.missing if result_model else [])),
+            evidence_artifact_ids=list(result.get("evidence_artifact_ids") or cited),
+            terminal=bool(result.get("accepted")),
         )
-        if not result_model.accepted:
+        if not result.get("accepted"):
             self.state.last_finish_rejection = result
             self.store.append_agent_event(
                 self.task.id,
@@ -123,15 +175,7 @@ class TaskCompletionHandler:
             return {"ok": False, "terminal": False, "validation": result, **result}
 
         self.state.last_finish_rejection = None
-        proof_id = (
-            result_model.evidence_artifact_ids[0]
-            if result_model.evidence_artifact_ids else ""
-        )
-        self._record_validated_completion(
-            submission=submission,
-            validator_code=result_model.code,
-            proof_id=proof_id,
-        )
+        proof_id = result_model.evidence_artifact_ids[0] if result_model and result_model.evidence_artifact_ids else ""
         self.state.terminal_outcome = SessionOutcome(
             status="completed",
             stop_reason="finish_accepted",
@@ -145,10 +189,10 @@ class TaskCompletionHandler:
                 "structured_result": {
                     "flag": submission.flag,
                     "proof_artifact_id": proof_id,
-                    "verification": result_model.details.get("verification")
-                    or "completion_validator",
+                "verification": result_model.details.get("verification")
+                or "completion_validator",
                 } if submission.flag else {},
-                "validator_code": result_model.code,
+                "validator_code": result_model.code if result_model else str(result.get("code") or ""),
                 "terminal": True,
             },
         )

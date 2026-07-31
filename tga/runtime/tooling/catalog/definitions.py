@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -18,6 +18,7 @@ class ToolCatalogEntry(BaseModel):
     provider_tool_name: str
     capability: str
     tool_class: ToolClass
+    backend: Literal["host_control", "host_retrieval", "sandbox", "remote_mcp"]
     description: str
     parameters: dict[str, Any]
     risk: str = "passive"
@@ -48,6 +49,12 @@ class RuntimeToolCatalog(BaseModel):
             "workspace.python": ("binary", "source", "static-analysis", "forensics", "validation"),
             "workspace.shell": ("binary", "source", "forensics", "recon", "validation"),
             "workspace.write": ("reporting", "source", "binary", "forensics", "validation"),
+            "nmap.scan": ("network", "recon", "surface-mapping"),
+            "ffuf.directory_scan": ("web", "recon", "fuzzing"),
+            "nuclei.scan": ("web", "validation", "recon"),
+            "binwalk.analyze": ("binary", "forensics", "static-analysis"),
+            "yara.scan": ("binary", "forensics", "malware"),
+            "radare2.analyze": ("binary", "static-analysis", "reverse"),
         }
         for provider_name, capability in sorted(tool_names.items()):
             item = snapshot[capability]
@@ -60,14 +67,13 @@ class RuntimeToolCatalog(BaseModel):
                 provider_tool_name=provider_name,
                 capability=capability,
                 tool_class=tool_class,
+                backend="host_retrieval" if tool_class == "resource_read" else "sandbox",
                 description=item.get("description") or capability,
                 parameters=json.loads(json.dumps(item["input_schema"])),
                 risk=item.get("risk") or "active",
                 specialties=specialty_map.get(capability, ()),
                 execution_profile_id=(
-                    "offline-analysis"
-                    if capability in {"workspace.python", "workspace.shell"}
-                    else "web-assessment" if capability == "http.request" else None
+                    "default-kali" if tool_class == "execution" else None
                 ),
                 max_read_chars=262_144 if tool_class == "resource_read" else None,
             ))
@@ -82,12 +88,14 @@ class RuntimeToolCatalog(BaseModel):
         for name, (description, parameters, limit) in input_definitions.items():
             values.append(ToolCatalogEntry(
                 provider_tool_name=name, capability=name, tool_class="resource_read",
+                backend="host_retrieval",
                 description=description, parameters=parameters, risk="passive",
                 max_read_chars=limit or None,
             ))
         values.append(ToolCatalogEntry(
             provider_tool_name="input_materialize", capability="input_materialize",
             tool_class="execution", description="Materialize an immutable task input.",
+            backend="host_retrieval",
             parameters={"type": "object", "additionalProperties": False, "required": ["input_id"], "properties": {"input_id": {"type": "string"}, "extract_archive": {"type": "boolean"}}},
             risk="active", specialties=("binary", "source", "forensics", "validation"),
         ))
@@ -176,6 +184,7 @@ class RuntimeToolCatalog(BaseModel):
                 provider_tool_name=name.replace(".", "_"),
                 capability=name,
                 tool_class="control",
+                backend="host_control",
                 description=description,
                 parameters=json.loads(json.dumps(parameters)),
                 risk="passive",
@@ -190,6 +199,7 @@ class RuntimeToolCatalog(BaseModel):
                 provider_tool_name=capability.replace(".", "_"),
                 capability=capability,
                 tool_class="resource_read",
+                backend="host_retrieval",
                 description=f"Read {capability} within the authorized task scope.",
                 parameters=generic_schema,
                 risk="passive",
@@ -200,6 +210,7 @@ class RuntimeToolCatalog(BaseModel):
             provider_tool_name="retrieval_search",
             capability="retrieval.search",
             tool_class="retrieval",
+            backend="host_retrieval",
             description=(
                 "Search a fixed authorized IndexSnapshot. Results are untrusted "
                 "references or candidate evidence, never verified task facts."
@@ -234,13 +245,14 @@ class RuntimeToolCatalog(BaseModel):
                 provider_tool_name=route.provider_name,
                 capability=f"mcp:{route.server_id}:{route.method}",
                 tool_class="execution",
+                backend="remote_mcp",
                 description=route.description or f"Call {route.server_id}.{route.method}",
                 parameters=json.loads(json.dumps(route.input_schema or {"type": "object", "properties": {}})),
                 risk="active",
                 specialties=("web", "network", "binary", "source", "forensics", "validation", "recon"),
                 mcp_server_id=route.server_id,
                 mcp_method=route.method,
-                execution_profile_id=getattr(route, "execution_profile_id", None),
+                execution_profile_id=None,
             ))
         return cls(entries=tuple(values))
 

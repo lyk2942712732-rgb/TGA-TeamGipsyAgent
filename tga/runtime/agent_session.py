@@ -29,6 +29,14 @@ from tga.infrastructure.persistence import PersistenceBundle
 from tga.runtime.tooling import ToolDefinitionBuilder
 from tga.runtime.tooling.governance.approvals import SolverApprovalCoordinator
 from tga.runtime.tooling.execution_adapter import ExecutionPipelineAdapter
+from tga.runtime.tooling.execution import (
+    ArtifactIngestionService,
+    ExecutionBackendRouter,
+    HandlerExecutionBackend,
+    HostRetrievalBackend,
+    KaliSandboxBackend,
+    RemoteMCPBackend,
+)
 from tga.infrastructure.solver_definitions.registry import SolverDefinitionRegistry
 from tga.runtime.tooling.catalog import RuntimeToolCatalog
 from tga.runtime.tooling.catalog.manifest_builder import ToolManifestBuilder
@@ -131,6 +139,7 @@ class AgentSessionRunner:
             handlers=self.handlers,
             execution_context=execution_context,
         )
+        self.execution_backend_router = None
         self._refresh_tool_governance()
 
     def run(self) -> SessionOutcome:
@@ -163,12 +172,30 @@ class AgentSessionRunner:
             if session is None or session.status != "running":
                 break
             self._consume_resolved_approval()
-            reserved_session = self.coordinator.reserve_turn(task_id=self.task.id)
-            if reserved_session is None:
-                self.handlers.state.terminal_outcome = SessionOutcome(status="blocked", stop_reason="session_turn_limit", turn_count=session.turn_count)
-                break
-            session = reserved_session
-            turn_number = session.turn_count
+            if self.execution_context is not None:
+                reserved_run = self.persistence.orchestration.reserve_solver_run_turn(
+                    self.execution_context.run_id,
+                    self.execution_context.owner_id,
+                    self.execution_context.fencing_token,
+                )
+                if reserved_run is None:
+                    self.handlers.state.terminal_outcome = SessionOutcome(
+                        status="blocked",
+                        stop_reason="solver_run_turn_limit",
+                        turn_count=session.turn_count,
+                    )
+                    break
+                # The repository reserves the SolverRun turn and Task total
+                # atomically. Session remains the compatibility Task projection.
+                session = self.store.get_session(self.task.id) or session
+                turn_number = reserved_run.turn_count
+            else:
+                reserved_session = self.coordinator.reserve_turn(task_id=self.task.id)
+                if reserved_session is None:
+                    self.handlers.state.terminal_outcome = SessionOutcome(status="blocked", stop_reason="session_turn_limit", turn_count=session.turn_count)
+                    break
+                session = reserved_session
+                turn_number = session.turn_count
 
             progress_before = self._progress_signature()
             # A catalog refresh never mutates a turn already in flight. Take
@@ -265,7 +292,6 @@ class AgentSessionRunner:
                     BudgetManager(self.persistence.tool_governance).release_model_tokens(
                         str(token_reservation["id"])
                     )
-                self.task_orchestrator.block(reason="task_budget_exhausted")
                 self.handlers.state.terminal_outcome = SessionOutcome(
                     status="blocked",
                     stop_reason="task_budget_exhausted",
@@ -346,7 +372,11 @@ class AgentSessionRunner:
                     usage.get("completion_tokens") or usage.get("output_tokens") or 0
                 )
                 budget_manager = BudgetManager(self.persistence.tool_governance)
-                usage_key = f"model:{self.task.id}:{self.solver_id}:{turn_number}"
+                usage_key = (
+                    f"model:{self.task.id}:{self.solver_id}:"
+                    f"{self.execution_context.run_id if self.execution_context else 'supervisor'}:"
+                    f"{turn_number}"
+                )
                 if token_reservation is not None:
                     settled = budget_manager.settle_model_tokens(
                         str(token_reservation["id"]),
@@ -355,7 +385,6 @@ class AgentSessionRunner:
                         usage_idempotency_key=usage_key,
                     )
                     if settled.get("limit_exceeded"):
-                        self.task_orchestrator.block(reason="task_budget_exhausted")
                         self.handlers.state.terminal_outcome = SessionOutcome(
                             status="blocked",
                             stop_reason="task_budget_exhausted",
@@ -377,7 +406,6 @@ class AgentSessionRunner:
                         output_tokens=actual_output,
                     )
             except PersistenceConflict as exc:
-                self.task_orchestrator.block(reason="task_budget_exhausted")
                 self.handlers.state.terminal_outcome = SessionOutcome(
                     status="blocked",
                     stop_reason="task_budget_exhausted",
@@ -776,18 +804,73 @@ class AgentSessionRunner:
             control_handlers["propose_task_completion"] = (
                 self.handlers.completion.propose_task_completion
             )
+        resource_handlers = self.task_orchestrator.gateway_resource_handlers(
+            self.solver_id
+        )
+        retrieval_handlers = {
+            "retrieval.search": self._gateway_retrieval_search,
+        }
+
+        def host_control(request):
+            handler = control_handlers.get(request.capability)
+            if handler is None:
+                return {
+                    "ok": False,
+                    "status": "blocked",
+                    "error": {
+                        "code": "CONTROL_TOOL_NOT_IMPLEMENTED",
+                        "message": f"Control tool is unavailable: {request.capability}",
+                    },
+                }
+            return handler(request.arguments)
+
+        def host_retrieval(request):
+            handler = resource_handlers.get(request.capability) or retrieval_handlers.get(
+                request.capability
+            )
+            if handler is not None:
+                return handler(request.arguments)
+            return self.execution_adapter.execute_authorized(request)
+
+        sandbox_manager = getattr(self.executor, "sandbox_manager", None)
+        if sandbox_manager is None:
+            raise RuntimeError("production execution requires a SandboxManager")
+        self.execution_backend_router = ExecutionBackendRouter(
+            {
+                "host_control": HandlerExecutionBackend("host_control", host_control),
+                "host_retrieval": HostRetrievalBackend(
+                    workspace=self.workspace,
+                    store=self.store,
+                    artifact_service=self.handlers.artifacts,
+                    delegated=host_retrieval,
+                ),
+                "sandbox": KaliSandboxBackend(
+                    manager=sandbox_manager,
+                    task=self.task,
+                    workspace=self.workspace,
+                ),
+                "remote_mcp": RemoteMCPBackend(
+                    manager=self.mcp_manager,
+                    task=self.task,
+                    workspace=self.workspace,
+                ),
+            },
+            artifact_ingestion=ArtifactIngestionService(
+                task=self.task,
+                store=self.store,
+                run_root=self.run_root,
+                execution_context=self.execution_context,
+            ),
+        )
         self.tool_gateway = ToolGovernanceGateway(
             task=self.task,
             manifest=self.tool_manifest,
             repository=self.persistence.tool_governance,
             execution_adapter=self.execution_adapter,
+            execution_backend_router=self.execution_backend_router,
             control_handlers=control_handlers,
-            resource_handlers=self.task_orchestrator.gateway_resource_handlers(
-                self.solver_id
-            ),
-            retrieval_handlers={
-                "retrieval.search": self._gateway_retrieval_search,
-            },
+            resource_handlers=resource_handlers,
+            retrieval_handlers=retrieval_handlers,
             event_repository=self.persistence.events,
             allowed_resource_ids=(
                 self.assignment.allowed_resources if self.assignment is not None else None

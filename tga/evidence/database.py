@@ -155,6 +155,10 @@ class Database:
                 "execution_profile_id": "TEXT",
                 "sandbox_config_digest": "TEXT",
             },
+            "solver_runs": {
+                "turn_count": "INTEGER NOT NULL DEFAULT 0",
+                "max_turns": "INTEGER NOT NULL DEFAULT 1",
+            },
         }
         for table, requested in table_additions.items():
             table_exists = self.conn.execute(

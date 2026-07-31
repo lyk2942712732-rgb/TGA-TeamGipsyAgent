@@ -289,7 +289,6 @@ class CapabilityToolHandler(HandlerRuntime):
                 if artifact is None:
                     continue
                 self.last_artifact_id = artifact.id
-                self.artifacts.index(artifact)
                 excerpts.append({"artifact_id": artifact.id, "content": self.artifacts.excerpt(artifact)})
             for candidate in result.candidate_flags:
                 self.store.append_agent_event(
@@ -504,7 +503,6 @@ class InputToolHandler(HandlerRuntime):
             with self.store.transaction():
                 if artifact is not None:
                     self.store.add_artifact(artifact)
-                    index = self.artifacts.index(artifact)
                     self.last_artifact_id = artifact.id
                     self.store.append_agent_event(
                         self.task.id,
@@ -516,7 +514,8 @@ class InputToolHandler(HandlerRuntime):
                             "input_id": input_id,
                             "tool_name": name,
                             "execution_location": "Artifact Store",
-                            "indexed": index is not None,
+                            "indexed": False,
+                            "indexing_status": "pending",
                         },
                         solver_id=self.solver_id,
                     )
@@ -796,19 +795,6 @@ class MCPToolHandler(HandlerRuntime):
         with self.store.transaction():
             if artifact is not None:
                 self.store.add_artifact(artifact)
-                try:
-                    self.artifacts.index(artifact)
-                except Exception as exc:
-                    self.store.append_agent_event(
-                        self.task.id,
-                        "ARTIFACT_INDEX_FAILED",
-                        {
-                            "artifact_id": artifact.id,
-                            "trace_id": trace_id,
-                            "reason": self._safe_model_content(str(exc))[:800],
-                        },
-                        solver_id=self.solver_id,
-                    )
             if candidate and artifact_ids:
                 self.store.append_agent_event(
                     self.task.id,

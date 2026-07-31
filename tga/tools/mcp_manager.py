@@ -235,6 +235,74 @@ class MCPManager:
             code = "INVALID_ARGUMENTS" if policy_error.startswith("arguments") else "POLICY_DENIED"
             return self._failure(route, trace_id, request_id, catalog_version, code, policy_error, "policy")
 
+        return self._call_authorized(
+            task=task,
+            route=route,
+            arguments=arguments,
+            catalog_version=catalog_version,
+            workspace=workspace,
+            trace_id=trace_id,
+            request_id=request_id,
+            server=server,
+        )
+
+    def call_authorized_tool(
+        self,
+        *,
+        task: TGATask,
+        route: MCPToolRoute,
+        arguments: dict[str, Any],
+        catalog_version: str,
+        workspace: Path | None = None,
+        trace_id: str | None = None,
+    ) -> MCPCallOutcome:
+        """Execute a route already authorized by ToolGovernanceGateway."""
+        trace_id = trace_id or f"trace_{uuid4().hex}"
+        request_id = f"mcp_{uuid4().hex[:16]}"
+        self.ensure_catalog(workspace=workspace)
+        catalog = self._catalog_versions.get(catalog_version)
+        registered_route = catalog.route(route.provider_name) if catalog else None
+        if (
+            registered_route is None
+            or registered_route.server_id != route.server_id
+            or registered_route.method != route.method
+        ):
+            return self._failure(
+                route, trace_id, request_id, catalog_version,
+                "TOOL_NOT_VISIBLE",
+                "method was not present in the referenced discovered catalog",
+                "routing",
+            )
+        server = self.config.servers.get(route.server_id) if self.config else None
+        if server is None or not server.enabled:
+            return self._failure(
+                route, trace_id, request_id, catalog_version,
+                "CONFIG_ERROR", "route server is not configured and enabled", "config",
+            )
+        return self._call_authorized(
+            task=task,
+            route=route,
+            arguments=arguments,
+            catalog_version=catalog_version,
+            workspace=workspace,
+            trace_id=trace_id,
+            request_id=request_id,
+            server=server,
+        )
+
+    def _call_authorized(
+        self,
+        *,
+        task: TGATask,
+        route: MCPToolRoute,
+        arguments: dict[str, Any],
+        catalog_version: str,
+        workspace: Path | None,
+        trace_id: str,
+        request_id: str,
+        server,
+    ) -> MCPCallOutcome:
+
         with self._lock:
             bucket = self._rate_limits.setdefault(
                 route.server_id,

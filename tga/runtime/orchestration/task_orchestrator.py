@@ -147,19 +147,46 @@ class TaskOrchestrator:
         )
         return replacement
 
-    def block(self, *, reason: str):
+    def block(self, *, reason: str, solver_status: str = "paused"):
+        if solver_status not in {"paused", "blocked"}:
+            raise ValueError("blocked task Solver projection must be paused or blocked")
         state = self.state()
+        if state.status == "blocked":
+            return state
         if state.status in {"completed", "failed", "cancelled"}:
             raise PersistenceConflict(
                 f"TaskOrchestrator cannot block from {state.status}"
             )
         for solver in self.repositories.solvers.list_solvers(self.task.id):
-            if str(solver.status) in {"queued", "running", "ready"}:
-                self.repositories.solvers.update_solver_status(solver.id, "paused")
+            if str(solver.status) not in {"completed", "failed", "cancelled"}:
+                self.repositories.solvers.update_solver_status(
+                    solver.id, solver_status
+                )
         replacement = self._set_state("blocked")
         self.repositories.events.append_agent_event(
             self.task.id,
             "TASK_ORCHESTRATOR_BLOCKED",
+            {"reason": reason},
+            solver_id=state.supervisor_solver_id,
+        )
+        return replacement
+
+    def fail(self, *, reason: str = "failed"):
+        """Make a nonterminal task runtime failed through the task authority."""
+        state = self.state()
+        if state.status == "failed":
+            return state
+        if state.status in {"completed", "cancelled"}:
+            raise PersistenceConflict(
+                f"TaskOrchestrator cannot fail from {state.status}"
+            )
+        for solver in self.repositories.solvers.list_solvers(self.task.id):
+            if str(solver.status) not in {"completed", "failed", "cancelled"}:
+                self.repositories.solvers.update_solver_status(solver.id, "failed")
+        replacement = self._set_state("failed")
+        self.repositories.events.append_agent_event(
+            self.task.id,
+            "TASK_ORCHESTRATOR_FAILED",
             {"reason": reason},
             solver_id=state.supervisor_solver_id,
         )
@@ -672,72 +699,93 @@ class TaskOrchestrator:
         proposal: dict[str, Any],
         validator: Callable[[dict[str, Any]], dict[str, Any]],
     ) -> dict[str, Any]:
+        """Compatibility facade for the single task-completion service.
+
+        Completion is a task aggregate transition.  Keep this public method
+        for callers that already use the orchestrator API, but keep all state
+        writes in ``complete_task`` below.
+        """
+        return self.complete_task(
+            solver_id=solver_id,
+            proposal=proposal,
+            validator=validator,
+        )
+
+    def complete_task(
+        self,
+        *,
+        solver_id: str,
+        proposal: dict[str, Any],
+        validator: Callable[[dict[str, Any]], dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Atomically apply the only task-level completion transition."""
         self._require_role(solver_id, "supervisor", label="Supervisor")
-        plan = self.repositories.plans.get_global_plan(self.task.id)
-        active = [
-            item.id for item in (plan.intents if plan else [])
-            if item.status in {"pending", "ready", "assigned", "running", "reviewing"}
-        ]
-        if active:
-            return {
-                "accepted": False,
-                "code": "ACTIVE_INTENTS_REMAIN",
-                "active_intent_ids": active,
-            }
-        result = validator(proposal)
-        accepted = bool(result.get("accepted"))
-        now = utc_now()
-        proposal_id = "completion_" + hashlib.sha256(
-            json.dumps(proposal, ensure_ascii=False, sort_keys=True, default=str).encode()
-        ).hexdigest()[:24]
-        if accepted and plan is not None and plan.status != "completed":
-            self.repositories.plans.compare_and_swap_global_plan(
-                plan.model_copy(update={
-                    "version": plan.version + 1,
-                    "status": "completed",
-                    "updated_at": now,
-                }),
-                expected_version=plan.version,
-            )
+        with self.repositories.transaction():
+            plan = self.repositories.plans.get_global_plan(self.task.id)
+            active = [
+                item.id for item in (plan.intents if plan else [])
+                if item.status in {"pending", "ready", "assigned", "running", "reviewing"}
+            ]
+            if active:
+                return {
+                    "accepted": False,
+                    "code": "ACTIVE_INTENTS_REMAIN",
+                    "active_intent_ids": active,
+                }
+            result = validator(proposal)
+            accepted = bool(result.get("accepted"))
+            now = utc_now()
+            proposal_id = "completion_" + hashlib.sha256(
+                json.dumps(proposal, ensure_ascii=False, sort_keys=True, default=str).encode()
+            ).hexdigest()[:24]
+            if accepted and plan is not None and plan.status != "completed":
+                self.repositories.plans.compare_and_swap_global_plan(
+                    plan.model_copy(update={
+                        "version": plan.version + 1,
+                        "status": "completed",
+                        "updated_at": now,
+                    }),
+                    expected_version=plan.version,
+                )
+                self.repositories.events.append_agent_event(
+                    self.task.id,
+                    "PLAN_UPDATED",
+                    {
+                        "operation": "plan_completed",
+                        "old_version": plan.version,
+                        "new_version": plan.version + 1,
+                    },
+                    solver_id=solver_id,
+                )
+            state = self.state()
+            if accepted:
+                supervisor = self.repositories.solvers.get_solver(solver_id)
+                if supervisor is not None and str(supervisor.status) != "completed":
+                    self.repositories.solvers.update_solver_status(solver_id, "completed")
+            replacement = state.model_copy(update={
+                "status": "completed" if accepted else state.status,
+                "completion_proposal": dict(proposal),
+                "updated_at": now,
+            })
+            self.repositories.orchestration.save_state(replacement)
             self.repositories.events.append_agent_event(
                 self.task.id,
-                "PLAN_UPDATED",
+                "TASK_COMPLETION_PROPOSED",
                 {
-                    "operation": "plan_completed",
-                    "old_version": plan.version,
-                    "new_version": plan.version + 1,
+                    "proposal_id": proposal_id,
+                    "accepted": accepted,
+                    "validation": result,
                 },
                 solver_id=solver_id,
             )
-        if accepted:
-            supervisor = self.repositories.solvers.get_solver(solver_id)
-            if supervisor is not None and str(supervisor.status) != "completed":
-                self.repositories.solvers.update_solver_status(solver_id, "completed")
-        state = self.state()
-        replacement = state.model_copy(update={
-            "status": "completed" if accepted else state.status,
-            "completion_proposal": dict(proposal),
-            "updated_at": now,
-        })
-        self.repositories.orchestration.save_state(replacement)
-        self.repositories.events.append_agent_event(
-            self.task.id,
-            "TASK_COMPLETION_PROPOSED",
-            {
-                "proposal_id": proposal_id,
-                "accepted": accepted,
-                "validation": result,
-            },
-            solver_id=solver_id,
-        )
-        if accepted:
-            self.repositories.events.append_agent_event(
-                self.task.id,
-                "TASK_COMPLETION_ACCEPTED",
-                {"proposal_id": proposal_id, "validation": result},
-                solver_id=solver_id,
-            )
-        return result
+            if accepted:
+                self.repositories.events.append_agent_event(
+                    self.task.id,
+                    "TASK_COMPLETION_ACCEPTED",
+                    {"proposal_id": proposal_id, "validation": result},
+                    solver_id=solver_id,
+                )
+            return result
 
     def run_serial(
         self,

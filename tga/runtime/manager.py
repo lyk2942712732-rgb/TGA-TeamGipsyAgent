@@ -20,6 +20,7 @@ from tga.infrastructure.persistence.errors import PersistenceConflict
 from tga.runtime.approvals import expire_pending_approvals
 from tga.runtime.tooling.governance.approvals import SolverApprovalCoordinator
 from tga.runtime.coordinator import SessionCoordinator
+from tga.runtime.lifecycle_service import TaskLifecycleService
 from tga.runtime.errors import RuntimeConfigurationError
 from tga.runtime.service import TaskRuntimeService, require_current_task_schema
 from tga.runtime.orchestration import TaskOrchestrator
@@ -102,6 +103,7 @@ class Manager:
             if not supervisor_id:
                 raise RuntimeError("TaskOrchestrator did not provision a Supervisor")
             coordinator = SessionCoordinator(store)
+            lifecycle = TaskLifecycleService(task=task, store=store)
             session = coordinator.ensure_session(
                 task=task, max_turns=self.limits.max_turns,
                 supervisor_solver_id=supervisor_id,
@@ -150,11 +152,12 @@ class Manager:
                 if current is None or current.status != "running":
                     break
                 if outcome.status in {
-                    "awaiting_approval", "blocked", "failed", "cancelled"
+                    "blocked", "failed", "cancelled"
                 }:
-                    coordinator.apply(
-                        task_id=task.id, solver_id=solver_id, outcome=outcome
-                    )
+                    lifecycle.apply(solver_id=solver_id, outcome=outcome)
+                    break
+                if outcome.status == "awaiting_approval":
+                    coordinator.apply(task_id=task.id, solver_id=solver_id, outcome=outcome)
                     break
                 if outcome.status == "completed" and solver.orchestration_role == "supervisor":
                     coordinator.apply(
@@ -166,8 +169,8 @@ class Manager:
                 )
             current = store.get_session(task.id)
             if current is not None and current.status == "running" and solver_id is None:
-                coordinator.block(
-                    task_id=task.id, reason="no_runnable_solver",
+                lifecycle.block(
+                    reason="no_runnable_solver",
                     turn_count=current.turn_count, solver_id=supervisor_id,
                 )
             current = store.get_session(task.id)
@@ -311,21 +314,14 @@ class Manager:
             session = store.get_session(task_id)
             if session is None:
                 raise KeyError(f"session not found: {task_id}")
-            coordinator = SessionCoordinator(store)
-            orchestrator = TaskOrchestrator(
-                task=task, repositories=PersistenceBundle(store)
-            )
+            lifecycle = TaskLifecycleService(task=task, store=store)
             if action == "pause":
                 ActiveRunRegistry.cancel_task(task_id, "task_paused")
-                with store.transaction():
-                    orchestrator.pause(reason="user_paused")
-                    session = coordinator.pause(task_id=task_id, reason="user_paused")
+                session = lifecycle.pause(reason="user_paused")
             elif action == "resume":
                 if session.status not in {"paused", "blocked"}:
                     return {"status": session.status, "accepted": False, "reason": "session_not_paused"}
-                with store.transaction():
-                    orchestrator.resume()
-                    session = coordinator.resume(task_id=task_id)
+                session = lifecycle.resume()
             elif action == "cancel":
                 ActiveRunRegistry.cancel_task(task_id, "task_cancelled")
                 with store.transaction():
@@ -348,8 +344,7 @@ class Manager:
                             {"action_id": pending_id, "status": "cancelled", "reason": "user_cancelled"},
                             solver_id=str(pending.get("solver_id") or "") or None,
                         )
-                    orchestrator.cancel(reason="user_cancelled")
-                    session = coordinator.cancel(task_id=task_id, reason="user_cancelled")
+                    session = lifecycle.cancel(reason="user_cancelled")
                 self._release_existing_sandbox(store, task_id)
             elif action in {"approve_action", "reject_action"} and action_id:
                 governance = PersistenceBundle(store).tool_governance
@@ -375,12 +370,10 @@ class Manager:
                             solver_id=str(pending.get("solver_id") or "") or None,
                             intent_id=str(pending.get("intent_id") or "") or None,
                         )
-                        remaining = store.conn.execute(
-                            "SELECT COUNT(*) FROM approvals WHERE task_id=? "
-                            "AND solver_id=? AND status='pending'",
-                            (task_id, str(pending.get("solver_id") or "")),
-                        ).fetchone()[0]
-                        if int(remaining) == 0:
+                        remaining = governance.pending_approval_count(
+                            task_id, str(pending.get("solver_id") or "")
+                        )
+                        if remaining == 0:
                             SolverApprovalCoordinator(store).resolve(
                                 solver_id=str(pending.get("solver_id") or ""),
                                 intent_id=str(pending.get("intent_id") or "") or None,
@@ -614,19 +607,6 @@ class Manager:
                 supervisor_solver_id=state.supervisor_solver_id,
                 intent_id=intent_id,
             )
-            repositories.events.append_agent_event(
-                task_id,
-                "INTENT_ASSIGNED",
-                {
-                    "intent_id": intent_id,
-                    "solver_id": assignment.solver_id,
-                    "assignment_id": assignment.id,
-                    "attempt": assignment.attempt,
-                    "reason": reason,
-                },
-                solver_id=assignment.solver_id,
-                intent_id=intent_id,
-            )
             return {
                 "schema_version": 6,
                 "task_id": task_id,
@@ -675,17 +655,12 @@ class Manager:
                     raise PermissionError("Solver execution context ownership mismatch")
                 execution_context.assert_active()
                 return execution_context.fencing_token
-            row = store.conn.execute(
-                "SELECT fencing_token FROM solver_runs WHERE solver_id=? "
-                "AND state IN ('leased','running') ORDER BY updated_at DESC LIMIT 1",
-                (solver_id,),
-            ).fetchone()
-            if row is None:
-                row = store.conn.execute(
-                    "SELECT fencing_token FROM solver_leases WHERE solver_id=?",
-                    (solver_id,),
-                ).fetchone()
-            return int(row["fencing_token"]) if row else 1
+            repositories = PersistenceBundle(store)
+            return (
+                repositories.orchestration.active_run_fencing_token(solver_id)
+                or repositories.solvers.lease_fencing_token(solver_id)
+                or 1
+            )
 
         return ControlledActionExecutor(
             artifact_store=ArtifactStore(
@@ -741,11 +716,10 @@ class Manager:
                 execution_context.assert_active()
                 fencing = execution_context.fencing_token
             else:
-                row = store.conn.execute(
-                    "SELECT fencing_token FROM solver_leases WHERE solver_id=?",
-                    (solver_id,),
-                ).fetchone()
-                fencing = int(row["fencing_token"]) if row else 1
+                fencing = (
+                    PersistenceBundle(store).solvers.lease_fencing_token(solver_id)
+                    or 1
+                )
             config, _ = load_sandbox_config()
             manager = SandboxManager(
                 config=config,

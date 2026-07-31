@@ -848,6 +848,19 @@ class SqliteToolGovernanceRepository:
             for row in self.conn.execute(sql, parameters).fetchall()
         ]
 
+    def pending_approval_count(self, task_id: str, solver_id: str) -> int:
+        return int(self.conn.execute(
+            "SELECT COUNT(*) FROM approvals WHERE task_id=? AND solver_id=? "
+            "AND status='pending'",
+            (task_id, solver_id),
+        ).fetchone()[0])
+
+    def artifact_owned_by_task(self, artifact_id: str, task_id: str) -> bool:
+        return self.conn.execute(
+            "SELECT 1 FROM artifacts WHERE id=? AND task_id=?",
+            (artifact_id, task_id),
+        ).fetchone() is not None
+
     def decide_approval(self, action_id: str, status: str, *, expected_status: str = "pending") -> None:
         row = self.conn.execute(
             "SELECT id,payload_json,version,status FROM approvals WHERE action_id=? ORDER BY created_at DESC LIMIT 1",

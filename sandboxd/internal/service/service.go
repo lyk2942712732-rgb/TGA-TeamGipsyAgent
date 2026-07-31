@@ -74,7 +74,7 @@ func (s *Service) Acquire(ctx context.Context, request *sandboxv1.AcquireRequest
 }
 
 func (s *Service) Exec(request *sandboxv1.ExecRequest, stream sandboxv1.SandboxService_ExecServer) error {
-	releaseExecution := s.lockTaskExecution(request.InstanceId, false)
+	releaseExecution := s.lockTaskExecution(request.InstanceId, true)
 	defer releaseExecution()
 	profile, err := s.profileForInstance(stream.Context(), request.InstanceId, request.FencingToken)
 	if err != nil {
@@ -87,6 +87,9 @@ func (s *Service) Exec(request *sandboxv1.ExecRequest, stream sandboxv1.SandboxS
 	if err := s.applyNetwork(stream.Context(), request.InstanceId, request.FencingToken, request.Process.NetworkGrants); err != nil {
 		return err
 	}
+	defer func() {
+		_ = s.applyNetwork(context.Background(), request.InstanceId, request.FencingToken, nil)
+	}()
 	result, err := s.runtime.Exec(stream.Context(), request.InstanceId, request.FencingToken, spec, func(frame runtimepkg.Frame) error {
 		kind := sandboxv1.ExecFrame_STDOUT
 		if frame.Stderr {
@@ -116,7 +119,7 @@ func (s *Service) OpenProcess(stream sandboxv1.SandboxService_OpenProcessServer)
 	if start == nil {
 		return errors.New("first process message must be start")
 	}
-	releaseExecution := s.lockTaskExecution(start.InstanceId, false)
+	releaseExecution := s.lockTaskExecution(start.InstanceId, true)
 	defer releaseExecution()
 	profile, err := s.profileForInstance(stream.Context(), start.InstanceId, start.FencingToken)
 	if err != nil {
@@ -129,6 +132,9 @@ func (s *Service) OpenProcess(stream sandboxv1.SandboxService_OpenProcessServer)
 	if err := s.applyNetwork(stream.Context(), start.InstanceId, start.FencingToken, start.Process.NetworkGrants); err != nil {
 		return err
 	}
+	defer func() {
+		_ = s.applyNetwork(context.Background(), start.InstanceId, start.FencingToken, nil)
+	}()
 	process, err := s.runtime.OpenProcess(stream.Context(), start.InstanceId, start.FencingToken, spec, func(frame runtimepkg.Frame) error {
 		kind := sandboxv1.ExecFrame_STDOUT
 		if frame.Stderr {

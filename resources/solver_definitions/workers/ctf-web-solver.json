@@ -27,6 +27,8 @@
                              ],
     "required_capabilities":  [
                                   "http.request",
+                                  "ffuf.directory_scan",
+                                  "nuclei.scan",
                                   "artifact.inspect"
                               ],
     "allowed_tool_groups":  [

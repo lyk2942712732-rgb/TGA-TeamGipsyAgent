@@ -171,6 +171,8 @@ CREATE TABLE IF NOT EXISTS solver_runs (
     orchestration_role TEXT NOT NULL,
     state TEXT NOT NULL,
     attempt INTEGER NOT NULL CHECK(attempt >= 1),
+    turn_count INTEGER NOT NULL DEFAULT 0 CHECK(turn_count >= 0),
+    max_turns INTEGER NOT NULL DEFAULT 1 CHECK(max_turns >= 1),
     lease_owner TEXT,
     fencing_token INTEGER NOT NULL DEFAULT 0 CHECK(fencing_token >= 0),
     lease_expires_at TEXT,

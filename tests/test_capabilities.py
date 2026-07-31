@@ -105,7 +105,7 @@ def test_distinct_http_form_values_have_distinct_semantic_fingerprints() -> None
     assert first != second
 
 
-def test_http_redirect_outside_scope_is_blocked_and_artifacted(tmp_path: Path) -> None:
+def test_host_executor_does_not_follow_http_redirects(tmp_path: Path) -> None:
     class RedirectHandler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:  # noqa: N802
             self.send_response(302)
@@ -128,11 +128,11 @@ def test_http_redirect_outside_scope_is_blocked_and_artifacted(tmp_path: Path) -
         server.shutdown()
         server.server_close()
 
-    assert result.error and result.error.code == "REDIRECT_OUT_OF_SCOPE"
+    assert result.error and result.error.code == "EXECUTION_BACKEND_REQUIRED"
     assert result.artifact_ids
 
 
-def test_cross_origin_redirect_strips_explicit_authorization(tmp_path: Path) -> None:
+def test_host_executor_does_not_send_cross_origin_authorization(tmp_path: Path) -> None:
     received: dict[str, str | None] = {}
 
     class DestinationHandler(BaseHTTPRequestHandler):
@@ -186,11 +186,11 @@ def test_cross_origin_redirect_strips_explicit_authorization(tmp_path: Path) -> 
         destination.shutdown()
         destination.server_close()
 
-    assert result.status == "succeeded"
-    assert received["authorization"] is None
+    assert result.error and result.error.code == "EXECUTION_BACKEND_REQUIRED"
+    assert received.get("authorization") is None
 
 
-def test_task_sources_blocks_cross_origin_redirect_between_seed_origins(tmp_path: Path) -> None:
+def test_host_executor_does_not_process_task_source_redirects(tmp_path: Path) -> None:
     class DestinationHandler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:  # noqa: N802
             self.send_response(200)
@@ -235,11 +235,11 @@ def test_task_sources_blocks_cross_origin_redirect_between_seed_origins(tmp_path
         destination.shutdown()
         destination.server_close()
 
-    assert result.error and result.error.code == "REDIRECT_OUT_OF_SCOPE"
+    assert result.error and result.error.code == "EXECUTION_BACKEND_REQUIRED"
     assert result.artifact_ids
 
 
-def test_http_connection_uses_policy_approved_dns_result(tmp_path: Path, monkeypatch) -> None:
+def test_host_executor_does_not_resolve_http_targets(tmp_path: Path, monkeypatch) -> None:
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:  # noqa: N802
             self.send_response(200)
@@ -280,8 +280,8 @@ def test_http_connection_uses_policy_approved_dns_result(tmp_path: Path, monkeyp
         server.shutdown()
         server.server_close()
 
-    assert result.status == "succeeded"
-    assert calls == 1
+    assert result.error and result.error.code == "EXECUTION_BACKEND_REQUIRED"
+    assert calls == 0
 
 
 def test_execution_budget_enforces_per_host_rate() -> None:
@@ -293,7 +293,7 @@ def test_execution_budget_enforces_per_host_rate() -> None:
     limited = budget.reserve(http.model_copy(update={"target": "http://127.0.0.1:8080"}), http_target="http://127.0.0.1:9000/b")
     assert limited and limited.code == "RATE_LIMITED" and limited.retryable is True
 
-def test_http_output_is_bounded_before_artifact_serialization(tmp_path: Path) -> None:
+def test_host_executor_blocks_http_before_output_serialization(tmp_path: Path) -> None:
     class LargeHandler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:  # noqa: N802
             body = b"x" * 1024
@@ -320,11 +320,10 @@ def test_http_output_is_bounded_before_artifact_serialization(tmp_path: Path) ->
         server.shutdown()
         server.server_close()
 
-    assert payload["truncated"] is True
-    assert len(payload["body_excerpt"].encode()) <= 128
+    assert payload["error"]["code"] == "EXECUTION_BACKEND_REQUIRED"
 
 
-def test_workspace_python_output_is_stream_bounded(tmp_path: Path) -> None:
+def test_host_executor_blocks_workspace_python(tmp_path: Path) -> None:
     task = _task()
     store = ArtifactStore(tmp_path / "artifacts")
     executor = ControlledActionExecutor(artifact_store=store, budget=ExecutionBudget(max_output_bytes=128))
@@ -339,11 +338,9 @@ def test_workspace_python_output_is_stream_bounded(tmp_path: Path) -> None:
     result = executor.execute(task=task, action=action, workspace=tmp_path / "solver")
     payload = __import__("json").loads(store.read_text(result.artifact_ids[0]))
 
-    if result.status == "succeeded":
-        assert payload["truncated"] is True
-        assert len(payload["stdout"].encode()) <= 128
-    else:
-        assert result.error and result.error.code == "ISOLATED_RUNTIME_UNAVAILABLE"
+    assert result.status == "blocked"
+    assert result.error and result.error.code == "EXECUTION_BACKEND_REQUIRED"
+    assert payload["error"]["code"] == "EXECUTION_BACKEND_REQUIRED"
 
 
 @pytest.mark.skipif(

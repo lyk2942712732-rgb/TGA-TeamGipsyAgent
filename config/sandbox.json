@@ -17,56 +17,21 @@
     "run_root": "/var/lib/tga/runs",
     "allowed_client_uids": []
   },
-  "tools": {
-    "binwalk": {
-      "profile_id": "offline-analysis",
-      "image": "binwalk-mcp@sha256:REPLACE_WITH_RELEASE_DIGEST"
-    },
-    "ffuf": {
-      "profile_id": "web-assessment",
-      "image": "ffuf-mcp@sha256:REPLACE_WITH_RELEASE_DIGEST"
-    },
-    "nuclei": {
-      "profile_id": "web-assessment",
-      "image": "nuclei-mcp@sha256:REPLACE_WITH_RELEASE_DIGEST"
-    },
-    "nmap": {
-      "profile_id": "tcp-assessment",
-      "image": "nmap-mcp@sha256:REPLACE_WITH_RELEASE_DIGEST",
-      "args": ["--mode", "connect"]
-    },
-    "nmap-raw": {
-      "profile_id": "raw-network",
-      "image": "nmap-mcp@sha256:REPLACE_WITH_RELEASE_DIGEST",
-      "args": ["--mode", "raw"]
-    }
-  },
+  "tools": {},
   "profiles": {
-    "offline-analysis": {
-      "id": "offline-analysis",
-      "provider": "docker_sandbox",
-      "image": "ghcr.io/team-gipsy/tga-kali-offline@sha256:REPLACE_WITH_RELEASE_DIGEST",
-      "network_mode": "none"
-    },
-    "web-assessment": {
-      "id": "web-assessment",
-      "provider": "docker_sandbox",
-      "image": "ghcr.io/team-gipsy/tga-kali-web@sha256:REPLACE_WITH_RELEASE_DIGEST",
-      "network_mode": "public_http",
-      "web_allow_hosts": []
-    },
-    "tcp-assessment": {
-      "id": "tcp-assessment",
+    "default-kali": {
+      "id": "default-kali",
       "provider": "sandboxd",
-      "image": "ghcr.io/team-gipsy/tga-kali-network@sha256:REPLACE_WITH_RELEASE_DIGEST",
-      "network_mode": "target_allowlist"
-    },
-    "raw-network": {
-      "id": "raw-network",
-      "provider": "sandboxd",
-      "image": "ghcr.io/team-gipsy/tga-kali-network@sha256:REPLACE_WITH_RELEASE_DIGEST",
+      "image": "ghcr.io/team-gipsy/tga-kali-default@sha256:REPLACE_WITH_RELEASE_DIGEST",
       "network_mode": "target_allowlist",
-      "allow_net_raw": true
+      "allow_net_raw": false,
+      "limits": {
+        "timeout_seconds": 600,
+        "max_output_bytes": 262144,
+        "memory_bytes": 1073741824,
+        "cpu_count": 2.0,
+        "pids_limit": 512
+      }
     },
     "remote-http": {
       "id": "remote-http",

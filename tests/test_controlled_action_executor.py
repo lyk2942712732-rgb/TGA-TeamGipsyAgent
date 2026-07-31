@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import threading
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from tga.capabilities.runtime import ControlledActionExecutor
@@ -67,37 +65,15 @@ def test_invalid_http_arguments_are_blocked_before_execution(tmp_path: Path) -> 
     assert result.error.code == "INVALID_ACTION_ARGUMENTS"
 
 
-class _FlagHandler(BaseHTTPRequestHandler):
-    def do_GET(self) -> None:  # noqa: N802
-        body = b"flag{candidate_only}"
-        self.send_response(200)
-        self.send_header("Content-Type", "text/plain")
-        self.end_headers()
-        self.wfile.write(body)
+def test_http_execution_requires_governed_kali_backend(tmp_path: Path) -> None:
+    executor = ControlledActionExecutor(artifact_store=ArtifactStore(tmp_path))
+    result = executor.execute(
+        task=_task(),
+        action=_action(),
+        workspace=tmp_path / "solver",
+    )
 
-    def log_message(self, *_: object) -> None:
-        return
-
-
-def test_http_result_exposes_only_candidate_flag(tmp_path: Path) -> None:
-    server = ThreadingHTTPServer(("127.0.0.1", 0), _FlagHandler)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    try:
-        target = f"http://127.0.0.1:{server.server_port}"
-        scope = [f"127.0.0.1:{server.server_port}"]
-        task = _task().model_copy(update={"task_entry_url": f"{target}/", "execution_policy": execution_policy(scope)})
-        executor = ControlledActionExecutor(artifact_store=ArtifactStore(tmp_path))
-
-        result = executor.execute(
-            task=task,
-            action=_action(target=target, arguments={"method": "GET", "path": "/"}),
-            workspace=tmp_path / "solver",
-        )
-
-        assert result.status == "succeeded"
-        assert result.candidate_flags == ["flag{candidate_only}"]
-        assert result.candidate_findings == []
-        assert result.artifact_ids
-    finally:
-        server.shutdown()
+    assert result.status == "blocked"
+    assert result.error is not None
+    assert result.error.code == "EXECUTION_BACKEND_REQUIRED"
+    assert result.artifact_ids

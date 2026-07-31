@@ -24,6 +24,9 @@
     "required_capabilities":  [
                                   "workspace.read",
                                   "workspace.python",
+                                  "binwalk.analyze",
+                                  "yara.scan",
+                                  "radare2.analyze",
                                   "artifact.inspect"
                               ],
     "allowed_tool_groups":  [

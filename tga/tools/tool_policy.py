@@ -9,7 +9,7 @@ from typing import Any
 from pydantic import BaseModel, model_validator
 
 from tga.contracts import TGATask
-from tga.network_policy import authorize_url
+from tga.network_policy import authorize_url, enforce_address_policy
 
 
 PASSIVE_TOOLS = {
@@ -163,6 +163,34 @@ def _policy_decision(
             return deny("LOCAL_COMPUTE_DISABLED", "local compute is disabled", "local_compute.mode=isolated")
         if not sandboxed:
             return deny("ISOLATED_COMPUTE_REQUIRED", "this execution entry point is not an isolated worker", "isolated local compute")
+        return PolicyDecision(allowed=True)
+
+    if normalized == "nmap.scan":
+        try:
+            address = ipaddress.ip_address(target)
+            enforce_address_policy(address, policy.network)
+            if policy.network.access == "disabled":
+                raise PermissionError("NETWORK_ACCESS_DISABLED")
+            if policy.network.access == "custom":
+                networks = [
+                    ipaddress.ip_network(item, strict=False)
+                    for item in policy.network.custom_cidrs
+                ]
+                if not any(
+                    address.version == network.version and address in network
+                    for network in networks
+                ):
+                    raise PermissionError("NETWORK_TARGET_NOT_IN_CUSTOM_ALLOWLIST")
+            elif policy.network.access == "task_sources":
+                seed_hosts = {
+                    urlparse(origin).hostname for origin in policy.network.seed_origins
+                }
+                if str(address) not in seed_hosts:
+                    raise PermissionError("NETWORK_ORIGIN_NOT_IN_TASK_SOURCES")
+        except (PermissionError, ValueError) as exc:
+            return deny(str(exc), "network target is outside the authorized access boundary", "network access policy")
+        if policy.network.interaction != "interact":
+            return deny("NETWORK_INTERACTION_NOT_AUTHORIZED", "network policy permits observation only", "network.interaction=interact")
         return PolicyDecision(allowed=True)
 
     parsed = urlparse(target)

@@ -35,6 +35,7 @@ class GovernedAction(BaseModel):
     tool_call_id: str
     tool_class: ToolClass
     capability: str
+    backend: Literal["host_control", "host_retrieval", "sandbox", "remote_mcp"] = "sandbox"
     execution_profile_id: str | None = None
     sandbox_config_digest: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
     normalized_arguments: dict[str, Any] = Field(default_factory=dict)

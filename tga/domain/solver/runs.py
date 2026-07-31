@@ -35,6 +35,8 @@ class SolverRun(BaseModel):
     orchestration_role: Literal["supervisor", "worker", "reviewer", "reporter"]
     state: SolverRunState = "queued"
     attempt: int = Field(default=1, ge=1)
+    turn_count: int = Field(default=0, ge=0)
+    max_turns: int = Field(default=1, ge=1)
     lease_owner: str | None = None
     fencing_token: int = Field(default=0, ge=0)
     lease_expires_at: str | None = None

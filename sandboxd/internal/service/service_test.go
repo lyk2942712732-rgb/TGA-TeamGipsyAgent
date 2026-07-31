@@ -6,21 +6,26 @@ import (
 	"time"
 )
 
-func TestTaskExecutionLockAllowsSameTaskExecutions(t *testing.T) {
+func TestTaskExecutionLockSerializesSameTaskExecutions(t *testing.T) {
 	service := &Service{locks: make(map[string]*taskExecutionLock)}
-	releaseFirst := service.lockTaskExecution("instance-a", false)
-	defer releaseFirst()
+	releaseFirst := service.lockTaskExecution("instance-a", true)
 	entered := make(chan struct{})
 	go func() {
-		releaseSecond := service.lockTaskExecution("instance-a", false)
+		releaseSecond := service.lockTaskExecution("instance-a", true)
 		close(entered)
 		releaseSecond()
 	}()
 
 	select {
 	case <-entered:
+		t.Fatal("same-task execution entered before the prior network grant was released")
+	case <-time.After(25 * time.Millisecond):
+	}
+	releaseFirst()
+	select {
+	case <-entered:
 	case <-time.After(time.Second):
-		t.Fatal("same-task executions were incorrectly serialized")
+		t.Fatal("same-task execution did not resume")
 	}
 }
 

@@ -27,6 +27,7 @@ class SolverRunner:
     def __init__(self, **kwargs: Any) -> None:
         self.task = kwargs["task"]
         self.solver_id = str(kwargs["solver_id"])
+        self.execution_context = kwargs.get("execution_context")
         store = kwargs["store"]
         self.repositories = PersistenceBundle(store)
         solver = self.repositories.solvers.get_solver(self.solver_id)
@@ -40,11 +41,13 @@ class SolverRunner:
         self._engine = AgentSessionRunner(**kwargs)
 
     def run(self) -> SolverOutcome:
-        self._set_status("running")
+        if self.execution_context is None:
+            self._set_status("running")
         try:
             outcome = self._engine.run()
         except Exception:
-            self._set_status("failed")
+            if self.execution_context is None:
+                self._set_status("failed")
             raise
         result = SolverOutcome(
             task_id=self.task.id,
@@ -66,7 +69,8 @@ class SolverRunner:
             "paused": "waiting",
             "running": "waiting",
         }.get(result.status, "blocked")
-        self._set_status(status)
+        if self.execution_context is None:
+            self._set_status(status)
         return result
 
     def _set_status(self, status: str) -> None:

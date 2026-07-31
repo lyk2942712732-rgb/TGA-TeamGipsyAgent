@@ -446,6 +446,55 @@ def test_parallel_turn_reservation_is_atomic(tmp_path: Path) -> None:
         verified.close()
 
 
+def test_parallel_solver_runs_reserve_independent_turn_budgets(tmp_path: Path) -> None:
+    task = _task("parallel_run_turn_budgets", active_workers=2)
+    database_path, bundle, orchestrator, state = _seed_orchestrator(tmp_path, task)
+    try:
+        session_store = EvidenceStore(database_path)
+        try:
+            SessionCoordinator(session_store).ensure_session(
+                task=task,
+                max_turns=48,
+                supervisor_solver_id=state.supervisor_solver_id,
+            )
+            SessionCoordinator(session_store).start(
+                task_id=task.id, solver_id=state.supervisor_solver_id
+            )
+        finally:
+            session_store.close()
+        _add_intent(orchestrator, state.supervisor_solver_id, "peer")
+        orchestrator.dispatch_ready()
+        runs = bundle.orchestration.list_solver_runs(task.id)
+        assert len(runs) == 2
+        reserved = []
+        for index, run in enumerate(runs):
+            owner = f"owner_{index}"
+            claimed = bundle.orchestration.claim_solver_run(
+                run.id,
+                owner,
+                ttl_seconds=30,
+                expected_version=run.version,
+                max_active_workers=2,
+            )
+            assert claimed is not None
+            started = bundle.orchestration.start_solver_run(
+                claimed.id, owner, claimed.fencing_token
+            )
+            reserved.append(bundle.orchestration.reserve_solver_run_turn(
+                started.id, owner, started.fencing_token
+            ))
+
+        assert [item.turn_count for item in reserved] == [1, 1]
+        assert all(item.max_turns > 1 for item in reserved)
+        session_store = EvidenceStore(database_path)
+        try:
+            assert session_store.get_session(task.id).turn_count == 2
+        finally:
+            session_store.close()
+    finally:
+        bundle.close()
+
+
 def test_failed_run_reconcile_creates_one_retry_attempt(tmp_path: Path) -> None:
     task = _task("parallel_failed_reconcile", active_workers=1)
     database_path, bundle, orchestrator, _ = _seed_orchestrator(tmp_path, task)

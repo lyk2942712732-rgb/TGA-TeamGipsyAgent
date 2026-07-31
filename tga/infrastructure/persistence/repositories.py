@@ -851,6 +851,13 @@ class SqliteSolverRepository:
         ).fetchall()
         return [SolverInstance.model_validate_json(row["payload_json"]) for row in rows]
 
+    def lease_fencing_token(self, solver_id: str) -> int | None:
+        row = self.conn.execute(
+            "SELECT fencing_token FROM solver_leases WHERE solver_id=?",
+            (solver_id,),
+        ).fetchone()
+        return int(row["fencing_token"]) if row else None
+
     def add_solver(self, solver: SolverInstance) -> None:
         with self.database.transaction():
             self._add_solver(solver)
@@ -1489,12 +1496,13 @@ class SqliteOrchestrationRepository:
             self.conn.execute(
                 "INSERT INTO solver_runs("
                 "id,task_id,solver_id,assignment_id,intent_id,orchestration_role,state,"
-                "attempt,lease_owner,fencing_token,lease_expires_at,heartbeat_at,result_id,"
+                "attempt,turn_count,max_turns,lease_owner,fencing_token,lease_expires_at,heartbeat_at,result_id,"
                 "error_code,version,payload_json,created_at,updated_at"
-                ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?,?,?)",
+                ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?,?,?)",
                 (
                     run.id, run.task_id, run.solver_id, run.assignment_id, run.intent_id,
-                    run.orchestration_role, run.state, run.attempt, run.lease_owner,
+                    run.orchestration_role, run.state, run.attempt, run.turn_count,
+                    run.max_turns, run.lease_owner,
                     run.fencing_token, run.lease_expires_at, run.heartbeat_at, run.result_id,
                     run.error_code, run.model_dump_json(), run.created_at, run.updated_at,
                 ),
@@ -1516,6 +1524,14 @@ class SqliteOrchestrationRepository:
             (task_id,),
         ).fetchall()
         return [SolverRun.model_validate_json(row["payload_json"]) for row in rows]
+
+    def active_run_fencing_token(self, solver_id: str) -> int | None:
+        row = self.conn.execute(
+            "SELECT fencing_token FROM solver_runs WHERE solver_id=? "
+            "AND state IN ('leased','running') ORDER BY updated_at DESC LIMIT 1",
+            (solver_id,),
+        ).fetchone()
+        return int(row["fencing_token"]) if row else None
 
     def claim_solver_run(
         self, run_id: str, owner_id: str, *, ttl_seconds: float,
@@ -1658,6 +1674,53 @@ class SqliteOrchestrationRepository:
             raise PersistenceConflict(f"late SolverRun result rejected: {run_id}")
         self.database._commit()
         return replacement
+
+    def reserve_solver_run_turn(
+        self,
+        run_id: str,
+        owner_id: str,
+        fencing_token: int,
+        *,
+        now: datetime | None = None,
+    ) -> SolverRun | None:
+        """Atomically reserve one model turn from one fenced SolverRun."""
+        instant = now or datetime.now(UTC)
+        stamp = _timestamp(instant)
+        with self.database.transaction():
+            current = self.get_solver_run(run_id)
+            if current is None or current.state != "running":
+                return None
+            if (
+                current.lease_owner != owner_id
+                or current.fencing_token != fencing_token
+                or not current.lease_expires_at
+                or current.lease_expires_at <= stamp
+                or current.turn_count >= current.max_turns
+            ):
+                return None
+            session_cursor = self.conn.execute(
+                "UPDATE sessions SET turn_count=turn_count+1 "
+                "WHERE task_id=? AND status='running' AND turn_count<max_turns",
+                (current.task_id,),
+            )
+            if session_cursor.rowcount != 1:
+                return None
+            replacement = SolverRun.model_validate(current.model_dump() | {
+                "turn_count": current.turn_count + 1,
+                "updated_at": stamp,
+                "version": current.version + 1,
+            })
+            cursor = self.conn.execute(
+                "UPDATE solver_runs SET turn_count=?,version=?,payload_json=?,updated_at=? "
+                "WHERE id=? AND state='running' AND lease_owner=? AND fencing_token=? "
+                "AND lease_expires_at>? AND turn_count<? AND version=?",
+                (
+                    replacement.turn_count, replacement.version,
+                    replacement.model_dump_json(), stamp, run_id, owner_id,
+                    fencing_token, stamp, current.max_turns, current.version,
+                ),
+            )
+            return replacement if cursor.rowcount == 1 else None
 
     def validate_solver_run_authority(
         self, run_id: str, owner_id: str, fencing_token: int,

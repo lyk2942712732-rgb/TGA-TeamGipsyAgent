@@ -4,6 +4,8 @@ import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import pytest
+
 from tga.contracts import (
     ActionEffect,
     ActionSpec,
@@ -293,9 +295,21 @@ def test_custom_network_rules_authorize_origin_domain_and_cidr() -> None:
         raise AssertionError("wildcard must not authorize the apex domain")
 
 
-def test_network_authorization_does_not_filter_resolved_ip_address_classes() -> None:
+def test_network_authorization_enforces_resolved_ip_address_classes() -> None:
     policy = NetworkExecutionPolicy(access="public_internet")
 
-    assert authorize_url("http://127.0.0.1:8080/", policy) == ["127.0.0.1"]
-    assert authorize_url("http://169.254.169.254/latest/meta-data/", policy) == ["169.254.169.254"]
-    assert authorize_url("http://198.18.0.8/", policy) == ["198.18.0.8"]
+    for url, code in (
+        ("http://127.0.0.1:8080/", "NETWORK_LOOPBACK_DENIED"),
+        ("http://169.254.169.254/latest/meta-data/", "NETWORK_LINK_LOCAL_DENIED"),
+        ("http://198.18.0.8/", "NETWORK_PRIVATE_ADDRESS_DENIED"),
+    ):
+        with pytest.raises(PermissionError, match=code):
+            authorize_url(url, policy)
+
+    ctf = policy.model_copy(update={
+        "deny_private_networks": False,
+        "deny_loopback": False,
+        "deny_link_local": False,
+        "deny_cloud_metadata": False,
+    })
+    assert authorize_url("http://127.0.0.1:8080/", ctf) == ["127.0.0.1"]

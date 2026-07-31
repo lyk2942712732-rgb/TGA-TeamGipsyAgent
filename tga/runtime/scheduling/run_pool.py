@@ -131,6 +131,9 @@ class SolverRunPool:
             started = repositories.orchestration.start_solver_run(
                 claimed.id, self.owner_id, claimed.fencing_token
             )
+            from tga.runtime.orchestration.solver_run_projector import SolverRunProjector
+
+            SolverRunProjector(repositories=repositories).project_started(started)
             repositories.events.append_agent_event(
                 started.task_id,
                 "SOLVER_RUN_STARTED",
@@ -258,6 +261,7 @@ class SolverRunPool:
                     solver_id=finished.solver_id,
                     intent_id=finished.intent_id,
                 )
+                SolverRunProjector(repositories=repositories).project(finished)
                 return completion
             except CancellationError as exc:
                 cancelled = SolverRunCompletion(
@@ -267,7 +271,7 @@ class SolverRunPool:
                     value=exc,
                 )
                 try:
-                    repositories.orchestration.finish_solver_run(
+                    finished = repositories.orchestration.finish_solver_run(
                         started.id,
                         self.owner_id,
                         started.fencing_token,
@@ -275,6 +279,7 @@ class SolverRunPool:
                         error_code=cancelled.error_code,
                         error_message=cancelled.error_message,
                     )
+                    SolverRunProjector(repositories=repositories).project(finished)
                 except Exception:
                     pass
                 return cancelled
@@ -286,7 +291,7 @@ class SolverRunPool:
                     value=exc,
                 )
                 try:
-                    repositories.orchestration.finish_solver_run(
+                    finished = repositories.orchestration.finish_solver_run(
                         started.id,
                         self.owner_id,
                         started.fencing_token,
@@ -294,6 +299,7 @@ class SolverRunPool:
                         error_code="SOLVER_RUN_EXECUTION_FAILED",
                         error_message=str(exc)[:1000],
                     )
+                    SolverRunProjector(repositories=repositories).project(finished)
                 except Exception:
                     pass
                 return failed

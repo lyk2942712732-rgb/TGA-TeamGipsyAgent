@@ -23,7 +23,6 @@ class PlanKnowledgeHandler:
 
     def record_action_result(self, result) -> list[KnowledgeItem]:
         """Persist facts/leads as Solver candidate Knowledge, never verified state."""
-        self.index_artifacts(result)
         values = []
         if result.status == "succeeded":
             values.append(("hypothesis", str(result.summary)))

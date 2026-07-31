@@ -4,12 +4,14 @@ from __future__ import annotations
 
 from tga.evidence.database import utc_now
 from tga.infrastructure.persistence.errors import PersistenceConflict
+from tga.runtime.orchestration.solver_run_projector import SolverRunProjector
 
 
 class ResultMerger:
     def __init__(self, *, task, repositories) -> None:
         self.task = task
         self.repositories = repositories
+        self.projector = SolverRunProjector(repositories=repositories)
 
     def merge(self, result_id: str, result) -> str:
         with self.repositories.transaction():
@@ -62,49 +64,28 @@ class ResultMerger:
             if item is None or item.status != "candidate":
                 raise ValueError(f"WorkerResult Finding is not a task candidate: {finding_id}")
 
-        intent_status = {
-            "succeeded": "completed",
-            "partial": "completed",
-            "blocked": "blocked",
-            "failed": "failed",
-            "cancelled": "cancelled",
-        }[str(result.status)]
-        solver_status = {
-            "succeeded": "completed",
-            "partial": "completed",
-            "blocked": "blocked",
-            "failed": "failed",
-            "cancelled": "cancelled",
-        }[str(result.status)]
         current_plan = self.repositories.plans.get_global_plan(self.task.id)
-        current_intent = next(
-            item for item in current_plan.intents if item.id == result.intent_id
+        old_plan_version = current_plan.version
+        solver_status, intent_status = self.projector.worker_result_statuses(
+            result.status
         )
-        if current_intent.status != intent_status:
-            self.repositories.plans.update_intent_status(
-                result.intent_id,
-                intent_status,
-                expected_status=current_intent.status,
-            )
+        if not self.projector.project_worker_result(result):
+            raise PersistenceConflict("WorkerResult lifecycle projection failed")
+        projected_plan = self.repositories.plans.get_global_plan(self.task.id)
+        if projected_plan is not None and projected_plan.version != old_plan_version:
             self.repositories.events.append_agent_event(
                 self.task.id,
                 "PLAN_UPDATED",
                 {
                     "operation": "intent_status_changed",
                     "intent_id": result.intent_id,
-                    "old_version": current_plan.version,
-                    "new_version": current_plan.version + 1,
+                    "old_version": old_plan_version,
+                    "new_version": projected_plan.version,
                 },
                 solver_id=state.supervisor_solver_id,
                 intent_id=result.intent_id,
             )
-        current_solver = self.repositories.solvers.get_solver(result.solver_id)
-        if str(current_solver.status) != solver_status:
-            self.repositories.solvers.update_solver_status(result.solver_id, solver_status)
         now = utc_now()
-        self.repositories.orchestration.complete_assignment(
-            assignment.id, finished_at=now
-        )
         self.repositories.orchestration.mark_worker_result_merged(
             result_id,
             task_id=self.task.id,
@@ -140,12 +121,7 @@ class ResultMerger:
             solver_id=result.solver_id,
             intent_id=result.intent_id,
         )
-        solver_event = {
-            "completed": "SOLVER_COMPLETED",
-            "failed": "SOLVER_FAILED",
-            "blocked": "SOLVER_FAILED",
-            "cancelled": "SOLVER_FAILED",
-        }[solver_status]
+        solver_event = "SOLVER_COMPLETED" if solver_status == "completed" else "SOLVER_FAILED"
         self.repositories.events.append_agent_event(
             self.task.id,
             solver_event,

@@ -223,6 +223,20 @@ def _manager(tmp_path: Path, client, *, max_turns: int = 48) -> Manager:
     return manager
 
 
+def _resolve_initial_intent(tmp_path: Path, task: TGATask) -> None:
+    """Make completion fixtures explicit: task-level completion needs no active work."""
+    store = EvidenceStore(tmp_path / task.id / "evidence.db")
+    try:
+        plan = PersistenceBundle(store).plans.get_global_plan(task.id)
+        assert plan is not None and len(plan.intents) == 1
+        intent = plan.intents[0]
+        PersistenceBundle(store).plans.update_intent_status(
+            intent.id, "completed", expected_status=intent.status
+        )
+    finally:
+        store.close()
+
+
 def test_fake_model_drives_real_react_tool_feedback_and_completion(tmp_path: Path) -> None:
     task, item = _seed_task(tmp_path, task_id="react_complete")
     flag = "CTF{model_independent_runtime}"
@@ -230,6 +244,7 @@ def test_fake_model_drives_real_react_tool_feedback_and_completion(tmp_path: Pat
     client = FakeModelClient(input_id=item.id, flag=flag)
     manager = _manager(tmp_path, client)
     assert manager.start_session(task_id=task.id)["accepted"] is True
+    _resolve_initial_intent(tmp_path, task)
     snapshot = manager.run_session(task.id)
 
     assert snapshot["session"]["status"] == "completed"
@@ -262,7 +277,11 @@ def test_fake_model_drives_real_react_tool_feedback_and_completion(tmp_path: Pat
         event_types = [event.type for event in store.list_agent_events(task.id)]
         assert "ARTIFACT_SAVED" in event_types
         assert "TOOL_EXECUTION_END" in event_types
-        assert event_types[-3:] == ["FINISH_ACCEPTED", "AGENT_FINISHED", "SESSION_STOPPED"]
+        finish_index = event_types.index("FINISH_ACCEPTED")
+        assert event_types[finish_index:finish_index + 3] == [
+            "FINISH_ACCEPTED", "AGENT_FINISHED", "SESSION_STOPPED"
+        ]
+        assert event_types.count("FINISH_ACCEPTED") == 1
         assert store.list_flags(task.id)[0]["evidence_artifact_id"] == artifact_id
         durable_solvers = PersistenceBundle(store).solvers.list_solvers(task.id)
         assert len(durable_solvers) == 1
@@ -344,6 +363,7 @@ def test_finish_rejection_continues_to_real_evidence_and_completion(tmp_path: Pa
     manager = _manager(tmp_path, client)
 
     manager.start_session(task_id=task.id)
+    _resolve_initial_intent(tmp_path, task)
     snapshot = manager.run_session(task.id)
 
     assert snapshot["session"]["status"] == "completed"
@@ -351,7 +371,11 @@ def test_finish_rejection_continues_to_real_evidence_and_completion(tmp_path: Pa
     events = snapshot["events"]
     types = [event["type"] for event in events]
     assert types.index("FINISH_REJECTED") < types.index("CONTINUATION_TRIGGERED") < types.index("ARTIFACT_SAVED")
-    assert types[-3:] == ["FINISH_ACCEPTED", "AGENT_FINISHED", "SESSION_STOPPED"]
+    finish_index = types.index("FINISH_ACCEPTED")
+    assert types[finish_index:finish_index + 3] == [
+        "FINISH_ACCEPTED", "AGENT_FINISHED", "SESSION_STOPPED"
+    ]
+    assert types.count("FINISH_ACCEPTED") == 1
 
 
 def test_provider_failure_blocks_with_observable_reason(tmp_path: Path) -> None:
@@ -430,6 +454,7 @@ def test_pause_resume_recovers_sqlite_and_transcript_without_duplicate_action(tm
     second_client = ResumeFromTranscriptModelClient(input_id=item.id, flag=flag)
     second_manager = _manager(tmp_path, second_client)
     assert second_manager.control_session(task_id=task.id, action="resume")["accepted"] is True
+    _resolve_initial_intent(tmp_path, task)
     completed = second_manager.run_session(task.id)
 
     assert completed["session"]["status"] == "completed"

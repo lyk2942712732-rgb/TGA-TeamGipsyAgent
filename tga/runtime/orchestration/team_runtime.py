@@ -226,6 +226,7 @@ class TeamRuntime:
             intent_id=intent.id,
             orchestration_role="worker",
             attempt=attempt,
+            max_turns=solver.budget.max_turns,
             state="queued",
             created_at=now,
             updated_at=now,

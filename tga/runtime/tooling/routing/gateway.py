@@ -33,6 +33,7 @@ from tga.runtime.tooling.results import (
     ToolGatewayResult,
     ToolObservation,
 )
+from tga.runtime.tooling.execution import AuthorizedExecutionRequest, ExecutionResult
 from tga.runtime.tooling.routing.routers import (
     ControlToolRouter,
     ExecutionToolRouter,
@@ -51,6 +52,10 @@ AUTHORITATIVE_ARGUMENTS = {
     "strategy_card_id", "strategy_step_id", "local_plan_step_id",
 }
 
+NETWORK_EXECUTION_CAPABILITIES = {
+    "http.request", "nmap.scan", "ffuf.directory_scan", "nuclei.scan",
+}
+
 
 class ToolGovernanceGateway:
     def __init__(
@@ -60,6 +65,7 @@ class ToolGovernanceGateway:
         manifest,
         repository,
         execution_adapter,
+        execution_backend_router=None,
         control_handlers: dict[str, Any] | None = None,
         resource_handlers: dict[str, Any] | None = None,
         retrieval_handlers: dict[str, Any] | None = None,
@@ -75,6 +81,7 @@ class ToolGovernanceGateway:
         self.manifest = manifest
         self.repository = repository
         self.execution_adapter = execution_adapter
+        self.execution_backend_router = execution_backend_router
         self.events = event_repository
         self.allowed_resource_ids = allowed_resource_ids
         self.lease_validator = lease_validator
@@ -131,7 +138,7 @@ class ToolGovernanceGateway:
                         "Approved Action could not reacquire its resource lock.",
                         action_id=action.id,
                     )
-            if action.capability == "http.request" or action.capability.startswith("mcp:"):
+            if action.capability in NETWORK_EXECUTION_CAPABILITIES or action.capability.startswith("mcp:"):
                 network_permit = self.network.acquire(
                     idempotency_key=action.id,
                     task_id=action.context.task_id,
@@ -141,7 +148,7 @@ class ToolGovernanceGateway:
             self.actions.transition(action.id, "queued", expected_status="approved")
             self.actions.transition(action.id, "running", expected_status="queued")
             try:
-                raw = self.execution_adapter.resume_approved(action)
+                raw = self._execute_router(action, approved=True)
             except Exception as exc:
                 raw = self._execution_failure(action, exc)
             if self.lease_validator is not None and not self.lease_validator():
@@ -219,7 +226,13 @@ class ToolGovernanceGateway:
         assert definition is not None
         now = utc_now()
         target = self._resolve_target(definition.capability, request.arguments, request.action_context)
-        risk = self._risk(definition, request.arguments)
+        try:
+            normalized_arguments = self._normalize_arguments(
+                definition.capability, request.arguments, target
+            )
+        except ValueError as exc:
+            return self._error("INVALID_TOOL_ARGUMENTS", str(exc))
+        risk = self._risk(definition, normalized_arguments)
         effect = request.model_intent.proposed_effect or ActionEffect()
         authorization = self._authorize(
             definition=definition,
@@ -228,8 +241,12 @@ class ToolGovernanceGateway:
             risk=risk,
             effect=effect,
         )
-        fingerprint = self._fingerprint(request, definition.capability, target)
-        high_impact = self._high_impact(risk, effect, definition.capability, request.arguments)
+        fingerprint = self._fingerprint(
+            request, definition.capability, target, normalized_arguments
+        )
+        high_impact = self._high_impact(
+            risk, effect, definition.capability, normalized_arguments
+        )
         action = GovernedAction(
             id=self._action_id(request),
             context=request.action_context,
@@ -237,11 +254,12 @@ class ToolGovernanceGateway:
             tool_call_id=request.tool_call_id,
             tool_class=definition.tool_class,
             capability=definition.capability,
+            backend=definition.backend,
             execution_profile_id=definition.execution_profile_id,
             sandbox_config_digest=(
                 self.sandbox_config_digest if definition.execution_profile_id else None
             ),
-            normalized_arguments=request.arguments,
+            normalized_arguments=normalized_arguments,
             resolved_target=target,
             execution_metadata={
                 "mcp_server_id": definition.mcp_server_id,
@@ -258,11 +276,13 @@ class ToolGovernanceGateway:
             effect=effect,
             authorization=authorization,
             attempt=request.action_context.attempt,
-            idempotency_key=self._idempotency_key(request, definition.capability, target)
+            idempotency_key=self._idempotency_key(
+                request, definition.capability, target, normalized_arguments
+            )
             if high_impact else None,
             semantic_fingerprint=fingerprint,
             resource_lock_key=self._lock_key(
-                definition.capability, target, request.arguments
+                definition.capability, target, normalized_arguments
             ) if high_impact else None,
             status="proposed",
             created_at=now,
@@ -374,7 +394,7 @@ class ToolGovernanceGateway:
                         "Another Action owns the conflicting resource lock.",
                         action_id=action.id,
                     )
-            if action.capability == "http.request" or action.capability.startswith("mcp:"):
+            if action.capability in NETWORK_EXECUTION_CAPABILITIES or action.capability.startswith("mcp:"):
                 network_permit = self.network.acquire(
                     idempotency_key=action.id,
                     task_id=action.context.task_id,
@@ -487,11 +507,7 @@ class ToolGovernanceGateway:
                 and artifact_id not in self.allowed_resource_ids
             ):
                 return "The requested Artifact is outside this SolverAssignment."
-            row = self.repository.conn.execute(
-                "SELECT 1 FROM artifacts WHERE id=? AND task_id=?",
-                (artifact_id, self.task.id),
-            ).fetchone()
-            if row is None:
+            if not self.repository.artifact_owned_by_task(artifact_id, self.task.id):
                 return "The requested Artifact is not owned by this Task."
         if capability.startswith("workspace."):
             value = str(
@@ -504,11 +520,32 @@ class ToolGovernanceGateway:
                 return "Workspace paths must remain relative to the owning Solver workspace."
         return None
 
-    def _execute_router(self, action: GovernedAction) -> RawExecutionResult:
+    def _execute_router(
+        self, action: GovernedAction, *, approved: bool = False
+    ) -> RawExecutionResult:
         try:
+            if self.execution_backend_router is not None:
+                request = AuthorizedExecutionRequest.from_action(
+                    action, backend=action.backend
+                )
+                result = self.execution_backend_router.execute(request)
+                return self._legacy_raw(result)
+            if approved:
+                return self.execution_adapter.resume_approved(action)
             return self.routers[action.tool_class].execute(action)
         except Exception as exc:
             return self._execution_failure(action, exc)
+
+    @staticmethod
+    def _legacy_raw(result: ExecutionResult) -> RawExecutionResult:
+        return RawExecutionResult(
+            action_id=result.action_id,
+            status=result.status,
+            output=result.output,
+            artifact_ids=result.artifact_ids,
+            telemetry=result.telemetry,
+            error=result.error,
+        )
 
     @staticmethod
     def _execution_failure(action: GovernedAction, exc: Exception) -> RawExecutionResult:
@@ -655,7 +692,29 @@ class ToolGovernanceGateway:
             return f"workspace:{context.solver_id}:{relative}"
         if capability.startswith("mcp:"):
             return capability
+        if capability == "nmap.scan":
+            return str(arguments.get("target") or "") or None
+        if capability in {"ffuf.directory_scan", "nuclei.scan"}:
+            return str(arguments.get("url") or arguments.get("target") or "") or None
+        if capability in {"binwalk.analyze", "radare2.analyze"}:
+            return f"workspace:{context.solver_id}:{arguments.get('path') or ''}"
+        if capability == "yara.scan":
+            return f"workspace:{context.solver_id}:{arguments.get('target_path') or ''}"
         return str(arguments.get("input_id") or arguments.get("artifact_id") or capability)
+
+    @staticmethod
+    def _normalize_arguments(
+        capability: str,
+        arguments: dict[str, Any],
+        resolved_target: str | None,
+    ) -> dict[str, Any]:
+        normalized = dict(arguments)
+        if capability == "http.request":
+            if not resolved_target:
+                raise ValueError("HTTP request has no resolved target")
+            normalized["url"] = resolved_target
+            normalized.pop("path", None)
+        return normalized
 
     @staticmethod
     def _risk(definition, arguments: dict[str, Any]) -> str:
@@ -674,19 +733,31 @@ class ToolGovernanceGateway:
         )
 
     @staticmethod
-    def _fingerprint(request, capability: str, target: str | None) -> str:
+    def _fingerprint(
+        request,
+        capability: str,
+        target: str | None,
+        arguments: dict[str, Any] | None = None,
+    ) -> str:
         encoded = json.dumps(
             [request.action_context.task_id, request.action_context.solver_id,
-             request.action_context.intent_id, capability, target, request.arguments],
+             request.action_context.intent_id, capability, target,
+             arguments if arguments is not None else request.arguments],
             ensure_ascii=False, sort_keys=True, default=str,
         ).encode()
         return hashlib.sha256(encoded).hexdigest()
 
     @staticmethod
-    def _idempotency_key(request, capability: str, target: str | None) -> str:
+    def _idempotency_key(
+        request,
+        capability: str,
+        target: str | None,
+        arguments: dict[str, Any] | None = None,
+    ) -> str:
         encoded = json.dumps(
             [request.action_context.task_id, request.action_context.intent_id,
-             request.action_context.solver_id, capability, target, request.arguments,
+             request.action_context.solver_id, capability, target,
+             arguments if arguments is not None else request.arguments,
              request.action_context.attempt],
             ensure_ascii=False, sort_keys=True, default=str,
         ).encode()
