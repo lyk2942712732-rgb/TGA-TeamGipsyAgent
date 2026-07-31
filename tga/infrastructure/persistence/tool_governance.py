@@ -429,6 +429,243 @@ class SqliteToolGovernanceRepository:
                 (idempotency_key,),
             ).fetchone())
 
+    def reserve_model_tokens(
+        self,
+        *,
+        idempotency_key: str,
+        task_id: str,
+        solver_id: str,
+        intent_id: str | None,
+        run_id: str | None,
+        estimated_input_tokens: int,
+        estimated_output_tokens: int,
+        ttl_seconds: float = 900,
+    ) -> dict[str, Any]:
+        if min(estimated_input_tokens, estimated_output_tokens) < 0:
+            raise ValueError("estimated token counts must be non-negative")
+        if ttl_seconds <= 0:
+            raise ValueError("token reservation ttl must be positive")
+        with self.database.transaction():
+            now = datetime.now(UTC)
+            stamp = now.isoformat().replace("+00:00", "Z")
+            self.conn.execute(
+                "UPDATE model_token_reservations SET status='expired',updated_at=? "
+                "WHERE status='reserved' AND expires_at<=?", (stamp, stamp)
+            )
+            existing = self.conn.execute(
+                "SELECT * FROM model_token_reservations WHERE idempotency_key=?",
+                (idempotency_key,),
+            ).fetchone()
+            if existing is not None:
+                return dict(existing)
+            scopes = self._model_token_scopes(task_id, solver_id, intent_id)
+            for label, budget, where, parameters in scopes:
+                used = self.conn.execute(
+                    "SELECT COALESCE(SUM(input_tokens),0) AS input_tokens,"
+                    "COALESCE(SUM(output_tokens),0) AS output_tokens "
+                    f"FROM runtime_budget_usage WHERE {where}", parameters,
+                ).fetchone()
+                held = self.conn.execute(
+                    "SELECT COALESCE(SUM(estimated_input_tokens),0) AS input_tokens,"
+                    "COALESCE(SUM(estimated_output_tokens),0) AS output_tokens "
+                    f"FROM model_token_reservations WHERE {where} AND status='reserved'",
+                    parameters,
+                ).fetchone()
+                self._enforce_model_token_limit(
+                    label,
+                    budget,
+                    used_input=int(used["input_tokens"]),
+                    used_output=int(used["output_tokens"]),
+                    held_input=int(held["input_tokens"]),
+                    held_output=int(held["output_tokens"]),
+                    requested_input=estimated_input_tokens,
+                    requested_output=estimated_output_tokens,
+                )
+            reservation_id = f"model_tokens_{uuid4().hex}"
+            expires = (now + timedelta(seconds=ttl_seconds)).isoformat().replace(
+                "+00:00", "Z"
+            )
+            self.conn.execute(
+                "INSERT INTO model_token_reservations("
+                "id,idempotency_key,task_id,solver_id,intent_id,run_id,"
+                "estimated_input_tokens,estimated_output_tokens,status,expires_at,created_at,updated_at) "
+                "VALUES (?,?,?,?,?,?,?,?,'reserved',?,?,?)",
+                (
+                    reservation_id, idempotency_key, task_id, solver_id, intent_id,
+                    run_id, estimated_input_tokens, estimated_output_tokens,
+                    expires, stamp, stamp,
+                ),
+            )
+            return dict(self.conn.execute(
+                "SELECT * FROM model_token_reservations WHERE id=?", (reservation_id,)
+            ).fetchone())
+
+    def settle_model_tokens(
+        self,
+        reservation_id: str,
+        *,
+        actual_input_tokens: int,
+        actual_output_tokens: int,
+        usage_idempotency_key: str,
+    ) -> dict[str, Any]:
+        if min(actual_input_tokens, actual_output_tokens) < 0:
+            raise ValueError("actual token counts must be non-negative")
+        with self.database.transaction():
+            row = self.conn.execute(
+                "SELECT * FROM model_token_reservations WHERE id=?", (reservation_id,)
+            ).fetchone()
+            if row is None:
+                raise KeyError(f"model token reservation not found: {reservation_id}")
+            if row["status"] == "settled":
+                return dict(row)
+            if row["status"] != "reserved":
+                raise PersistenceConflict("model token reservation is not active")
+            limit_exceeded = False
+            scopes = self._model_token_scopes(
+                str(row["task_id"]), str(row["solver_id"]),
+                str(row["intent_id"] or "") or None,
+            )
+            for label, budget, where, parameters in scopes:
+                used = self.conn.execute(
+                    "SELECT COALESCE(SUM(input_tokens),0) AS input_tokens,"
+                    "COALESCE(SUM(output_tokens),0) AS output_tokens "
+                    f"FROM runtime_budget_usage WHERE {where}", parameters,
+                ).fetchone()
+                held = self.conn.execute(
+                    "SELECT COALESCE(SUM(estimated_input_tokens),0) AS input_tokens,"
+                    "COALESCE(SUM(estimated_output_tokens),0) AS output_tokens "
+                    f"FROM model_token_reservations WHERE {where} "
+                    "AND status='reserved' AND id<>?",
+                    (*parameters, reservation_id),
+                ).fetchone()
+                try:
+                    self._enforce_model_token_limit(
+                        label,
+                        budget,
+                        used_input=int(used["input_tokens"]),
+                        used_output=int(used["output_tokens"]),
+                        held_input=int(held["input_tokens"]),
+                        held_output=int(held["output_tokens"]),
+                        requested_input=actual_input_tokens,
+                        requested_output=actual_output_tokens,
+                    )
+                except PersistenceConflict:
+                    # The provider call already happened. Preserve the real usage
+                    # even when it exceeded the conservative reservation.
+                    limit_exceeded = True
+            now = utc_now()
+            existing_usage = self.conn.execute(
+                "SELECT * FROM runtime_budget_usage WHERE idempotency_key=?",
+                (usage_idempotency_key,),
+            ).fetchone()
+            if existing_usage is not None:
+                expected = {
+                    "task_id": str(row["task_id"]),
+                    "solver_id": str(row["solver_id"]),
+                    "intent_id": str(row["intent_id"] or "") or None,
+                    "turns": 1,
+                    "input_tokens": actual_input_tokens,
+                    "output_tokens": actual_output_tokens,
+                }
+                actual = {key: existing_usage[key] for key in expected}
+                if actual != expected:
+                    raise PersistenceConflict(
+                        "model token usage idempotency key has conflicting values"
+                    )
+            self.conn.execute(
+                "UPDATE model_token_reservations SET status='settled',"
+                "actual_input_tokens=?,actual_output_tokens=?,updated_at=? "
+                "WHERE id=? AND status='reserved'",
+                (actual_input_tokens, actual_output_tokens, now, reservation_id),
+            )
+            if existing_usage is None:
+                self.conn.execute(
+                    "INSERT INTO runtime_budget_usage("
+                    "idempotency_key,task_id,solver_id,intent_id,turns,input_tokens,"
+                    "output_tokens,artifact_bytes,network_requests,created_at) "
+                    "VALUES (?,?,?,?,?,?,?,0,0,?)",
+                    (
+                        usage_idempotency_key, str(row["task_id"]),
+                        str(row["solver_id"]), str(row["intent_id"] or "") or None,
+                        1, actual_input_tokens, actual_output_tokens, now,
+                    ),
+                )
+            settled = dict(self.conn.execute(
+                "SELECT * FROM model_token_reservations WHERE id=?", (reservation_id,)
+            ).fetchone())
+            settled["limit_exceeded"] = limit_exceeded
+            return settled
+
+    def release_model_tokens(self, reservation_id: str) -> bool:
+        cursor = self.conn.execute(
+            "UPDATE model_token_reservations SET status='released',updated_at=? "
+            "WHERE id=? AND status='reserved'",
+            (utc_now(), reservation_id),
+        )
+        self.database._commit()
+        return cursor.rowcount == 1
+
+    def _model_token_scopes(
+        self, task_id: str, solver_id: str, intent_id: str | None
+    ) -> list[tuple[str, dict[str, Any], str, tuple[Any, ...]]]:
+        task_row = self.conn.execute(
+            "SELECT payload_json FROM tasks WHERE id=?", (task_id,)
+        ).fetchone()
+        solver_row = self.conn.execute(
+            "SELECT budget_json FROM solver_budgets WHERE solver_id=? AND task_id=?",
+            (solver_id, task_id),
+        ).fetchone()
+        if task_row is None or solver_row is None:
+            raise PersistenceConflict("model token budget owner is missing")
+        scopes = [
+            (
+                "TaskBudget",
+                json.loads(task_row["payload_json"]).get("execution_budget") or {},
+                "task_id=?", (task_id,),
+            ),
+            (
+                "SolverBudget", json.loads(solver_row["budget_json"]),
+                "solver_id=?", (solver_id,),
+            ),
+        ]
+        if intent_id:
+            intent_row = self.conn.execute(
+                "SELECT payload_json FROM intents WHERE id=? AND task_id=?",
+                (intent_id, task_id),
+            ).fetchone()
+            if intent_row is None:
+                raise PersistenceConflict("IntentBudget owner is missing")
+            scopes.append((
+                "IntentBudget",
+                json.loads(intent_row["payload_json"]).get("budget") or {},
+                "intent_id=?", (intent_id,),
+            ))
+        return scopes
+
+    @staticmethod
+    def _enforce_model_token_limit(
+        label: str,
+        budget: dict[str, Any],
+        *,
+        used_input: int,
+        used_output: int,
+        held_input: int,
+        held_output: int,
+        requested_input: int,
+        requested_output: int,
+    ) -> None:
+        input_total = used_input + held_input + requested_input
+        output_total = used_output + held_output + requested_output
+        input_limit = budget.get("max_input_tokens")
+        output_limit = budget.get("max_output_tokens")
+        total_limit = budget.get("max_total_tokens")
+        if input_limit is not None and input_total > int(input_limit):
+            raise PersistenceConflict(f"{label} input-token limit exceeded")
+        if output_limit is not None and output_total > int(output_limit):
+            raise PersistenceConflict(f"{label} output-token limit exceeded")
+        if total_limit is not None and input_total + output_total > int(total_limit):
+            raise PersistenceConflict(f"{label} total-token limit exceeded")
+
     def release_network_permit(self, idempotency_key: str) -> bool:
         cursor = self.conn.execute(
             "UPDATE network_budget_permits SET status='released',released_at=? "

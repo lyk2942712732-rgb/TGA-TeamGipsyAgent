@@ -75,5 +75,14 @@ class BudgetManager:
             network_requests=network_requests,
         )
 
+    def reserve_model_tokens(self, **kwargs: Any) -> dict[str, Any]:
+        return self.repository.reserve_model_tokens(**kwargs)
+
+    def settle_model_tokens(self, reservation_id: str, **kwargs: Any) -> dict[str, Any]:
+        return self.repository.settle_model_tokens(reservation_id, **kwargs)
+
+    def release_model_tokens(self, reservation_id: str) -> bool:
+        return self.repository.release_model_tokens(reservation_id)
+
 
 __all__ = ["BudgetManager", "NetworkBudgetLimiter", "NetworkPermit"]

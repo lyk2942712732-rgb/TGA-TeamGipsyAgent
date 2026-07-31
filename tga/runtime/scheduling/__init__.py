@@ -14,14 +14,20 @@ from tga.runtime.scheduling.schedulers import (
     TaskScheduler,
 )
 from tga.runtime.scheduling.run_pool import (
+    ActiveRunRegistry,
     DurableSolverRunContext,
     SolverRunCompletion,
     SolverRunPool,
 )
+from tga.runtime.scheduling.execution import SolverExecutionContext
+from tga.runtime.scheduling.model_calls import ModelCallLimiter
 
 __all__ = [
     "BudgetManager", "NetworkBudgetLimiter", "NetworkPermit", "CancellationError", "CancellationToken", "ConcurrencyLimiter",
     "DurableSolverRunContext",
+    "ActiveRunRegistry",
+    "ModelCallLimiter",
+    "SolverExecutionContext",
     "SolverLeaseManager", "SolverRunContext", "SolverScheduler",
     "SolverRunCompletion", "SolverRunPool",
     "TaskLeaseManager", "TaskRunContext", "TaskScheduler",

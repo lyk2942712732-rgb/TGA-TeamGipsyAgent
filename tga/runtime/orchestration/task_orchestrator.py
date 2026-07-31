@@ -20,6 +20,7 @@ from tga.infrastructure.solver_definitions.registry import SolverDefinitionRegis
 from tga.infrastructure.team_templates.registry import TeamTemplateRegistry
 from tga.runtime.orchestration.intent_dispatcher import IntentDispatcher
 from tga.runtime.orchestration.result_merger import ResultMerger
+from tga.runtime.orchestration.run_reconciler import SolverRunReconciler
 from tga.runtime.orchestration.solver_selector import SolverSelector
 from tga.runtime.orchestration.team_runtime import TeamRuntime
 
@@ -60,6 +61,7 @@ class TaskOrchestrator:
             task=self.task,
         )
         self.merger = ResultMerger(task=task, repositories=repositories)
+        self.run_reconciler = SolverRunReconciler(task=task, repositories=repositories)
 
     def bootstrap(self):
         return self.team.bootstrap()
@@ -74,9 +76,35 @@ class TaskOrchestrator:
             raise PersistenceConflict(
                 f"TaskOrchestrator cannot pause from {state.status}"
             )
+        now = utc_now()
         for solver in self.repositories.solvers.list_solvers(self.task.id):
             if str(solver.status) in {"queued", "running", "ready"}:
                 self.repositories.solvers.update_solver_status(solver.id, "paused")
+                if solver.orchestration_role == "worker":
+                    self.repositories.orchestration.cancel_solver_runs(
+                        self.task.id, solver.id, reason="TASK_PAUSED"
+                    )
+                    assignment = self.repositories.orchestration.get_assignment_for_solver(
+                        solver.id
+                    )
+                    if assignment is not None and assignment.status in {
+                        "proposed", "accepted"
+                    }:
+                        self.repositories.orchestration.cancel_assignment(
+                            assignment.id, finished_at=now
+                        )
+                    if solver.assigned_intent_id:
+                        plan = self.repositories.plans.get_global_plan(self.task.id)
+                        intent = next(
+                            (item for item in plan.intents if item.id == solver.assigned_intent_id),
+                            None,
+                        ) if plan else None
+                        if intent is not None and intent.status not in {
+                            "completed", "failed", "cancelled", "blocked"
+                        }:
+                            self.repositories.plans.update_intent_status(
+                                intent.id, "blocked", expected_status=intent.status
+                            )
         replacement = self._set_state("paused")
         self.repositories.events.append_agent_event(
             self.task.id,
@@ -92,11 +120,25 @@ class TaskOrchestrator:
             raise PersistenceConflict(
                 f"TaskOrchestrator cannot resume from {state.status}"
             )
+        retry_intents: list[str] = []
         for solver in self.repositories.solvers.list_solvers(self.task.id):
             if str(solver.status) == "paused":
-                target = "queued" if solver.orchestration_role != "supervisor" else "ready"
-                self.repositories.solvers.update_solver_status(solver.id, target)
+                if solver.orchestration_role == "worker" and solver.assigned_intent_id:
+                    retry_intents.append(solver.assigned_intent_id)
+                else:
+                    self.repositories.solvers.update_solver_status(solver.id, "ready")
         replacement = self._set_state("running")
+        if replacement.supervisor_solver_id:
+            for intent_id in dict.fromkeys(retry_intents):
+                plan = self.repositories.plans.get_global_plan(self.task.id)
+                intent = next(
+                    (item for item in plan.intents if item.id == intent_id), None
+                ) if plan else None
+                if intent is not None and intent.status in {"blocked", "failed"}:
+                    self.retry_intent(
+                        supervisor_solver_id=replacement.supervisor_solver_id,
+                        intent_id=intent_id,
+                    )
         self.repositories.events.append_agent_event(
             self.task.id,
             "TASK_ORCHESTRATOR_RESUMED",
@@ -329,9 +371,23 @@ class TaskOrchestrator:
             raise PersistenceConflict(
                 f"worker result rejected after task {self.state().status}"
             )
+        if lease is not None and hasattr(lease, "run_id"):
+            lease.cancellation.raise_if_cancelled()
+            with self.repositories.transaction():
+                if not self.repositories.orchestration.validate_solver_run_authority(
+                    lease.run_id, lease.owner_id, lease.fencing_token
+                ):
+                    raise PersistenceConflict("SolverRun execution authority is no longer valid")
+                result_id = self.repositories.solvers.save_worker_result(result)
+                self._record_worker_result_submission(result_id, result)
+                return self.merger._merge_locked(result_id, result)
         if lease is not None and not self.repositories.solvers.validate_lease(lease):
             raise PersistenceConflict("Solver runner lease is no longer valid")
         result_id = self.repositories.solvers.save_worker_result(result)
+        self._record_worker_result_submission(result_id, result)
+        return self.merger.merge(result_id, result)
+
+    def _record_worker_result_submission(self, result_id: str, result: WorkerResult) -> None:
         self.repositories.events.append_agent_event(
             self.task.id,
             "WORKER_RESULT_SUBMITTED",
@@ -343,7 +399,6 @@ class TaskOrchestrator:
             solver_id=result.solver_id,
             intent_id=result.intent_id,
         )
-        return self.merger.merge(result_id, result)
 
     def retry_intent(self, *, supervisor_solver_id: str, intent_id: str):
         self._require_role(supervisor_solver_id, "supervisor", label="Supervisor")
@@ -432,6 +487,30 @@ class TaskOrchestrator:
             if not self.repositories.orchestration.is_worker_result_merged(result_id):
                 self.merger.merge(result_id, result)
         return self.state()
+
+    def reconcile_solver_runs(self) -> tuple[str, ...]:
+        reconciled: list[str] = []
+        state = self.state()
+        for run in self.repositories.orchestration.list_solver_runs(self.task.id):
+            if self.run_reconciler.reconcile(run):
+                reconciled.append(run.id)
+            if (
+                state.status == "running"
+                and run.orchestration_role == "worker"
+                and run.state in {"failed", "expired"}
+                and run.intent_id
+                and run.attempt < MAX_SOLVER_RUN_ATTEMPTS
+            ):
+                assignments = [
+                    item for item in self.repositories.orchestration.list_assignments(self.task.id)
+                    if item.intent_id == run.intent_id
+                ]
+                if not any(item.attempt > run.attempt for item in assignments):
+                    self.retry_intent(
+                        supervisor_solver_id=state.supervisor_solver_id,
+                        intent_id=run.intent_id,
+                    )
+        return tuple(reconciled)
 
     def request_review(self, *, supervisor_solver_id: str):
         self._require_role(supervisor_solver_id, "supervisor", label="Supervisor")

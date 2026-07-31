@@ -45,6 +45,7 @@ from tga.tools.mcp_policy import validate_json_schema
 
 AUTHORITATIVE_ARGUMENTS = {
     "task_id", "solver_id", "intent_id", "policy_snapshot_id",
+    "run_id", "run_owner_id", "run_fencing_token", "fencing_token",
     "execution_policy_snapshot_id", "tool_policy_snapshot_id",
     "solver_tool_policy_snapshot_id", "parent_solver_id", "global_plan_version",
     "strategy_card_id", "strategy_step_id", "local_plan_step_id",
@@ -130,7 +131,7 @@ class ToolGovernanceGateway:
                         "Approved Action could not reacquire its resource lock.",
                         action_id=action.id,
                     )
-            if action.capability == "http.request":
+            if action.capability == "http.request" or action.capability.startswith("mcp:"):
                 network_permit = self.network.acquire(
                     idempotency_key=action.id,
                     task_id=action.context.task_id,
@@ -373,7 +374,7 @@ class ToolGovernanceGateway:
                         "Another Action owns the conflicting resource lock.",
                         action_id=action.id,
                     )
-            if action.capability == "http.request":
+            if action.capability == "http.request" or action.capability.startswith("mcp:"):
                 network_permit = self.network.acquire(
                     idempotency_key=action.id,
                     task_id=action.context.task_id,

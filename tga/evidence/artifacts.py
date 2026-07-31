@@ -12,8 +12,9 @@ from tga.contracts import ArtifactRecord
 
 
 class ArtifactStore:
-    def __init__(self, root: str | Path):
+    def __init__(self, root: str | Path, *, execution_context=None):
         self.root = Path(root)
+        self.execution_context = execution_context
         self.root.mkdir(parents=True, exist_ok=True)
 
     def save_text(
@@ -83,8 +84,9 @@ class ArtifactStore:
             return ""
         return matches[0].read_text(encoding="utf-8", errors="replace")
 
-    @staticmethod
-    def _atomic_write(path: Path, data: bytes) -> None:
+    def _atomic_write(self, path: Path, data: bytes) -> None:
+        if self.execution_context is not None:
+            self.execution_context.assert_active()
         fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
         temporary_path = Path(temporary)
         try:
@@ -92,6 +94,8 @@ class ArtifactStore:
                 handle.write(data)
                 handle.flush()
                 os.fsync(handle.fileno())
+            if self.execution_context is not None:
+                self.execution_context.assert_active()
             os.replace(temporary_path, path)
         except BaseException:
             temporary_path.unlink(missing_ok=True)

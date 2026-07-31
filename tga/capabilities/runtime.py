@@ -136,6 +136,7 @@ class ControlledActionExecutor:
         http_sessions: HTTPSessionRegistry | None = None,
         sandbox_manager: Any | None = None,
         fencing_token_provider: Any | None = None,
+        execution_context: Any | None = None,
     ) -> None:
         self.artifact_store = artifact_store
         self.registry = registry or build_default_registry()
@@ -143,6 +144,7 @@ class ControlledActionExecutor:
         self.http_sessions = http_sessions or HTTPSessionRegistry()
         self.sandbox_manager = sandbox_manager
         self.fencing_token_provider = fencing_token_provider or (lambda _solver_id: 1)
+        self.execution_context = execution_context
 
     def close_http_sessions(self, *, task_id: str, solver_id: str | None = None) -> int:
         return self.http_sessions.destroy(task_id=task_id, solver_id=solver_id)
@@ -152,6 +154,8 @@ class ControlledActionExecutor:
 
     def execute(self, *, task: TGATask, action: ActionSpec, workspace: Path) -> ActionResult:
         """Return a structured outcome; never mutate strategy state or confirm a flag."""
+        if self.execution_context is not None:
+            self.execution_context.assert_active()
         if action.task_id != task.id:
             return self._reject(action, "ACTION_TASK_MISMATCH", "action task_id does not match the execution task")
 
@@ -199,14 +203,20 @@ class ControlledActionExecutor:
 
         try:
             if action.capability == "http.request":
+                if self.execution_context is not None:
+                    self.execution_context.assert_active()
                 return self._execute_http(task=task, action=action, arguments=arguments)
             if isinstance(arguments, WorkspaceReadArguments):
                 return self._workspace_read(task=task, action=action, arguments=arguments, workspace=workspace)
             if isinstance(arguments, WorkspaceWriteArguments):
                 return self._workspace_write(task=task, action=action, arguments=arguments, workspace=workspace)
             if isinstance(arguments, WorkspacePythonArguments):
+                if self.execution_context is not None:
+                    self.execution_context.assert_active()
                 return self._workspace_python(task=task, action=action, arguments=arguments, workspace=workspace)
             if isinstance(arguments, WorkspaceShellArguments):
+                if self.execution_context is not None:
+                    self.execution_context.assert_active()
                 return self._workspace_shell(task=task, action=action, arguments=arguments, workspace=workspace)
             if isinstance(arguments, ArtifactInspectArguments):
                 return self._artifact_inspect(task=task, action=action, arguments=arguments)

@@ -289,7 +289,7 @@ def test_interventions_and_solver_intent_commands(
         json={},
     )
     assert retried.status_code == 200
-    assert retried.json()["assignment"]["attempt"] == 2
+    assert retried.json()["assignment"]["attempt"] == 3
 
 
 def test_multiple_approvals_are_projected_and_one_decision_is_scoped(

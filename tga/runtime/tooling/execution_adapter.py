@@ -10,8 +10,9 @@ from tga.runtime.tooling.results import ExecutionError, RawExecutionResult
 
 
 class ExecutionPipelineAdapter:
-    def __init__(self, *, handlers) -> None:
+    def __init__(self, *, handlers, execution_context=None) -> None:
         self.handlers = handlers
+        self.execution_context = execution_context
 
     def authorization(self, action: GovernedAction) -> AuthorizationDecision | None:
         """Apply the current MCP policy before any external I/O."""
@@ -60,6 +61,8 @@ class ExecutionPipelineAdapter:
         )
 
     def execute(self, action: GovernedAction) -> RawExecutionResult:
+        if self.execution_context is not None:
+            self.execution_context.assert_active()
         name = action.provider_tool_name
         execution = self._execution_action(action)
         if name.startswith("input_"):
@@ -68,15 +71,21 @@ class ExecutionPipelineAdapter:
             payload = self.handlers.mcp.execute_governed(execution)
         else:
             payload = self.handlers.capability.execute_governed(execution)
+        if self.execution_context is not None:
+            self.execution_context.assert_active()
         return self._raw(action, payload)
 
     def resume_approved(self, action: GovernedAction) -> RawExecutionResult:
+        if self.execution_context is not None:
+            self.execution_context.assert_active()
         execution = self._execution_action(action)
         payload = (
             self.handlers.mcp.execute_governed(execution, approved=True)
             if action.capability.startswith("mcp:")
             else self.handlers.capability.execute_governed(execution)
         )
+        if self.execution_context is not None:
+            self.execution_context.assert_active()
         return self._raw(action, payload)
 
     def _execution_action(self, action: GovernedAction) -> ActionSpec:

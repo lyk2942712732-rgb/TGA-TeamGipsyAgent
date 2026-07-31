@@ -8,7 +8,43 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from tga.domain.solver import SolverRun
-from tga.runtime.scheduling.concurrency import CancellationToken
+from tga.runtime.scheduling.concurrency import CancellationError, CancellationToken
+from tga.runtime.scheduling.execution import SolverExecutionContext
+
+
+class ActiveRunRegistry:
+    """Process-local bridge from durable controls to active runner tokens."""
+
+    _lock = threading.Lock()
+    _contexts: dict[tuple[str, str], SolverExecutionContext] = {}
+
+    @classmethod
+    def register(cls, context: SolverExecutionContext) -> None:
+        with cls._lock:
+            cls._contexts[(context.task_id, context.solver_id)] = context
+
+    @classmethod
+    def unregister(cls, context: SolverExecutionContext) -> None:
+        with cls._lock:
+            if cls._contexts.get((context.task_id, context.solver_id)) is context:
+                cls._contexts.pop((context.task_id, context.solver_id), None)
+
+    @classmethod
+    def get(cls, task_id: str, solver_id: str) -> SolverExecutionContext | None:
+        with cls._lock:
+            return cls._contexts.get((task_id, solver_id))
+
+    @classmethod
+    def cancel_solver(cls, task_id: str, solver_id: str, reason: str) -> bool:
+        with cls._lock:
+            context = cls._contexts.get((task_id, solver_id))
+        return context.cancellation.cancel(reason) if context is not None else False
+
+    @classmethod
+    def cancel_task(cls, task_id: str, reason: str) -> int:
+        with cls._lock:
+            contexts = [context for (owner_task, _), context in cls._contexts.items() if owner_task == task_id]
+        return sum(context.cancellation.cancel(reason) for context in contexts)
 
 
 @dataclass(frozen=True)
@@ -57,7 +93,7 @@ class SolverRunPool:
         self,
         task_id: str,
         runs: tuple[SolverRun, ...],
-        operation: Callable[[SolverRun, DurableSolverRunContext], SolverRunCompletion],
+        operation: Callable[[SolverRun, SolverExecutionContext], SolverRunCompletion],
     ) -> tuple[SolverRunCompletion, ...]:
         candidates = tuple(run for run in runs if run.task_id == task_id)
         if not candidates:
@@ -77,7 +113,7 @@ class SolverRunPool:
     def _execute(
         self,
         candidate: SolverRun,
-        operation: Callable[[SolverRun, DurableSolverRunContext], SolverRunCompletion],
+        operation: Callable[[SolverRun, SolverExecutionContext], SolverRunCompletion],
     ) -> SolverRunCompletion | None:
         repositories = self.repository_factory()
         heartbeat_stopped = threading.Event()
@@ -109,19 +145,26 @@ class SolverRunPool:
             )
 
             def is_valid() -> bool:
-                check = self.repository_factory()
+                check = None
                 try:
+                    check = self.repository_factory()
                     persisted = check.orchestration.get_solver_run(started.id)
+                    solver = check.solvers.get_solver(started.solver_id)
                     return bool(
                         persisted
                         and persisted.state in {"leased", "running"}
                         and persisted.lease_owner == self.owner_id
                         and persisted.fencing_token == started.fencing_token
+                        and solver is not None
+                        and str(solver.status) not in {"paused", "cancelled"}
                     )
+                except Exception:
+                    return False
                 finally:
-                    check.close()
+                    if check is not None:
+                        check.close()
 
-            context = DurableSolverRunContext(
+            context = SolverExecutionContext(
                 run_id=started.id,
                 task_id=started.task_id,
                 solver_id=started.solver_id,
@@ -130,11 +173,35 @@ class SolverRunPool:
                 cancellation=cancellation,
                 _is_valid=is_valid,
             )
+            ActiveRunRegistry.register(context)
+
+            def lease_lost(reason: str, message: str | None = None) -> None:
+                cancellation.cancel(reason)
+                events = None
+                try:
+                    events = self.repository_factory()
+                    events.events.append_agent_event(
+                        started.task_id,
+                        "SOLVER_RUN_LEASE_LOST",
+                        {
+                            "run_id": started.id,
+                            "reason": reason,
+                            "message": message,
+                        },
+                        solver_id=started.solver_id,
+                        intent_id=started.intent_id,
+                    )
+                except Exception:
+                    pass
+                finally:
+                    if events is not None:
+                        events.close()
 
             def heartbeat() -> None:
                 while not heartbeat_stopped.wait(self.lease_ttl_seconds / 3):
-                    heartbeat_repositories = self.repository_factory()
+                    heartbeat_repositories = None
                     try:
+                        heartbeat_repositories = self.repository_factory()
                         renewed = heartbeat_repositories.orchestration.renew_solver_run(
                             started.id,
                             self.owner_id,
@@ -142,10 +209,16 @@ class SolverRunPool:
                             ttl_seconds=self.lease_ttl_seconds,
                         )
                         if renewed is None:
-                            cancellation.cancel("solver_run_lease_lost")
+                            lease_lost("solver_run_lease_lost")
                             return
+                    except Exception as exc:
+                        lease_lost(
+                            "solver_run_lease_renew_failed", str(exc)[:500]
+                        )
+                        return
                     finally:
-                        heartbeat_repositories.close()
+                        if heartbeat_repositories is not None:
+                            heartbeat_repositories.close()
 
             heartbeat_thread = threading.Thread(
                 target=heartbeat,
@@ -186,6 +259,25 @@ class SolverRunPool:
                     intent_id=finished.intent_id,
                 )
                 return completion
+            except CancellationError as exc:
+                cancelled = SolverRunCompletion(
+                    state="cancelled",
+                    error_code="SOLVER_RUN_CANCELLED",
+                    error_message=str(exc)[:1000],
+                    value=exc,
+                )
+                try:
+                    repositories.orchestration.finish_solver_run(
+                        started.id,
+                        self.owner_id,
+                        started.fencing_token,
+                        state="cancelled",
+                        error_code=cancelled.error_code,
+                        error_message=cancelled.error_message,
+                    )
+                except Exception:
+                    pass
+                return cancelled
             except Exception as exc:
                 failed = SolverRunCompletion(
                     state="failed",
@@ -208,8 +300,9 @@ class SolverRunPool:
             finally:
                 heartbeat_stopped.set()
                 heartbeat_thread.join(timeout=max(1.0, self.lease_ttl_seconds / 3))
+                ActiveRunRegistry.unregister(context)
         finally:
             repositories.close()
 
 
-__all__ = ["DurableSolverRunContext", "SolverRunCompletion", "SolverRunPool"]
+__all__ = ["ActiveRunRegistry", "DurableSolverRunContext", "SolverRunCompletion", "SolverRunPool"]

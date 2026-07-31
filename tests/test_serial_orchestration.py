@@ -341,7 +341,7 @@ def test_orchestration_limits_prevent_recursive_solver_creation(tmp_path: Path) 
         bundle.close()
 
 
-def test_pause_resume_preserves_active_worker_assignment(tmp_path: Path) -> None:
+def test_pause_resume_replaces_worker_run_generation(tmp_path: Path) -> None:
     task = _task(task_id="serial_pause_resume")
     bundle, orchestrator = _orchestrator(tmp_path, task)
     try:
@@ -355,9 +355,16 @@ def test_pause_resume_preserves_active_worker_assignment(tmp_path: Path) -> None
 
         resumed = orchestrator.resume()
         assert resumed.status == "running"
-        assert bundle.solvers.get_solver(assignment.solver_id).status == "queued"
+        assert bundle.solvers.get_solver(assignment.solver_id).status == "paused"
         assert orchestrator.dispatch_next() is None
-        assert bundle.orchestration.get_assignment(assignment.id).solver_id == assignment.solver_id
+        assert bundle.orchestration.get_assignment(assignment.id).status == "cancelled"
+        replacements = [
+            item for item in bundle.orchestration.list_assignments(task.id)
+            if item.intent_id == assignment.intent_id and item.attempt == 2
+        ]
+        assert len(replacements) == 1
+        assert replacements[0].solver_id != assignment.solver_id
+        assert bundle.solvers.get_solver(replacements[0].solver_id).status == "queued"
     finally:
         bundle.close()
 

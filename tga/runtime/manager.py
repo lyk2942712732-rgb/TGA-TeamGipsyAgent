@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
@@ -11,6 +10,7 @@ from uuid import uuid4
 
 from tga.contracts import ActionResult, ActionSpec, TGATask
 from tga.evidence.store import EvidenceStore
+from tga.evidence.database import utc_now
 from tga.inputs import task_artifact_root
 from tga.models.bootstrap import build_model_client
 from tga.models.bootstrap import model_config_status
@@ -24,7 +24,12 @@ from tga.runtime.errors import RuntimeConfigurationError
 from tga.runtime.service import TaskRuntimeService, require_current_task_schema
 from tga.runtime.orchestration import TaskOrchestrator
 from tga.runtime.agents import SolverRunner
-from tga.runtime.scheduling import SolverRunCompletion, SolverRunPool
+from tga.runtime.scheduling import (
+    ActiveRunRegistry,
+    ModelCallLimiter,
+    SolverRunCompletion,
+    SolverRunPool,
+)
 from tga.tools.mcp_manager import MCPManager
 
 
@@ -122,6 +127,7 @@ class Manager:
                         runs=queued_runs,
                         max_active_workers=state.max_active_workers,
                     )
+                    orchestrator.reconcile_solver_runs()
                     current = store.get_session(task.id)
                     if current is None or current.status not in {"created", "running"}:
                         break
@@ -188,7 +194,19 @@ class Manager:
                 int(task.execution_budget.get("max_concurrent_model_calls", max_active_workers)),
             ),
         )
-        model_call_slots = threading.BoundedSemaphore(model_call_limit)
+        model_call_limiter = ModelCallLimiter(model_call_limit)
+        from tga.capabilities.runtime import ExecutionBudget
+
+        policy = task.execution_policy
+        assert policy is not None
+        shared_execution_budget = ExecutionBudget(
+            http_requests_per_minute=policy.network.rate_limit_per_minute,
+            http_burst=max(1, min(policy.network.concurrency, 10)),
+            http_concurrency=policy.network.concurrency,
+            process_concurrency=policy.local_compute.concurrency,
+            http_timeout_s=policy.network.request_timeout_seconds,
+            process_timeout_s=policy.local_compute.timeout_seconds,
+        )
 
         def repository_factory() -> PersistenceBundle:
             return PersistenceBundle.open(database_path)
@@ -197,7 +215,12 @@ class Manager:
             worker_store = EvidenceStore(database_path)
             try:
                 context.assert_active()
-                executor = self.executor or self._default_executor(task, worker_store)
+                executor = self.executor or self._default_executor(
+                    task,
+                    worker_store,
+                    execution_context=context,
+                    execution_budget=shared_execution_budget,
+                )
                 runner = SolverRunner(
                     task=task,
                     store=worker_store,
@@ -208,10 +231,11 @@ class Manager:
                     max_turns=self.limits.max_turns,
                     mcp_manager=self.mcp_manager,
                     remote_flag_verifier=self.remote_flag_verifier,
+                    execution_context=context,
+                    model_call_limiter=model_call_limiter,
                 )
-                with model_call_slots:
-                    context.assert_active()
-                    outcome = runner.run()
+                context.assert_active()
+                outcome = runner.run()
                 context.assert_active()
                 state = {
                     "completed": "completed",
@@ -292,6 +316,7 @@ class Manager:
                 task=task, repositories=PersistenceBundle(store)
             )
             if action == "pause":
+                ActiveRunRegistry.cancel_task(task_id, "task_paused")
                 with store.transaction():
                     orchestrator.pause(reason="user_paused")
                     session = coordinator.pause(task_id=task_id, reason="user_paused")
@@ -302,6 +327,7 @@ class Manager:
                     orchestrator.resume()
                     session = coordinator.resume(task_id=task_id)
             elif action == "cancel":
+                ActiveRunRegistry.cancel_task(task_id, "task_cancelled")
                 with store.transaction():
                     governance = PersistenceBundle(store).tool_governance
                     for pending in governance.list_actions(
@@ -433,6 +459,8 @@ class Manager:
             if solver is None or solver.task_id != task_id:
                 raise PermissionError("Solver does not belong to Task")
             current = str(solver.status)
+            response_status: str | None = None
+            replacement_solver_id: str | None = None
             if action == "pause":
                 if current not in {"created", "queued", "ready", "running", "waiting"}:
                     return {
@@ -442,6 +470,37 @@ class Manager:
                 replacement = repositories.solvers.update_solver_status(
                     solver_id, "paused"
                 )
+                cancelled_runs = repositories.orchestration.cancel_solver_runs(
+                    task_id, solver_id, reason="SOLVER_PAUSED"
+                )
+                ActiveRunRegistry.cancel_solver(task_id, solver_id, "operator_paused")
+                assignment = repositories.orchestration.get_assignment_for_solver(
+                    solver_id
+                )
+                if assignment is not None and assignment.status in {"proposed", "accepted"}:
+                    repositories.orchestration.cancel_assignment(
+                        assignment.id, finished_at=utc_now()
+                    )
+                if solver.assigned_intent_id:
+                    plan = repositories.plans.get_global_plan(task_id)
+                    intent = next(
+                        (item for item in plan.intents if item.id == solver.assigned_intent_id),
+                        None,
+                    ) if plan else None
+                    if intent is not None and intent.status not in {
+                        "completed", "failed", "cancelled", "blocked"
+                    }:
+                        repositories.plans.update_intent_status(
+                            intent.id, "blocked", expected_status=intent.status
+                        )
+                for run in cancelled_runs:
+                    repositories.events.append_agent_event(
+                        task_id,
+                        "SOLVER_RUN_CANCELLED",
+                        {"run_id": run.id, "reason": "operator_paused"},
+                        solver_id=solver_id,
+                        intent_id=run.intent_id,
+                    )
                 event_type = "SOLVER_PAUSED"
             elif action == "resume":
                 if current not in {"paused", "blocked"}:
@@ -449,10 +508,22 @@ class Manager:
                         "accepted": False, "status": current,
                         "reason": "solver_not_resumable",
                     }
-                target = "ready" if solver.orchestration_role == "supervisor" else "queued"
-                replacement = repositories.solvers.update_solver_status(
-                    solver_id, target
-                )
+                if solver.orchestration_role == "worker" and solver.assigned_intent_id:
+                    state = repositories.orchestration.get_state(task_id)
+                    if state is None or not state.supervisor_solver_id:
+                        raise RuntimeError("Task Supervisor is unavailable")
+                    replacement = TaskOrchestrator(
+                        task=task, repositories=repositories
+                    ).retry_intent(
+                        supervisor_solver_id=state.supervisor_solver_id,
+                        intent_id=solver.assigned_intent_id,
+                    )
+                    replacement_solver_id = replacement.solver_id
+                    response_status = "queued"
+                else:
+                    replacement = repositories.solvers.update_solver_status(
+                        solver_id, "ready"
+                    )
                 event_type = "SOLVER_STARTED"
             elif action == "cancel":
                 if current in {"completed", "failed", "cancelled"}:
@@ -463,6 +534,35 @@ class Manager:
                 replacement = repositories.solvers.update_solver_status(
                     solver_id, "cancelled"
                 )
+                cancelled_runs = repositories.orchestration.cancel_solver_runs(
+                    task_id, solver_id, reason="SOLVER_CANCELLED"
+                )
+                ActiveRunRegistry.cancel_solver(task_id, solver_id, "operator_cancelled")
+                assignment = repositories.orchestration.get_assignment_for_solver(
+                    solver_id
+                )
+                if assignment is not None and assignment.status in {"proposed", "accepted"}:
+                    repositories.orchestration.cancel_assignment(
+                        assignment.id, finished_at=utc_now()
+                    )
+                if solver.assigned_intent_id:
+                    plan = repositories.plans.get_global_plan(task_id)
+                    intent = next(
+                        (item for item in plan.intents if item.id == solver.assigned_intent_id),
+                        None,
+                    ) if plan else None
+                    if intent is not None and intent.status not in {"completed", "failed", "cancelled"}:
+                        repositories.plans.update_intent_status(
+                            intent.id, "cancelled", expected_status=intent.status
+                        )
+                for run in cancelled_runs:
+                    repositories.events.append_agent_event(
+                        task_id,
+                        "SOLVER_RUN_CANCELLED",
+                        {"run_id": run.id, "reason": "operator_cancelled"},
+                        solver_id=solver_id,
+                        intent_id=run.intent_id,
+                    )
                 event_type = "SOLVER_CANCELLED"
             else:
                 return {
@@ -480,8 +580,9 @@ class Manager:
                 "schema_version": 6,
                 "task_id": task_id,
                 "solver_id": solver_id,
+                "replacement_solver_id": replacement_solver_id,
                 "accepted": True,
-                "status": str(replacement.status),
+                "status": response_status or str(replacement.status),
             }
         finally:
             if should_close:
@@ -542,7 +643,14 @@ class Manager:
             return self.store, False
         return EvidenceStore(self.run_root / task_id / "evidence.db"), True
 
-    def _default_executor(self, task: TGATask, store: EvidenceStore) -> ActionExecutor:
+    def _default_executor(
+        self,
+        task: TGATask,
+        store: EvidenceStore,
+        *,
+        execution_context=None,
+        execution_budget=None,
+    ) -> ActionExecutor:
         from tga.capabilities.runtime import ControlledActionExecutor, ExecutionBudget
         from tga.evidence.artifacts import ArtifactStore
         from tga.sandbox import DockerSandboxProvider, SandboxManager, SandboxdProvider, load_sandbox_config
@@ -562,6 +670,11 @@ class Manager:
         )
 
         def fencing_token(solver_id: str) -> int:
+            if execution_context is not None:
+                if solver_id != execution_context.solver_id:
+                    raise PermissionError("Solver execution context ownership mismatch")
+                execution_context.assert_active()
+                return execution_context.fencing_token
             row = store.conn.execute(
                 "SELECT fencing_token FROM solver_runs WHERE solver_id=? "
                 "AND state IN ('leased','running') ORDER BY updated_at DESC LIMIT 1",
@@ -575,8 +688,11 @@ class Manager:
             return int(row["fencing_token"]) if row else 1
 
         return ControlledActionExecutor(
-            artifact_store=ArtifactStore(task_artifact_root(self.run_root / task.id, task)),
-            budget=ExecutionBudget(
+            artifact_store=ArtifactStore(
+                task_artifact_root(self.run_root / task.id, task),
+                execution_context=execution_context,
+            ),
+            budget=execution_budget or ExecutionBudget(
                 http_requests_per_minute=policy.network.rate_limit_per_minute,
                 http_burst=max(1, min(policy.network.concurrency, 10)),
                 http_concurrency=policy.network.concurrency,
@@ -586,6 +702,7 @@ class Manager:
             ),
             sandbox_manager=sandbox_manager,
             fencing_token_provider=fencing_token,
+            execution_context=execution_context,
         )
 
     def _release_existing_sandbox(self, store: EvidenceStore, task_id: str) -> None:
@@ -619,17 +736,16 @@ class Manager:
         solver_id = workspace.resolve().name
         store = EvidenceStore(self.run_root / task.id / "evidence.db")
         try:
-            row = store.conn.execute(
-                "SELECT fencing_token FROM solver_runs WHERE solver_id=? "
-                "AND state IN ('leased','running') ORDER BY updated_at DESC LIMIT 1",
-                (solver_id,),
-            ).fetchone()
-            if row is None:
+            execution_context = ActiveRunRegistry.get(task.id, solver_id)
+            if execution_context is not None:
+                execution_context.assert_active()
+                fencing = execution_context.fencing_token
+            else:
                 row = store.conn.execute(
                     "SELECT fencing_token FROM solver_leases WHERE solver_id=?",
                     (solver_id,),
                 ).fetchone()
-            fencing = int(row["fencing_token"]) if row else 1
+                fencing = int(row["fencing_token"]) if row else 1
             config, _ = load_sandbox_config()
             manager = SandboxManager(
                 config=config,
@@ -696,7 +812,7 @@ class Manager:
         runnable = {
             "created", "queued", "ready", "waiting", "blocked",
         }
-        queued_roles = {"worker", "reviewer", "reporter"}
+        queued_roles = {"reviewer", "reporter"}
         queued = next((
             item for item in solvers
             if item.orchestration_role in queued_roles and str(item.status) in runnable

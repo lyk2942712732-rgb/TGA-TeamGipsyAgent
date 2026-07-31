@@ -8,6 +8,8 @@ from pathlib import Path
 import pytest
 
 from tga.contracts import TGATask
+from tga.evidence.store import EvidenceStore
+from tga.evidence.artifacts import ArtifactStore
 from tga.domain.knowledge import KnowledgeItem
 from tga.domain.planning import GlobalPlan, Intent
 from tga.domain.solver import WorkerResult
@@ -19,7 +21,9 @@ from tga.infrastructure.persistence import (
 from tga.infrastructure.workspace import SolverWorkspaceService
 from tga.runtime.knowledge import KnowledgePromotionService
 from tga.runtime.manager import Manager
+from tga.runtime.coordinator import SessionCoordinator
 from tga.runtime.agents.session_runner import SolverOutcome
+from tga.runtime.agents.model_loop import ModelLoop
 from tga.runtime.orchestration import TaskOrchestrator
 from tga.runtime.scheduling import (
     BudgetManager,
@@ -30,6 +34,7 @@ from tga.runtime.scheduling import (
     SolverScheduler,
     TaskScheduler,
     NetworkBudgetLimiter,
+    ModelCallLimiter,
 )
 from tga.runtime.tooling.governance.approvals import SolverApprovalCoordinator
 
@@ -141,6 +146,80 @@ def test_solver_run_pool_executes_workers_with_real_overlap(tmp_path: Path) -> N
         verified.close()
 
 
+def test_cancelled_run_context_rejects_late_side_effect_boundary(tmp_path: Path) -> None:
+    task = _task("parallel_stale_context", active_workers=1)
+    database_path, bundle, orchestrator, _ = _seed_orchestrator(tmp_path, task)
+    assignment = orchestrator.dispatch_ready()[0]
+    run = bundle.orchestration.list_solver_runs(task.id)[0]
+    bundle.close()
+    entered = threading.Event()
+    cancelled = threading.Event()
+    side_effects: list[str] = []
+
+    def execute(_run, context):
+        entered.set()
+        assert cancelled.wait(timeout=5)
+        context.assert_active()
+        side_effects.append("late-write")
+        return SolverRunCompletion(state="completed")
+
+    holder: list[tuple[SolverRunCompletion, ...]] = []
+    thread = threading.Thread(
+        target=lambda: holder.append(SolverRunPool(
+            repository_factory=lambda: PersistenceBundle.open(database_path),
+            owner_id="runtime_stale",
+            max_active_workers=1,
+            lease_ttl_seconds=10,
+        ).run(task.id, (run,), execute))
+    )
+    thread.start()
+    assert entered.wait(timeout=5)
+    control = PersistenceBundle.open(database_path)
+    try:
+        control.solvers.update_solver_status(assignment.solver_id, "cancelled")
+        control.orchestration.cancel_solver_runs(
+            task.id, assignment.solver_id, reason="SOLVER_CANCELLED"
+        )
+    finally:
+        control.close()
+    cancelled.set()
+    thread.join(timeout=5)
+
+    assert not thread.is_alive()
+    assert side_effects == []
+    assert holder and holder[0][0].state == "cancelled"
+
+
+def test_artifact_store_rejects_write_after_execution_context_is_cancelled(
+    tmp_path: Path,
+) -> None:
+    from tga.runtime.scheduling import SolverExecutionContext
+
+    token = CancellationToken()
+    context = SolverExecutionContext(
+        run_id="run_artifact_fence",
+        task_id="task_artifact_fence",
+        solver_id="solver_artifact_fence",
+        owner_id="runtime_artifact_fence",
+        fencing_token=7,
+        cancellation=token,
+        _is_valid=lambda: True,
+    )
+    token.cancel("lease_lost")
+
+    with pytest.raises(Exception, match="lease_lost"):
+        ArtifactStore(
+            tmp_path / "artifacts", execution_context=context
+        ).save_text(
+            task_id=context.task_id,
+            intent_id=None,
+            kind="file",
+            text="must not be published",
+        )
+
+    assert list((tmp_path / "artifacts").iterdir()) == []
+
+
 def test_manager_worker_batch_uses_parallel_solver_runs(
     tmp_path: Path, monkeypatch,
 ) -> None:
@@ -153,12 +232,14 @@ def test_manager_worker_batch_uses_parallel_solver_runs(
 
     barrier = threading.Barrier(2, timeout=5)
     entered: list[str] = []
+    contexts: list[object] = []
     lock = threading.Lock()
 
     class BarrierRunner:
         def __init__(self, **kwargs):
             self.task = kwargs["task"]
             self.solver_id = kwargs["solver_id"]
+            contexts.append(kwargs["execution_context"])
 
         def run(self):
             with lock:
@@ -185,10 +266,12 @@ def test_manager_worker_batch_uses_parallel_solver_runs(
     )
 
     assert len(entered) == 2
+    assert {context.run_id for context in contexts} == {run.id for run in runs}
+    assert all(context.fencing_token == 1 for context in contexts)
     assert {item.state for item in completions} == {"completed"}
 
 
-def test_manager_worker_batch_limits_concurrent_model_calls(
+def test_manager_worker_batch_keeps_workers_parallel_when_model_calls_are_limited(
     tmp_path: Path, monkeypatch,
 ) -> None:
     task = _task("parallel_manager_model_limit").model_copy(
@@ -243,7 +326,154 @@ def test_manager_worker_batch_limits_concurrent_model_calls(
     )
 
     assert len(completions) == 2
+    assert maximum_active == 2
+
+
+def test_model_call_limiter_limits_only_provider_requests() -> None:
+    limiter = ModelCallLimiter(1)
+    active = 0
+    maximum_active = 0
+    lock = threading.Lock()
+    barrier = threading.Barrier(2, timeout=5)
+
+    class Gateway:
+        temperature = 0.2
+
+        def chat_tools(self, _messages, *, tools, temperature):
+            del tools, temperature
+            nonlocal active, maximum_active
+            with lock:
+                active += 1
+                maximum_active = max(maximum_active, active)
+            time.sleep(0.03)
+            with lock:
+                active -= 1
+            return {"message": {"role": "assistant", "content": "ok"}}
+
+    def call_model() -> None:
+        barrier.wait()
+        ModelLoop(Gateway(), limiter=limiter).run(messages=[], tools=[])
+
+    threads = [threading.Thread(target=call_model) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=5)
+
+    assert all(not thread.is_alive() for thread in threads)
     assert maximum_active == 1
+
+
+def test_model_loop_returns_late_response_usage_after_cancellation() -> None:
+    token = CancellationToken()
+
+    class ExecutionContext:
+        def assert_active(self) -> None:
+            token.raise_if_cancelled()
+
+    class Gateway:
+        temperature = 0.2
+
+        def chat_tools(self, _messages, *, tools, temperature):
+            del tools, temperature
+            token.cancel("operator_cancelled")
+            return {
+                "message": {"role": "assistant", "content": "late"},
+                "usage": {"input_tokens": 7, "output_tokens": 3},
+            }
+
+    turn = ModelLoop(Gateway(), execution_context=ExecutionContext()).run(
+        messages=[], tools=[]
+    )
+
+    assert turn.response["usage"] == {"input_tokens": 7, "output_tokens": 3}
+
+
+def test_worker_never_enters_manager_serial_solver_selection(tmp_path: Path) -> None:
+    task = _task("parallel_worker_single_path", active_workers=1)
+    _, bundle, orchestrator, state = _seed_orchestrator(tmp_path, task)
+    try:
+        assignment = orchestrator.dispatch_ready()[0]
+        assert Manager._next_solver_id(
+            bundle, task.id, preferred_id=state.supervisor_solver_id
+        ) == state.supervisor_solver_id
+        assert assignment.solver_id != state.supervisor_solver_id
+    finally:
+        bundle.close()
+
+
+def test_parallel_turn_reservation_is_atomic(tmp_path: Path) -> None:
+    task = _task("parallel_turn_reservation")
+    database_path, bundle, _, state = _seed_orchestrator(tmp_path, task)
+    store = EvidenceStore(database_path)
+    try:
+        SessionCoordinator(store).ensure_session(
+            task=task, max_turns=1, supervisor_solver_id=state.supervisor_solver_id
+        )
+        SessionCoordinator(store).start(
+            task_id=task.id, solver_id=state.supervisor_solver_id
+        )
+    finally:
+        store.close()
+        bundle.close()
+
+    barrier = threading.Barrier(2, timeout=5)
+    reservations: list[bool] = []
+    lock = threading.Lock()
+
+    def reserve() -> None:
+        worker_store = EvidenceStore(database_path)
+        try:
+            barrier.wait()
+            reserved = SessionCoordinator(worker_store).reserve_turn(task_id=task.id)
+            with lock:
+                reservations.append(reserved is not None)
+        finally:
+            worker_store.close()
+
+    threads = [threading.Thread(target=reserve) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=5)
+
+    verified = EvidenceStore(database_path)
+    try:
+        assert reservations.count(True) == 1
+        assert reservations.count(False) == 1
+        assert verified.get_session(task.id).turn_count == 1
+    finally:
+        verified.close()
+
+
+def test_failed_run_reconcile_creates_one_retry_attempt(tmp_path: Path) -> None:
+    task = _task("parallel_failed_reconcile", active_workers=1)
+    database_path, bundle, orchestrator, _ = _seed_orchestrator(tmp_path, task)
+    orchestrator.dispatch_ready()
+    run = bundle.orchestration.list_solver_runs(task.id)[0]
+    bundle.close()
+
+    completions = SolverRunPool(
+        repository_factory=lambda: PersistenceBundle.open(database_path),
+        owner_id="runtime_failure",
+        max_active_workers=1,
+        lease_ttl_seconds=10,
+    ).run(task.id, (run,), lambda _run, _context: (_ for _ in ()).throw(RuntimeError("boom")))
+    assert completions[0].state == "failed"
+
+    recovered = PersistenceBundle.open(database_path)
+    try:
+        runtime = TaskOrchestrator(task=task, repositories=recovered)
+        runtime.reconcile_solver_runs()
+        runtime.reconcile_solver_runs()
+        assignments = [
+            item for item in recovered.orchestration.list_assignments(task.id)
+            if item.intent_id == run.intent_id
+        ]
+        assert [item.attempt for item in assignments] == [1, 2]
+        assert recovered.orchestration.get_solver_run(run.id).state == "failed"
+    finally:
+        recovered.close()
 
 
 def test_two_connections_claim_different_intents_and_same_intent_has_one_winner(
@@ -576,6 +806,119 @@ def test_task_token_budget_is_shared_across_parallel_solvers(tmp_path: Path) -> 
                 intent_id=second.intent_id,
                 input_tokens=3,
                 output_tokens=2,
+            )
+    finally:
+        bundle.close()
+
+
+def test_model_token_reservation_blocks_parallel_request_before_provider_call(
+    tmp_path: Path,
+) -> None:
+    task = _task("parallel_model_token_reservation").model_copy(update={
+        "execution_budget": {
+            "max_active_workers": 2,
+            "max_total_solvers": 8,
+            "max_output_tokens": 100,
+        }
+    })
+    database_path, bundle, orchestrator, state = _seed_orchestrator(tmp_path, task)
+    _add_intent(orchestrator, state.supervisor_solver_id, "peer")
+    assignments = orchestrator.dispatch_ready()
+    assert len(assignments) == 2
+    bundle.close()
+
+    first = PersistenceBundle.open(database_path)
+    second = PersistenceBundle.open(database_path)
+    try:
+        held = first.tool_governance.reserve_model_tokens(
+            idempotency_key="model-reservation-first",
+            task_id=task.id,
+            solver_id=assignments[0].solver_id,
+            intent_id=assignments[0].intent_id,
+            run_id="run_first",
+            estimated_input_tokens=0,
+            estimated_output_tokens=80,
+        )
+        with pytest.raises(PersistenceConflict, match="output-token"):
+            second.tool_governance.reserve_model_tokens(
+                idempotency_key="model-reservation-second",
+                task_id=task.id,
+                solver_id=assignments[1].solver_id,
+                intent_id=assignments[1].intent_id,
+                run_id="run_second",
+                estimated_input_tokens=0,
+                estimated_output_tokens=80,
+            )
+        assert first.tool_governance.release_model_tokens(held["id"]) is True
+        replacement = second.tool_governance.reserve_model_tokens(
+            idempotency_key="model-reservation-second",
+            task_id=task.id,
+            solver_id=assignments[1].solver_id,
+            intent_id=assignments[1].intent_id,
+            run_id="run_second",
+            estimated_input_tokens=0,
+            estimated_output_tokens=80,
+        )
+        settled = second.tool_governance.settle_model_tokens(
+            replacement["id"],
+            actual_input_tokens=0,
+            actual_output_tokens=55,
+            usage_idempotency_key="model-usage-second",
+        )
+        assert settled["status"] == "settled"
+        assert settled["actual_output_tokens"] == 55
+    finally:
+        first.close()
+        second.close()
+
+
+def test_model_token_settlement_records_actual_overspend_and_blocks_next_request(
+    tmp_path: Path,
+) -> None:
+    task = _task("parallel_model_token_actual_overspend").model_copy(update={
+        "execution_budget": {
+            "max_active_workers": 1,
+            "max_total_solvers": 8,
+            "max_output_tokens": 100,
+        }
+    })
+    _, bundle, orchestrator, _ = _seed_orchestrator(tmp_path, task)
+    try:
+        assignment = orchestrator.dispatch_ready()[0]
+        held = bundle.tool_governance.reserve_model_tokens(
+            idempotency_key="model-reservation-overspend",
+            task_id=task.id,
+            solver_id=assignment.solver_id,
+            intent_id=assignment.intent_id,
+            run_id="run_overspend",
+            estimated_input_tokens=0,
+            estimated_output_tokens=80,
+        )
+
+        settled = bundle.tool_governance.settle_model_tokens(
+            held["id"],
+            actual_input_tokens=0,
+            actual_output_tokens=110,
+            usage_idempotency_key="model-usage-overspend",
+        )
+
+        assert settled["status"] == "settled"
+        assert settled["actual_output_tokens"] == 110
+        assert settled["limit_exceeded"] is True
+        usage = bundle.database.conn.execute(
+            "SELECT output_tokens FROM runtime_budget_usage WHERE idempotency_key=?",
+            ("model-usage-overspend",),
+        ).fetchone()
+        assert usage["output_tokens"] == 110
+        with pytest.raises(PersistenceConflict, match="output-token"):
+            bundle.tool_governance.reserve_model_tokens(
+                idempotency_key="model-reservation-after-overspend",
+                task_id=task.id,
+                solver_id=assignment.solver_id,
+                intent_id=assignment.intent_id,
+                run_id="run_after_overspend",
+                estimated_input_tokens=0,
+                estimated_output_tokens=1,
             )
     finally:
         bundle.close()

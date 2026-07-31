@@ -1659,6 +1659,17 @@ class SqliteOrchestrationRepository:
         self.database._commit()
         return replacement
 
+    def validate_solver_run_authority(
+        self, run_id: str, owner_id: str, fencing_token: int,
+        *, now: datetime | None = None,
+    ) -> bool:
+        stamp = _timestamp(now or datetime.now(UTC))
+        return self.conn.execute(
+            "SELECT 1 FROM solver_runs WHERE id=? AND state='running' "
+            "AND lease_owner=? AND fencing_token=? AND lease_expires_at>?",
+            (run_id, owner_id, fencing_token, stamp),
+        ).fetchone() is not None
+
     def suspend_solver_run_for_approval(
         self, run_id: str, owner_id: str, fencing_token: int,
         *, now: datetime | None = None,
@@ -1779,6 +1790,46 @@ class SqliteOrchestrationRepository:
                     (
                         replacement.error_code, replacement.version,
                         replacement.model_dump_json(), stamp, current.id, current.version,
+                    ),
+                )
+                if cursor.rowcount == 1:
+                    cancelled.append(replacement)
+        return cancelled
+
+    def cancel_solver_runs(
+        self,
+        task_id: str,
+        solver_id: str,
+        *,
+        reason: str = "SOLVER_CANCELLED",
+        now: datetime | None = None,
+    ) -> list[SolverRun]:
+        stamp = _timestamp(now or datetime.now(UTC))
+        active_states = {"queued", "leased", "running", "waiting_approval", "retry_queued"}
+        cancelled: list[SolverRun] = []
+        with self.database.transaction():
+            for current in self.list_solver_runs(task_id):
+                if current.solver_id != solver_id or current.state not in active_states:
+                    continue
+                replacement = SolverRun.model_validate(current.model_dump() | {
+                    "state": "cancelled",
+                    "finished_at": stamp,
+                    "error_code": reason,
+                    "error_message": "Solver control invalidated the SolverRun",
+                    "updated_at": stamp,
+                    "version": current.version + 1,
+                })
+                cursor = self.conn.execute(
+                    "UPDATE solver_runs SET state='cancelled',error_code=?,version=?,"
+                    "payload_json=?,updated_at=? WHERE id=? AND version=? AND state IN "
+                    "('queued','leased','running','waiting_approval','retry_queued')",
+                    (
+                        replacement.error_code,
+                        replacement.version,
+                        replacement.model_dump_json(),
+                        stamp,
+                        current.id,
+                        current.version,
                     ),
                 )
                 if cursor.rowcount == 1:

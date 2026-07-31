@@ -152,7 +152,7 @@ def test_cancel_discards_late_provider_tool_calls(tmp_path: Path) -> None:
     snapshot = manager.run_session(task.id)
 
     assert snapshot["session"]["status"] == "cancelled"
-    assert snapshot["session"]["turn_count"] == 0
+    assert snapshot["session"]["turn_count"] == 1
     assert snapshot["actions"] == []
     assert any(event["type"] == "PROVIDER_RESPONSE_DISCARDED" for event in snapshot["events"])
     assert not any(event["type"] == "TOOL_EXECUTION_START" for event in snapshot["events"])

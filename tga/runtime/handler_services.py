@@ -24,6 +24,7 @@ class ArtifactService:
         self.store = state.store
         self.run_root = state.run_root
         self.solver_id = state.solver_id
+        self.execution_context = state.execution_context
 
     def save_input_evidence(
         self,
@@ -79,7 +80,7 @@ class ArtifactService:
             "immutable": True,
         }
         root = task_artifact_root(self.run_root / self.task.id, self.task)
-        store = ArtifactStore(root)
+        store = ArtifactStore(root, execution_context=self.execution_context)
         if operation == "input_read":
             provenance.update({
                 "offset": int(payload.get("offset") or 0),

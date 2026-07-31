@@ -98,6 +98,7 @@ class HandlerState:
         solver_id: str, workspace: Path, mcp_manager: MCPManager, mcp_snapshot: MCPCatalogSnapshot,
         registry: Any, tool_by_name: dict[str, str], remote_flag_verifier: Any | None = None,
         allowed_resource_ids: tuple[str, ...] | None = None,
+        execution_context: Any | None = None,
     ) -> None:
         self.task = task
         self.store = store
@@ -112,6 +113,7 @@ class HandlerState:
         self.tool_by_name = tool_by_name
         self.remote_flag_verifier = remote_flag_verifier
         self.allowed_resource_ids = allowed_resource_ids
+        self.execution_context = execution_context
         self.observer = ObserverCoordinator(observer=DeterministicObserver(), store=store, cooldown_seconds=0)
         self.observer_directive = ""
         self.artifact_retrievals = 0
@@ -1067,7 +1069,9 @@ class MCPToolHandler(HandlerRuntime):
                     trace_id=outcome.trace_id,
                 )
         artifact_root = task_artifact_root(self.run_root / self.task.id, self.task)
-        return ArtifactStore(artifact_root).save_text(
+        return ArtifactStore(
+            artifact_root, execution_context=self.state.execution_context
+        ).save_text(
             task_id=self.task.id,
             intent_id=None,
             kind="tool_output",

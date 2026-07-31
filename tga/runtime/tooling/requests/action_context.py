@@ -10,6 +10,9 @@ class ActionContext(BaseModel):
 
     task_id: str
     solver_id: str
+    run_id: str | None = None
+    run_owner_id: str | None = None
+    run_fencing_token: int | None = Field(default=None, ge=1)
     intent_id: str | None = None
     local_plan_step_id: str | None = None
     orchestration_role: Literal["supervisor", "worker", "reviewer", "reporter"]

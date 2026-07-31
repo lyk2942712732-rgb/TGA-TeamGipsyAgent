@@ -616,6 +616,23 @@ CREATE TABLE IF NOT EXISTS skill_publications (
     created_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS model_token_reservations (
+    id TEXT PRIMARY KEY,
+    idempotency_key TEXT NOT NULL UNIQUE,
+    task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    solver_id TEXT NOT NULL REFERENCES solver_instances(id) ON DELETE CASCADE,
+    intent_id TEXT REFERENCES intents(id) ON DELETE RESTRICT,
+    run_id TEXT,
+    estimated_input_tokens INTEGER NOT NULL CHECK(estimated_input_tokens >= 0),
+    estimated_output_tokens INTEGER NOT NULL CHECK(estimated_output_tokens >= 0),
+    actual_input_tokens INTEGER,
+    actual_output_tokens INTEGER,
+    status TEXT NOT NULL CHECK(status IN ('reserved','settled','released','expired')),
+    expires_at TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS skill_selection_decisions (
     id TEXT PRIMARY KEY,
     task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
