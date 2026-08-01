@@ -92,9 +92,73 @@ class WorkspaceShellArguments(StrictArguments):
     timeout: int = Field(default=60, ge=1, le=300)
 
 
+class SandboxNetworkTarget(StrictArguments):
+    host: str = Field(min_length=1, max_length=253)
+    ports: list[int] = Field(default_factory=list, max_length=128)
+
+
+class SandboxExecArguments(StrictArguments):
+    executable: str = Field(
+        min_length=1,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$",
+    )
+    argv: list[str] = Field(default_factory=list, max_length=255)
+    timeout: int = Field(default=120, ge=1, le=7200)
+    network_targets: list[SandboxNetworkTarget] = Field(default_factory=list, max_length=64)
+
+    @model_validator(mode="after")
+    def validate_values(self) -> "SandboxExecArguments":
+        if any("\x00" in value for value in self.argv):
+            raise ValueError("sandbox.exec argv may not contain NUL")
+        for target in self.network_targets:
+            if not target.ports or any(port < 1 or port > 65535 for port in target.ports):
+                raise ValueError("sandbox.exec network target requires valid ports")
+        return self
+
+
 class ArtifactInspectArguments(StrictArguments):
     artifact_id: str = Field(pattern=r"^artifact_[a-f0-9]{12}$")
     query: str | None = Field(default=None, max_length=256)
     section: str | None = Field(default=None, max_length=256)
     offset: int = Field(default=0, ge=0)
     limit: int = Field(default=16_384, ge=1, le=262_144)
+
+
+class NmapScanArguments(StrictArguments):
+    target: str = Field(min_length=1, max_length=64)
+    ports: str = Field(default="1-1000", pattern=r"^[0-9,-]{1,128}$")
+    service_detection: bool = False
+    timeout: int = Field(default=120, ge=1, le=600)
+
+
+class FfufDirectoryScanArguments(StrictArguments):
+    url: str = Field(min_length=8, max_length=4096)
+    wordlist: str = Field(min_length=1, max_length=512)
+    match_codes: list[int] = Field(default_factory=list, max_length=64)
+    timeout: int = Field(default=120, ge=1, le=600)
+
+
+class NucleiScanArguments(StrictArguments):
+    target: str = Field(min_length=8, max_length=4096)
+    tags: list[str] = Field(default_factory=list, max_length=32)
+    timeout: int = Field(default=120, ge=1, le=600)
+
+
+class BinwalkAnalyzeArguments(StrictArguments):
+    path: str = Field(min_length=1, max_length=512)
+    extract: bool = False
+    timeout: int = Field(default=120, ge=1, le=600)
+
+
+class YaraScanArguments(StrictArguments):
+    rules_path: str = Field(min_length=1, max_length=512)
+    target_path: str = Field(min_length=1, max_length=512)
+    recursive: bool = False
+    timeout: int = Field(default=120, ge=1, le=600)
+
+
+class Radare2AnalyzeArguments(StrictArguments):
+    path: str = Field(min_length=1, max_length=512)
+    commands: list[str] = Field(default_factory=lambda: ["aaa", "afl"], max_length=64)
+    timeout: int = Field(default=120, ge=1, le=600)

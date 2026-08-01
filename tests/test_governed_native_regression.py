@@ -10,7 +10,7 @@ from tga.evidence.store import EvidenceStore
 from tests.runtime_fixtures import execution_policy
 
 
-def test_form_preflight_rejects_before_network(tmp_path):
+def test_legacy_executor_never_performs_http_network_io(tmp_path):
     class NeverCalled(BaseHTTPRequestHandler):
         calls = 0
         def do_POST(self):  # noqa: N802
@@ -32,8 +32,7 @@ def test_form_preflight_rejects_before_network(tmp_path):
         )
         result = executor.execute(task=task, action=action, workspace=tmp_path)
         assert result.status == "blocked"
-        assert result.error and result.error.code == "HTTP_EXECUTION_FAILED"
-        assert "PARAMETER_COUNT_MISMATCH" in result.error.message
+        assert result.error and result.error.code == "EXECUTION_BACKEND_REQUIRED"
         assert NeverCalled.calls == 0
     finally:
         server.shutdown(); server.server_close()

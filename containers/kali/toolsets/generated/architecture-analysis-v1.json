@@ -1,0 +1,12 @@
+{
+    "profile_id":  "architecture-analysis-v1",
+    "tools":  {
+                  "python3":  "image-managed",
+                  "rg":  "image-managed",
+                  "ctags":  "image-managed",
+                  "cloc":  "image-managed",
+                  "tree":  "image-managed",
+                  "dot":  "image-managed",
+                  "semgrep":  "image-managed"
+              }
+}

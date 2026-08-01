@@ -24,6 +24,7 @@ class SandboxManager:
         *,
         task_id: str,
         solver_id: str,
+        solver_run_id: str,
         profile_id: str,
         fencing_token: int,
         idempotency_key: str,
@@ -36,18 +37,59 @@ class SandboxManager:
         profile = self.config.profile(profile_id)
         if profile.provider == "remote_http":
             raise SandboxError("remote HTTP does not create a local sandbox", code="REMOTE_PROFILE")
-        existing = self.repository.get_active(task_id) if self.repository else None
+        existing = (
+            self.repository.get_active(
+                task_id=task_id,
+                solver_id=solver_id,
+                solver_run_id=solver_run_id,
+            )
+            if self.repository
+            else None
+        )
         if existing:
             if existing.config_digest != self.config.digest:
                 raise SandboxError("active sandbox configuration changed", code="CONFIG_DIGEST_MISMATCH")
             if existing.profile_id != profile_id or existing.provider != profile.provider:
                 raise SandboxError(
-                    "one task may not acquire a second sandbox profile",
-                    code="TASK_SANDBOX_CONFLICT",
+                    "a SolverRun may not change its sandbox profile",
+                    code="SOLVER_RUN_SANDBOX_CONFLICT",
                 )
             if fencing_token < existing.fencing_token:
                 raise SandboxError("stale fencing token", code="STALE_FENCING_TOKEN")
-            reused = existing.model_copy(update={"solver_id": solver_id, "fencing_token": fencing_token})
+            if fencing_token == existing.fencing_token:
+                reused = existing
+                self._event("SANDBOX_REUSED", reused)
+                return reused
+            provider = self.providers.get(profile.provider)
+            if provider is None:
+                raise SandboxError(
+                    f"sandbox provider {profile.provider} is unavailable",
+                    code="PROVIDER_UNAVAILABLE",
+                    retryable=True,
+                )
+            refreshed = provider.acquire(
+                task_id=task_id,
+                solver_id=solver_id,
+                solver_run_id=solver_run_id,
+                profile_id=profile_id,
+                fencing_token=fencing_token,
+                idempotency_key=idempotency_key,
+            )
+            if (
+                refreshed.instance_id != existing.instance_id
+                or refreshed.config_digest != existing.config_digest
+                or refreshed.profile_id != existing.profile_id
+                or refreshed.provider != existing.provider
+                or refreshed.image_digest != existing.image_digest
+                or refreshed.toolset_digest != existing.toolset_digest
+            ):
+                raise SandboxError(
+                    "provider returned a different sandbox during fencing refresh",
+                    code="SANDBOX_IDENTITY_MISMATCH",
+                )
+            reused = refreshed
+            if self.repository:
+                self.repository.put(reused)
             self._event("SANDBOX_REUSED", reused)
             return reused
         provider = self.providers.get(profile.provider)
@@ -60,6 +102,7 @@ class SandboxManager:
         handle = provider.acquire(
             task_id=task_id,
             solver_id=solver_id,
+            solver_run_id=solver_run_id,
             profile_id=profile_id,
             fencing_token=fencing_token,
             idempotency_key=idempotency_key,
@@ -81,6 +124,12 @@ class SandboxManager:
     def exec(
         self, handle: SandboxHandle, spec: ProcessSpec
     ) -> tuple[Iterator[ExecFrame], ExecResult]:
+        profile = self.config.profile(handle.profile_id)
+        if spec.argv and spec.argv[0] not in profile.allowed_executables:
+            raise SandboxError(
+                f"executable {spec.argv[0]!r} is not allowed by profile {handle.profile_id}",
+                code="EXECUTABLE_NOT_ALLOWED",
+            )
         self._event("SANDBOX_EXEC_STARTED", handle)
         try:
             frames, result = self.provider_for(handle).exec(handle, spec)
@@ -158,6 +207,9 @@ class SandboxManager:
                 "instance_id": handle.instance_id,
                 "provider": handle.provider,
                 "profile_id": handle.profile_id,
+                "solver_run_id": handle.solver_run_id,
+                "image_digest": handle.image_digest,
+                "toolset_digest": handle.toolset_digest,
                 "config_digest": handle.config_digest,
                 "fencing_token": handle.fencing_token,
                 **(extra or {}),

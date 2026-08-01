@@ -98,6 +98,7 @@ class HandlerState:
         solver_id: str, workspace: Path, mcp_manager: MCPManager, mcp_snapshot: MCPCatalogSnapshot,
         registry: Any, tool_by_name: dict[str, str], remote_flag_verifier: Any | None = None,
         allowed_resource_ids: tuple[str, ...] | None = None,
+        execution_context: Any | None = None,
     ) -> None:
         self.task = task
         self.store = store
@@ -112,6 +113,7 @@ class HandlerState:
         self.tool_by_name = tool_by_name
         self.remote_flag_verifier = remote_flag_verifier
         self.allowed_resource_ids = allowed_resource_ids
+        self.execution_context = execution_context
         self.observer = ObserverCoordinator(observer=DeterministicObserver(), store=store, cooldown_seconds=0)
         self.observer_directive = ""
         self.artifact_retrievals = 0
@@ -287,7 +289,6 @@ class CapabilityToolHandler(HandlerRuntime):
                 if artifact is None:
                     continue
                 self.last_artifact_id = artifact.id
-                self.artifacts.index(artifact)
                 excerpts.append({"artifact_id": artifact.id, "content": self.artifacts.excerpt(artifact)})
             for candidate in result.candidate_flags:
                 self.store.append_agent_event(
@@ -502,7 +503,6 @@ class InputToolHandler(HandlerRuntime):
             with self.store.transaction():
                 if artifact is not None:
                     self.store.add_artifact(artifact)
-                    index = self.artifacts.index(artifact)
                     self.last_artifact_id = artifact.id
                     self.store.append_agent_event(
                         self.task.id,
@@ -514,7 +514,8 @@ class InputToolHandler(HandlerRuntime):
                             "input_id": input_id,
                             "tool_name": name,
                             "execution_location": "Artifact Store",
-                            "indexed": index is not None,
+                            "indexed": False,
+                            "indexing_status": "pending",
                         },
                         solver_id=self.solver_id,
                     )
@@ -794,19 +795,6 @@ class MCPToolHandler(HandlerRuntime):
         with self.store.transaction():
             if artifact is not None:
                 self.store.add_artifact(artifact)
-                try:
-                    self.artifacts.index(artifact)
-                except Exception as exc:
-                    self.store.append_agent_event(
-                        self.task.id,
-                        "ARTIFACT_INDEX_FAILED",
-                        {
-                            "artifact_id": artifact.id,
-                            "trace_id": trace_id,
-                            "reason": self._safe_model_content(str(exc))[:800],
-                        },
-                        solver_id=self.solver_id,
-                    )
             if candidate and artifact_ids:
                 self.store.append_agent_event(
                     self.task.id,
@@ -1067,7 +1055,9 @@ class MCPToolHandler(HandlerRuntime):
                     trace_id=outcome.trace_id,
                 )
         artifact_root = task_artifact_root(self.run_root / self.task.id, self.task)
-        return ArtifactStore(artifact_root).save_text(
+        return ArtifactStore(
+            artifact_root, execution_context=self.state.execution_context
+        ).save_text(
             task_id=self.task.id,
             intent_id=None,
             kind="tool_output",

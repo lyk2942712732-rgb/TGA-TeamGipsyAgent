@@ -37,6 +37,7 @@ def create_task(payload: CreateTaskRequest) -> dict[str, Any]:
         result = _application_commands().create_task(CreateTaskCommand(
             task_id=payload.id,
             name=payload.name,
+            workspace_id=payload.workspace_id,
             mode=payload.mode,
             goal=payload.goal,
             mode_options=payload.mode_options,
@@ -64,6 +65,7 @@ def preflight_task(payload: CreateTaskRequest) -> dict[str, Any]:
         result = _application_commands().preflight_task(CreateTaskCommand(
             task_id=payload.id,
             name=payload.name,
+            workspace_id=payload.workspace_id,
             mode=payload.mode,
             goal=payload.goal,
             mode_options=payload.mode_options,

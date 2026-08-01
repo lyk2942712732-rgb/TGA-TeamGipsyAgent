@@ -1,0 +1,16 @@
+{
+    "profile_id":  "static-analysis-v1",
+    "tools":  {
+                  "python3":  "image-managed",
+                  "analyzeHeadless":  "image-managed",
+                  "radare2":  "image-managed",
+                  "rizin":  "image-managed",
+                  "clang":  "image-managed",
+                  "objdump":  "image-managed",
+                  "readelf":  "image-managed",
+                  "checksec":  "image-managed",
+                  "yara":  "image-managed",
+                  "capa":  "image-managed",
+                  "binwalk":  "image-managed"
+              }
+}

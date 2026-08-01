@@ -1,0 +1,21 @@
+version: 1
+base:
+  image: ghcr.io/team-gipsy/tga-kali-base
+  context: base
+pilots:
+  - solver: surface-mapper
+    profile: pentest-surface-v1
+    image: tga-kali-surface-mapper
+    context: solvers/surface-mapper
+  - solver: ctf-web-solver
+    profile: ctf-web-v1
+    image: tga-kali-ctf-web
+    context: solvers/ctf-web-solver
+  - solver: ctf-pwn-solver
+    profile: ctf-pwn-v1
+    image: tga-kali-ctf-pwn
+    context: solvers/ctf-pwn-solver
+  - solver: static-analysis-solver
+    profile: static-analysis-v1
+    image: tga-kali-static-analysis
+    context: solvers/static-analysis-solver

@@ -334,6 +334,7 @@ type AcquireRequest struct {
 	ConfigDigest   string                 `protobuf:"bytes,4,opt,name=config_digest,json=configDigest,proto3" json:"config_digest,omitempty"`
 	FencingToken   uint64                 `protobuf:"varint,5,opt,name=fencing_token,json=fencingToken,proto3" json:"fencing_token,omitempty"`
 	IdempotencyKey string                 `protobuf:"bytes,6,opt,name=idempotency_key,json=idempotencyKey,proto3" json:"idempotency_key,omitempty"`
+	SolverRunId    string                 `protobuf:"bytes,7,opt,name=solver_run_id,json=solverRunId,proto3" json:"solver_run_id,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
@@ -410,12 +411,21 @@ func (x *AcquireRequest) GetIdempotencyKey() string {
 	return ""
 }
 
+func (x *AcquireRequest) GetSolverRunId() string {
+	if x != nil {
+		return x.SolverRunId
+	}
+	return ""
+}
+
 type AcquireResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	InstanceId    string                 `protobuf:"bytes,1,opt,name=instance_id,json=instanceId,proto3" json:"instance_id,omitempty"`
 	ConfigDigest  string                 `protobuf:"bytes,2,opt,name=config_digest,json=configDigest,proto3" json:"config_digest,omitempty"`
 	FencingToken  uint64                 `protobuf:"varint,3,opt,name=fencing_token,json=fencingToken,proto3" json:"fencing_token,omitempty"`
 	Reused        bool                   `protobuf:"varint,4,opt,name=reused,proto3" json:"reused,omitempty"`
+	ImageDigest   string                 `protobuf:"bytes,5,opt,name=image_digest,json=imageDigest,proto3" json:"image_digest,omitempty"`
+	ToolsetDigest string                 `protobuf:"bytes,6,opt,name=toolset_digest,json=toolsetDigest,proto3" json:"toolset_digest,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -476,6 +486,20 @@ func (x *AcquireResponse) GetReused() bool {
 		return x.Reused
 	}
 	return false
+}
+
+func (x *AcquireResponse) GetImageDigest() string {
+	if x != nil {
+		return x.ImageDigest
+	}
+	return ""
+}
+
+func (x *AcquireResponse) GetToolsetDigest() string {
+	if x != nil {
+		return x.ToolsetDigest
+	}
+	return ""
 }
 
 type ProcessSpec struct {
@@ -1509,7 +1533,7 @@ const file_sandbox_v1_sandbox_proto_rawDesc = "" +
 	" \x01(\bR\x15clientUidPolicyActive\"8\n" +
 	"\fNetworkGrant\x12\x12\n" +
 	"\x04cidr\x18\x01 \x01(\tR\x04cidr\x12\x14\n" +
-	"\x05ports\x18\x02 \x03(\rR\x05ports\"\xd8\x01\n" +
+	"\x05ports\x18\x02 \x03(\rR\x05ports\"\xfc\x01\n" +
 	"\x0eAcquireRequest\x12\x17\n" +
 	"\atask_id\x18\x01 \x01(\tR\x06taskId\x12\x1b\n" +
 	"\tsolver_id\x18\x02 \x01(\tR\bsolverId\x12\x1d\n" +
@@ -1517,13 +1541,16 @@ const file_sandbox_v1_sandbox_proto_rawDesc = "" +
 	"profile_id\x18\x03 \x01(\tR\tprofileId\x12#\n" +
 	"\rconfig_digest\x18\x04 \x01(\tR\fconfigDigest\x12#\n" +
 	"\rfencing_token\x18\x05 \x01(\x04R\ffencingToken\x12'\n" +
-	"\x0fidempotency_key\x18\x06 \x01(\tR\x0eidempotencyKey\"\x94\x01\n" +
+	"\x0fidempotency_key\x18\x06 \x01(\tR\x0eidempotencyKey\x12\"\n" +
+	"\rsolver_run_id\x18\a \x01(\tR\vsolverRunId\"\xde\x01\n" +
 	"\x0fAcquireResponse\x12\x1f\n" +
 	"\vinstance_id\x18\x01 \x01(\tR\n" +
 	"instanceId\x12#\n" +
 	"\rconfig_digest\x18\x02 \x01(\tR\fconfigDigest\x12#\n" +
 	"\rfencing_token\x18\x03 \x01(\x04R\ffencingToken\x12\x16\n" +
-	"\x06reused\x18\x04 \x01(\bR\x06reused\"\xe5\x02\n" +
+	"\x06reused\x18\x04 \x01(\bR\x06reused\x12!\n" +
+	"\fimage_digest\x18\x05 \x01(\tR\vimageDigest\x12%\n" +
+	"\x0etoolset_digest\x18\x06 \x01(\tR\rtoolsetDigest\"\xe5\x02\n" +
 	"\vProcessSpec\x12\x12\n" +
 	"\x04argv\x18\x01 \x03(\tR\x04argv\x12N\n" +
 	"\venvironment\x18\x02 \x03(\v2,.tga.sandbox.v1.ProcessSpec.EnvironmentEntryR\venvironment\x12+\n" +

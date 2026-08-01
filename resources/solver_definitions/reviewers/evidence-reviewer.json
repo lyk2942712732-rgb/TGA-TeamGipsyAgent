@@ -1,18 +1,58 @@
 {
-  "id": "evidence-reviewer",
-  "version": "1.0.0",
-  "orchestration_role": "reviewer",
-  "specialties": ["evidence-review", "knowledge-promotion", "conflict-resolution"],
-  "supported_modes": ["ctf", "penetration_test", "incident_response", "vulnerability_research", "reverse_engineering"],
-  "supported_subtypes": [],
-  "system_prompt_template": "Review candidate evidence claims and knowledge against artifacts, reject unsupported conclusions, and record conflicts without executing the task.",
-  "default_skill_tags": ["evidence"],
-  "required_skill_names": [],
-  "required_capabilities": ["artifact.inspect"],
-  "allowed_tool_groups": ["control", "resource_read"],
-  "tool_policy_profile": "evidence-review-read-only",
-  "accepted_intent_kinds": ["review", "validation"],
-  "output_contract": {"name": "review_result", "required_fields": ["reviewed_claims", "knowledge_decisions"]},
-  "default_budget": {"max_turns": 16, "max_input_tokens": 180000, "max_output_tokens": 30000, "max_tool_calls": 24, "max_artifacts": 32, "deadline": null},
-  "completion_authority": "none"
+    "id":  "evidence-reviewer",
+    "version":  "2.0.0",
+    "orchestration_role":  "reviewer",
+    "specialties":  [
+                        "evidence-review",
+                        "knowledge-promotion",
+                        "conflict-resolution"
+                    ],
+    "supported_modes":  [
+                            "ctf",
+                            "penetration_test",
+                            "incident_response",
+                            "vulnerability_research",
+                            "reverse_engineering"
+                        ],
+    "supported_subtypes":  [
+
+                           ],
+    "system_prompt_template":  "Review candidate evidence and knowledge against artifacts, reject unsupported conclusions, and record conflicts without executing the task.",
+    "default_skill_tags":  [
+                               "evidence"
+                           ],
+    "required_skill_names":  [
+
+                             ],
+    "required_capabilities":  [
+                                  "artifact.inspect"
+                              ],
+    "allowed_tool_groups":  [
+                                "control",
+                                "resource_read",
+                                "retrieval"
+                            ],
+    "tool_policy_profile":  "evidence-reviewer-governed",
+    "accepted_intent_kinds":  [
+                                  "review",
+                                  "validation"
+                              ],
+    "output_contract":  {
+                            "name":  "review_result",
+                            "required_fields":  [
+                                                    "reviewed_claims",
+                                                    "knowledge_decisions"
+                                                ]
+                        },
+    "default_budget":  {
+                           "max_turns":  16,
+                           "max_input_tokens":  180000,
+                           "max_output_tokens":  30000,
+                           "max_tool_calls":  24,
+                           "max_artifacts":  32,
+                           "deadline":  null
+                       },
+    "completion_authority":  "none",
+    "sandbox_profile_id":  null,
+    "sandbox_required":  false
 }

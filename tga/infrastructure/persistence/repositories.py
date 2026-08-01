@@ -22,10 +22,16 @@ from tga.domain.solver.budgets import SolverBudgetUsage
 from tga.domain.solver.assignments import SolverAssignment
 from tga.domain.solver.instances import SolverInstance
 from tga.domain.solver.leases import SolverLease, TaskOrchestratorLease
+from tga.domain.solver.runs import SolverRun
 from tga.domain.solver.results import ReportResult, ReviewResult, WorkerResult
 from tga.domain.solver.status import SolverInstanceStatus
 from tga.domain.solver.team_runtime import TeamRuntimeState
-from tga.domain.skills.models import SolverSkillSnapshot, TaskCommonSkillSnapshot
+from tga.domain.skills.models import (
+    SkillActivation,
+    SkillSelectionDecision,
+    SolverSkillSnapshot,
+    TaskCommonSkillSnapshot,
+)
 from tga.domain.solver.definitions import SolverDefinition
 from tga.domain.task.models import TGATask
 from tga.domain.task.spec import TaskSpec
@@ -845,6 +851,13 @@ class SqliteSolverRepository:
         ).fetchall()
         return [SolverInstance.model_validate_json(row["payload_json"]) for row in rows]
 
+    def lease_fencing_token(self, solver_id: str) -> int | None:
+        row = self.conn.execute(
+            "SELECT fencing_token FROM solver_leases WHERE solver_id=?",
+            (solver_id,),
+        ).fetchone()
+        return int(row["fencing_token"]) if row else None
+
     def add_solver(self, solver: SolverInstance) -> None:
         with self.database.transaction():
             self._add_solver(solver)
@@ -969,6 +982,78 @@ class SqliteSolverRepository:
             (solver_id,),
         ).fetchone()
         return SolverSkillSnapshot.model_validate_json(row["payload_json"]) if row else None
+
+    def save_skill_selection_decision(self, decision: SkillSelectionDecision) -> None:
+        _require_task(self.conn, decision.task_id)
+        current = self.conn.execute(
+            "SELECT payload_json FROM skill_selection_decisions WHERE id=?",
+            (decision.id,),
+        ).fetchone()
+        payload = decision.model_dump_json()
+        if current is not None:
+            if current["payload_json"] != payload:
+                raise PersistenceConflict(f"SkillSelectionDecision is immutable: {decision.id}")
+            return
+        self.conn.execute(
+            "INSERT INTO skill_selection_decisions(id,task_id,solver_id,intent_id,payload_json,created_at) "
+            "VALUES (?,?,?,?,?,?)",
+            (
+                decision.id, decision.task_id, decision.solver_id, decision.intent_id,
+                payload, decision.created_at,
+            ),
+        )
+        self.database._commit()
+
+    def get_skill_selection_decision(
+        self, decision_id: str
+    ) -> SkillSelectionDecision | None:
+        row = self.conn.execute(
+            "SELECT payload_json FROM skill_selection_decisions WHERE id=?",
+            (decision_id,),
+        ).fetchone()
+        return SkillSelectionDecision.model_validate_json(row["payload_json"]) if row else None
+
+    def list_skill_selection_decisions(
+        self, task_id: str, *, solver_id: str | None = None
+    ) -> list[SkillSelectionDecision]:
+        rows = self.conn.execute(
+            "SELECT payload_json FROM skill_selection_decisions "
+            "WHERE task_id=? AND (? IS NULL OR solver_id=?) "
+            "ORDER BY created_at,id",
+            (task_id, solver_id, solver_id),
+        ).fetchall()
+        return [
+            SkillSelectionDecision.model_validate_json(row["payload_json"])
+            for row in rows
+        ]
+
+    def save_skill_activation(self, activation: SkillActivation) -> None:
+        _require_task(self.conn, activation.task_id)
+        current = self.conn.execute(
+            "SELECT payload_json FROM skill_activations WHERE id=?", (activation.id,)
+        ).fetchone()
+        payload = activation.model_dump_json()
+        if current is not None:
+            if current["payload_json"] != payload:
+                raise PersistenceConflict(f"SkillActivation is immutable: {activation.id}")
+            return
+        self.conn.execute(
+            "INSERT INTO skill_activations(id,task_id,solver_id,skill_name,"
+            "selection_decision_id,payload_json,created_at) VALUES (?,?,?,?,?,?,?)",
+            (
+                activation.id, activation.task_id, activation.solver_id,
+                activation.skill_name, activation.selection_decision_id,
+                payload, activation.activated_at,
+            ),
+        )
+        self.database._commit()
+
+    def list_skill_activations(self, solver_id: str) -> list[SkillActivation]:
+        rows = self.conn.execute(
+            "SELECT payload_json FROM skill_activations WHERE solver_id=? "
+            "ORDER BY created_at,id", (solver_id,),
+        ).fetchall()
+        return [SkillActivation.model_validate_json(row["payload_json"]) for row in rows]
 
     def save_worker_result(self, result: WorkerResult, *, version: int = 1) -> str:
         _require_owned(self.conn, "solver_instances", result.solver_id, result.task_id, "worker result solver")
@@ -1393,6 +1478,427 @@ class SqliteOrchestrationRepository:
         self.database._commit()
         return replacement
 
+    def create_solver_run(self, run: SolverRun) -> SolverRun:
+        existing = self.get_solver_run(run.id)
+        if existing is not None:
+            if existing == run:
+                return existing
+            raise PersistenceConflict(f"SolverRun is immutable at creation: {run.id}")
+        _require_owned(self.conn, "solver_instances", run.solver_id, run.task_id, "run solver")
+        if run.assignment_id:
+            _require_owned(
+                self.conn, "solver_assignments", run.assignment_id, run.task_id,
+                "run assignment",
+            )
+        if run.intent_id:
+            _require_owned(self.conn, "intents", run.intent_id, run.task_id, "run intent")
+        try:
+            self.conn.execute(
+                "INSERT INTO solver_runs("
+                "id,task_id,solver_id,assignment_id,intent_id,orchestration_role,state,"
+                "attempt,turn_count,max_turns,lease_owner,fencing_token,lease_expires_at,heartbeat_at,result_id,"
+                "error_code,version,payload_json,created_at,updated_at"
+                ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?,?,?)",
+                (
+                    run.id, run.task_id, run.solver_id, run.assignment_id, run.intent_id,
+                    run.orchestration_role, run.state, run.attempt, run.turn_count,
+                    run.max_turns, run.lease_owner,
+                    run.fencing_token, run.lease_expires_at, run.heartbeat_at, run.result_id,
+                    run.error_code, run.model_dump_json(), run.created_at, run.updated_at,
+                ),
+            )
+        except sqlite3.IntegrityError as exc:
+            raise PersistenceConflict(f"SolverRun creation conflict: {run.id}") from exc
+        self.database._commit()
+        return run
+
+    def get_solver_run(self, run_id: str) -> SolverRun | None:
+        row = self.conn.execute(
+            "SELECT payload_json FROM solver_runs WHERE id=?", (run_id,)
+        ).fetchone()
+        return SolverRun.model_validate_json(row["payload_json"]) if row else None
+
+    def list_solver_runs(self, task_id: str) -> list[SolverRun]:
+        rows = self.conn.execute(
+            "SELECT payload_json FROM solver_runs WHERE task_id=? ORDER BY created_at,id",
+            (task_id,),
+        ).fetchall()
+        return [SolverRun.model_validate_json(row["payload_json"]) for row in rows]
+
+    def active_run_fencing_token(self, solver_id: str) -> int | None:
+        row = self.conn.execute(
+            "SELECT fencing_token FROM solver_runs WHERE solver_id=? "
+            "AND state IN ('leased','running') ORDER BY updated_at DESC LIMIT 1",
+            (solver_id,),
+        ).fetchone()
+        return int(row["fencing_token"]) if row else None
+
+    def claim_solver_run(
+        self, run_id: str, owner_id: str, *, ttl_seconds: float,
+        expected_version: int, max_active_workers: int | None = None,
+        now: datetime | None = None,
+    ) -> SolverRun | None:
+        if ttl_seconds <= 0:
+            raise ValueError("run lease ttl must be positive")
+        instant = now or datetime.now(UTC)
+        stamp = _timestamp(instant)
+        expiry = _timestamp(instant + timedelta(seconds=ttl_seconds))
+        try:
+            with self.database.transaction():
+                current = self.get_solver_run(run_id)
+                if current is None or current.version != expected_version:
+                    return None
+                if current.state not in {"queued", "retry_queued"}:
+                    return None
+                if max_active_workers is not None and current.orchestration_role == "worker":
+                    active = int(self.conn.execute(
+                        "SELECT COUNT(*) FROM solver_runs WHERE task_id=? "
+                        "AND orchestration_role='worker' AND state IN ('leased','running')",
+                        (current.task_id,),
+                    ).fetchone()[0])
+                    if active >= max_active_workers:
+                        return None
+                replacement = SolverRun.model_validate(current.model_dump() | {
+                    "state": "leased",
+                    "lease_owner": owner_id,
+                    "fencing_token": current.fencing_token + 1,
+                    "lease_expires_at": expiry,
+                    "heartbeat_at": stamp,
+                    "updated_at": stamp,
+                    "version": current.version + 1,
+                })
+                cursor = self.conn.execute(
+                    "UPDATE solver_runs SET state='leased',lease_owner=?,fencing_token=?,"
+                    "lease_expires_at=?,heartbeat_at=?,version=?,payload_json=?,updated_at=? "
+                    "WHERE id=? AND version=? AND state IN ('queued','retry_queued')",
+                    (
+                        owner_id, replacement.fencing_token, expiry, stamp,
+                        replacement.version, replacement.model_dump_json(), stamp,
+                        run_id, expected_version,
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    return None
+        except sqlite3.IntegrityError as exc:
+            raise PersistenceConflict(
+                f"Intent already has an active SolverRun: {current.intent_id}"
+            ) from exc
+        return replacement
+
+    def start_solver_run(
+        self, run_id: str, owner_id: str, fencing_token: int,
+        *, now: datetime | None = None,
+    ) -> SolverRun:
+        instant = now or datetime.now(UTC)
+        stamp = _timestamp(instant)
+        current = self.get_solver_run(run_id)
+        if current is None:
+            raise KeyError(f"SolverRun not found: {run_id}")
+        replacement = SolverRun.model_validate(current.model_dump() | {
+            "state": "running", "started_at": current.started_at or stamp,
+            "heartbeat_at": stamp, "updated_at": stamp, "version": current.version + 1,
+        })
+        cursor = self.conn.execute(
+            "UPDATE solver_runs SET state='running',heartbeat_at=?,version=?,payload_json=?,"
+            "updated_at=? WHERE id=? AND state='leased' AND lease_owner=? "
+            "AND fencing_token=? AND lease_expires_at>? AND version=?",
+            (
+                stamp, replacement.version, replacement.model_dump_json(), stamp,
+                run_id, owner_id, fencing_token, stamp, current.version,
+            ),
+        )
+        if cursor.rowcount != 1:
+            raise PersistenceConflict(f"SolverRun lease is no longer valid: {run_id}")
+        self.database._commit()
+        return replacement
+
+    def renew_solver_run(
+        self, run_id: str, owner_id: str, fencing_token: int, *, ttl_seconds: float,
+        now: datetime | None = None,
+    ) -> SolverRun | None:
+        if ttl_seconds <= 0:
+            raise ValueError("run lease ttl must be positive")
+        instant = now or datetime.now(UTC)
+        stamp = _timestamp(instant)
+        expiry = _timestamp(instant + timedelta(seconds=ttl_seconds))
+        current = self.get_solver_run(run_id)
+        if current is None or current.state not in {"leased", "running"}:
+            return None
+        replacement = SolverRun.model_validate(current.model_dump() | {
+            "lease_expires_at": expiry, "heartbeat_at": stamp,
+            "updated_at": stamp, "version": current.version + 1,
+        })
+        cursor = self.conn.execute(
+            "UPDATE solver_runs SET lease_expires_at=?,heartbeat_at=?,version=?,payload_json=?,"
+            "updated_at=? WHERE id=? AND state IN ('leased','running') AND lease_owner=? "
+            "AND fencing_token=? AND lease_expires_at>? AND version=?",
+            (
+                expiry, stamp, replacement.version, replacement.model_dump_json(), stamp,
+                run_id, owner_id, fencing_token, stamp, current.version,
+            ),
+        )
+        if cursor.rowcount != 1:
+            return None
+        self.database._commit()
+        return replacement
+
+    def finish_solver_run(
+        self, run_id: str, owner_id: str, fencing_token: int, *, state: str,
+        result_id: str | None = None, error_code: str | None = None,
+        error_message: str | None = None, now: datetime | None = None,
+    ) -> SolverRun:
+        if state not in {"completed", "failed", "cancelled"}:
+            raise ValueError("invalid terminal SolverRun state")
+        stamp = _timestamp(now or datetime.now(UTC))
+        current = self.get_solver_run(run_id)
+        if current is None:
+            raise KeyError(f"SolverRun not found: {run_id}")
+        if current.state == state and current.result_id == result_id:
+            return current
+        replacement = SolverRun.model_validate(current.model_dump() | {
+            "state": state, "result_id": result_id, "error_code": error_code,
+            "error_message": error_message, "finished_at": stamp,
+            "updated_at": stamp, "version": current.version + 1,
+        })
+        cursor = self.conn.execute(
+            "UPDATE solver_runs SET state=?,result_id=?,error_code=?,version=?,payload_json=?,"
+            "updated_at=? WHERE id=? AND state IN ('leased','running') AND lease_owner=? "
+            "AND fencing_token=? AND lease_expires_at>? AND version=?",
+            (
+                state, result_id, error_code, replacement.version,
+                replacement.model_dump_json(), stamp, run_id, owner_id,
+                fencing_token, stamp, current.version,
+            ),
+        )
+        if cursor.rowcount != 1:
+            raise PersistenceConflict(f"late SolverRun result rejected: {run_id}")
+        self.database._commit()
+        return replacement
+
+    def reserve_solver_run_turn(
+        self,
+        run_id: str,
+        owner_id: str,
+        fencing_token: int,
+        *,
+        now: datetime | None = None,
+    ) -> SolverRun | None:
+        """Atomically reserve one model turn from one fenced SolverRun."""
+        instant = now or datetime.now(UTC)
+        stamp = _timestamp(instant)
+        with self.database.transaction():
+            current = self.get_solver_run(run_id)
+            if current is None or current.state != "running":
+                return None
+            if (
+                current.lease_owner != owner_id
+                or current.fencing_token != fencing_token
+                or not current.lease_expires_at
+                or current.lease_expires_at <= stamp
+                or current.turn_count >= current.max_turns
+            ):
+                return None
+            session_cursor = self.conn.execute(
+                "UPDATE sessions SET turn_count=turn_count+1 "
+                "WHERE task_id=? AND status='running' AND turn_count<max_turns",
+                (current.task_id,),
+            )
+            if session_cursor.rowcount != 1:
+                return None
+            replacement = SolverRun.model_validate(current.model_dump() | {
+                "turn_count": current.turn_count + 1,
+                "updated_at": stamp,
+                "version": current.version + 1,
+            })
+            cursor = self.conn.execute(
+                "UPDATE solver_runs SET turn_count=?,version=?,payload_json=?,updated_at=? "
+                "WHERE id=? AND state='running' AND lease_owner=? AND fencing_token=? "
+                "AND lease_expires_at>? AND turn_count<? AND version=?",
+                (
+                    replacement.turn_count, replacement.version,
+                    replacement.model_dump_json(), stamp, run_id, owner_id,
+                    fencing_token, stamp, current.max_turns, current.version,
+                ),
+            )
+            return replacement if cursor.rowcount == 1 else None
+
+    def validate_solver_run_authority(
+        self, run_id: str, owner_id: str, fencing_token: int,
+        *, now: datetime | None = None,
+    ) -> bool:
+        stamp = _timestamp(now or datetime.now(UTC))
+        return self.conn.execute(
+            "SELECT 1 FROM solver_runs WHERE id=? AND state='running' "
+            "AND lease_owner=? AND fencing_token=? AND lease_expires_at>?",
+            (run_id, owner_id, fencing_token, stamp),
+        ).fetchone() is not None
+
+    def suspend_solver_run_for_approval(
+        self, run_id: str, owner_id: str, fencing_token: int,
+        *, now: datetime | None = None,
+    ) -> SolverRun:
+        stamp = _timestamp(now or datetime.now(UTC))
+        current = self.get_solver_run(run_id)
+        if current is None:
+            raise KeyError(f"SolverRun not found: {run_id}")
+        replacement = SolverRun.model_validate(current.model_dump() | {
+            "state": "waiting_approval",
+            "lease_owner": None,
+            "lease_expires_at": None,
+            "heartbeat_at": None,
+            "updated_at": stamp,
+            "version": current.version + 1,
+        })
+        cursor = self.conn.execute(
+            "UPDATE solver_runs SET state='waiting_approval',lease_owner=NULL,"
+            "lease_expires_at=NULL,heartbeat_at=NULL,version=?,payload_json=?,updated_at=? "
+            "WHERE id=? AND state='running' AND lease_owner=? AND fencing_token=? "
+            "AND lease_expires_at>? AND version=?",
+            (
+                replacement.version, replacement.model_dump_json(), stamp, run_id,
+                owner_id, fencing_token, stamp, current.version,
+            ),
+        )
+        if cursor.rowcount != 1:
+            raise PersistenceConflict(f"SolverRun lease is no longer valid: {run_id}")
+        self.database._commit()
+        return replacement
+
+    def resume_solver_run_after_approval(
+        self, solver_id: str, intent_id: str | None,
+        *, now: datetime | None = None,
+    ) -> SolverRun | None:
+        stamp = _timestamp(now or datetime.now(UTC))
+        row = self.conn.execute(
+            "SELECT payload_json FROM solver_runs WHERE solver_id=? "
+            "AND intent_id IS ? AND state='waiting_approval' "
+            "ORDER BY attempt DESC,created_at DESC LIMIT 1",
+            (solver_id, intent_id),
+        ).fetchone()
+        if row is None:
+            return None
+        current = SolverRun.model_validate_json(row["payload_json"])
+        replacement = SolverRun.model_validate(current.model_dump() | {
+            "state": "retry_queued",
+            "updated_at": stamp,
+            "version": current.version + 1,
+        })
+        cursor = self.conn.execute(
+            "UPDATE solver_runs SET state='retry_queued',version=?,payload_json=?,updated_at=? "
+            "WHERE id=? AND state='waiting_approval' AND version=?",
+            (
+                replacement.version, replacement.model_dump_json(), stamp,
+                current.id, current.version,
+            ),
+        )
+        if cursor.rowcount != 1:
+            raise PersistenceConflict(
+                f"SolverRun approval continuation changed concurrently: {current.id}"
+            )
+        self.database._commit()
+        return replacement
+
+    def expire_solver_runs(self, *, now: datetime | None = None) -> list[SolverRun]:
+        stamp = _timestamp(now or datetime.now(UTC))
+        rows = self.conn.execute(
+            "SELECT payload_json FROM solver_runs WHERE state IN ('leased','running') "
+            "AND lease_expires_at<=? ORDER BY created_at,id", (stamp,),
+        ).fetchall()
+        expired: list[SolverRun] = []
+        with self.database.transaction():
+            for row in rows:
+                current = SolverRun.model_validate_json(row["payload_json"])
+                replacement = SolverRun.model_validate(current.model_dump() | {
+                    "state": "expired", "finished_at": stamp,
+                    "error_code": "SOLVER_RUN_LEASE_EXPIRED",
+                    "error_message": "SolverRun heartbeat lease expired",
+                    "updated_at": stamp, "version": current.version + 1,
+                })
+                cursor = self.conn.execute(
+                    "UPDATE solver_runs SET state='expired',error_code=?,version=?,payload_json=?,"
+                    "updated_at=? WHERE id=? AND state IN ('leased','running') "
+                    "AND lease_expires_at<=? AND version=?",
+                    (
+                        replacement.error_code, replacement.version,
+                        replacement.model_dump_json(), stamp, current.id, stamp,
+                        current.version,
+                    ),
+                )
+                if cursor.rowcount == 1:
+                    expired.append(replacement)
+        return expired
+
+    def cancel_task_solver_runs(
+        self, task_id: str, *, now: datetime | None = None
+    ) -> list[SolverRun]:
+        stamp = _timestamp(now or datetime.now(UTC))
+        active_states = {"queued", "leased", "running", "waiting_approval", "retry_queued"}
+        cancelled: list[SolverRun] = []
+        with self.database.transaction():
+            for current in self.list_solver_runs(task_id):
+                if current.state not in active_states:
+                    continue
+                replacement = SolverRun.model_validate(current.model_dump() | {
+                    "state": "cancelled",
+                    "finished_at": stamp,
+                    "error_code": "TASK_CANCELLED",
+                    "error_message": "Task cancellation invalidated the SolverRun",
+                    "updated_at": stamp,
+                    "version": current.version + 1,
+                })
+                cursor = self.conn.execute(
+                    "UPDATE solver_runs SET state='cancelled',error_code=?,version=?,"
+                    "payload_json=?,updated_at=? WHERE id=? AND version=? AND state IN "
+                    "('queued','leased','running','waiting_approval','retry_queued')",
+                    (
+                        replacement.error_code, replacement.version,
+                        replacement.model_dump_json(), stamp, current.id, current.version,
+                    ),
+                )
+                if cursor.rowcount == 1:
+                    cancelled.append(replacement)
+        return cancelled
+
+    def cancel_solver_runs(
+        self,
+        task_id: str,
+        solver_id: str,
+        *,
+        reason: str = "SOLVER_CANCELLED",
+        now: datetime | None = None,
+    ) -> list[SolverRun]:
+        stamp = _timestamp(now or datetime.now(UTC))
+        active_states = {"queued", "leased", "running", "waiting_approval", "retry_queued"}
+        cancelled: list[SolverRun] = []
+        with self.database.transaction():
+            for current in self.list_solver_runs(task_id):
+                if current.solver_id != solver_id or current.state not in active_states:
+                    continue
+                replacement = SolverRun.model_validate(current.model_dump() | {
+                    "state": "cancelled",
+                    "finished_at": stamp,
+                    "error_code": reason,
+                    "error_message": "Solver control invalidated the SolverRun",
+                    "updated_at": stamp,
+                    "version": current.version + 1,
+                })
+                cursor = self.conn.execute(
+                    "UPDATE solver_runs SET state='cancelled',error_code=?,version=?,"
+                    "payload_json=?,updated_at=? WHERE id=? AND version=? AND state IN "
+                    "('queued','leased','running','waiting_approval','retry_queued')",
+                    (
+                        replacement.error_code,
+                        replacement.version,
+                        replacement.model_dump_json(),
+                        stamp,
+                        current.id,
+                        current.version,
+                    ),
+                )
+                if cursor.rowcount == 1:
+                    cancelled.append(replacement)
+        return cancelled
+
     def is_worker_result_merged(self, result_id: str) -> bool:
         return self.conn.execute(
             "SELECT 1 FROM worker_result_merges WHERE worker_result_id=?", (result_id,)
@@ -1556,7 +2062,12 @@ def _require_owned(
     conn: sqlite3.Connection, table: str, record_id: str, task_id: str, label: str
 ) -> None:
     if table not in {
-        "intents", "artifacts", "evidence_claims", "solver_instances", "knowledge_items"
+        "intents",
+        "artifacts",
+        "evidence_claims",
+        "solver_instances",
+        "knowledge_items",
+        "solver_assignments",
     }:
         raise ValueError("unsupported ownership table")
     row = conn.execute(f"SELECT task_id FROM {table} WHERE id=?", (record_id,)).fetchone()

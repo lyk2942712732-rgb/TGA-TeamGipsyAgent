@@ -41,6 +41,7 @@ class CreateTaskCommand:
     input_text: str
     file_ids: list[str]
     execution_policy: ExecutionPolicy
+    workspace_id: str | None = None
     selected_skill_names: tuple[str, ...] | None = None
     preflight_fingerprint: str | None = None
 
@@ -182,6 +183,7 @@ class TaskCreationService:
             task = TGATask(
                 id=task_id,
                 name=command.name.strip(),
+                workspace_id=command.workspace_id,
                 mode=mode,
                 goal=(command.goal or mode_profile(mode).default_goal).strip(),
                 mode_config=mode_config,

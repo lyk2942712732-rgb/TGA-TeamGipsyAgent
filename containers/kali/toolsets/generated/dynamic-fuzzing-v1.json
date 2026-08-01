@@ -1,0 +1,10 @@
+{
+    "profile_id":  "dynamic-fuzzing-v1",
+    "tools":  {
+                  "python3":  "image-managed",
+                  "afl-fuzz":  "image-managed",
+                  "clang":  "image-managed",
+                  "honggfuzz":  "image-managed",
+                  "radamsa":  "image-managed"
+              }
+}

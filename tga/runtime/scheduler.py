@@ -12,7 +12,7 @@ from uuid import uuid4
 
 from tga.evidence.store import EvidenceStore
 from tga.infrastructure.persistence import PersistenceBundle
-from tga.runtime.coordinator import SessionCoordinator
+from tga.runtime.lifecycle_service import TaskLifecycleService
 from tga.runtime.approvals import expire_pending_approvals
 from tga.runtime.errors import RuntimeConfigurationError
 
@@ -270,12 +270,14 @@ class RuntimeScheduler:
             )
             message = _redact_error(str(exc))[:1000]
             if isinstance(exc, RuntimeConfigurationError):
-                SessionCoordinator(store).stop(
-                    task_id=task_id,
-                    status="blocked",
+                task = store.get_task(task_id)
+                if task is None:
+                    return
+                TaskLifecycleService(task=task, store=store).block(
                     reason="runtime_configuration_blocked",
                     solver_id=solver_id,
                     turn_count=session.turn_count,
+                    solver_status="blocked",
                     error={
                         "code": exc.code,
                         "message": message,
@@ -283,54 +285,18 @@ class RuntimeScheduler:
                         "retryable": exc.retryable,
                     },
                 )
-                self._mark_runtime_failure(
-                    repositories, task_id, solver_id=solver_id,
-                    solver_status="blocked", orchestration_status="blocked",
-                )
                 return
-            SessionCoordinator(store).stop(
-                task_id=task_id,
-                status="failed",
+            task = store.get_task(task_id)
+            if task is None:
+                return
+            TaskLifecycleService(task=task, store=store).fail(
                 reason="background_runtime_failed",
                 solver_id=solver_id,
                 turn_count=session.turn_count,
                 error={"code": "BACKGROUND_RUNTIME_FAILED", "message": message},
             )
-            self._mark_runtime_failure(
-                repositories, task_id, solver_id=solver_id,
-                solver_status="failed", orchestration_status="failed",
-            )
         finally:
             store.close()
-
-    @staticmethod
-    def _mark_runtime_failure(
-        repositories: PersistenceBundle,
-        task_id: str,
-        *,
-        solver_id: str | None,
-        solver_status: str,
-        orchestration_status: str,
-    ) -> None:
-        with repositories.transaction():
-            if solver_id is not None:
-                solver = repositories.solvers.get_solver(solver_id)
-                if solver is not None and str(solver.status) not in {
-                    "completed", "failed", "cancelled",
-                }:
-                    repositories.solvers.update_solver_status(
-                        solver_id, solver_status
-                    )
-            state = repositories.orchestration.get_state(task_id)
-            if state is not None and state.status not in {
-                "completed", "failed", "cancelled",
-            }:
-                repositories.orchestration.save_state(state.model_copy(update={
-                    "status": orchestration_status,
-                    "updated_at": datetime.now(UTC).isoformat().replace(
-                        "+00:00", "Z"
-                    ),
-                }))
 
 
 def _redact_error(value: str) -> str:

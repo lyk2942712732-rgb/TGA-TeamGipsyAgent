@@ -162,6 +162,42 @@ CREATE TABLE IF NOT EXISTS solver_assignments (
     UNIQUE(task_id, intent_id, attempt)
 );
 
+CREATE TABLE IF NOT EXISTS solver_runs (
+    id TEXT PRIMARY KEY,
+    task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    solver_id TEXT NOT NULL REFERENCES solver_instances(id) ON DELETE CASCADE,
+    assignment_id TEXT REFERENCES solver_assignments(id) ON DELETE RESTRICT,
+    intent_id TEXT REFERENCES intents(id) ON DELETE RESTRICT,
+    orchestration_role TEXT NOT NULL,
+    state TEXT NOT NULL,
+    attempt INTEGER NOT NULL CHECK(attempt >= 1),
+    turn_count INTEGER NOT NULL DEFAULT 0 CHECK(turn_count >= 0),
+    max_turns INTEGER NOT NULL DEFAULT 1 CHECK(max_turns >= 1),
+    lease_owner TEXT,
+    fencing_token INTEGER NOT NULL DEFAULT 0 CHECK(fencing_token >= 0),
+    lease_expires_at TEXT,
+    heartbeat_at TEXT,
+    result_id TEXT,
+    error_code TEXT,
+    version INTEGER NOT NULL DEFAULT 1 CHECK(version >= 1),
+    payload_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(assignment_id)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_v6_active_solver_run_per_intent
+ON solver_runs(intent_id)
+WHERE intent_id IS NOT NULL
+  AND state IN ('leased','running','waiting_approval');
+
+CREATE INDEX IF NOT EXISTS idx_v6_solver_runs_task_state
+ON solver_runs(task_id,state,created_at);
+
+CREATE INDEX IF NOT EXISTS idx_v6_solver_runs_lease_expiry
+ON solver_runs(lease_expires_at)
+WHERE state IN ('leased','running');
+
 CREATE TABLE IF NOT EXISTS worker_result_merges (
     worker_result_id TEXT PRIMARY KEY REFERENCES worker_results(id) ON DELETE CASCADE,
     task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
@@ -353,9 +389,12 @@ CREATE TABLE IF NOT EXISTS sandbox_instances (
     instance_id TEXT PRIMARY KEY,
     task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
     solver_id TEXT NOT NULL,
+    solver_run_id TEXT NOT NULL REFERENCES solver_runs(id) ON DELETE CASCADE,
     profile_id TEXT NOT NULL,
     provider TEXT NOT NULL CHECK(provider IN ('docker_sandbox','sandboxd')),
     config_digest TEXT NOT NULL,
+    image_digest TEXT NOT NULL,
+    toolset_digest TEXT,
     fencing_token INTEGER NOT NULL CHECK(fencing_token >= 1),
     state TEXT NOT NULL CHECK(state IN (
         'acquiring','ready','released','destroying','destroyed','failed'
@@ -557,6 +596,67 @@ CREATE TABLE IF NOT EXISTS retrieval_hits (
     UNIQUE(retrieval_run_id, chunk_id)
 );
 
+CREATE TABLE IF NOT EXISTS artifact_index_projections (
+    artifact_id TEXT PRIMARY KEY REFERENCES artifacts(id) ON DELETE CASCADE,
+    task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    artifact_sha256 TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('pending','indexing','indexed','failed')),
+    attempt INTEGER NOT NULL CHECK(attempt >= 0),
+    snapshot_id TEXT,
+    binding_updated INTEGER NOT NULL CHECK(binding_updated IN (0,1)),
+    retryable INTEGER NOT NULL CHECK(retryable IN (0,1)),
+    payload_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS skill_publications (
+    id TEXT PRIMARY KEY,
+    revision_id TEXT NOT NULL REFERENCES document_revisions(id) ON DELETE RESTRICT,
+    document_id TEXT NOT NULL REFERENCES corpus_documents(id) ON DELETE RESTRICT,
+    skill_name TEXT NOT NULL,
+    skill_version TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('draft','reviewed','published','deprecated','revoked')),
+    payload_json TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS model_token_reservations (
+    id TEXT PRIMARY KEY,
+    idempotency_key TEXT NOT NULL UNIQUE,
+    task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    solver_id TEXT NOT NULL REFERENCES solver_instances(id) ON DELETE CASCADE,
+    intent_id TEXT REFERENCES intents(id) ON DELETE RESTRICT,
+    run_id TEXT,
+    estimated_input_tokens INTEGER NOT NULL CHECK(estimated_input_tokens >= 0),
+    estimated_output_tokens INTEGER NOT NULL CHECK(estimated_output_tokens >= 0),
+    actual_input_tokens INTEGER,
+    actual_output_tokens INTEGER,
+    status TEXT NOT NULL CHECK(status IN ('reserved','settled','released','expired')),
+    expires_at TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS skill_selection_decisions (
+    id TEXT PRIMARY KEY,
+    task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    solver_id TEXT NOT NULL,
+    intent_id TEXT,
+    payload_json TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS skill_activations (
+    id TEXT PRIMARY KEY,
+    task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    solver_id TEXT NOT NULL,
+    skill_name TEXT NOT NULL,
+    selection_decision_id TEXT,
+    payload_json TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS db_write_lock_metrics (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     wait_ms REAL NOT NULL CHECK(wait_ms >= 0),
@@ -586,9 +686,9 @@ CREATE INDEX IF NOT EXISTS idx_v6_findings_task_status ON findings(task_id, stat
 CREATE INDEX IF NOT EXISTS idx_v6_agent_events_task_seq ON agent_events(task_id, seq);
 CREATE INDEX IF NOT EXISTS idx_v6_approvals_task_status ON approvals(task_id, status, created_at);
 CREATE INDEX IF NOT EXISTS idx_v6_governed_actions_owner ON governed_actions(task_id, solver_id, intent_id, status);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_v6_sandbox_active_task
-ON sandbox_instances(task_id)
-WHERE state IN ('acquiring','ready','released','destroying');
+CREATE UNIQUE INDEX IF NOT EXISTS uq_active_solver_run_sandbox
+ON sandbox_instances(task_id,solver_id,solver_run_id)
+WHERE state IN ('acquiring','ready');
 CREATE INDEX IF NOT EXISTS idx_v6_sandbox_cleanup
 ON sandbox_instances(state,destroy_after);
 CREATE INDEX IF NOT EXISTS idx_v6_governed_actions_semantic ON governed_actions(task_id, solver_id, semantic_fingerprint, status);
@@ -609,3 +709,8 @@ CREATE INDEX IF NOT EXISTS idx_v6_index_snapshots_owner ON index_snapshots(owner
 CREATE INDEX IF NOT EXISTS idx_v6_index_bindings_owner ON index_bindings(owner_scope, workspace_id, task_id, solver_id, purpose);
 CREATE INDEX IF NOT EXISTS idx_v6_retrieval_runs_principal ON retrieval_runs(task_id, solver_id, intent_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_v6_retrieval_hits_run_rank ON retrieval_hits(retrieval_run_id, rank);
+CREATE INDEX IF NOT EXISTS idx_v6_artifact_index_projection_task ON artifact_index_projections(task_id, status, updated_at, artifact_id);
+CREATE INDEX IF NOT EXISTS idx_v6_skill_publications_revision ON skill_publications(revision_id, created_at, id);
+CREATE INDEX IF NOT EXISTS idx_v6_skill_publications_name ON skill_publications(skill_name, skill_version, created_at);
+CREATE INDEX IF NOT EXISTS idx_v6_skill_decisions_solver ON skill_selection_decisions(task_id, solver_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_v6_skill_activations_solver ON skill_activations(task_id, solver_id, created_at);

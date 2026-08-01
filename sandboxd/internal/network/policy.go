@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"sort"
 	"strings"
+	"sync"
 )
 
 type Grant struct {
@@ -20,6 +21,7 @@ type Grant struct {
 
 type Policy struct {
 	nftPath string
+	mu      sync.Mutex
 }
 
 func New(nftPath string) *Policy {
@@ -34,6 +36,8 @@ func (p *Policy) Available(ctx context.Context) bool {
 }
 
 func (p *Policy) Apply(ctx context.Context, taskID, bridge string, gateways []string, grants []Grant) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	rules, err := Render(taskID, bridge, gateways, grants)
 	if err != nil {
 		return err
@@ -65,6 +69,8 @@ func (p *Policy) Apply(ctx context.Context, taskID, bridge string, gateways []st
 }
 
 func (p *Policy) Delete(ctx context.Context, taskID string) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	file, err := os.CreateTemp("", "tga-nft-delete-*.nft")
 	if err != nil {
 		return err

@@ -40,6 +40,8 @@ def _config(**updates) -> SandboxConfig:
                 "provider": "docker_sandbox",
                 "image": "example.invalid/offline@sha256:" + "0" * 64,
                 "network_mode": "none",
+                "allowed_executables": ["file", "binwalk"],
+                "toolset_digest": "a" * 64,
             },
             "raw-network": {
                 "id": "raw-network",
@@ -47,6 +49,8 @@ def _config(**updates) -> SandboxConfig:
                 "image": "example.invalid/network@sha256:" + "1" * 64,
                 "network_mode": "target_allowlist",
                 "allow_net_raw": True,
+                "allowed_executables": ["nmap"],
+                "toolset_digest": "b" * 64,
             },
         },
     }
@@ -64,12 +68,14 @@ class FakeProvider:
     def acquire(self, **values):
         self.calls += 1
         return SandboxHandle(
-            instance_id="tga-instance",
+            instance_id=f"tga-instance-{values['solver_run_id']}",
             task_id=values["task_id"],
             solver_id=values["solver_id"],
+            solver_run_id=values["solver_run_id"],
             profile_id=values["profile_id"],
             provider="docker_sandbox",
             config_digest=self.config.digest,
+            image_digest="0" * 64,
             fencing_token=values["fencing_token"],
             state=SandboxState.READY,
         )
@@ -78,12 +84,24 @@ class FakeProvider:
         return None
 
 
+class FakeRepository:
+    def __init__(self):
+        self.handles = {}
+
+    def get_active(self, *, task_id, solver_id, solver_run_id):
+        return self.handles.get((task_id, solver_id, solver_run_id))
+
+    def put(self, handle):
+        self.handles[(handle.task_id, handle.solver_id, handle.solver_run_id)] = handle
+
+
 def test_manager_fails_closed_when_provider_is_missing() -> None:
     manager = SandboxManager(config=_config(), providers={})
     with pytest.raises(SandboxError) as error:
         manager.acquire(
             task_id="task-1",
             solver_id="solver-1",
+            solver_run_id="run-1",
             profile_id="offline-analysis",
             fencing_token=1,
             idempotency_key="key",
@@ -98,11 +116,64 @@ def test_manager_rejects_disabled_runtime() -> None:
         manager.acquire(
             task_id="task-1",
             solver_id="solver-1",
+            solver_run_id="run-1",
             profile_id="offline-analysis",
             fencing_token=1,
             idempotency_key="key",
         )
     assert error.value.code == "SANDBOX_RUNTIME_DISABLED"
+
+
+def test_manager_isolates_solver_runs_and_reuses_only_the_same_run() -> None:
+    config = _config()
+    provider = FakeProvider(config)
+    repository = FakeRepository()
+    manager = SandboxManager(
+        config=config,
+        providers={"docker_sandbox": provider},
+        repository=repository,
+    )
+
+    first = manager.acquire(
+        task_id="task-1", solver_id="solver-1", solver_run_id="run-1",
+        profile_id="offline-analysis", fencing_token=1, idempotency_key="first",
+    )
+    reused = manager.acquire(
+        task_id="task-1", solver_id="solver-1", solver_run_id="run-1",
+        profile_id="offline-analysis", fencing_token=2, idempotency_key="reuse",
+    )
+    second = manager.acquire(
+        task_id="task-1", solver_id="solver-2", solver_run_id="run-2",
+        profile_id="offline-analysis", fencing_token=1, idempotency_key="second",
+    )
+
+    assert reused.instance_id == first.instance_id
+    assert reused.fencing_token == 2
+    assert second.instance_id != first.instance_id
+    assert provider.calls == 3
+
+
+def test_manager_rejects_profile_change_within_solver_run() -> None:
+    config = _config()
+    provider = FakeProvider(config)
+    repository = FakeRepository()
+    manager = SandboxManager(
+        config=config,
+        providers={"docker_sandbox": provider},
+        repository=repository,
+    )
+    manager.acquire(
+        task_id="task-1", solver_id="solver-1", solver_run_id="run-1",
+        profile_id="offline-analysis", fencing_token=1, idempotency_key="first",
+    )
+
+    with pytest.raises(SandboxError) as error:
+        manager.acquire(
+            task_id="task-1", solver_id="solver-1", solver_run_id="run-1",
+            profile_id="raw-network", fencing_token=2, idempotency_key="changed",
+        )
+
+    assert error.value.code == "SOLVER_RUN_SANDBOX_CONFLICT"
 
 
 def test_docker_provider_uses_host_profile_and_no_docker_flags(tmp_path: Path) -> None:
@@ -128,6 +199,7 @@ def test_docker_provider_uses_host_profile_and_no_docker_flags(tmp_path: Path) -
     handle = provider.acquire(
         task_id="task-1",
         solver_id="solver-1",
+        solver_run_id="run-1",
         profile_id="offline-analysis",
         fencing_token=2,
         idempotency_key="key",
@@ -158,6 +230,7 @@ def test_docker_provider_rejects_incompatible_sbx_version() -> None:
         provider.acquire(
             task_id="task-1",
             solver_id="solver-1",
+            solver_run_id="run-1",
             profile_id="offline-analysis",
             fencing_token=2,
             idempotency_key="key",
@@ -188,6 +261,7 @@ def test_docker_provider_uses_trusted_tool_image(tmp_path: Path) -> None:
     handle = provider.acquire(
         task_id="task-1",
         solver_id="solver-1",
+        solver_run_id="run-1",
         profile_id="offline-analysis",
         fencing_token=2,
         idempotency_key="key",
@@ -209,6 +283,7 @@ def test_docker_provider_applies_and_verifies_scoped_web_policy(tmp_path: Path) 
         "image": "example.invalid/web@sha256:" + "3" * 64,
         "network_mode": "public_http",
         "web_allow_hosts": ["example.com:443"],
+        "toolset_digest": "c" * 64,
     }
     config = SandboxConfig.model_validate(payload)
     commands: list[list[str]] = []
@@ -231,6 +306,7 @@ def test_docker_provider_applies_and_verifies_scoped_web_policy(tmp_path: Path) 
     provider.acquire(
         task_id="task-web",
         solver_id="solver-1",
+        solver_run_id="run-1",
         profile_id="web-assessment",
         fencing_token=1,
         idempotency_key="web",
@@ -247,6 +323,16 @@ def test_schema_adds_sandbox_instances(tmp_path: Path) -> None:
             "SELECT name FROM sqlite_master WHERE type='table' AND name='sandbox_instances'"
         ).fetchone()
         assert row is not None
+        columns = {
+            item["name"]
+            for item in store.conn.execute("PRAGMA table_info(sandbox_instances)").fetchall()
+        }
+        assert {"solver_run_id", "image_digest", "toolset_digest"} <= columns
+        index = store.conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='index' "
+            "AND name='uq_active_solver_run_sandbox'"
+        ).fetchone()
+        assert index is not None and "solver_run_id" in index["sql"]
     finally:
         store.close()
 
@@ -303,6 +389,13 @@ def test_network_profile_cannot_be_assigned_to_standard_provider() -> None:
     payload = _config().model_dump(mode="json")
     payload["profiles"]["raw-network"]["provider"] = "docker_sandbox"
     with pytest.raises(ValueError):
+        SandboxConfig.model_validate(payload)
+
+
+def test_enforced_profile_requires_toolset_digest() -> None:
+    payload = _config().model_dump(mode="json")
+    payload["profiles"]["offline-analysis"].pop("toolset_digest")
+    with pytest.raises(ValueError, match="requires a toolset digest"):
         SandboxConfig.model_validate(payload)
 
 

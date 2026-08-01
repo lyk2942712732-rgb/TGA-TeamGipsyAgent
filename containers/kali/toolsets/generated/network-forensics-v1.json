@@ -1,0 +1,14 @@
+{
+    "profile_id":  "network-forensics-v1",
+    "tools":  {
+                  "python3":  "image-managed",
+                  "tshark":  "image-managed",
+                  "zeek":  "image-managed",
+                  "tcpdump":  "image-managed",
+                  "ngrep":  "image-managed",
+                  "tcpflow":  "image-managed",
+                  "capinfos":  "image-managed",
+                  "editcap":  "image-managed",
+                  "mergecap":  "image-managed"
+              }
+}

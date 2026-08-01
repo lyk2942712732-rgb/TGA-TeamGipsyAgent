@@ -1,0 +1,18 @@
+{
+    "profile_id":  "pentest-surface-v1",
+    "tools":  {
+                  "python3":  "image-managed",
+                  "nmap":  "image-managed",
+                  "naabu":  "image-managed",
+                  "httpx":  "image-managed",
+                  "subfinder":  "image-managed",
+                  "dnsx":  "image-managed",
+                  "ffuf":  "image-managed",
+                  "feroxbuster":  "image-managed",
+                  "nuclei":  "image-managed",
+                  "whatweb":  "image-managed",
+                  "wafw00f":  "image-managed",
+                  "dig":  "image-managed",
+                  "whois":  "image-managed"
+              }
+}

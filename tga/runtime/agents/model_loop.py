@@ -14,8 +14,10 @@ class ModelTurn:
 
 
 class ModelLoop:
-    def __init__(self, gateway: Any) -> None:
+    def __init__(self, gateway: Any, *, limiter: Any | None = None, execution_context: Any | None = None) -> None:
         self.gateway = gateway
+        self.limiter = limiter
+        self.execution_context = execution_context
 
     def run(
         self,
@@ -24,11 +26,17 @@ class ModelLoop:
         tools: list[dict[str, Any]],
     ) -> ModelTurn:
         started = time.perf_counter()
-        response = self.gateway.chat_tools(
-            messages,
-            tools=tools,
-            temperature=getattr(self.gateway, "temperature", 0.2),
-        )
+        def request() -> dict[str, Any]:
+            if self.execution_context is not None:
+                self.execution_context.assert_active()
+            value = self.gateway.chat_tools(
+                messages,
+                tools=tools,
+                temperature=getattr(self.gateway, "temperature", 0.2),
+            )
+            return value
+
+        response = self.limiter.run(request) if self.limiter is not None else request()
         if not isinstance(response, dict) or not isinstance(response.get("message"), dict):
             raise ValueError("ModelGateway returned an invalid tool-loop response")
         return ModelTurn(

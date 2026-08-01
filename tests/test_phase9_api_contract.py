@@ -70,7 +70,7 @@ def _add_approval(run_root: Path, ids: dict[str, str], suffix: str) -> str:
             context=ActionContext(
                 task_id=ids["task_id"], solver_id=ids["worker_id"],
                 intent_id=ids["intent_id"], orchestration_role="worker",
-                solver_definition_id="recon-triage",
+                solver_definition_id="challenge-classifier",
                 execution_policy_snapshot_id="execution:" + "a" * 64,
                 solver_tool_policy_snapshot_id="tool:" + "b" * 64,
                 created_at=now,
@@ -283,7 +283,7 @@ def test_interventions_and_solver_intent_commands(
         json={},
     )
     assert retried.status_code == 200
-    assert retried.json()["assignment"]["attempt"] == 2
+    assert retried.json()["assignment"]["attempt"] == 3
 
 
 def test_multiple_approvals_are_projected_and_one_decision_is_scoped(

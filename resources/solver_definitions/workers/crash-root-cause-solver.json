@@ -1,0 +1,61 @@
+{
+    "id":  "crash-root-cause-solver",
+    "version":  "2.0.0",
+    "orchestration_role":  "worker",
+    "specialties":  [
+                        "source",
+                        "crash-analysis",
+                        "root-cause"
+                    ],
+    "supported_modes":  [
+                            "vulnerability_research"
+                        ],
+    "supported_subtypes":  [
+
+                           ],
+    "system_prompt_template":  "Analyze supplied crashes to establish reproducibility, root cause, security relevance, and untested assumptions.",
+    "default_skill_tags":  [
+                               "source",
+                               "crash"
+                           ],
+    "required_skill_names":  [
+                                 "code-audit"
+                             ],
+    "required_capabilities":  [
+                                  "workspace.read",
+                                  "workspace.write",
+                                  "workspace.python",
+                                  "workspace.shell",
+                                  "artifact.inspect",
+                                  "sandbox.exec"
+                              ],
+    "allowed_tool_groups":  [
+                                "control",
+                                "resource_read",
+                                "execution",
+                                "retrieval"
+                            ],
+    "tool_policy_profile":  "crash-root-cause-solver-governed",
+    "accepted_intent_kinds":  [
+                                  "crash_root_cause"
+                              ],
+    "output_contract":  {
+                            "name":  "worker_result",
+                            "required_fields":  [
+                                                    "summary",
+                                                    "coverage",
+                                                    "limitations"
+                                                ]
+                        },
+    "default_budget":  {
+                           "max_turns":  24,
+                           "max_input_tokens":  220000,
+                           "max_output_tokens":  40000,
+                           "max_tool_calls":  48,
+                           "max_artifacts":  96,
+                           "deadline":  null
+                       },
+    "completion_authority":  "worker_only",
+    "sandbox_profile_id":  "crash-triage-v1",
+    "sandbox_required":  true
+}

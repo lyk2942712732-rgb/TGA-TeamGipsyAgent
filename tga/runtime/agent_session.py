@@ -29,6 +29,14 @@ from tga.infrastructure.persistence import PersistenceBundle
 from tga.runtime.tooling import ToolDefinitionBuilder
 from tga.runtime.tooling.governance.approvals import SolverApprovalCoordinator
 from tga.runtime.tooling.execution_adapter import ExecutionPipelineAdapter
+from tga.runtime.tooling.execution import (
+    ArtifactIngestionService,
+    ExecutionBackendRouter,
+    HandlerExecutionBackend,
+    HostRetrievalBackend,
+    KaliSandboxBackend,
+    RemoteMCPBackend,
+)
 from tga.infrastructure.solver_definitions.registry import SolverDefinitionRegistry
 from tga.runtime.tooling.catalog import RuntimeToolCatalog
 from tga.runtime.tooling.catalog.manifest_builder import ToolManifestBuilder
@@ -36,6 +44,7 @@ from tga.runtime.tooling.requests import ActionContext
 from tga.runtime.tooling.routing import GatewayToolDispatcher, ToolGovernanceGateway
 from tga.runtime.orchestration import TaskOrchestrator
 from tga.runtime.scheduling import BudgetManager
+from tga.runtime.scheduling import CancellationError
 from tga.infrastructure.persistence.errors import PersistenceConflict
 from tga.domain.retrieval import OwnerScope, RetrievalPolicy
 from tga.runtime.retrieval import RetrievalService
@@ -64,6 +73,8 @@ class AgentSessionRunner:
         mcp_manager: MCPManager | None = None,
         remote_flag_verifier: Any | None = None,
         solver_lease=None,
+        execution_context=None,
+        model_call_limiter=None,
     ) -> None:
         self.task = task
         self.store = store
@@ -75,8 +86,12 @@ class AgentSessionRunner:
         self.registry = build_default_registry()
         self.solver_id = solver_id
         self.solver_lease = solver_lease
+        self.execution_context = execution_context
         self.workspace = SolverSessionState(
-            run_root=run_root, task_id=task.id, solver_id=self.solver_id
+            run_root=run_root,
+            task_id=task.id,
+            solver_id=self.solver_id,
+            solver_run_id=(execution_context.run_id if execution_context else None),
         ).workspace
         self.workspace.mkdir(parents=True, exist_ok=True)
         self.mcp_manager = mcp_manager or MCPManager(cache_path=run_root / "mcp-cache.json")
@@ -93,7 +108,9 @@ class AgentSessionRunner:
         )
         self.retrieval_policy: RetrievalPolicy | None = None
         self.task_orchestrator = TaskOrchestrator(
-            task=task, repositories=self.persistence, runner_lease=solver_lease
+            task=task, repositories=self.persistence, runner_lease=(
+                execution_context if execution_context is not None else solver_lease
+            )
         )
         self.assignment = self.persistence.orchestration.get_assignment_for_solver(
             self.solver_id
@@ -104,7 +121,11 @@ class AgentSessionRunner:
             solver_id=self.solver_id,
         )
         self.messages = self.transcript.read()
-        self.model_loop = ModelLoop(client)
+        self.model_loop = ModelLoop(
+            client,
+            limiter=model_call_limiter,
+            execution_context=execution_context,
+        )
         self.tool_by_name = self._build_tool_map()
         self.handlers = build_tool_handlers(
             task=task, store=store, run_root=run_root, client=client, executor=executor,
@@ -114,9 +135,14 @@ class AgentSessionRunner:
             allowed_resource_ids=(
                 self.assignment.allowed_resources if self.assignment is not None else None
             ),
+            execution_context=execution_context,
         )
         self.consecutive_idle_turns = 0
-        self.execution_adapter = ExecutionPipelineAdapter(handlers=self.handlers)
+        self.execution_adapter = ExecutionPipelineAdapter(
+            handlers=self.handlers,
+            execution_context=execution_context,
+        )
+        self.execution_backend_router = None
         self._refresh_tool_governance()
 
     def run(self) -> SessionOutcome:
@@ -143,13 +169,36 @@ class AgentSessionRunner:
                 ).build()),
             ]
         while True:
+            if not self._execution_is_active():
+                break
             session = self.store.get_session(self.task.id)
             if session is None or session.status != "running":
                 break
             self._consume_resolved_approval()
-            if session.turn_count >= session.max_turns:
-                self.handlers.state.terminal_outcome = SessionOutcome(status="blocked", stop_reason="session_turn_limit", turn_count=session.turn_count)
-                break
+            if self.execution_context is not None:
+                reserved_run = self.persistence.orchestration.reserve_solver_run_turn(
+                    self.execution_context.run_id,
+                    self.execution_context.owner_id,
+                    self.execution_context.fencing_token,
+                )
+                if reserved_run is None:
+                    self.handlers.state.terminal_outcome = SessionOutcome(
+                        status="blocked",
+                        stop_reason="solver_run_turn_limit",
+                        turn_count=session.turn_count,
+                    )
+                    break
+                # The repository reserves the SolverRun turn and Task total
+                # atomically. Session remains the compatibility Task projection.
+                session = self.store.get_session(self.task.id) or session
+                turn_number = reserved_run.turn_count
+            else:
+                reserved_session = self.coordinator.reserve_turn(task_id=self.task.id)
+                if reserved_session is None:
+                    self.handlers.state.terminal_outcome = SessionOutcome(status="blocked", stop_reason="session_turn_limit", turn_count=session.turn_count)
+                    break
+                session = reserved_session
+                turn_number = session.turn_count
 
             progress_before = self._progress_signature()
             # A catalog refresh never mutates a turn already in flight. Take
@@ -164,10 +213,11 @@ class AgentSessionRunner:
             self.store.append_agent_event(
                 self.task.id,
                 "MESSAGE_START",
-                {"role": "assistant", "turn": session.turn_count + 1},
+                {"role": "assistant", "turn": turn_number},
                 solver_id=self.solver_id,
             )
             provider_started: float | None = None
+            token_reservation: dict[str, Any] | None = None
             try:
                 built_context = ContextBuilder(
                     task=self.task,
@@ -184,7 +234,7 @@ class AgentSessionRunner:
                 context_metric = ContextMetric(
                     task_id=self.task.id,
                     solver_id=self.solver_id,
-                    turn=session.turn_count + 1,
+                    turn=turn_number,
                     artifact_retrievals=self.handlers.state.artifact_retrievals,
                     created_at=utc_now(),
                     **context_stats,
@@ -196,6 +246,32 @@ class AgentSessionRunner:
                     context_metric.model_dump(mode="json"),
                     solver_id=self.solver_id,
                 )
+                token_budget = BudgetManager(self.persistence.tool_governance)
+                intent = self._current_intent()
+                if self._has_model_token_limit():
+                    estimated_input = int(
+                        context_stats.get("total_tokens")
+                        or context_stats.get("estimated_tokens")
+                        or max(1, len(json.dumps(working_messages, ensure_ascii=False)) // 4)
+                    )
+                    estimated_output = int(
+                        self.task.model_snapshot.max_output_tokens
+                        if self.task.model_snapshot is not None
+                        else getattr(self.client, "max_tokens", 4096)
+                    )
+                    token_reservation = token_budget.reserve_model_tokens(
+                        idempotency_key=(
+                            f"model-reservation:{self.task.id}:{self.solver_id}:"
+                            f"{self.execution_context.run_id if self.execution_context else 'serial'}:"
+                            f"{turn_number}"
+                        ),
+                        task_id=self.task.id,
+                        solver_id=self.solver_id,
+                        intent_id=intent.id if intent else None,
+                        run_id=(self.execution_context.run_id if self.execution_context else None),
+                        estimated_input_tokens=estimated_input,
+                        estimated_output_tokens=estimated_output,
+                    )
                 provider_started = time.perf_counter()
                 model_turn = self.model_loop.run(
                     messages=working_messages,
@@ -203,7 +279,34 @@ class AgentSessionRunner:
                 )
                 response = model_turn.response
                 provider_duration_ms = model_turn.duration_ms
+            except CancellationError as exc:
+                if token_reservation is not None:
+                    BudgetManager(self.persistence.tool_governance).release_model_tokens(
+                        str(token_reservation["id"])
+                    )
+                self.handlers.state.terminal_outcome = SessionOutcome(
+                    status="cancelled",
+                    stop_reason=str(exc) or "solver_execution_cancelled",
+                    turn_count=session.turn_count,
+                )
+                break
+            except PersistenceConflict as exc:
+                if token_reservation is not None:
+                    BudgetManager(self.persistence.tool_governance).release_model_tokens(
+                        str(token_reservation["id"])
+                    )
+                self.handlers.state.terminal_outcome = SessionOutcome(
+                    status="blocked",
+                    stop_reason="task_budget_exhausted",
+                    turn_count=session.turn_count,
+                    error={"code": "TASK_BUDGET_EXHAUSTED", "message": str(exc)},
+                )
+                break
             except Exception as exc:
+                if token_reservation is not None:
+                    BudgetManager(self.persistence.tool_governance).release_model_tokens(
+                        str(token_reservation["id"])
+                    )
                 # A provider/protocol error is recoverable.  Keep the session
                 # resumable and show the actual error instead of fabricating
                 # several waiting Solvers and a generic planning failure.
@@ -225,7 +328,30 @@ class AgentSessionRunner:
             # authoritative: a late model response must never dispatch tools or
             # mutate the durable transcript after control has been accepted.
             current = self.store.get_session(self.task.id)
-            if current is None or current.status != "running":
+            if current is None or current.status != "running" or not self._execution_is_active():
+                discarded_usage = response.get("usage") if isinstance(response, dict) else None
+                discarded_usage = discarded_usage if isinstance(discarded_usage, dict) else {}
+                if token_reservation is not None:
+                    budget_manager = BudgetManager(self.persistence.tool_governance)
+                    try:
+                        budget_manager.settle_model_tokens(
+                            str(token_reservation["id"]),
+                            actual_input_tokens=int(
+                                discarded_usage.get("prompt_tokens")
+                                or discarded_usage.get("input_tokens") or 0
+                            ),
+                            actual_output_tokens=int(
+                                discarded_usage.get("completion_tokens")
+                                or discarded_usage.get("output_tokens") or 0
+                            ),
+                            usage_idempotency_key=(
+                                f"model:{self.task.id}:{self.solver_id}:{turn_number}"
+                            ),
+                        )
+                    except Exception:
+                        budget_manager.release_model_tokens(
+                            str(token_reservation["id"])
+                        )
                 self.store.append_agent_event(
                     self.task.id,
                     "PROVIDER_RESPONSE_DISCARDED",
@@ -242,23 +368,47 @@ class AgentSessionRunner:
             usage = response.get("usage") if isinstance(response, dict) else None
             usage = usage if isinstance(usage, dict) else {}
             try:
-                BudgetManager(self.persistence.tool_governance).record_usage(
-                    idempotency_key=(
-                        f"model:{self.task.id}:{self.solver_id}:{session.turn_count + 1}"
-                    ),
-                    task_id=self.task.id,
-                    solver_id=self.solver_id,
-                    intent_id=(self._current_intent().id if self._current_intent() else None),
-                    turns=1,
-                    input_tokens=int(
-                        usage.get("prompt_tokens") or usage.get("input_tokens") or 0
-                    ),
-                    output_tokens=int(
-                        usage.get("completion_tokens") or usage.get("output_tokens") or 0
-                    ),
+                actual_input = int(
+                    usage.get("prompt_tokens") or usage.get("input_tokens") or 0
                 )
+                actual_output = int(
+                    usage.get("completion_tokens") or usage.get("output_tokens") or 0
+                )
+                budget_manager = BudgetManager(self.persistence.tool_governance)
+                usage_key = (
+                    f"model:{self.task.id}:{self.solver_id}:"
+                    f"{self.execution_context.run_id if self.execution_context else 'supervisor'}:"
+                    f"{turn_number}"
+                )
+                if token_reservation is not None:
+                    settled = budget_manager.settle_model_tokens(
+                        str(token_reservation["id"]),
+                        actual_input_tokens=actual_input,
+                        actual_output_tokens=actual_output,
+                        usage_idempotency_key=usage_key,
+                    )
+                    if settled.get("limit_exceeded"):
+                        self.handlers.state.terminal_outcome = SessionOutcome(
+                            status="blocked",
+                            stop_reason="task_budget_exhausted",
+                            turn_count=session.turn_count,
+                            error={
+                                "code": "TASK_BUDGET_EXHAUSTED",
+                                "message": "actual model token usage exceeded the reserved budget",
+                            },
+                        )
+                        break
+                else:
+                    budget_manager.record_usage(
+                        idempotency_key=usage_key,
+                        task_id=self.task.id,
+                        solver_id=self.solver_id,
+                        intent_id=(self._current_intent().id if self._current_intent() else None),
+                        turns=1,
+                        input_tokens=actual_input,
+                        output_tokens=actual_output,
+                    )
             except PersistenceConflict as exc:
-                self.task_orchestrator.block(reason="task_budget_exhausted")
                 self.handlers.state.terminal_outcome = SessionOutcome(
                     status="blocked",
                     stop_reason="task_budget_exhausted",
@@ -312,7 +462,6 @@ class AgentSessionRunner:
                 solver_id=self.solver_id,
             )
 
-            session = self.coordinator.advance_turn(task_id=self.task.id)
             if usage:
                 self.store.append_agent_event(
                     self.task.id,
@@ -377,11 +526,19 @@ class AgentSessionRunner:
             finish_rejected = False
             approval_deferred = False
             for call_index, call in enumerate(tool_calls):
-                result = (
-                    {"ok": False, "cancelled": True, "reason": "session completed by an earlier tool call"}
-                    if terminal
-                else self.dispatcher.dispatch(task=self.task, call=call)
-                )
+                if not self._execution_is_active():
+                    result = {
+                        "ok": False,
+                        "status": "cancelled",
+                        "reason": "solver_execution_authority_lost",
+                    }
+                    terminal = True
+                else:
+                    result = (
+                        {"ok": False, "cancelled": True, "reason": "session completed by an earlier tool call"}
+                        if terminal
+                        else self.dispatcher.dispatch(task=self.task, call=call)
+                    )
                 model_content = result.pop("_model_content", None)
                 if result.pop("_defer_tool_result", False):
                     approval_deferred = True
@@ -475,6 +632,14 @@ class AgentSessionRunner:
         current = self.store.get_session(self.task.id) or session
         outcome = self.handlers.state.terminal_outcome or (
             SessionOutcome(
+                status="cancelled",
+                stop_reason=self.execution_context.cancellation.reason or "solver_execution_cancelled",
+                turn_count=current.turn_count,
+            )
+            if self.execution_context is not None
+            and self.execution_context.cancellation.cancelled
+            else
+            SessionOutcome(
                 status="running",
                 stop_reason="runner_handoff",
                 turn_count=current.turn_count,
@@ -525,6 +690,19 @@ class AgentSessionRunner:
         return (
             f"{base}\n\n# Solver Role\n{solver.orchestration_role}: "
             f"{definition.system_prompt_template}{assigned}"
+        )
+
+    def _execution_is_active(self) -> bool:
+        if self.execution_context is None:
+            return True
+        return self.execution_context.is_active()
+
+    def _has_model_token_limit(self) -> bool:
+        return any(
+            self.task.execution_budget.get(name) is not None
+            for name in (
+                "max_input_tokens", "max_output_tokens", "max_total_tokens"
+            )
         )
 
     def _sync_hints(self) -> None:
@@ -580,6 +758,13 @@ class AgentSessionRunner:
         return ActionContext(
             task_id=self.task.id,
             solver_id=self.solver_id,
+            run_id=(self.execution_context.run_id if self.execution_context else None),
+            run_owner_id=(
+                self.execution_context.owner_id if self.execution_context else None
+            ),
+            run_fencing_token=(
+                self.execution_context.fencing_token if self.execution_context else None
+            ),
             intent_id=intent.id if intent else None,
             local_plan_step_id=local_step_id,
             orchestration_role=solver.orchestration_role,
@@ -604,6 +789,7 @@ class AgentSessionRunner:
         self.retrieval_policy = self._retrieval_policy_for(solver)
         catalog = RuntimeToolCatalog.from_runtime(
             task=self.task,
+            solver_definition=definition,
             registry=self.registry,
             tool_names=self.tool_by_name,
             mcp_snapshot=self.mcp_snapshot,
@@ -622,27 +808,86 @@ class AgentSessionRunner:
             control_handlers["propose_task_completion"] = (
                 self.handlers.completion.propose_task_completion
             )
+        resource_handlers = self.task_orchestrator.gateway_resource_handlers(
+            self.solver_id
+        )
+        retrieval_handlers = {
+            "retrieval.search": self._gateway_retrieval_search,
+        }
+
+        def host_control(request):
+            handler = control_handlers.get(request.capability)
+            if handler is None:
+                return {
+                    "ok": False,
+                    "status": "blocked",
+                    "error": {
+                        "code": "CONTROL_TOOL_NOT_IMPLEMENTED",
+                        "message": f"Control tool is unavailable: {request.capability}",
+                    },
+                }
+            return handler(request.arguments)
+
+        def host_retrieval(request):
+            handler = resource_handlers.get(request.capability) or retrieval_handlers.get(
+                request.capability
+            )
+            if handler is not None:
+                return handler(request.arguments)
+            return self.execution_adapter.execute_authorized(request)
+
+        sandbox_manager = getattr(self.executor, "sandbox_manager", None)
+        if sandbox_manager is None:
+            raise RuntimeError("production execution requires a SandboxManager")
+        self.execution_backend_router = ExecutionBackendRouter(
+            {
+                "host_control": HandlerExecutionBackend("host_control", host_control),
+                "host_retrieval": HostRetrievalBackend(
+                    workspace=self.workspace,
+                    store=self.store,
+                    artifact_service=self.handlers.artifacts,
+                    delegated=host_retrieval,
+                ),
+                "sandbox": KaliSandboxBackend(
+                    manager=sandbox_manager,
+                    task=self.task,
+                    workspace=self.workspace,
+                ),
+                "remote_mcp": RemoteMCPBackend(
+                    manager=self.mcp_manager,
+                    task=self.task,
+                    workspace=self.workspace,
+                ),
+            },
+            artifact_ingestion=ArtifactIngestionService(
+                task=self.task,
+                store=self.store,
+                run_root=self.run_root,
+                execution_context=self.execution_context,
+            ),
+        )
         self.tool_gateway = ToolGovernanceGateway(
             task=self.task,
             manifest=self.tool_manifest,
             repository=self.persistence.tool_governance,
             execution_adapter=self.execution_adapter,
+            execution_backend_router=self.execution_backend_router,
             control_handlers=control_handlers,
-            resource_handlers=self.task_orchestrator.gateway_resource_handlers(
-                self.solver_id
-            ),
-            retrieval_handlers={
-                "retrieval.search": self._gateway_retrieval_search,
-            },
+            resource_handlers=resource_handlers,
+            retrieval_handlers=retrieval_handlers,
             event_repository=self.persistence.events,
             allowed_resource_ids=(
                 self.assignment.allowed_resources if self.assignment is not None else None
             ),
             lease_validator=(
-                None
-                if self.solver_lease is None
-                else lambda: self.persistence.solvers.validate_lease(
-                    self.solver_lease
+                (lambda: self.execution_context.is_active())
+                if self.execution_context is not None
+                else (
+                    None
+                    if self.solver_lease is None
+                    else lambda: self.persistence.solvers.validate_lease(
+                        self.solver_lease
+                    )
                 )
             ),
             artifact_result_handler=self.handlers.state.plan_knowledge.index_artifacts,

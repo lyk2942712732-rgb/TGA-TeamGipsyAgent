@@ -2,13 +2,19 @@
 
 from tga.domain.skills.models import (
     SkillActivation,
+    SkillCandidate,
+    SkillCandidateRejection,
     SkillDocument,
+    SkillPublication,
+    SkillPublicationStatus,
+    SkillSelectionDecision,
     SkillSnapshot,
     SolverSkillSnapshot,
     TaskCommonSkillSnapshot,
 )
 
 __all__ = [
-    "SkillActivation", "SkillDocument", "SkillSnapshot", "SolverSkillSnapshot",
-    "TaskCommonSkillSnapshot",
+    "SkillActivation", "SkillCandidate", "SkillCandidateRejection", "SkillDocument",
+    "SkillPublication", "SkillPublicationStatus", "SkillSelectionDecision",
+    "SkillSnapshot", "SolverSkillSnapshot", "TaskCommonSkillSnapshot",
 ]

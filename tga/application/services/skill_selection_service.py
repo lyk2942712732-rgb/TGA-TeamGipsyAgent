@@ -6,7 +6,7 @@ import hashlib
 import json
 import re
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Protocol, Sequence
 
 from tga.domain.planning.intents import Intent
 from tga.domain.skills.models import (
@@ -17,6 +17,7 @@ from tga.domain.skills.models import (
 )
 from tga.domain.solver.definitions import SolverDefinition
 from tga.modes import TaskMode
+from tga.application.services.skill_candidate_activation_service import ApprovedSkillCandidate
 
 
 class SkillCatalog(Protocol):
@@ -57,7 +58,14 @@ class SolverSkillSelectionService:
     def __init__(self, catalog: SkillCatalog) -> None:
         self.catalog = catalog
 
-    def select_solver_skills(self, request: SolverSkillSelectionRequest) -> SolverSkillSnapshot:
+    def select_solver_skills(
+        self,
+        request: SolverSkillSelectionRequest,
+        *,
+        approved_candidates: Sequence[ApprovedSkillCandidate] = (),
+        selection_decision_id: str | None = None,
+        skill_index_snapshot_ids: tuple[str, ...] = (),
+    ) -> SolverSkillSnapshot:
         if not request.definition.supports(
             mode=request.mode,
             subtype=str(request.mode_config.get("subtype") or "") or None,
@@ -78,17 +86,44 @@ class SolverSkillSelectionService:
         required = tuple(request.definition.required_skill_names)
         if selected_names is not None and not set(required).issubset(selected_names):
             raise ValueError("manual Solver Skill selection must include required Skills")
-        names = selected_names or self._rank_solver_candidates(request, required)
-        documents = self._resolve_and_validate(
+        names = selected_names or required
+        documents = list(self._resolve_and_validate(
             names=names,
             mode=request.mode,
             available=request.available_capabilities,
             policy_allowed=request.tool_policy_allowed_capabilities,
-        )
-        snapshots = tuple(
+        ))
+        snapshots = [
             self._freeze(document, reasons=self._solver_reasons(document, request))
             for document in documents[:3]
-        )
+        ]
+        selected = {item.name for item in snapshots}
+        for approved in approved_candidates:
+            if len(snapshots) >= 3:
+                break
+            if approved.document.name in selected:
+                continue
+            snapshots.append(self._freeze(
+                approved.document,
+                reasons=approved.selection_reasons,
+                candidate=approved,
+            ))
+            selected.add(approved.document.name)
+        if selected_names is None and len(snapshots) < 3:
+            for name in self._rank_solver_candidates(request, required):
+                if len(snapshots) >= 3 or name in selected:
+                    continue
+                document = self._resolve_and_validate(
+                    names=(name,),
+                    mode=request.mode,
+                    available=request.available_capabilities,
+                    policy_allowed=request.tool_policy_allowed_capabilities,
+                )[0]
+                snapshots.append(self._freeze(
+                    document, reasons=self._solver_reasons(document, request)
+                ))
+                selected.add(name)
+        snapshots = tuple(snapshots)
         if not set(required).issubset(skill.name for skill in snapshots):
             raise ValueError("required Solver Skills could not be selected")
         return SolverSkillSnapshot(
@@ -100,6 +135,8 @@ class SolverSkillSelectionService:
             skills=snapshots,
             total_chars=sum(len(skill.body) for skill in snapshots),
             created_at=request.created_at,
+            skill_index_snapshot_ids=skill_index_snapshot_ids,
+            selection_decision_id=selection_decision_id,
         )
 
     def select_task_common_skills(
@@ -195,8 +232,15 @@ class SolverSkillSelectionService:
         return tuple(documents)
 
     @staticmethod
-    def _freeze(document: SkillDocument, *, reasons: tuple[str, ...]) -> SkillSnapshot:
-        body = document.body.strip()[:12_000]
+    def _freeze(
+        document: SkillDocument,
+        *,
+        reasons: tuple[str, ...],
+        candidate: ApprovedSkillCandidate | None = None,
+    ) -> SkillSnapshot:
+        body = document.body.strip()
+        if len(body) > 12_000:
+            raise ValueError(f"Skill {document.name} exceeds the 12000 character activation limit")
         return SkillSnapshot(
             name=document.name,
             version=document.version,
@@ -207,6 +251,11 @@ class SolverSkillSelectionService:
             content_sha256=hashlib.sha256(body.encode("utf-8")).hexdigest(),
             origin=document.origin,
             selection_reasons=reasons,
+            source_ref=document.source_ref,
+            document_id=candidate.candidate.document_id if candidate else None,
+            revision_id=candidate.candidate.revision_id if candidate else None,
+            retrieval_run_id=candidate.candidate.retrieval_run_id if candidate else None,
+            index_snapshot_id=candidate.candidate.index_snapshot_id if candidate else None,
         )
 
     @staticmethod

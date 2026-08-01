@@ -32,7 +32,8 @@ def main() -> int:
         "from sandbox.v1 import sandbox_pb2 as sandbox_dot_v1_dot_sandbox__pb2",
         "from tga.sandbox.api.sandbox.v1 import sandbox_pb2 as sandbox_dot_v1_dot_sandbox__pb2",
     )
-    grpc_file.write_text(content, encoding="utf-8", newline="\n")
+    with grpc_file.open("w", encoding="utf-8", newline="\n") as stream:
+        stream.write(content)
     for directory in (
         PYTHON_OUT / "sandbox",
         PYTHON_OUT / "sandbox" / "v1",

@@ -86,6 +86,37 @@ class SolverProjection(ApiDTO):
     timestamps: dict[str, str | None] = Field(default_factory=dict)
 
 
+class SolverRunProjection(ApiDTO):
+    run_id: str
+    task_id: str
+    solver_id: str
+    assignment_id: str | None = None
+    intent_id: str | None = None
+    orchestration_role: str
+    state: str
+    attempt: int = Field(ge=1)
+    turn_count: int = Field(default=0, ge=0)
+    max_turns: int = Field(default=1, ge=1)
+    lease_owner: str | None = None
+    fencing_token: int = Field(default=0, ge=0)
+    lease_expires_at: str | None = None
+    heartbeat_at: str | None = None
+    started_at: str | None = None
+    finished_at: str | None = None
+    result_id: str | None = None
+    error_code: str | None = None
+    error_message: str | None = None
+    version: int = Field(ge=1)
+    created_at: str
+    updated_at: str
+
+
+class SolverRunPage(PageMeta):
+    schema_version: Literal[6] = 6
+    task_id: str
+    items: list[SolverRunProjection] = Field(default_factory=list)
+
+
 class IntentProjection(ApiDTO):
     task_id: str
     intent_id: str
@@ -217,6 +248,7 @@ class RuntimeSnapshotResponse(ApiDTO):
     session: SessionAggregate
     team: TeamProjection
     solvers: list[SolverProjection] = Field(default_factory=list)
+    solver_runs: list[SolverRunProjection] = Field(default_factory=list)
     intents: list[IntentProjection] = Field(default_factory=list)
     worker_results: list[WorkerResultProjection] = Field(default_factory=list)
     global_plan: dict[str, Any] | None = None

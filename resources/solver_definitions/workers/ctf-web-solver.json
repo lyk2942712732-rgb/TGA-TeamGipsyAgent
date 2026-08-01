@@ -1,0 +1,65 @@
+{
+    "id":  "ctf-web-solver",
+    "version":  "2.0.0",
+    "orchestration_role":  "worker",
+    "specialties":  [
+                        "ctf",
+                        "web",
+                        "http-validation"
+                    ],
+    "supported_modes":  [
+                            "ctf"
+                        ],
+    "supported_subtypes":  [
+                               "web",
+                               "auto",
+                               "unknown"
+                           ],
+    "system_prompt_template":  "Investigate the assigned CTF web route with bounded requests and return candidate evidence, coverage, and limitations.",
+    "default_skill_tags":  [
+                               "web",
+                               "auth",
+                               "sqli",
+                               "idor"
+                           ],
+    "required_skill_names":  [
+                                 "web-vuln-triage"
+                             ],
+    "required_capabilities":  [
+                                  "http.request",
+                                  "ffuf.directory_scan",
+                                  "nuclei.scan",
+                                  "artifact.inspect",
+                                  "sandbox.exec"
+                              ],
+    "allowed_tool_groups":  [
+                                "control",
+                                "resource_read",
+                                "execution",
+                                "retrieval"
+                            ],
+    "tool_policy_profile":  "ctf-web-solver-governed",
+    "accepted_intent_kinds":  [
+                                  "ctf_web",
+                                  "web_analysis"
+                              ],
+    "output_contract":  {
+                            "name":  "worker_result",
+                            "required_fields":  [
+                                                    "summary",
+                                                    "coverage",
+                                                    "limitations"
+                                                ]
+                        },
+    "default_budget":  {
+                           "max_turns":  24,
+                           "max_input_tokens":  220000,
+                           "max_output_tokens":  40000,
+                           "max_tool_calls":  48,
+                           "max_artifacts":  96,
+                           "deadline":  null
+                       },
+    "completion_authority":  "worker_only",
+    "sandbox_profile_id":  "ctf-web-v1",
+    "sandbox_required":  true
+}

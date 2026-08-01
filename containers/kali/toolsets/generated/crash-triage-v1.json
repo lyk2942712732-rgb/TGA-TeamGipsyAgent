@@ -1,0 +1,12 @@
+{
+    "profile_id":  "crash-triage-v1",
+    "tools":  {
+                  "python3":  "image-managed",
+                  "gdb":  "image-managed",
+                  "lldb":  "image-managed",
+                  "casr-cli":  "image-managed",
+                  "llvm-symbolizer":  "image-managed",
+                  "addr2line":  "image-managed",
+                  "valgrind":  "image-managed"
+              }
+}

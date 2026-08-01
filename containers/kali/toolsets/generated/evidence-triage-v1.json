@@ -1,0 +1,14 @@
+{
+    "profile_id":  "evidence-triage-v1",
+    "tools":  {
+                  "python3":  "image-managed",
+                  "file":  "image-managed",
+                  "exiftool":  "image-managed",
+                  "hashdeep":  "image-managed",
+                  "yara":  "image-managed",
+                  "binwalk":  "image-managed",
+                  "strings":  "image-managed",
+                  "jq":  "image-managed",
+                  "rg":  "image-managed"
+              }
+}

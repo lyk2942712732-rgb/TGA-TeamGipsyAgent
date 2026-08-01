@@ -31,11 +31,11 @@ from tga.evidence.database import utc_now
 
 
 MODES_AND_WORKERS = {
-    "ctf": "recon-triage",
-    "penetration_test": "recon-triage",
-    "incident_response": "forensics-analysis",
-    "vulnerability_research": "code-audit",
-    "reverse_engineering": "binary-analysis",
+    "ctf": "challenge-classifier",
+    "penetration_test": "surface-mapper",
+    "incident_response": "evidence-triage-solver",
+    "vulnerability_research": "architecture-analyst",
+    "reverse_engineering": "binary-triage-solver",
 }
 
 
@@ -71,6 +71,10 @@ def test_five_modes_bootstrap_supervisor_and_dispatch_one_worker(
         worker = bundle.solvers.get_solver(assignment.solver_id)
         supervisor = bundle.solvers.get_solver(state.supervisor_solver_id)
         assert worker is not None and worker.definition_id == expected_worker
+        definition = orchestrator.definitions.require(expected_worker)
+        assert set(worker.tool_policy_snapshot.allowed_capabilities) == set(
+            definition.required_capabilities
+        )
         assert worker.parent_solver_id == supervisor.id
         assert assignment.intent.id == assignment.intent_id
         assert assignment.tool_policy_snapshot == worker.tool_policy_snapshot
@@ -337,7 +341,7 @@ def test_orchestration_limits_prevent_recursive_solver_creation(tmp_path: Path) 
         bundle.close()
 
 
-def test_pause_resume_preserves_active_worker_assignment(tmp_path: Path) -> None:
+def test_pause_resume_replaces_worker_run_generation(tmp_path: Path) -> None:
     task = _task(task_id="serial_pause_resume")
     bundle, orchestrator = _orchestrator(tmp_path, task)
     try:
@@ -351,9 +355,16 @@ def test_pause_resume_preserves_active_worker_assignment(tmp_path: Path) -> None
 
         resumed = orchestrator.resume()
         assert resumed.status == "running"
-        assert bundle.solvers.get_solver(assignment.solver_id).status == "queued"
+        assert bundle.solvers.get_solver(assignment.solver_id).status == "paused"
         assert orchestrator.dispatch_next() is None
-        assert bundle.orchestration.get_assignment(assignment.id).solver_id == assignment.solver_id
+        assert bundle.orchestration.get_assignment(assignment.id).status == "cancelled"
+        replacements = [
+            item for item in bundle.orchestration.list_assignments(task.id)
+            if item.intent_id == assignment.intent_id and item.attempt == 2
+        ]
+        assert len(replacements) == 1
+        assert replacements[0].solver_id != assignment.solver_id
+        assert bundle.solvers.get_solver(replacements[0].solver_id).status == "queued"
     finally:
         bundle.close()
 
@@ -424,6 +435,7 @@ def test_worker_submit_result_routes_through_gateway_without_legacy_execution(tm
         }
         catalog = RuntimeToolCatalog.from_runtime(
             task=task,
+            solver_definition=definition,
             registry=registry,
             tool_names=tool_names,
             mcp_snapshot=SimpleNamespace(function_tools=lambda: [], routes={}),
@@ -543,7 +555,7 @@ def test_serial_recon_validator_reviewer_reporter_pipeline(tmp_path: Path) -> No
             completion_validator=lambda _proposal: {"accepted": True},
         )
 
-        assert definitions_seen == ["recon-triage", "vulnerability-validator"]
+        assert definitions_seen == ["challenge-classifier", "flag-verifier"]
         assert final.status == "completed"
         roles = [item.orchestration_role for item in bundle.solvers.list_solvers(task.id)]
         assert roles.count("worker") == 2
@@ -613,6 +625,7 @@ def test_worker_context_and_gateway_hide_unassigned_task_inputs(tmp_path: Path) 
         registry = build_default_registry()
         catalog = RuntimeToolCatalog.from_runtime(
             task=task,
+            solver_definition=definition,
             registry=registry,
             tool_names={
                 f"tga_{item['name'].replace('.', '_')}": item["name"]

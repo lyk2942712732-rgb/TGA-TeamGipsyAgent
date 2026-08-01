@@ -1,0 +1,60 @@
+{
+    "id":  "ctf-supervisor",
+    "version":  "2.0.0",
+    "orchestration_role":  "supervisor",
+    "specialties":  [
+                        "coordination",
+                        "ctf",
+                        "completion-governance"
+                    ],
+    "supported_modes":  [
+                            "ctf"
+                        ],
+    "supported_subtypes":  [
+
+                           ],
+    "system_prompt_template":  "Coordinate challenge classification, specialist investigation, evidence review, and Artifact-backed flag verification.",
+    "default_skill_tags":  [
+
+                           ],
+    "required_skill_names":  [
+
+                             ],
+    "required_capabilities":  [
+                                  "artifact.inspect"
+                              ],
+    "allowed_tool_groups":  [
+                                "control",
+                                "resource_read",
+                                "retrieval"
+                            ],
+    "tool_policy_profile":  "ctf-supervisor-governed",
+    "accepted_intent_kinds":  [
+                                  "coordination",
+                                  "challenge_classification",
+                                  "ctf_web",
+                                  "ctf_pwn",
+                                  "ctf_reverse",
+                                  "ctf_crypto",
+                                  "ctf_forensics",
+                                  "flag_verification"
+                              ],
+    "output_contract":  {
+                            "name":  "supervisor_result",
+                            "required_fields":  [
+                                                    "global_plan",
+                                                    "completion_decision"
+                                                ]
+                        },
+    "default_budget":  {
+                           "max_turns":  64,
+                           "max_input_tokens":  500000,
+                           "max_output_tokens":  100000,
+                           "max_tool_calls":  64,
+                           "max_artifacts":  128,
+                           "deadline":  null
+                       },
+    "completion_authority":  "task",
+    "sandbox_profile_id":  null,
+    "sandbox_required":  false
+}

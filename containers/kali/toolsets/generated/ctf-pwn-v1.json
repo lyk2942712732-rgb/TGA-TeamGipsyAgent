@@ -1,0 +1,19 @@
+{
+    "profile_id":  "ctf-pwn-v1",
+    "tools":  {
+                  "python3":  "image-managed",
+                  "gdb":  "image-managed",
+                  "checksec":  "image-managed",
+                  "ROPgadget":  "image-managed",
+                  "ropper":  "image-managed",
+                  "one_gadget":  "image-managed",
+                  "patchelf":  "image-managed",
+                  "qemu-x86_64":  "image-managed",
+                  "gcc":  "image-managed",
+                  "clang":  "image-managed",
+                  "make":  "image-managed",
+                  "objdump":  "image-managed",
+                  "readelf":  "image-managed",
+                  "strace":  "image-managed"
+              }
+}

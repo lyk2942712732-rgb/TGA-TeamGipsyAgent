@@ -1,0 +1,9 @@
+{
+    "profile_id":  "logic-recovery-v1",
+    "tools":  {
+                  "python3":  "image-managed",
+                  "diffoscope":  "image-managed",
+                  "jq":  "image-managed",
+                  "yq":  "image-managed"
+              }
+}

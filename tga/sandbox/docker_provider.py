@@ -32,8 +32,16 @@ CommandRunner = Callable[..., subprocess.CompletedProcess[bytes]]
 _SEMVER = re.compile(r"\b(\d+)\.(\d+)\.(\d+)\b")
 
 
-def _safe_name(task_id: str) -> str:
-    return f"tga-{hashlib.sha256(task_id.encode()).hexdigest()[:16]}"
+def _safe_name(task_id: str, solver_run_id: str) -> str:
+    identity = f"{task_id}\0{solver_run_id}"
+    return f"tga-{hashlib.sha256(identity.encode()).hexdigest()[:16]}"
+
+
+def _image_digest(image: str) -> str:
+    match = re.search(r"@sha256:([a-f0-9]{64})$", image)
+    if match is None:
+        raise SandboxError("sandbox image is not digest pinned", code="IMAGE_NOT_PINNED")
+    return match.group(1)
 
 
 def _version(value: str) -> tuple[int, int, int]:
@@ -165,29 +173,31 @@ class DockerSandboxProvider:
         *,
         task_id: str,
         solver_id: str,
+        solver_run_id: str,
         profile_id: str,
         fencing_token: int,
         idempotency_key: str,
     ) -> SandboxHandle:
         del idempotency_key
         profile = self.config.profile(profile_id)
-        if not IDENTIFIER.fullmatch(task_id) or not IDENTIFIER.fullmatch(solver_id):
-            raise SandboxError("invalid task or solver id", code="INVALID_IDENTITY")
+        if not all(IDENTIFIER.fullmatch(value) for value in (task_id, solver_id, solver_run_id)):
+            raise SandboxError("invalid task, solver, or SolverRun id", code="INVALID_IDENTITY")
         if profile.provider != self.provider_name:
             raise SandboxError("profile does not belong to Docker Sandboxes", code="PROFILE_PROVIDER_MISMATCH")
         self._check_version()
-        name = _safe_name(task_id)
+        name = _safe_name(task_id, solver_run_id)
         workspace = self._workspace(task_id)
-        (workspace / "solvers" / solver_id).mkdir(parents=True, exist_ok=True)
+        (workspace / "solver-runs" / solver_run_id).mkdir(parents=True, exist_ok=True)
         (workspace / "inputs").mkdir(exist_ok=True)
         (workspace / "shared").mkdir(exist_ok=True)
         existing = self._sandbox(name)
         if existing is not None:
-            marker = self._read_marker(task_id)
+            marker = self._read_marker(task_id, solver_run_id)
             if (
                 marker is None
                 or marker.get("instance_id") != name
                 or marker.get("task_id") != task_id
+                or marker.get("solver_run_id") != solver_run_id
                 or marker.get("config_digest") != self.config.digest
                 or str(Path(str(marker.get("workspace") or "")).resolve()) != str(workspace)
             ):
@@ -211,16 +221,19 @@ class DockerSandboxProvider:
                 timeout=180,
             )
         sandbox_workspace = self._resolve_sandbox_workspace(name, workspace)
-        self._write_marker(task_id, name, workspace, sandbox_workspace)
+        self._write_marker(task_id, solver_run_id, name, workspace, sandbox_workspace)
         if profile.network_mode == "public_http":
             self._apply_web_policy(name, profile.web_allow_hosts)
         return SandboxHandle(
             instance_id=name,
             task_id=task_id,
             solver_id=solver_id,
+            solver_run_id=solver_run_id,
             profile_id=profile_id,
             provider=self.provider_name,
             config_digest=self.config.digest,
+            image_digest=_image_digest(profile.image or ""),
+            toolset_digest=profile.toolset_digest,
             fencing_token=fencing_token,
             state=SandboxState.READY,
         )
@@ -330,7 +343,7 @@ class DockerSandboxProvider:
             timeout=90,
             check=False,
         )
-        marker = self._marker(handle.task_id)
+        marker = self._marker(handle.task_id, handle.solver_run_id)
         try:
             marker.unlink()
         except FileNotFoundError:
@@ -392,13 +405,13 @@ class DockerSandboxProvider:
         else:
             tool_args = ()
         workspace = self._workspace(handle.task_id)
-        marker = self._read_marker(handle.task_id)
+        marker = self._read_marker(handle.task_id, handle.solver_run_id)
         if marker is None:
             raise SandboxError("trusted sandbox marker is missing", code="SANDBOX_IDENTITY_MISMATCH")
         sandbox_workspace = str(marker.get("sandbox_workspace") or "")
         if not sandbox_workspace.startswith("/") or "\x00" in sandbox_workspace:
             raise SandboxError("sandbox workspace path is invalid", code="INVALID_PROVIDER_RESPONSE")
-        solver = f"{sandbox_workspace}/solvers/{handle.solver_id}"
+        solver = f"{sandbox_workspace}/solver-runs/{handle.solver_run_id}"
         logical = {
             "solver": "/workspace/solver",
             "task_inputs": "/workspace/inputs",
@@ -536,12 +549,12 @@ class DockerSandboxProvider:
             raise SandboxError("workspace escapes task root", code="INVALID_WORKSPACE") from exc
         return value
 
-    def _marker(self, task_id: str) -> Path:
-        return self._workspace(task_id).parent / "sandbox-instance.json"
+    def _marker(self, task_id: str, solver_run_id: str) -> Path:
+        return self._workspace(task_id).parent / "sandbox-instances" / f"{solver_run_id}.json"
 
-    def _read_marker(self, task_id: str) -> dict | None:
+    def _read_marker(self, task_id: str, solver_run_id: str) -> dict | None:
         try:
-            value = json.loads(self._marker(task_id).read_text(encoding="utf-8"))
+            value = json.loads(self._marker(task_id, solver_run_id).read_text(encoding="utf-8"))
         except (FileNotFoundError, json.JSONDecodeError):
             return None
         return value if isinstance(value, dict) else None
@@ -549,11 +562,12 @@ class DockerSandboxProvider:
     def _write_marker(
         self,
         task_id: str,
+        solver_run_id: str,
         instance_id: str,
         workspace: Path,
         sandbox_workspace: str,
     ) -> None:
-        marker = self._marker(task_id)
+        marker = self._marker(task_id, solver_run_id)
         marker.parent.mkdir(parents=True, exist_ok=True)
         temporary = marker.with_suffix(".tmp")
         temporary.write_text(
@@ -561,6 +575,7 @@ class DockerSandboxProvider:
                 {
                     "instance_id": instance_id,
                     "task_id": task_id,
+                    "solver_run_id": solver_run_id,
                     "workspace": str(workspace),
                     "sandbox_workspace": sandbox_workspace,
                     "config_digest": self.config.digest,
@@ -594,7 +609,7 @@ class DockerSandboxProvider:
 
     def _markers(self) -> Iterator[Path]:
         root = Path(self.config.docker_sandbox.task_root).expanduser().resolve()
-        return root.glob("*/sandbox-instance.json")
+        return root.glob("*/sandbox-instances/*.json")
 
     def _remove_inner(self, sandbox: str, name: str) -> None:
         self._run(

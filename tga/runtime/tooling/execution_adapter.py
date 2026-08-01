@@ -7,11 +7,14 @@ from typing import Any
 from tga.contracts import ActionSpec
 from tga.runtime.tooling.requests import AuthorizationDecision, GovernedAction
 from tga.runtime.tooling.results import ExecutionError, RawExecutionResult
+from tga.runtime.tooling.execution.models import AuthorizedExecutionRequest
+from tga.domain.governance.models import ActionEffect
 
 
 class ExecutionPipelineAdapter:
-    def __init__(self, *, handlers) -> None:
+    def __init__(self, *, handlers, execution_context=None) -> None:
         self.handlers = handlers
+        self.execution_context = execution_context
 
     def authorization(self, action: GovernedAction) -> AuthorizationDecision | None:
         """Apply the current MCP policy before any external I/O."""
@@ -60,6 +63,8 @@ class ExecutionPipelineAdapter:
         )
 
     def execute(self, action: GovernedAction) -> RawExecutionResult:
+        if self.execution_context is not None:
+            self.execution_context.assert_active()
         name = action.provider_tool_name
         execution = self._execution_action(action)
         if name.startswith("input_"):
@@ -68,16 +73,73 @@ class ExecutionPipelineAdapter:
             payload = self.handlers.mcp.execute_governed(execution)
         else:
             payload = self.handlers.capability.execute_governed(execution)
+        if self.execution_context is not None:
+            self.execution_context.assert_active()
         return self._raw(action, payload)
 
     def resume_approved(self, action: GovernedAction) -> RawExecutionResult:
+        if self.execution_context is not None:
+            self.execution_context.assert_active()
         execution = self._execution_action(action)
         payload = (
             self.handlers.mcp.execute_governed(execution, approved=True)
             if action.capability.startswith("mcp:")
             else self.handlers.capability.execute_governed(execution)
         )
+        if self.execution_context is not None:
+            self.execution_context.assert_active()
         return self._raw(action, payload)
+
+    def execute_authorized(
+        self, request: AuthorizedExecutionRequest, *, approved: bool = False
+    ) -> dict[str, Any]:
+        """Compatibility bridge for host-owned data access only."""
+        if self.execution_context is not None:
+            self.execution_context.assert_active()
+        action = ActionSpec(
+            id=request.action_id,
+            task_id=request.task_id,
+            solver_id=request.solver_id,
+            intent_id=request.intent_id,
+            local_plan_step_id=None,
+            execution_policy_snapshot_id="authorized-execution-request",
+            solver_tool_policy_snapshot_id="authorized-execution-request",
+            governed_action_id=request.action_id,
+            kind=(
+                "http" if request.capability == "http.request"
+                else "workspace" if request.capability.startswith("workspace.")
+                else "tool"
+            ),
+            capability=request.capability,
+            target=request.resolved_target or request.capability,
+            arguments=request.arguments,
+            rationale="governance already completed",
+            risk="active" if request.backend in {"sandbox", "remote_mcp"} else "passive",
+            expected_outcome="execute the frozen authorized request",
+            effect=ActionEffect(),
+            input_id=str(request.arguments.get("input_id") or "") or None,
+            target_ref=str(request.arguments.get("input_id") or "") or None,
+            actual_target=request.resolved_target,
+            authorization={
+                "allowed": True,
+                "tool_call_id": request.execution_metadata.get("tool_call_id"),
+                "provider_tool_name": request.execution_metadata.get("provider_tool_name"),
+                "mcp_provider_name": request.execution_metadata.get("provider_tool_name"),
+                "mcp_server": request.execution_metadata.get("mcp_server_id"),
+                "mcp_method": request.execution_metadata.get("mcp_method"),
+                "catalog_version": request.execution_metadata.get("mcp_catalog_version"),
+            },
+            provenance={
+                "source": "authorized_execution_request",
+                "governed_action_id": request.action_id,
+            },
+        )
+        provider_name = str(request.execution_metadata.get("provider_tool_name") or "")
+        if provider_name.startswith("input_"):
+            return self.handlers.inputs.execute_governed(action)
+        if request.capability.startswith("mcp:"):
+            return self.handlers.mcp.execute_governed(action, approved=approved)
+        return self.handlers.capability.execute_governed(action)
 
     def _execution_action(self, action: GovernedAction) -> ActionSpec:
         metadata = action.execution_metadata

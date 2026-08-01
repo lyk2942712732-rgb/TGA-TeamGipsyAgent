@@ -48,6 +48,7 @@ class SandboxdProvider:
         *,
         task_id: str,
         solver_id: str,
+        solver_run_id: str,
         profile_id: str,
         fencing_token: int,
         idempotency_key: str,
@@ -63,6 +64,7 @@ class SandboxdProvider:
                 sandbox_pb2.AcquireRequest(
                     task_id=task_id,
                     solver_id=solver_id,
+                    solver_run_id=solver_run_id,
                     profile_id=profile_id,
                     config_digest=self.config.digest,
                     fencing_token=fencing_token,
@@ -78,9 +80,12 @@ class SandboxdProvider:
             instance_id=response.instance_id,
             task_id=task_id,
             solver_id=solver_id,
+            solver_run_id=solver_run_id,
             profile_id=profile_id,
             provider=self.provider_name,
             config_digest=response.config_digest,
+            image_digest=response.image_digest,
+            toolset_digest=response.toolset_digest or None,
             fencing_token=response.fencing_token,
             state=SandboxState.READY,
         )

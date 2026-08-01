@@ -155,6 +155,15 @@ class Database:
                 "execution_profile_id": "TEXT",
                 "sandbox_config_digest": "TEXT",
             },
+            "solver_runs": {
+                "turn_count": "INTEGER NOT NULL DEFAULT 0",
+                "max_turns": "INTEGER NOT NULL DEFAULT 1",
+            },
+            "sandbox_instances": {
+                "solver_run_id": "TEXT",
+                "image_digest": "TEXT",
+                "toolset_digest": "TEXT",
+            },
         }
         for table, requested in table_additions.items():
             table_exists = self.conn.execute(
@@ -170,5 +179,17 @@ class Database:
             for name, declaration in requested.items():
                 if name not in existing:
                     self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {declaration}")
+        sandbox_exists = self.conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='sandbox_instances'"
+        ).fetchone()
+        if sandbox_exists is not None:
+            # Released legacy rows are cleanup-only; active legacy rows cannot be
+            # safely attributed to a SolverRun and must not be reused.
+            self.conn.execute(
+                "UPDATE sandbox_instances SET state='released',destroy_after=COALESCE(destroy_after,?) "
+                "WHERE solver_run_id IS NULL AND state IN ('acquiring','ready')",
+                (utc_now(),),
+            )
+            self.conn.execute("DROP INDEX IF EXISTS idx_v6_sandbox_active_task")
     def close(self) -> None:
         self.conn.close()

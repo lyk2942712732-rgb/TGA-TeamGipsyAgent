@@ -58,6 +58,7 @@ class CreateTaskRequest(BaseModel):
 
     id: str | None = Field(default=None, pattern=r"^[A-Za-z0-9_-]{1,128}$")
     name: str = Field(min_length=1, max_length=255)
+    workspace_id: str | None = Field(default=None, alias="workspaceId", min_length=1, max_length=255)
     mode: str
     goal: str | None = Field(default=None, max_length=8000)
     mode_options: dict[str, Any] = Field(default_factory=dict, alias="modeOptions")

@@ -300,6 +300,7 @@ class TGATask(BaseModel):
 
     id: str = Field(pattern=r"^[A-Za-z0-9_-]{1,128}$")
     name: str = Field(min_length=1, max_length=255)
+    workspace_id: str | None = Field(default=None, min_length=1, max_length=255)
     mode: TaskMode
     session_input: SessionInput = Field(default_factory=SessionInput)
     task_entry_url: str | None = Field(default=None, max_length=2048)

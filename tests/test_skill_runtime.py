@@ -25,7 +25,11 @@ from tga.domain.skills.models import (
 )
 from tga.skills.loader import Skill
 from tga.skills.models import SkillBundleSnapshot, SkillSnapshot
-from tga.skills.retrieval import RetrievedSkill, SkillRetrievalQuery
+from tga.skills.retrieval import (
+    RegistrySkillRetriever,
+    RetrievedSkill,
+    SkillRetrievalQuery,
+)
 from tga.skills.selection import (
     MAX_SKILL_CONTEXT_CHARS,
     SkillSelectionRequest,
@@ -93,6 +97,29 @@ def test_selector_is_deterministic_filters_missing_capabilities_and_bounds_conte
     assert "z-unavailable" not in {item.name for item in first.skills}
     assert all("上下文预算已截断" in item.body for item in first.skills)
     assert all(item.content_sha256 == hashlib.sha256(item.body.encode("utf-8")).hexdigest() for item in first.skills)
+
+
+def test_registry_retriever_keeps_custom_skill_visible_at_candidate_limit() -> None:
+    class LargeRegistry:
+        def compatible(self, _mode):
+            builtins = [
+                (_skill(f"builtin-{index:03d}", body="builtin", capabilities=[], tags=["web"]), "builtin")
+                for index in range(80)
+            ]
+            custom = _skill(
+                "custom-visible",
+                body="custom",
+                capabilities=[],
+                tags=["web"],
+            )
+            return [*builtins, (custom, "custom")]
+
+    values = RegistrySkillRetriever(LargeRegistry()).retrieve(  # type: ignore[arg-type]
+        SkillRetrievalQuery(mode="ctf", text="web", tags=("web",), limit=64)
+    )
+
+    assert len(values) == 64
+    assert "custom-visible" in {item.skill.name for item in values}
 
 
 def test_manual_selector_preserves_user_order_and_rejects_invalid_choices() -> None:

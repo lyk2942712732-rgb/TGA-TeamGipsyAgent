@@ -4,6 +4,8 @@ import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import pytest
+
 from tga.contracts import (
     ActionEffect,
     ActionSpec,
@@ -49,7 +51,7 @@ def _pending_governed_action(
             solver_id="agent_main",
             intent_id=None,
             orchestration_role="supervisor",
-            solver_definition_id="task-supervisor",
+            solver_definition_id="ctf-supervisor",
             execution_policy_snapshot_id="execution:" + "a" * 64,
             solver_tool_policy_snapshot_id="tool:" + "b" * 64,
             attempt=1,
@@ -152,7 +154,7 @@ def test_cancel_discards_late_provider_tool_calls(tmp_path: Path) -> None:
     snapshot = manager.run_session(task.id)
 
     assert snapshot["session"]["status"] == "cancelled"
-    assert snapshot["session"]["turn_count"] == 0
+    assert snapshot["session"]["turn_count"] == 1
     assert snapshot["actions"] == []
     assert any(event["type"] == "PROVIDER_RESPONSE_DISCARDED" for event in snapshot["events"])
     assert not any(event["type"] == "TOOL_EXECUTION_START" for event in snapshot["events"])
@@ -293,9 +295,21 @@ def test_custom_network_rules_authorize_origin_domain_and_cidr() -> None:
         raise AssertionError("wildcard must not authorize the apex domain")
 
 
-def test_network_authorization_does_not_filter_resolved_ip_address_classes() -> None:
+def test_network_authorization_enforces_resolved_ip_address_classes() -> None:
     policy = NetworkExecutionPolicy(access="public_internet")
 
-    assert authorize_url("http://127.0.0.1:8080/", policy) == ["127.0.0.1"]
-    assert authorize_url("http://169.254.169.254/latest/meta-data/", policy) == ["169.254.169.254"]
-    assert authorize_url("http://198.18.0.8/", policy) == ["198.18.0.8"]
+    for url, code in (
+        ("http://127.0.0.1:8080/", "NETWORK_LOOPBACK_DENIED"),
+        ("http://169.254.169.254/latest/meta-data/", "NETWORK_LINK_LOCAL_DENIED"),
+        ("http://198.18.0.8/", "NETWORK_PRIVATE_ADDRESS_DENIED"),
+    ):
+        with pytest.raises(PermissionError, match=code):
+            authorize_url(url, policy)
+
+    ctf = policy.model_copy(update={
+        "deny_private_networks": False,
+        "deny_loopback": False,
+        "deny_link_local": False,
+        "deny_cloud_metadata": False,
+    })
+    assert authorize_url("http://127.0.0.1:8080/", ctf) == ["127.0.0.1"]

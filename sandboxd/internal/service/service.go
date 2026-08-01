@@ -6,6 +6,8 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"strings"
+	"sync"
 	"time"
 
 	sandboxv1 "github.com/team-gipsy/tga-sandboxd/api/sandbox/v1"
@@ -21,10 +23,20 @@ type Service struct {
 	config  *config.Config
 	runtime *runtimepkg.Runtime
 	network *network.Policy
+	locksMu sync.Mutex
+	locks   map[string]*taskExecutionLock
+}
+
+type taskExecutionLock struct {
+	mu   sync.RWMutex
+	refs int
 }
 
 func New(cfg *config.Config, runtime *runtimepkg.Runtime, policy *network.Policy) *Service {
-	return &Service{config: cfg, runtime: runtime, network: policy}
+	return &Service{
+		config: cfg, runtime: runtime, network: policy,
+		locks: make(map[string]*taskExecutionLock),
+	}
 }
 
 func (s *Service) Health(ctx context.Context, request *sandboxv1.HealthRequest) (*sandboxv1.HealthResponse, error) {
@@ -50,7 +62,7 @@ func (s *Service) Health(ctx context.Context, request *sandboxv1.HealthRequest) 
 
 func (s *Service) Acquire(ctx context.Context, request *sandboxv1.AcquireRequest) (*sandboxv1.AcquireResponse, error) {
 	instance, reused, err := s.runtime.Acquire(
-		ctx, request.TaskId, request.SolverId, request.ProfileId,
+		ctx, request.TaskId, request.SolverId, request.SolverRunId, request.ProfileId,
 		request.ConfigDigest, request.FencingToken,
 	)
 	if err != nil {
@@ -59,10 +71,23 @@ func (s *Service) Acquire(ctx context.Context, request *sandboxv1.AcquireRequest
 	return &sandboxv1.AcquireResponse{
 		InstanceId: instance.ID, ConfigDigest: instance.ConfigDigest,
 		FencingToken: instance.FencingToken, Reused: reused,
+		ImageDigest:   imageDigest(s.config.Profiles[request.ProfileId].Image),
+		ToolsetDigest: s.config.Profiles[request.ProfileId].ToolsetDigest,
 	}, nil
 }
 
+func imageDigest(image string) string {
+	const marker = "@sha256:"
+	index := strings.LastIndex(image, marker)
+	if index < 0 {
+		return ""
+	}
+	return image[index+len(marker):]
+}
+
 func (s *Service) Exec(request *sandboxv1.ExecRequest, stream sandboxv1.SandboxService_ExecServer) error {
+	releaseExecution := s.lockTaskExecution(request.InstanceId, true)
+	defer releaseExecution()
 	profile, err := s.profileForInstance(stream.Context(), request.InstanceId, request.FencingToken)
 	if err != nil {
 		return err
@@ -74,6 +99,9 @@ func (s *Service) Exec(request *sandboxv1.ExecRequest, stream sandboxv1.SandboxS
 	if err := s.applyNetwork(stream.Context(), request.InstanceId, request.FencingToken, request.Process.NetworkGrants); err != nil {
 		return err
 	}
+	defer func() {
+		_ = s.applyNetwork(context.Background(), request.InstanceId, request.FencingToken, nil)
+	}()
 	result, err := s.runtime.Exec(stream.Context(), request.InstanceId, request.FencingToken, spec, func(frame runtimepkg.Frame) error {
 		kind := sandboxv1.ExecFrame_STDOUT
 		if frame.Stderr {
@@ -103,6 +131,8 @@ func (s *Service) OpenProcess(stream sandboxv1.SandboxService_OpenProcessServer)
 	if start == nil {
 		return errors.New("first process message must be start")
 	}
+	releaseExecution := s.lockTaskExecution(start.InstanceId, true)
+	defer releaseExecution()
 	profile, err := s.profileForInstance(stream.Context(), start.InstanceId, start.FencingToken)
 	if err != nil {
 		return err
@@ -114,6 +144,9 @@ func (s *Service) OpenProcess(stream sandboxv1.SandboxService_OpenProcessServer)
 	if err := s.applyNetwork(stream.Context(), start.InstanceId, start.FencingToken, start.Process.NetworkGrants); err != nil {
 		return err
 	}
+	defer func() {
+		_ = s.applyNetwork(context.Background(), start.InstanceId, start.FencingToken, nil)
+	}()
 	process, err := s.runtime.OpenProcess(stream.Context(), start.InstanceId, start.FencingToken, spec, func(frame runtimepkg.Frame) error {
 		kind := sandboxv1.ExecFrame_STDOUT
 		if frame.Stderr {
@@ -185,6 +218,8 @@ func (s *Service) Inspect(ctx context.Context, request *sandboxv1.InspectRequest
 }
 
 func (s *Service) Destroy(ctx context.Context, request *sandboxv1.DestroyRequest) (*sandboxv1.Empty, error) {
+	releaseExecution := s.lockTaskExecution(request.InstanceId, true)
+	defer releaseExecution()
 	if err := s.runtime.Destroy(ctx, request.InstanceId, request.FencingToken); err != nil {
 		return nil, err
 	}
@@ -224,6 +259,18 @@ func processSpec(value *sandboxv1.ProcessSpec, profile config.Profile, solverID 
 	}
 	if !config.ValidIdentifier(solverID) {
 		return runtimepkg.ProcessSpec{}, errors.New("invalid solver id")
+	}
+	if len(value.Argv) > 0 {
+		allowed := false
+		for _, executable := range profile.AllowedExecutables {
+			if value.Argv[0] == executable {
+				allowed = true
+				break
+			}
+		}
+		if !allowed {
+			return runtimepkg.ProcessSpec{}, errors.New("executable is not allowed by sandbox profile")
+		}
 	}
 	timeout := value.TimeoutSeconds
 	if timeout == 0 || int(timeout) > profile.Limits.TimeoutSeconds {
@@ -273,3 +320,33 @@ func commandAvailable(ctx context.Context, name string) bool {
 	return exec.CommandContext(ctx, name, "--version").Run() == nil
 }
 func fileExists(path string) bool { _, err := os.Stat(path); return err == nil }
+
+func (s *Service) lockTaskExecution(instanceID string, exclusive bool) func() {
+	s.locksMu.Lock()
+	lock := s.locks[instanceID]
+	if lock == nil {
+		lock = &taskExecutionLock{}
+		s.locks[instanceID] = lock
+	}
+	lock.refs++
+	s.locksMu.Unlock()
+
+	if exclusive {
+		lock.mu.Lock()
+	} else {
+		lock.mu.RLock()
+	}
+	return func() {
+		if exclusive {
+			lock.mu.Unlock()
+		} else {
+			lock.mu.RUnlock()
+		}
+		s.locksMu.Lock()
+		lock.refs--
+		if lock.refs == 0 {
+			delete(s.locks, instanceID)
+		}
+		s.locksMu.Unlock()
+	}
+}

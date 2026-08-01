@@ -4,26 +4,50 @@ from __future__ import annotations
 
 
 PREFERRED_BY_INTENT = {
-    "validation": "vulnerability-validator",
-    "web_analysis": "web-network-analyst",
-    "code_audit": "code-audit",
-    "binary_analysis": "binary-analysis",
-    "forensics": "forensics-analysis",
-    "recon": "recon-triage",
+    "challenge_classification": "challenge-classifier",
+    "ctf_web": "ctf-web-solver",
+    "ctf_pwn": "ctf-pwn-solver",
+    "ctf_reverse": "ctf-reverse-solver",
+    "ctf_crypto": "ctf-crypto-solver",
+    "ctf_forensics": "ctf-forensics-solver",
+    "flag_verification": "flag-verifier",
+    "surface_mapping": "surface-mapper",
+    "web_api_analysis": "web-api-analyst",
+    "vulnerability_validation": "vulnerability-validator",
+    "evidence_triage": "evidence-triage-solver",
+    "timeline_ioc": "timeline-ioc-solver",
+    "host_network_forensics": "host-network-forensics-solver",
+    "malware_analysis": "malware-solver",
+    "containment_advice": "containment-advisor",
+    "architecture_analysis": "architecture-analyst",
+    "code_audit": "code-audit-solver",
+    "dynamic_fuzzing": "dynamic-fuzzing-solver",
+    "crash_root_cause": "crash-root-cause-solver",
+    "poc_reproduction": "poc-reproduction-solver",
+    "binary_triage": "binary-triage-solver",
+    "static_analysis": "static-analysis-solver",
+    "dynamic_analysis": "dynamic-analysis-solver",
+    "logic_config_recovery": "logic-config-recovery-solver",
 }
 
 
 class SolverSelector:
-    def __init__(self, *, definitions, template) -> None:
+    def __init__(self, *, definitions, template, task) -> None:
         self.definitions = definitions
         self.template = template
+        self.task = task
 
     def select(self, intent):
-        candidates = [
-            self.definitions.require(definition_id)
-            for definition_id in self.template.available_solver_definition_ids
-            if intent.kind in self.definitions.require(definition_id).accepted_intent_kinds
-        ]
+        subtype = str(getattr(self.task.mode_config, "subtype", "") or "") or None
+        candidates = []
+        for definition_id in self.template.available_solver_definition_ids:
+            definition = self.definitions.require(definition_id)
+            if (
+                intent.kind in definition.accepted_intent_kinds
+                and definition.supports(mode=self.task.mode, subtype=subtype)
+                and self._allowed_by_mode_config(definition.id)
+            ):
+                candidates.append(definition)
         preferred = PREFERRED_BY_INTENT.get(intent.kind)
         selected = next((item for item in candidates if item.id == preferred), None)
         if selected is None:
@@ -31,6 +55,20 @@ class SolverSelector:
         if selected is None:
             raise ValueError(f"no Worker SolverDefinition accepts Intent kind: {intent.kind}")
         return selected
+
+    def _allowed_by_mode_config(self, definition_id: str) -> bool:
+        config = self.task.mode_config
+        if definition_id == "vulnerability-validator":
+            return bool(getattr(config, "exploit_validation", False))
+        if definition_id == "dynamic-fuzzing-solver":
+            return bool(getattr(config, "allow_fuzzing", False))
+        if definition_id == "poc-reproduction-solver":
+            return bool(getattr(config, "allow_target_execution", False))
+        if definition_id == "dynamic-analysis-solver":
+            return bool(getattr(config, "allow_dynamic_execution", False))
+        if definition_id == "containment-advisor":
+            return str(getattr(config, "response_authority", "analysis_only")) != "analysis_only"
+        return True
 
 
 __all__ = ["SolverSelector"]

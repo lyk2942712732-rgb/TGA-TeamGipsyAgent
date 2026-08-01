@@ -163,6 +163,18 @@ class SessionRepository:
         self._commit()
         return self.get_session(task_id)  # type: ignore[return-value]
 
+    def reserve_turn(self, task_id: str) -> SessionRecord | None:
+        """Atomically consume one task turn before a provider request."""
+        cursor = self.conn.execute(
+            "UPDATE sessions SET turn_count=turn_count+1 "
+            "WHERE task_id=? AND status='running' AND turn_count<max_turns",
+            (task_id,),
+        )
+        self._commit()
+        if cursor.rowcount != 1:
+            return None
+        return self.get_session(task_id)
+
     def upsert_challenge(self, challenge: ChallengeContract) -> ChallengeContract:
         self.conn.execute(
             "INSERT INTO challenge_contracts(task_id,payload_json,updated_at) VALUES (?, ?, ?) "

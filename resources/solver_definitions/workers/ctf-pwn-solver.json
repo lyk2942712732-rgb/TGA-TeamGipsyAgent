@@ -1,0 +1,63 @@
+{
+    "id":  "ctf-pwn-solver",
+    "version":  "2.0.0",
+    "orchestration_role":  "worker",
+    "specialties":  [
+                        "ctf",
+                        "binary",
+                        "pwn"
+                    ],
+    "supported_modes":  [
+                            "ctf"
+                        ],
+    "supported_subtypes":  [
+                               "pwn",
+                               "auto",
+                               "unknown"
+                           ],
+    "system_prompt_template":  "Analyze the assigned pwn route in an isolated workspace and preserve scripts, outputs, and exploit assumptions as artifacts.",
+    "default_skill_tags":  [
+                               "binary",
+                               "pwn"
+                           ],
+    "required_skill_names":  [
+                                 "binary-triage"
+                             ],
+    "required_capabilities":  [
+                                  "workspace.read",
+                                  "workspace.write",
+                                  "workspace.python",
+                                  "workspace.shell",
+                                  "artifact.inspect",
+                                  "sandbox.exec"
+                              ],
+    "allowed_tool_groups":  [
+                                "control",
+                                "resource_read",
+                                "execution",
+                                "retrieval"
+                            ],
+    "tool_policy_profile":  "ctf-pwn-solver-governed",
+    "accepted_intent_kinds":  [
+                                  "ctf_pwn"
+                              ],
+    "output_contract":  {
+                            "name":  "worker_result",
+                            "required_fields":  [
+                                                    "summary",
+                                                    "coverage",
+                                                    "limitations"
+                                                ]
+                        },
+    "default_budget":  {
+                           "max_turns":  24,
+                           "max_input_tokens":  220000,
+                           "max_output_tokens":  40000,
+                           "max_tool_calls":  48,
+                           "max_artifacts":  96,
+                           "deadline":  null
+                       },
+    "completion_authority":  "worker_only",
+    "sandbox_profile_id":  "ctf-pwn-v1",
+    "sandbox_required":  true
+}

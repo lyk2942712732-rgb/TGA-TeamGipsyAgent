@@ -27,6 +27,7 @@ func validConfig(runRoot string) string {
 				"id":"raw-network",
 				"provider":"sandboxd",
 				"image":"example.invalid/network@sha256:` + digest + `",
+				"toolset_digest":"` + digest + `",
 				"network_mode":"target_allowlist",
 				"allow_net_raw":true,
 				"limits":{}
@@ -67,6 +68,18 @@ func TestLoadRejectsMutableToolImage(t *testing.T) {
 	)
 	if _, err := loadFixture(t, content); err == nil {
 		t.Fatal("expected mutable image to fail")
+	}
+}
+
+func TestLoadRejectsMissingToolsetDigest(t *testing.T) {
+	content := strings.Replace(
+		validConfig(t.TempDir()),
+		`"toolset_digest":"`+strings.Repeat("a", 64)+`",`,
+		``,
+		1,
+	)
+	if _, err := loadFixture(t, content); err == nil {
+		t.Fatal("expected missing toolset digest to fail")
 	}
 }
 

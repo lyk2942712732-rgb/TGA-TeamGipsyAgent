@@ -74,7 +74,7 @@ def _solver() -> SolverInstance:
     return SolverInstance(
         id="solver_1",
         task_id="task_1",
-        definition_id="task-supervisor",
+        definition_id="ctf-supervisor",
         definition_version="1",
         definition_content_sha256="b" * 64,
         orchestration_role="supervisor",

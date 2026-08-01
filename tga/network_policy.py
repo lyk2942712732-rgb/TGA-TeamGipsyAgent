@@ -54,6 +54,8 @@ def authorize_url(url: str, policy: NetworkExecutionPolicy, *, resolve_dns: bool
         raise PermissionError("NETWORK_ORIGIN_NOT_IN_TASK_SOURCES")
     host = urlsplit(url).hostname or ""
     addresses = _resolved_addresses(host) if resolve_dns else _literal_addresses(host)
+    for address in addresses:
+        enforce_address_policy(address, policy)
     if policy.access == "custom" and not _custom_target_allowed(
         origin=origin,
         host=host,
@@ -62,6 +64,26 @@ def authorize_url(url: str, policy: NetworkExecutionPolicy, *, resolve_dns: bool
     ):
         raise PermissionError("NETWORK_TARGET_NOT_IN_CUSTOM_ALLOWLIST")
     return [str(address) for address in addresses]
+
+
+def enforce_address_policy(
+    address: str | ipaddress.IPv4Address | ipaddress.IPv6Address,
+    policy: NetworkExecutionPolicy,
+) -> None:
+    address = ipaddress.ip_address(address)
+    if policy.deny_loopback and address.is_loopback:
+        raise PermissionError("NETWORK_LOOPBACK_DENIED")
+    if policy.deny_link_local and address.is_link_local:
+        raise PermissionError("NETWORK_LINK_LOCAL_DENIED")
+    if policy.deny_private_networks and address.is_private:
+        raise PermissionError("NETWORK_PRIVATE_ADDRESS_DENIED")
+    metadata = {
+        ipaddress.ip_address("169.254.169.254"),
+        ipaddress.ip_address("100.100.100.200"),
+        ipaddress.ip_address("fd00:ec2::254"),
+    }
+    if policy.deny_cloud_metadata and address in metadata:
+        raise PermissionError("NETWORK_CLOUD_METADATA_DENIED")
 
 
 def _custom_target_allowed(
@@ -117,4 +139,3 @@ def _resolved_addresses(host: str) -> list[ipaddress.IPv4Address | ipaddress.IPv
         if address not in result:
             result.append(address)
     return result
-

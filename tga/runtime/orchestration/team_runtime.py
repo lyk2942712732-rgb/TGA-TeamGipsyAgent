@@ -4,7 +4,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+from pathlib import Path
 
+from tga.application.services.skill_candidate_activation_service import (
+    SkillCandidateActivationService,
+)
 from tga.application.services.skill_selection_service import (
     SolverSkillSelectionRequest,
     SolverSkillSelectionService,
@@ -12,23 +17,28 @@ from tga.application.services.skill_selection_service import (
 from tga.application.services.solver_factory import SolverFactory
 from tga.capabilities.registry import build_default_registry
 from tga.domain.planning import GlobalPlan, Intent, LocalPlan, LocalPlanStep
+from tga.domain.retrieval import RetrievalPolicy
+from tga.domain.skills import SkillActivation
 from tga.domain.solver import (
     SolverAssignment,
+    SolverRun,
     TeamRuntimeState,
     ToolPolicySnapshot,
 )
 from tga.domain.task.models import ModelSnapshot
 from tga.evidence.database import utc_now
 from tga.infrastructure.persistence.errors import PersistenceConflict
+from tga.infrastructure.persistence import PersistenceBundle
 from tga.infrastructure.skills.catalog import FileSkillCatalog
+from tga.runtime.retrieval import RetrievalService
 
 
 INITIAL_INTENT_KIND = {
-    "ctf": "recon",
-    "penetration_test": "recon",
-    "incident_response": "forensics",
-    "vulnerability_research": "code_audit",
-    "reverse_engineering": "binary_analysis",
+    "ctf": "challenge_classification",
+    "penetration_test": "surface_mapping",
+    "incident_response": "evidence_triage",
+    "vulnerability_research": "architecture_analysis",
+    "reverse_engineering": "binary_triage",
 }
 
 
@@ -208,6 +218,32 @@ class TeamRuntime:
             accepted_at=now,
         )
         self.repositories.orchestration.save_assignment(assignment)
+        run = SolverRun(
+            id=f"run_{assignment.id}",
+            task_id=self.task.id,
+            solver_id=solver.id,
+            assignment_id=assignment.id,
+            intent_id=intent.id,
+            orchestration_role="worker",
+            attempt=attempt,
+            max_turns=solver.budget.max_turns,
+            state="queued",
+            created_at=now,
+            updated_at=now,
+        )
+        self.repositories.orchestration.create_solver_run(run)
+        self.repositories.events.append_agent_event(
+            self.task.id,
+            "SOLVER_RUN_QUEUED",
+            {
+                "run_id": run.id,
+                "assignment_id": assignment.id,
+                "intent_id": intent.id,
+                "attempt": attempt,
+            },
+            solver_id=solver.id,
+            intent_id=intent.id,
+        )
         self.repositories.events.append_agent_event(
             self.task.id,
             "SOLVER_ASSIGNED",
@@ -279,6 +315,55 @@ class TeamRuntime:
         self, *, solver_id: str, definition, intent, parent_solver_id: str | None, now: str
     ):
         policy = self._tool_policy(definition)
+        approved = ()
+        candidates = ()
+        decision = None
+        index_snapshot_ids: tuple[str, ...] = ()
+        skill_corpus = self._open_skill_corpus()
+        if skill_corpus is not None:
+            skill_policy = self._skill_retrieval_policy()
+            try:
+                gateway = RetrievalService(skill_corpus.retrieval)
+                query = " ".join((
+                    definition.id,
+                    *definition.specialties,
+                    *definition.default_skill_tags,
+                    intent.kind if intent else "",
+                    intent.objective if intent else self.task.goal,
+                ))
+                pack = gateway.retrieve_skill_candidates(
+                    task_id=self.task.id,
+                    solver_id=solver_id,
+                    intent_id=intent.id if intent else None,
+                    query=query,
+                    policy=skill_policy,
+                    workspace_id=self.task.workspace_id,
+                )
+                if pack is not None:
+                    activation = SkillCandidateActivationService(
+                        repository=skill_corpus.retrieval,
+                        capability_registry=self.registry,
+                    ).activate(
+                        pack=pack,
+                        task_id=self.task.id,
+                        solver_id=solver_id,
+                        mode=self.task.mode,
+                        definition=definition,
+                        intent=intent,
+                        available_capabilities=policy.allowed_capabilities,
+                        tool_policy_allowed_capabilities=policy.allowed_capabilities,
+                        policy=skill_policy,
+                        workspace_id=self.task.workspace_id,
+                        created_at=now,
+                        reserved_skill_names=tuple(definition.required_skill_names),
+                        max_skills=max(0, 3 - len(definition.required_skill_names)),
+                    )
+                    approved = activation.approved
+                    candidates = activation.candidates
+                    decision = activation.decision
+                    index_snapshot_ids = decision.index_snapshot_ids
+            finally:
+                skill_corpus.close()
         skill = self.skills.select_solver_skills(SolverSkillSelectionRequest(
             task_id=self.task.id,
             solver_id=solver_id,
@@ -289,7 +374,10 @@ class TeamRuntime:
             available_capabilities=policy.allowed_capabilities,
             tool_policy_allowed_capabilities=policy.allowed_capabilities,
             created_at=now,
-        ))
+        ), approved_candidates=approved,
+            selection_decision_id=decision.id if decision else None,
+            skill_index_snapshot_ids=index_snapshot_ids,
+        )
         solver = self.factory.create(
             instance_id=solver_id,
             task=self.task,
@@ -306,7 +394,57 @@ class TeamRuntime:
                 self.task.id, definition, created_at=now
             )
             self.repositories.solvers.add_solver(solver)
+            if decision is not None:
+                self.repositories.solvers.save_skill_selection_decision(decision)
+                self._append_skill_decision_events(decision, candidates)
             self.repositories.solvers.save_solver_skill_snapshot(skill)
+            self.repositories.events.append_agent_event(
+                self.task.id,
+                "SKILL_SNAPSHOT_FROZEN",
+                {
+                    "solver_id": solver.id,
+                    "selection_decision_id": skill.selection_decision_id,
+                    "index_snapshot_ids": list(skill.skill_index_snapshot_ids),
+                    "skills": [
+                        {
+                            "name": item.name,
+                            "version": item.version,
+                            "content_sha256": item.content_sha256,
+                            "document_id": item.document_id,
+                            "revision_id": item.revision_id,
+                        }
+                        for item in skill.skills
+                    ],
+                },
+                solver_id=solver.id,
+                intent_id=solver.assigned_intent_id,
+            )
+            for item in skill.skills:
+                activation = SkillActivation(
+                    id="skillact_" + hashlib.sha256(
+                        f"{solver.id}\0{item.name}\0{item.content_sha256}".encode()
+                    ).hexdigest()[:32],
+                    task_id=self.task.id,
+                    solver_id=solver.id,
+                    skill_name=item.name,
+                    skill_content_sha256=item.content_sha256,
+                    source="solver_specialized",
+                    reason="; ".join(item.selection_reasons),
+                    activated_at=now,
+                    document_id=item.document_id,
+                    revision_id=item.revision_id,
+                    retrieval_run_id=item.retrieval_run_id,
+                    index_snapshot_id=item.index_snapshot_id,
+                    selection_decision_id=skill.selection_decision_id,
+                )
+                self.repositories.solvers.save_skill_activation(activation)
+                self.repositories.events.append_agent_event(
+                    self.task.id,
+                    "SKILL_ACTIVATED",
+                    activation.model_dump(mode="json"),
+                    solver_id=solver.id,
+                    intent_id=solver.assigned_intent_id,
+                )
             self.repositories.events.append_agent_event(
                 self.task.id,
                 "SOLVER_CREATED",
@@ -322,11 +460,85 @@ class TeamRuntime:
             )
         return solver
 
+    def _append_skill_decision_events(self, decision, candidate_values) -> None:
+        self.repositories.events.append_agent_event(
+            self.task.id,
+            "SKILL_RETRIEVAL_COMPLETED",
+            {
+                "retrieval_run_ids": list(decision.retrieval_run_ids),
+                "index_snapshot_ids": list(decision.index_snapshot_ids),
+                "candidate_ids": list(decision.candidate_ids),
+            },
+            solver_id=decision.solver_id,
+            intent_id=decision.intent_id,
+        )
+        candidates = {item.id: item for item in candidate_values}
+        for rejection in decision.rejected_candidates:
+            candidate = candidates.get(rejection.candidate_id)
+            payload = {
+                "decision_id": decision.id,
+                "candidate_id": rejection.candidate_id,
+                "code": rejection.code,
+                "reason": rejection.reason,
+            }
+            if candidate is not None:
+                payload.update({
+                    "retrieval_run_id": candidate.retrieval_run_id,
+                    "index_snapshot_id": candidate.index_snapshot_id,
+                    "document_id": candidate.document_id,
+                    "revision_id": candidate.revision_id,
+                    "content_sha256": candidate.content_sha256,
+                })
+            self.repositories.events.append_agent_event(
+                self.task.id,
+                "SKILL_CANDIDATE_REJECTED",
+                payload,
+                solver_id=decision.solver_id,
+                intent_id=decision.intent_id,
+            )
+        self.repositories.events.append_agent_event(
+            self.task.id,
+            "SKILL_SELECTION_DECIDED",
+            decision.model_dump(mode="json"),
+            solver_id=decision.solver_id,
+            intent_id=decision.intent_id,
+        )
+
+    def _open_skill_corpus(self):
+        configured = os.environ.get("TGA_SKILL_CORPUS_DB")
+        path = Path(configured) if configured else Path(
+            os.environ.get("TGA_RUN_ROOT", "runs")
+        ) / "_skill-corpus" / "evidence.db"
+        if not configured and not path.is_file():
+            return None
+        return PersistenceBundle.open(path)
+
+    def _skill_retrieval_policy(self) -> RetrievalPolicy:
+        scopes = ["solver", "task"]
+        if self.task.workspace_id:
+            scopes.append("workspace")
+        scopes.append("global")
+        return RetrievalPolicy(
+            allowed_source_kinds=(
+                "documentation", "code_repository", "knowledge_base",
+                "uploaded_file", "web_reference",
+            ),
+            allowed_trust_levels=("authoritative", "trusted"),
+            allowed_owner_scopes=tuple(scopes),
+            task_artifact_access=False,
+            cross_solver_access=False,
+            max_results=16,
+            max_context_tokens=24_000,
+        )
+
     def _tool_policy(self, definition) -> ToolPolicySnapshot:
-        capabilities = tuple(sorted(
+        mode_capabilities = {
             item["name"]
             for item in self.registry.snapshot()["capabilities"]
             if self.task.mode in item["modes"]
+        }
+        capabilities = tuple(sorted(
+            set(definition.required_capabilities).intersection(mode_capabilities)
         ))
         payload = {
             "definition": definition.id,

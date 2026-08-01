@@ -18,6 +18,7 @@ from tga.runtime.completion_validators import (
     validator_for,
 )
 from tga.runtime.coordinator import SessionCoordinator
+from tga.runtime.completion_service import TaskCompletionService
 from tga.runtime.orchestration import TaskOrchestrator
 from tga.infrastructure.persistence import PersistenceBundle
 from tga.runtime.prompts import build_agent_system_prompt
@@ -106,6 +107,43 @@ def test_finish_schema_is_strict_and_exposes_flag_only_for_ctf():
         schema = task_completion_tool_schema(mode)
         assert schema["additionalProperties"] is False
         assert "flag" not in schema["properties"]
+
+
+def test_completion_service_rejects_active_intents_before_mode_validation(tmp_path):
+    task = _task("active_intent_completion", "ctf")
+    store = EvidenceStore(tmp_path / task.id / "evidence.db")
+    try:
+        store.create_task(task)
+        state = TaskOrchestrator(
+            task=task, repositories=PersistenceBundle(store)
+        ).bootstrap()
+        SessionCoordinator(store).ensure_session(
+            task=task,
+            max_turns=4,
+            supervisor_solver_id=state.supervisor_solver_id,
+        )
+        SessionCoordinator(store).start(
+            task_id=task.id, solver_id=state.supervisor_solver_id
+        )
+        validated = False
+
+        def validate(_proposal):
+            nonlocal validated
+            validated = True
+            return {"accepted": True}
+
+        result = TaskCompletionService(task=task, store=store).complete(
+            solver_id=state.supervisor_solver_id,
+            proposal={"summary": "premature"},
+            validate=validate,
+        )
+
+        assert result["code"] == "ACTIVE_INTENTS_REMAIN"
+        assert validated is False
+        assert store.get_session(task.id).status == "running"
+        assert PersistenceBundle(store).orchestration.get_state(task.id).status == "running"
+    finally:
+        store.close()
 
 
 def test_each_mode_drives_prompt_capabilities_and_skills():

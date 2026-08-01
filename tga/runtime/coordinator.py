@@ -129,6 +129,10 @@ class SessionCoordinator:
                 return session
             return self.store.update_session(task_id, turn_count=session.turn_count + delta)
 
+    def reserve_turn(self, *, task_id: str) -> SessionRecord | None:
+        with self.store.transaction():
+            return self.store.reserve_turn(task_id)
+
     def start(self, *, task_id: str, solver_id: str | None = None) -> SessionRecord:
         session = self.store.get_session(task_id)
         if session is None:
