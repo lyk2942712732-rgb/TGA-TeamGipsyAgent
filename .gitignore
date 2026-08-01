@@ -207,22 +207,9 @@ tempCodeRunnerFile.py
 runs/
 config/*.v1.bak
 
-# TGA pytest --basetemp scratch dirs.  These are regenerable test artifacts;
-# they must never be committed (a previous run leaked 3.4 GB into the repo).
-.phase*/
-.pytest-*/
-.real-provider-smoke*/
-.no-ssrf-probe-artifacts/
-tmp_*/
-
-# Local tooling screenshots and scratch captures
-.codex-*.png
-artifacts/
-
 # TGA web UI dependencies/build output
 apps/web/node_modules/
 apps/web/dist/
-apps/web/test-results/
 
 # Ruff stuff:
 .ruff_cache/

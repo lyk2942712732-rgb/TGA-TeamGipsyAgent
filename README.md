@@ -24,29 +24,6 @@ tga go
 `tga go` 打开桌面界面，`tga web` 打开浏览器界面。公网监听必须显式使用
 `tga web --host 0.0.0.0`。Provider API Key 只写不读，API 不回显已保存凭据。
 
-## Web Frontend
-
-前端位于 `apps/web/`，使用 React、TypeScript、Vite、TanStack Query、React Router
-和 Lucide Icons。界面覆盖完整任务工作流：
-
-- Dashboard、任务列表、五步创建任务向导、任务详情、Runtime 与 Replay。
-- 全局审批中心、资源中心、报告中心和知识库。
-- 团队模板、Solver、Skills、Tools & MCP、Models、策略与预算及系统状态。
-
-页面优先展示真实 API 数据；当接口暂无对应数据时，使用受控参考数据补齐界面，便于
-独立验证布局和交互，不会把静态审批等操作提交到后端。
-
-前端开发模式：
-
-```powershell
-cd apps\web
-npm ci
-npm run dev
-```
-
-浏览器访问 `http://127.0.0.1:5173`。生产构建使用 `npm run build`，生成目录为
-`apps/web/dist/`；该目录不提交到 Git，由 `tga web` 或部署流程加载构建结果。
-
 ## Runtime Contract
 
 - `TaskSpec` 保存 objective、instructions、constraints、success criteria 和 resources。
@@ -102,5 +79,5 @@ npm run build
 npm run test:e2e
 ```
 
-架构说明位于 `docs/architecture/`，运维手册位于 `docs/operations/`，发布门禁记录在
-`docs/operations/CUTOVER_CHECKLIST.md`。
+架构和运维说明位于 `docs/architecture/`，发布门禁记录在
+`CUTOVER_CHECKLIST.md`。

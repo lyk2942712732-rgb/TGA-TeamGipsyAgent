@@ -15,6 +15,7 @@ from tga.domain.planning.intents import Intent, IntentDependency
 from tga.domain.knowledge.items import KnowledgeItem
 from tga.domain.solver.budgets import SolverBudget
 from tga.domain.solver.instances import SolverInstance, SolverTimestamps, ToolPolicySnapshot
+from tga.domain.solver.runs import SolverRun
 from tga.domain.task.hints import TaskHint
 from tga.domain.task.interventions import UserIntervention
 from tga.domain.task.models import ModelSnapshot, TGATask
@@ -24,6 +25,7 @@ from tga.infrastructure.persistence import (
     IntentClaimConflict,
     OwnershipError,
     PersistenceBundle,
+    PersistenceConflict,
     PlanVersionConflict,
 )
 
@@ -128,7 +130,7 @@ def test_new_database_has_schema_v6_tables_and_indexes(tmp_path) -> None:
             "task_specs", "task_hints", "user_interventions", "global_plans",
             "intent_dependencies", "local_plans", "local_plan_steps",
             "solver_definitions_snapshot", "solver_instances", "solver_budgets",
-            "solver_leases", "worker_results", "knowledge_items",
+            "solver_leases", "solver_runs", "worker_results", "knowledge_items",
             "solver_assignments", "worker_result_merges", "review_results",
             "report_results", "task_orchestrator_states",
             "knowledge_evidence_links", "evidence_claims", "finding_evidence_links",
@@ -140,6 +142,7 @@ def test_new_database_has_schema_v6_tables_and_indexes(tmp_path) -> None:
             "document_revisions", "document_chunks", "index_snapshots",
             "index_bindings", "retrieval_runs", "retrieval_hits",
             "idx_v6_agent_events_task_seq",
+            "uq_v6_active_solver_run_per_intent",
         }.issubset(names)
         assert not names.intersection({
             "solvers", "memory_entries", "actions", "strategy_cards",
@@ -234,6 +237,71 @@ def test_solver_lease_expiry_allows_recovery(persistence) -> None:
         "task_1", "solver_1", "owner_a", ttl_seconds=10,
         now=start + timedelta(seconds=12),
     )
+
+
+def test_solver_run_lifecycle_is_fenced_and_auditable(persistence) -> None:
+    persistence.solvers.add_solver(_solver())
+    run = SolverRun(
+        id="run_1", task_id="task_1", solver_id="solver_1",
+        orchestration_role="supervisor", created_at=NOW, updated_at=NOW,
+    )
+    persistence.orchestration.create_solver_run(run)
+    start = datetime(2026, 7, 30, tzinfo=UTC)
+
+    leased = persistence.orchestration.claim_solver_run(
+        run.id, "runner_a", ttl_seconds=30, expected_version=1, now=start
+    )
+    assert leased is not None and leased.state == "leased"
+    assert leased.fencing_token == 1
+    running = persistence.orchestration.start_solver_run(
+        run.id, "runner_a", leased.fencing_token, now=start + timedelta(seconds=1)
+    )
+    assert running.state == "running" and running.started_at is not None
+    renewed = persistence.orchestration.renew_solver_run(
+        run.id, "runner_a", leased.fencing_token,
+        ttl_seconds=30, now=start + timedelta(seconds=2),
+    )
+    assert renewed is not None and renewed.version == running.version + 1
+    completed = persistence.orchestration.finish_solver_run(
+        run.id, "runner_a", leased.fencing_token, state="completed",
+        result_id="result_1", now=start + timedelta(seconds=3),
+    )
+    assert completed.state == "completed" and completed.result_id == "result_1"
+    assert persistence.orchestration.get_solver_run(run.id) == completed
+
+    with pytest.raises(PersistenceConflict, match="late SolverRun"):
+        persistence.orchestration.finish_solver_run(
+            run.id, "runner_a", leased.fencing_token - 1, state="failed",
+            now=start + timedelta(seconds=4),
+        )
+
+
+def test_expired_solver_run_rejects_late_completion(persistence) -> None:
+    persistence.solvers.add_solver(_solver())
+    run = SolverRun(
+        id="run_expired", task_id="task_1", solver_id="solver_1",
+        orchestration_role="supervisor", created_at=NOW, updated_at=NOW,
+    )
+    persistence.orchestration.create_solver_run(run)
+    start = datetime(2026, 7, 30, tzinfo=UTC)
+    leased = persistence.orchestration.claim_solver_run(
+        run.id, "runner_a", ttl_seconds=10, expected_version=1, now=start
+    )
+    assert leased is not None
+    persistence.orchestration.start_solver_run(
+        run.id, "runner_a", leased.fencing_token, now=start + timedelta(seconds=1)
+    )
+
+    expired = persistence.orchestration.expire_solver_runs(
+        now=start + timedelta(seconds=11)
+    )
+    assert [item.id for item in expired] == [run.id]
+    assert expired[0].error_code == "SOLVER_RUN_LEASE_EXPIRED"
+    with pytest.raises(PersistenceConflict, match="late SolverRun"):
+        persistence.orchestration.finish_solver_run(
+            run.id, "runner_a", leased.fencing_token, state="completed",
+            now=start + timedelta(seconds=12),
+        )
 
 
 def test_artifacts_are_append_only_and_claim_ownership_is_enforced(persistence) -> None:

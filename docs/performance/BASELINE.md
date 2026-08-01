@@ -42,7 +42,7 @@ documented local envelope, candidate seams are projection caching, event-page
 serialization, transcript summarization, and retrieval indexing—not domain or
 governance removal.
 
-Raw backend output is retained at `docs/performance/phase12-performance.json` for this
+Raw backend output is retained at `output/phase12-performance.json` for this
 worktree verification run.
 
 ## Release verification commands

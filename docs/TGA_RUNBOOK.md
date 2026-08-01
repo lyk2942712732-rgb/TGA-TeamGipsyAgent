@@ -20,7 +20,7 @@ TGA_LLM_MODEL
 ```
 
 Optional limits include `TGA_LLM_TIMEOUT_S`, `TGA_LLM_MAX_OUTPUT_TOKENS`,
-`TGA_LLM_TEMPERATURE`, and `TGA_MAX_SESSION_TURNS`. See `docs/guides/LLM_CONFIG.md`.
+`TGA_LLM_TEMPERATURE`, and `TGA_MAX_SESSION_TURNS`. See `docs/LLM_CONFIG.md`.
 
 ## Run
 
