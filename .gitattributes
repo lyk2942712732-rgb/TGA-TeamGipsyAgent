@@ -1,0 +1,3 @@
+# Toolset manifests are hashed as raw bytes and must be stable across platforms.
+containers/kali/toolsets/generated/*.json text eol=lf
+containers/kali/solvers/*/toolset.json text eol=lf
