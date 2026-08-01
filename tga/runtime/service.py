@@ -33,6 +33,30 @@ def require_current_task_schema(task: TGATask) -> None:
         raise UnsupportedTaskSchemaError(task.schema_version)
 
 
+def require_current_task_payload(payload_json: str | bytes) -> dict[str, Any]:
+    """Gate a persisted task payload on schema_version before validating it.
+
+    `TGATask` forbids unknown fields, so a legacy row raises `ValidationError`
+    inside `model_validate_json` and the schema guard that follows it never
+    runs.  Callers therefore saw a 500 or a leaked pydantic error dump instead
+    of the `SCHEMA_VERSION_UNSUPPORTED` contract.  Reading the version off the
+    raw payload keeps the version check reachable for every legacy schema.
+    """
+    try:
+        payload = json.loads(payload_json)
+    except (TypeError, json.JSONDecodeError) as exc:
+        raise UnsupportedTaskSchemaError(0) from exc
+    if not isinstance(payload, dict):
+        raise UnsupportedTaskSchemaError(0)
+    schema_version = payload.get("schema_version")
+    try:
+        version = int(schema_version) if schema_version is not None else 0
+    except (TypeError, ValueError):
+        version = 0
+    if version != 6:
+        raise UnsupportedTaskSchemaError(version)
+    return payload
+
 class TaskRuntimeService:
     """Own task commands and queries without transport-specific behavior.
 
@@ -425,7 +449,8 @@ class TaskRuntimeService:
             ).fetchone()
             if row is None:
                 raise KeyError(f"task not found: {task_id}")
-            task = TGATask.model_validate_json(row["payload_json"])
+            payload = require_current_task_payload(row["payload_json"])
+            task = TGATask.model_validate(payload)
             require_current_task_schema(task)
             return task.model_dump(mode="json")
         finally:
@@ -443,7 +468,9 @@ class TaskRuntimeService:
             ).fetchone()
             if task_row is None:
                 raise KeyError(f"task not found: {task_id}")
-            task = TGATask.model_validate_json(task_row["payload_json"])
+            task = TGATask.model_validate(
+                require_current_task_payload(task_row["payload_json"])
+            )
             require_current_task_schema(task)
             summary = _task_summary_from_connection(
                 connection, task, created_at=str(task_row["created_at"] or "")
@@ -770,7 +797,11 @@ class TaskRuntimeService:
                     ).fetchone()
                     if task_row is None:
                         continue
-                    task = TGATask.model_validate_json(task_row["payload_json"])
+                    # Legacy rows are skipped by schema version rather than by
+                    # an incidental validation failure.
+                    task = TGATask.model_validate(
+                        require_current_task_payload(task_row["payload_json"])
+                    )
                     require_current_task_schema(task)
                     summary = _task_summary_from_connection(
                         connection, task, created_at=str(task_row["created_at"] or "")

@@ -59,7 +59,7 @@ export function AppShell({ route, children }: { route: AppRoute; children: React
         <h2>正在运行 <i className="running-dot" aria-hidden="true" /></h2>
         {running.map((task) => <button
           key={task.taskId}
-          onClick={() => go(task.sample ? "/tasks" : `/tasks/${encodeURIComponent(task.taskId)}/runtime`)}
+          onClick={() => go(`/tasks/${encodeURIComponent(task.taskId)}/runtime`)}
         >
           <CirclePlay size={15} aria-hidden="true" />
           <span>

@@ -2,15 +2,15 @@ import { useState } from "react";
 import { Check } from "lucide-react";
 import type { RuntimeIntent, RuntimeStore } from "../runtime/models/types";
 import { StatusBadge } from "../../shared/StatusBadge";
-import { SAMPLE_INTENTS, type IntentCardView } from "./sample-intents";
+import type { IntentCardView } from "./intent-card";
 
 type View = "kanban" | "graph" | "list";
 
 /**
  * Reference image 05 draws five columns — 待分配 / 运行中 / 等待审批 / 已完成 /
  * 阻塞 — so the runtime's eight Intent states are folded into those buckets and
- * each column takes the reference's accent colour.  A column the live task has
- * not filled is padded from `sample-intents`; those cards are inert.
+ * each column takes the reference's accent colour.  Columns show only the live
+ * task's Intents, so an empty column reads as empty.
  */
 const COLUMNS = [
   { id: "pending", label: "待分配", tone: "neutral", states: ["pending", "assigned"] },
@@ -38,21 +38,21 @@ export function IntentBoard({ store, selectedIntentId, onSelect }: { store: Runt
 
 function Kanban({ intents, selectedIntentId, onSelect }: { intents: RuntimeIntent[]; selectedIntentId: string | null; onSelect: (id: string) => void }) {
   return <div className="intent-kanban" role="region" aria-label="Intent Kanban">{COLUMNS.map((column) => {
-    const real = intents.filter((intent) => (column.states as readonly string[]).includes(intent.status)).map(toCard);
-    const fallback = SAMPLE_INTENTS[column.id];
-    const cards = real.length ? real : fallback.cards;
-    const total = real.length ? real.length : fallback.total;
+    const cards = intents
+      .filter((intent) => (column.states as readonly string[]).includes(intent.status))
+      .map(toCard);
+    const total = cards.length;
     return <section key={column.id} className={`tone-${column.tone}`}>
       <header><b>{column.label}</b><span>{total}</span></header>
       <div className="intent-kanban-cards">
-        {cards.map((card) => <IntentCard
+        {cards.length ? cards.map((card) => <IntentCard
           key={card.key}
           card={card}
-          selected={card.intentId !== null && card.intentId === selectedIntentId}
+          selected={card.intentId === selectedIntentId}
           onSelect={onSelect}
-        />)}
+        />) : <p className="intent-kanban-empty">暂无</p>}
       </div>
-      <footer>+ {Math.max(0, total - cards.length)} 个 Intent</footer>
+      <footer>{total} 个 Intent</footer>
     </section>;
   })}</div>;
 }
@@ -71,16 +71,14 @@ function toCard(intent: RuntimeIntent): IntentCardView {
     flag: intent.status === "awaiting_approval" ? "approval"
       : intent.status === "completed" ? "done"
         : ["blocked", "failed"].includes(intent.status) ? "blocked" : null,
-    sample: false,
   };
 }
 
 function IntentCard({ card, selected, onSelect }: { card: IntentCardView; selected: boolean; onSelect: (id: string) => void }) {
   return <button
     type="button"
-    className={`intent-card ${selected ? "selected" : ""} ${card.sample ? "is-sample" : ""}`}
-    disabled={card.intentId === null}
-    onClick={() => card.intentId && onSelect(card.intentId)}
+    className={`intent-card ${selected ? "selected" : ""}`}
+    onClick={() => onSelect(card.intentId)}
   >
     <b>{card.title}</b>
     <p>{card.objective}</p>

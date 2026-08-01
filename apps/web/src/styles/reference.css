@@ -615,7 +615,6 @@ html, body { height: 100%; overflow: hidden; }
 .approval-page .approval-actions button { min-width: 94px; min-height: 38px; border-radius: var(--r-sm); font-size: 12px; }
 .approval-page .approval-actions .ref-primary-button { min-width: 106px; }
 .approval-page .approval-blocked { margin-right: auto; }
-.approval-data-note { padding: 9px 12px; border: 1px solid var(--c-warning-border); border-radius: var(--r-sm); color: var(--c-warning); background: var(--c-warning-soft); font-size: 12px; }
 
 @media (max-width: 900px) {
   .approval-page { margin-top: 0; }
@@ -941,7 +940,6 @@ html, body { height: 100%; overflow: hidden; }
 .team-explorer-tree { display: grid; align-content: start; flex: 1 1 auto; gap: 0; min-height: 0; padding: 4px 10px; overflow-y: auto; }
 .solver-tree-branch [role="group"] { margin-left: 16px; padding-left: 8px; border-left: 1px solid var(--c-border); }
 .solver-tree-branch button { display: grid; grid-template-columns: 30px minmax(0, 1fr); align-items: start; gap: 10px; width: 100%; padding: 9px 8px; border: 0; border-bottom: 1px solid var(--c-border); border-radius: 0; color: inherit; background: transparent; text-align: left; }
-.solver-tree-branch button.is-sample { opacity: .75; }
 .solver-tree-branch:last-child > button { border-bottom: 0; }
 .solver-tree-branch button:hover { background: var(--c-surface-muted); }
 .solver-tree-branch button[aria-selected="true"] { border-radius: var(--r-md); background: var(--c-accent-soft); box-shadow: inset 0 0 0 1px var(--c-accent-border); }
@@ -1177,6 +1175,7 @@ html, body { height: 100%; overflow: hidden; }
 .intent-kanban > section.tone-danger { --kanban-tone: var(--c-danger); }
 .intent-kanban > section.tone-neutral { --kanban-tone: var(--c-border-strong); }
 .intent-kanban-cards { display: grid; gap: var(--sp-2); }
+.intent-kanban-empty { margin: 0; padding: var(--sp-3) 0; color: var(--c-text-subtle); font-size: 12px; text-align: center; }
 .intent-card { display: grid; gap: 6px; padding: var(--sp-3); border: 1px solid var(--c-border); border-radius: var(--r-md); background: var(--c-surface); text-align: left; }
 .intent-card:hover { border-color: var(--c-accent); }
 .intent-card.selected { border-color: var(--c-accent); box-shadow: 0 0 0 1px var(--c-accent); }

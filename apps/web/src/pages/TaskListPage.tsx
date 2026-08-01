@@ -5,19 +5,19 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { fetchTaskList } from "../api/task-query-adapter";
 import type { TaskListItem } from "../api/tasks";
 import { CatalogTable, Pagination, usePage, type Column } from "../components/ui/CatalogTable";
+import { EmptyState } from "../components/ui/EmptyState";
 import { ErrorState } from "../components/ui/ErrorState";
 import { LoadingSkeleton } from "../components/ui/LoadingSkeleton";
 import { useToast } from "../components/ui/Toast";
 import { statusLabel } from "../shared/status";
 import { MODE_PROFILES, TASK_MODES } from "../modes";
-import { padRows } from "./sample";
 
 /**
  * 任务 (reference image 02).
  *
  * `/api/v2/tasks` supplies every column except 严重度 — the task summary has no
- * aggregated finding severity, so real rows show a dash there.  Sample rows
- * carry the reference image's tasks and cannot be opened.
+ * aggregated finding severity, so rows show a dash there.  Every row comes from
+ * the API; an install with no schema-v6 task renders the empty state.
  */
 
 const STATUSES = ["created", "running", "paused", "awaiting_approval", "blocked", "completed", "failed", "cancelled"];
@@ -34,17 +34,7 @@ type TaskRow = {
   approvals: number;
   severity: "高" | "中" | "低" | null;
   updatedAt: string;
-  sample: boolean;
 };
-
-const SAMPLE_ROWS: TaskRow[] = [
-  sample("T-20240520-001", "Web API 安全测试", "penetration_test", "running", 47, 2, 5, 1, "高", "29 分钟前"),
-  sample("T-20240520-002", "内网渗透评估", "penetration_test", "running", 62, 2, 7, 1, "高", "1 小时前"),
-  sample("T-20240520-003", "样本逆向分析", "reverse_engineering", "awaiting_approval", 31, 1, 4, 2, "中", "1 小时前"),
-  sample("T-20240520-004", "应急响应分析", "incident_response", "running", 78, 4, 6, 0, "高", "2 小时前"),
-  sample("T-20240520-005", "超权限测试验证", "vulnerability_research", "completed", 100, 0, 0, 0, "中", "昨天"),
-  sample("T-20240520-006", "CTF 题目 2024", "ctf", "blocked", 0, 0, 0, 2, "低", "昨天"),
-];
 
 const STATUS_TONES: Record<string, string> = {
   running: "tone-ok", completed: "tone-ok",
@@ -77,10 +67,7 @@ export function TaskListPage() {
 
   const tasks = useQuery({ queryKey: ["task-list", filters], queryFn: () => fetchTaskList(filters) });
 
-  const rows = useMemo(() => {
-    const real = (tasks.data?.tasks ?? []).map(toRow);
-    return padRows(real, SAMPLE_ROWS, SAMPLE_ROWS.length, (row) => row.name);
-  }, [tasks.data]);
+  const rows = useMemo(() => (tasks.data?.tasks ?? []).map(toRow), [tasks.data]);
 
   const visible = usePage(rows, pageSize, page);
 
@@ -91,10 +78,7 @@ export function TaskListPage() {
     setPage(1);
   };
 
-  const open = (row: TaskRow) => {
-    if (row.sample) return toast.notify(`${row.name}：样例数据，该任务尚未创建`);
-    navigate(`/tasks/${encodeURIComponent(row.taskId)}`);
-  };
+  const open = (row: TaskRow) => navigate(`/tasks/${encodeURIComponent(row.taskId)}`);
 
   const columns: Array<Column<TaskRow>> = [
     {
@@ -180,9 +164,11 @@ export function TaskListPage() {
       />
       : <>
         {view === "cards"
-          ? <div className="task-card-grid ref-fill">
-            {visible.map((row) => <TaskCard key={row.taskId} task={row} onOpen={() => open(row)} />)}
-          </div>
+          ? visible.length
+            ? <div className="task-card-grid ref-fill">
+              {visible.map((row) => <TaskCard key={row.taskId} task={row} onOpen={() => open(row)} />)}
+            </div>
+            : <EmptyState label="没有匹配的任务" />
           : <CatalogTable
             fill
             label="任务列表"
@@ -233,18 +219,6 @@ function toRow(task: TaskListItem): TaskRow {
     approvals: task.pending_approvals ?? 0,
     severity: null,
     updatedAt: formatDate(task.updated_at ?? task.created_at),
-    sample: false,
-  };
-}
-
-function sample(
-  displayId: string, name: string, mode: string, status: string, percent: number,
-  solversActive: number, solversTotal: number, approvals: number,
-  severity: TaskRow["severity"], updatedAt: string,
-): TaskRow {
-  return {
-    taskId: `sample-${displayId}`, displayId, name, mode, status, percent,
-    solversActive, solversTotal, approvals, severity, updatedAt, sample: true,
   };
 }
 

@@ -24,26 +24,26 @@ function renderPage(overrides: Partial<DashboardResponse> = {}) {
 }
 
 describe("DashboardPage", () => {
-  it("adds the sample offset to the real API counts so the cards agree with the metrics", () => {
+  it("renders the API metric counts verbatim", () => {
     const { container } = renderPage();
     const cards = container.querySelectorAll(".dashboard-metric");
     expect(cards).toHaveLength(6);
     expect(cards[0]).toHaveTextContent("运行中任务");
-    expect(cards[0]).toHaveTextContent("6"); // 2 real + 4 sample
+    expect(cards[0]).toHaveTextContent("2");
     expect(cards[5]).toHaveTextContent("活动 Solver");
-    expect(cards[5]).toHaveTextContent("10"); // 3 real + 7 sample
+    expect(cards[5]).toHaveTextContent("3");
   });
 
-  it("pads each list to the reference length with the real records first", () => {
+  it("lists exactly the records the API returned", () => {
     const { container } = renderPage();
     const [attention, activeWork] = container.querySelectorAll(".ref-card");
 
     const attentionRows = within(attention as HTMLElement).getAllByRole("listitem");
-    expect(attentionRows).toHaveLength(5);
+    expect(attentionRows).toHaveLength(1);
     expect(attentionRows[0]).toHaveTextContent("等待审批");
 
     const taskRows = within(activeWork as HTMLElement).getAllByRole("listitem");
-    expect(taskRows).toHaveLength(4);
+    expect(taskRows).toHaveLength(1);
     expect(taskRows[0]).toHaveTextContent("任务一");
   });
 
@@ -51,7 +51,6 @@ describe("DashboardPage", () => {
     const { container } = renderPage();
     const taskRows = within(container.querySelectorAll(".ref-card")[1] as HTMLElement).getAllByRole("listitem");
     expect(taskRows[0]).toHaveTextContent("已阻塞");
-    expect(taskRows[1]).toHaveTextContent("运行中");
   });
 
   it("renders the reference's five system components", () => {
@@ -60,26 +59,37 @@ describe("DashboardPage", () => {
     expect(labels).toEqual(["Model Providers", "MCP Servers", "Scheduler", "Execution Runtime", "Database"]);
   });
 
-  it("carries no sample or unimplemented marker into the page", () => {
+  it("never renders a demo task, approval or report name", () => {
     const { container } = renderPage({ needs_attention: [], active_tasks: [], recent_completed: [] });
-    expect(container.querySelector(".sample-banner")).toBeNull();
-    expect(container.querySelector(".sample-badge")).toBeNull();
-    expect(container.textContent).not.toContain("项目没有实现");
+    // The reference design was previously padded with these fabricated rows.
+    // An empty dashboard must stay empty rather than reviving any of them.
+    for (const fabricated of [
+      "Web API 安全测试",
+      "内网渗透评估",
+      "样本逆向分析",
+      "应急响应分析",
+      "高风险操作等待审批",
+    ]) {
+      expect(container.textContent).not.toContain(fabricated);
+    }
   });
 
-  it("routes sample rows to the section index so no fabricated task id reaches the router", () => {
+  it("shows an empty state instead of fabricated rows when the API returns nothing", () => {
     const { callbacks, container } = renderPage({ needs_attention: [], active_tasks: [], recent_completed: [] });
     const [attention, activeWork] = container.querySelectorAll(".ref-card");
 
-    fireEvent.click(within(attention as HTMLElement).getByRole("button", { name: "回答问题" }));
-    expect(callbacks.onTasks).toHaveBeenCalled();
-    expect(callbacks.onTask).not.toHaveBeenCalled();
-
-    fireEvent.click(within(attention as HTMLElement).getByRole("button", { name: "查看并审批" }));
-    expect(callbacks.onApprovals).toHaveBeenCalledWith();
-
-    fireEvent.click(within(activeWork as HTMLElement).getAllByRole("button")[0]);
+    expect(within(attention as HTMLElement).queryAllByRole("listitem")).toHaveLength(0);
+    expect(within(attention as HTMLElement).getByText("暂无需要处理的事项")).toBeInTheDocument();
+    expect(within(activeWork as HTMLElement).queryAllByRole("listitem")).toHaveLength(0);
+    expect(within(activeWork as HTMLElement).getByText("暂无活动任务")).toBeInTheDocument();
     expect(callbacks.onRuntime).not.toHaveBeenCalled();
+  });
+
+  it("reports Scheduler as unprobed because no health contract backs it", () => {
+    const { container } = renderPage();
+    const rows = [...container.querySelectorAll(".system-rows li")];
+    const scheduler = rows.find((row) => row.textContent?.includes("Scheduler"));
+    expect(scheduler).toHaveTextContent("未探测");
   });
 
   it("opens the approval center and task runtime from real summaries", () => {

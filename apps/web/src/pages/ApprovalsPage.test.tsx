@@ -97,16 +97,17 @@ describe("ApprovalsPage", () => {
     expect(mocks.decideGlobalApproval).not.toHaveBeenCalled();
   });
 
-  it("uses reference approvals when the real queue is empty or unavailable", async () => {
-    mocks.fetchGlobalApprovals.mockResolvedValueOnce({ schema_version: 1, offset: 0, limit: 12, total: 0, next_offset: null, items: [], filters: {} });
-    const first = renderPage();
-    expect(await screen.findByText("审批服务器文件")).toBeInTheDocument();
-    expect(screen.getByText("发起 SQL 注入测试")).toBeInTheDocument();
-    expect(screen.getByText("上传测试文件")).toBeInTheDocument();
-    first.unmount();
-
-    mocks.fetchGlobalApprovals.mockRejectedValueOnce(new Error("approval service offline"));
+  it("shows an empty queue rather than fabricated approvals", async () => {
+    mocks.fetchGlobalApprovals.mockResolvedValue({ schema_version: 1, offset: 0, limit: 12, total: 0, next_offset: null, items: [], filters: {} });
     renderPage();
-    expect(await screen.findByText("实时审批队列暂不可用，正在显示参考数据。")).toBeInTheDocument();
+    expect(await screen.findByText("当前筛选下没有待处理审批。")).toBeInTheDocument();
+    expect(screen.queryByRole("article")).not.toBeInTheDocument();
+  });
+
+  it("surfaces a queue error instead of masking it with reference data", async () => {
+    mocks.fetchGlobalApprovals.mockRejectedValue(new Error("approval service offline"));
+    renderPage();
+    expect(await screen.findByText("approval service offline")).toBeInTheDocument();
+    expect(screen.queryByText("审批服务器文件")).not.toBeInTheDocument();
   });
 });

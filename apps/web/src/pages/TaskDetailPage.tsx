@@ -19,15 +19,14 @@ import { useToast } from "../components/ui/Toast";
 import { StatusBadge } from "../shared/StatusBadge";
 import { statusLabel } from "../shared/status";
 import { MODE_PROFILES } from "../modes";
-import { padRows } from "./sample";
 
 /**
  * 任务详情 (reference image 04).
  *
  * Lifecycle counters, elapsed time, intent progress and the config snapshot are
  * all real.  The task summary has no aggregated finding severity and no team
- * size, and this deployment's demo task produced no findings or events, so
- * 关键发现 / 最近事件 fall back to the reference's sample rows.
+ * size, so those read as a dash.  关键发现 and 最近事件 come from the task's own
+ * evidence and event pages and render an empty state when a task has neither.
  */
 
 type DetailTabId = "overview" | "directives" | "team" | "inputs" | "results" | "config" | "history";
@@ -50,21 +49,7 @@ type FindingRow = {
   impact: string;
   location: string;
   at: string;
-  sample: boolean;
 };
-
-const SAMPLE_FINDINGS: FindingRow[] = [
-  { id: "s1", severity: "高", title: "未授权访问：水平越权（IDOR）", description: "攻击者可通过修改用户 ID 访问其他用户的敏感数据。", impact: "数据泄露", location: "GET /api/v1/users/{id}", at: "10:24", sample: true },
-  { id: "s2", severity: "中", title: "敏感信息泄露：错误信息包含堆栈跟踪", description: "接口在异常情况下返回详细堆栈信息，可能泄露系统内部信息。", impact: "信息泄露", location: "POST /api/v1/login", at: "09:47", sample: true },
-  { id: "s3", severity: "低", title: "安全响应头缺失：X-Content-Type-Options", description: "响应头中未设置 X-Content-Type-Options，可能增加 XSS 风险。", impact: "安全加固", location: "全局", at: "08:32", sample: true },
-];
-
-const SAMPLE_EVENTS = [
-  { id: "e1", title: "任务已启动", description: "任务执行已开始，调度器分配资源", timestamp: "10:15:12", tone: "success" as const },
-  { id: "e2", title: "Solver 已加入：Web Analyst", description: "由调度器分配，开始执行侦察与枚举", timestamp: "10:15:35", tone: "neutral" as const },
-  { id: "e3", title: "待审批：高风险问题", description: "发现未授权访问（IDOR），需要安全团队审批", timestamp: "11:02:18", tone: "warning" as const },
-  { id: "e4", title: "发现关键漏洞", description: "检测到 1 个高风险、2 个中风险、5 个低风险问题", timestamp: "12:18:46", tone: "danger" as const },
-];
 
 const SEVERITY_TONES: Record<string, string> = { 高: "tone-danger", 中: "tone-warn", 低: "tone-ok" };
 const SEVERITY_RANK: Record<string, number> = { 高: 3, 中: 2, 低: 1 };
@@ -115,12 +100,7 @@ export function TaskDetailPage({ taskId }: { taskId: string }) {
   const done = lifecycle.intent_completed || 0;
   const percent = total ? Math.round(done / total * 100) : 0;
 
-  const findings = padRows(
-    toFindings(evidence.data),
-    SAMPLE_FINDINGS,
-    SAMPLE_FINDINGS.length,
-    (row) => row.title,
-  );
+  const findings = toFindings(evidence.data);
   const topSeverity = findings.reduce<FindingRow["severity"] | null>(
     (best, row) => !best || SEVERITY_RANK[row.severity] > SEVERITY_RANK[best] ? row.severity : best,
     null,
@@ -205,15 +185,13 @@ function Overview({ detail, findings, events, onTab }: {
   onTab: (tab: DetailTabId) => void;
 }) {
   const policy = detail.config_snapshot.execution_policy as Record<string, unknown>;
-  const timeline = events.length
-    ? events.slice(0, 4).map((event) => ({
+  const timeline = events.slice(0, 4).map((event) => ({
       id: String(event.id ?? event.seq),
       title: String(event.type),
       timestamp: formatDate(event.created_at),
       description: String(event.payload?.summary ?? event.payload?.reason ?? "事件已记录"),
       tone: (String(event.type).includes("FAILED") ? "danger" : String(event.type).includes("COMPLETED") ? "success" : "neutral") as "danger" | "success" | "neutral",
-    }))
-    : SAMPLE_EVENTS;
+  }));
 
   return <>
     <div className="dashboard-columns">
@@ -222,20 +200,22 @@ function Overview({ detail, findings, events, onTab }: {
           <h2>关键发现</h2>
           <button className="ref-link-button" onClick={() => onTab("results")}>查看全部</button>
         </header>
-        <ul className="finding-list">
-          {findings.map((row) => <li key={row.id}>
-            <span className={`severity-chip ${SEVERITY_TONES[row.severity]}`}>{row.severity}</span>
-            <div className="finding-copy">
-              <strong>{row.title}</strong>
-              <p>{row.description}</p>
-              <span className="finding-tags">
-                <span className="ref-chip tone-muted">影响: {row.impact}</span>
-                <span className="ref-chip tone-muted">位置: {row.location}</span>
-              </span>
-            </div>
-            <span className="finding-time">发现于 {row.at} <ChevronRight size={13} /></span>
-          </li>)}
-        </ul>
+        {findings.length
+          ? <ul className="finding-list">
+            {findings.map((row) => <li key={row.id}>
+              <span className={`severity-chip ${SEVERITY_TONES[row.severity]}`}>{row.severity}</span>
+              <div className="finding-copy">
+                <strong>{row.title}</strong>
+                <p>{row.description}</p>
+                <span className="finding-tags">
+                  <span className="ref-chip tone-muted">影响: {row.impact}</span>
+                  <span className="ref-chip tone-muted">位置: {row.location}</span>
+                </span>
+              </div>
+              <span className="finding-time">发现于 {row.at} <ChevronRight size={13} /></span>
+            </li>)}
+          </ul>
+          : <EmptyState label="暂无已确认发现" />}
         <footer className="card-footer-link">
           <button className="ref-link-button" onClick={() => onTab("results")}>查看全部发现（{findings.length}）</button>
         </footer>
@@ -309,7 +289,6 @@ function toFindings(evidence: any): FindingRow[] {
     impact: String(item.impact ?? "—"),
     location: String(item.target ?? "—"),
     at: formatDate(item.created_at),
-    sample: false,
   }));
 }
 

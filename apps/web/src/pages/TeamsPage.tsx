@@ -50,32 +50,6 @@ const ROLE_ICONS: Array<[RegExp, LucideIcon, string]> = [
   [/report/, ClipboardList, "tone-danger"],
 ];
 
-/**
- * Reference 10 also lists a Web 安全测试团队.  The backend ships one template per
- * task mode and has no separate Web-testing mode, so this row is a sample: it
- * renders like the rest but is marked 样例 and carries no content hash.
- */
-const SAMPLE_TEAMS: TeamTemplateRecord[] = [
-  {
-    mode: "sample-web-security",
-    supervisor_definition_id: "task-supervisor",
-    required_solver_definition_ids: ["recon-triage", "web-network-analyst"],
-    available_solver_definition_ids: ["recon-triage", "web-network-analyst", "code-audit", "vulnerability-validator"],
-    reviewer_definition_id: "evidence-reviewer",
-    reporter_definition_id: "security-reporter",
-    spawn_rules: [
-      { trigger: "task_start", definition_id: "task-supervisor", max_instances: 1 },
-      { trigger: "intent_ready", definition_id: "web-network-analyst", max_instances: 3 },
-      { trigger: "review_required", definition_id: "evidence-reviewer", max_instances: 1 },
-      { trigger: "report_required", definition_id: "security-reporter", max_instances: 1 },
-    ],
-    max_active_workers: 6,
-    max_total_solvers: 12,
-    completion_policy: { supervisor_decides: true, require_reviewer: true, require_reporter: true },
-    content_sha256: "",
-  },
-];
-
 export function TeamsPage() {
   const toast = useToast();
   const [search, setSearch] = useState("");
@@ -85,11 +59,8 @@ export function TeamsPage() {
   const [pageSize, setPageSize] = useState(10);
 
   const query = useQuery({ queryKey: ["catalog", "teams"], queryFn: () => fetchTeamTemplates() });
-  const all = useMemo(() => {
-    const real = query.data?.items ?? [];
-    const taken = new Set(real.map((item) => item.mode));
-    return [...real, ...SAMPLE_TEAMS.filter((item) => !taken.has(item.mode))];
-  }, [query.data]);
+  // The backend ships one Team Template per task mode; the list is that set.
+  const all = useMemo(() => query.data?.items ?? [], [query.data]);
 
   const items = useMemo(() => {
     const needle = search.trim().toLocaleLowerCase();
@@ -110,7 +81,7 @@ export function TeamsPage() {
         <strong>{teamName(row.mode)}</strong>
       </span>,
     },
-    { id: "supported", header: "支持模式", render: (row) => <span className={`ref-chip ${isSample(row) ? "tone-muted" : "tone-info"}`}>{modeLabel(row.mode)}</span> },
+    { id: "supported", header: "支持模式", render: (row) => <span className="ref-chip tone-info">{modeLabel(row.mode)}</span> },
     {
       id: "supervisor", header: "Supervisor",
       render: (row) => <span className="cell-with-icon">
@@ -246,18 +217,10 @@ function completionSummary(record: TeamTemplateRecord): string {
   return active.length ? active.join("；") : "无附加约束";
 }
 
-function isSample(record: TeamTemplateRecord): boolean {
-  return record.mode.startsWith("sample-");
-}
-
-const SAMPLE_TEAM_NAMES: Record<string, string> = { "sample-web-security": "Web 安全测试" };
-
 function teamName(mode: string): string {
   return `${modeLabel(mode)}团队`;
 }
 
 function modeLabel(mode: string): string {
-  return SAMPLE_TEAM_NAMES[mode]
-    ?? MODE_PROFILES[mode as keyof typeof MODE_PROFILES]?.label
-    ?? mode;
+  return MODE_PROFILES[mode as keyof typeof MODE_PROFILES]?.label ?? mode;
 }

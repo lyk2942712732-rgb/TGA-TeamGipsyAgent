@@ -15,13 +15,7 @@ import { EmptyState } from "../components/ui/EmptyState";
 import { ErrorState } from "../components/ui/ErrorState";
 import { LoadingSkeleton } from "../components/ui/LoadingSkeleton";
 import { Pagination } from "../components/ui/CatalogTable";
-import {
-  approvalFilterItems,
-  approvalMeta,
-  approvalViewItems,
-  samplePendingCount,
-  type ApprovalView,
-} from "./approvals-view";
+import { approvalMeta, type ApprovalView } from "./approvals-view";
 
 const STATUSES: Array<{ id: ApprovalStatus; label: string }> = [
   { id: "pending", label: "待处理" },
@@ -36,7 +30,6 @@ export function ApprovalsPage() {
   const [params, setParams] = useSearchParams();
   const [pending, setPending] = useState<{ approval: ApprovalView; decision: "approve" | "reject" } | null>(null);
   const [message, setMessage] = useState("");
-  const [sampleStatuses, setSampleStatuses] = useState<Record<string, ApprovalStatus>>({});
 
   const page = Math.max(1, Number(params.get("page") ?? 1) || 1);
   const query = useMemo<ApprovalQuery>(() => ({
@@ -51,10 +44,11 @@ export function ApprovalsPage() {
   }), [params, page]);
 
   const approvals = useQuery({ queryKey: ["approvals", query], queryFn: () => fetchGlobalApprovals(query) });
-  const realItems = approvals.data?.items ?? [];
-  const items = useMemo(() => approvalViewItems(realItems, query, sampleStatuses), [realItems, query, sampleStatuses]);
-  const filterItems = useMemo(() => approvalFilterItems(realItems, sampleStatuses), [realItems, sampleStatuses]);
-  const total = Math.max(approvals.data?.total ?? 0, items.length);
+  const items = approvals.data?.items ?? [];
+  // Filter options are drawn from the current page so a select never offers a
+  // task or capability that is not actually in the queue.
+  const filterItems = items;
+  const total = approvals.data?.total ?? 0;
 
   const decide = useMutation({
     mutationFn: ({ approval, decision }: { approval: GlobalApproval; decision: "approve" | "reject" }) =>
@@ -78,23 +72,18 @@ export function ApprovalsPage() {
     setParams(next);
   };
 
-  const pendingTotal = query.status === "pending" ? total : samplePendingCount(sampleStatuses);
+  // Only the pending tab knows its own count; the others would need a separate
+  // aggregate query, so they stay unlabelled rather than showing a wrong number.
+  const pendingTotal = query.status === "pending" ? total : null;
   const tabs: DetailTab[] = STATUSES.map((status) => ({
     id: status.id,
-    label: status.id === "pending" ? `${status.label}（${pendingTotal}）` : status.label,
+    label: status.id === "pending" && pendingTotal !== null
+      ? `${status.label}（${pendingTotal}）`
+      : status.label,
   }));
 
   const confirmDecision = () => {
     if (!pending) return;
-    if (pending.approval.sample) {
-      setSampleStatuses((current) => ({
-        ...current,
-        [pending.approval.approval_id]: pending.decision === "approve" ? "approved" : "rejected",
-      }));
-      setMessage(pending.decision === "approve" ? "已提交一次性批准" : "已提交拒绝决定");
-      setPending(null);
-      return;
-    }
     decide.mutate(pending);
   };
 
@@ -143,10 +132,8 @@ export function ApprovalsPage() {
 
     {message ? <p className="settings-message" role="status">{message}</p> : null}
 
-    {approvals.isError && items.length ? <p className="approval-data-note" role="status">实时审批队列暂不可用，正在显示参考数据。</p> : null}
-
-    {approvals.isLoading && !items.length ? <LoadingSkeleton label="正在读取审批队列" rows={5} />
-      : approvals.isError && !items.length ? <ErrorState
+    {approvals.isLoading ? <LoadingSkeleton label="正在读取审批队列" rows={5} />
+      : approvals.isError ? <ErrorState
         description={approvals.error instanceof Error ? approvals.error.message : "无法读取审批队列"}
         actionLabel="重试"
         onAction={() => void approvals.refetch()}
@@ -193,7 +180,7 @@ function ApprovalRecord({ approval, busy, onDecide }: {
   onDecide: (decision: "approve" | "reject") => void;
 }) {
   const meta = approvalMeta(approval);
-  return <article className="approval-record" data-sample={approval.sample || undefined}>
+  return <article className="approval-record">
     <header>
       <div className="approval-title">
         <h2>{meta.title}</h2>
@@ -213,7 +200,7 @@ function ApprovalRecord({ approval, busy, onDecide }: {
       <dl className="field-grid">
         <Row label="可逆性" value={REVERSIBILITY_LABELS[approval.reversibility] ?? approval.reversibility} />
         <Row label="替代方案" value={approval.alternative_analysis || approval.alternatives.join("；") || "—"} />
-        <Row label="请求时间" value={formatDate(approval.created_at, approval.sample)} />
+        <Row label="请求时间" value={formatDate(approval.created_at)} />
         <Row label="截止时间" value={meta.deadlineLabel ?? (approval.expires_at ? formatDate(approval.expires_at) : "—")} />
       </dl>
     </div>
@@ -258,11 +245,9 @@ function validStatus(value: string | null): ApprovalStatus {
   return STATUSES.some((status) => status.id === value) ? value as ApprovalStatus : "pending";
 }
 
-function formatDate(value?: string | null, includeYear = false): string {
+function formatDate(value?: string | null): string {
   if (!value) return "—";
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? value
-    : includeYear
-      ? date.toLocaleString("zh-CN", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }).replace(/\//g, "-")
-      : date.toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+    : date.toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
 }

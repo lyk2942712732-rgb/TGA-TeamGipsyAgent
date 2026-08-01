@@ -7,14 +7,14 @@ import { DetailTabs, type DetailTab } from "../components/ui/DetailTabs";
 import { ErrorState } from "../components/ui/ErrorState";
 import { LoadingSkeleton } from "../components/ui/LoadingSkeleton";
 import { useToast } from "../components/ui/Toast";
-import { padRows } from "./sample";
 
 /**
  * 资源中心 (reference image 07).
  *
  * `/api/v2/catalog/resources` projects a task's Artifact / EvidenceClaim /
- * Finding rows.  It carries no byte size, so 大小 shows a dash on real rows.
- * Knowledge has no list endpoint at all — that tab is sample-only.
+ * Finding rows.  It carries no byte size, so 大小 shows a dash.  The Knowledge
+ * tab is projected from the same catalog and stays empty until a task persists
+ * knowledge items.
  */
 
 type ResourceRow = {
@@ -28,7 +28,6 @@ type ResourceRow = {
   hash: string | null;
   createdAt: string;
   status: string;
-  sample: boolean;
 };
 
 type CatalogResource = {
@@ -46,30 +45,6 @@ const TABS: DetailTab[] = [
   { id: "findings", label: "Findings" },
   { id: "knowledge", label: "Knowledge" },
 ];
-
-const SAMPLE_ROWS: Record<string, ResourceRow[]> = {
-  artifacts: [
-    sample("s-a1", "artifacts", "response_admin_20240520.json", "JSON", "Web API 安全测试", "Web Analyst", "12.3 KB", "a1b2c3d4e5f6a7b8", "10:45:12", "已确认"),
-    sample("s-a2", "artifacts", "inject_payload.sql", "SQL", "内网渗透评估", "Web Analyst", "2.1 KB", "d4e5f6g7h8i9j0k1", "10:30:45", "已确认"),
-    sample("s-a3", "artifacts", "port_scan_result.xml", "XML", "Web API 安全测试", "Recon Worker", "87 KB", "h1i2j3k4l5m6n7o8", "10:28:33", "已确认"),
-    sample("s-a4", "artifacts", "app_source_code.zip", "ZIP", "代码审查分析", "Code Auditor", "452 MB", "k6l7m8n9o0p1q2r3", "09:16:22", "已入库"),
-    sample("s-a5", "artifacts", "memory_dump.raw", "RAW", "应急响应分析", "IR Analyst", "2.1 GB", "p3q4r5s6t7u8v9w0", "昨天 18:22", "已确认"),
-  ],
-  evidence: [
-    sample("s-e1", "evidence", "IDOR 越权访问证据", "Claim", "Web API 安全测试", "Web Analyst", "4.8 KB", "b2c3d4e5f6a7b8c9", "10:52:04", "已确认"),
-    sample("s-e2", "evidence", "SQL 报错回显证据", "Claim", "内网渗透评估", "Web Analyst", "3.2 KB", "c3d4e5f6a7b8c9d0", "10:41:18", "已确认"),
-    sample("s-e3", "evidence", "堆栈信息泄露证据", "Claim", "Web API 安全测试", "Web Analyst", "1.9 KB", "e5f6a7b8c9d0e1f2", "09:47:36", "待复核"),
-  ],
-  findings: [
-    sample("s-f1", "findings", "未授权访问：水平越权（IDOR）", "High", "Web API 安全测试", "Evidence Reviewer", "—", "f6a7b8c9d0e1f2a3", "10:24:11", "已确认"),
-    sample("s-f2", "findings", "敏感信息泄露：错误信息包含堆栈跟踪", "Medium", "Web API 安全测试", "Evidence Reviewer", "—", "a7b8c9d0e1f2a3b4", "09:47:52", "已确认"),
-    sample("s-f3", "findings", "安全响应头缺失：X-Content-Type-Options", "Low", "Web API 安全测试", "Evidence Reviewer", "—", "b8c9d0e1f2a3b4c5", "08:32:07", "待复核"),
-  ],
-  knowledge: [
-    sample("s-k1", "knowledge", "OWASP API Top 10 摘要", "Doc", "官方安全文档库", null, "128 KB", "c9d0e1f2a3b4c5d6", "今天 08:15", "已入库"),
-    sample("s-k2", "knowledge", "内网横向移动手法索引", "Doc", "历史案例库", null, "64 KB", "d0e1f2a3b4c5d6e7", "昨天 23:45", "已入库"),
-  ],
-};
 
 const TYPE_TONES: Record<string, string> = {
   JSON: "tone-info", SQL: "tone-violet", XML: "tone-ok", ZIP: "tone-warn", RAW: "tone-info",
@@ -95,12 +70,12 @@ export function ResourcesPage() {
     queryFn: () => fetchProductCatalog("resources"),
   });
 
-  const rows = useMemo(() => {
-    const real = ((query.data?.items ?? []) as unknown as CatalogResource[])
+  const rows = useMemo(
+    () => ((query.data?.items ?? []) as unknown as CatalogResource[])
       .filter((item) => item.kind === tab)
-      .map(toRow);
-    return padRows(real, SAMPLE_ROWS[tab] ?? [], (SAMPLE_ROWS[tab] ?? []).length, (row) => row.name);
-  }, [query.data, tab]);
+      .map(toRow),
+    [query.data, tab],
+  );
 
   const filtered = useMemo(() => {
     const needle = search.trim().toLocaleLowerCase();
@@ -198,15 +173,7 @@ function toRow(item: CatalogResource): ResourceRow {
     hash: text(raw.sha256),
     createdAt: formatDate(text(raw.created_at)),
     status: item.status ?? "—",
-    sample: false,
   };
-}
-
-function sample(
-  id: string, kind: string, name: string, type: string, taskName: string,
-  solver: string | null, size: string, hash: string, createdAt: string, status: string,
-): ResourceRow {
-  return { id, kind, name, type, taskName, solver, size: size === "—" ? null : size, hash, createdAt, status, sample: true };
 }
 
 function dash() {

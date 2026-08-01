@@ -7,16 +7,17 @@ import { CatalogTable, Pagination, usePage, type Column } from "../components/ui
 import { ErrorState } from "../components/ui/ErrorState";
 import { LoadingSkeleton } from "../components/ui/LoadingSkeleton";
 import { useToast } from "../components/ui/Toast";
+import { runtimeApi } from "../runtime/api-v2";
 import { MODE_PROFILES } from "../modes";
-import { padRows } from "./sample";
+
+const reportUrl = (taskId: string) => runtimeApi.reportUrl(taskId);
 
 /**
  * 报告中心 (reference image 08).
  *
  * `/api/v2/catalog/reports` lists exported `report.md` files and supplies only
  * id / task_id / status / title / updated_at.  模式, 版本 and Findings have no
- * source at all, so real rows show a dash for them while sample rows carry the
- * reference image's values.
+ * source at all, so those columns show a dash.
  */
 
 type ReportRow = {
@@ -29,18 +30,9 @@ type ReportRow = {
   status: string;
   findings: number | null;
   updatedAt: string;
-  sample: boolean;
 };
 
 type CatalogReport = { id: string; task_id: string; status: string; title: string; updated_at: number };
-
-const SAMPLE_ROWS: ReportRow[] = [
-  sample("sample-report-1", "Web API 安全测试报告 v1.0", "Web API 安全测试", "penetration_test", "v1.0", "final", 15, "今天 11:21"),
-  sample("sample-report-2", "内网渗透评估报告 v1.0", "内网渗透评估", "penetration_test", "v1.0", "final", 8, "昨天 15:33"),
-  sample("sample-report-3", "样本逆向分析报告 v0.9", "样本逆向分析", "reverse_engineering", "v0.9", "reviewing", 12, "昨天 10:12"),
-  sample("sample-report-4", "应急响应分析报告 v0.8", "应急响应分析", "incident_response", "v0.8", "draft", 6, "昨天 09:45"),
-  sample("sample-report-5", "CTF 题目 2024 报告 v1.0", "CTF 题目 2024", "ctf", "v1.0", "final", 3, "5-18 10:33"),
-];
 
 const STATUS_TONES: Record<string, string> = {
   final: "tone-ok", completed: "tone-ok",
@@ -62,10 +54,10 @@ export function ReportsPage() {
     queryFn: () => fetchProductCatalog("reports"),
   });
 
-  const rows = useMemo(() => {
-    const real = ((query.data?.items ?? []) as unknown as CatalogReport[]).map(toRow);
-    return padRows(real, SAMPLE_ROWS, SAMPLE_ROWS.length, (row) => row.title);
-  }, [query.data]);
+  const rows = useMemo(
+    () => ((query.data?.items ?? []) as unknown as CatalogReport[]).map(toRow),
+    [query.data],
+  );
 
   const filtered = useMemo(() => rows.filter((row) => (
     (!task || row.taskName === task)
@@ -94,13 +86,16 @@ export function ReportsPage() {
           className="ref-link-button"
           onClick={(event) => {
             event.stopPropagation();
-            if (row.sample) return toast.notifyUnavailable("报告详情");
             navigate(`/tasks/${encodeURIComponent(row.taskId)}`);
           }}
         >查看</button>
         <button
           className="ref-secondary-button"
-          onClick={(event) => { event.stopPropagation(); toast.notifyUnavailable("导出报告"); }}
+          onClick={(event) => {
+            event.stopPropagation();
+            // The report endpoint streams Markdown for the owning task.
+            window.open(reportUrl(row.taskId), "_blank", "noopener");
+          }}
         ><Download size={13} />导出</button>
       </span>,
     },
@@ -157,15 +152,7 @@ function toRow(item: CatalogReport): ReportRow {
     status: item.status,
     findings: null,
     updatedAt: formatEpoch(item.updated_at),
-    sample: false,
   };
-}
-
-function sample(
-  id: string, title: string, taskName: string, mode: string,
-  version: string, status: string, findings: number, updatedAt: string,
-): ReportRow {
-  return { id, taskId: "", title, taskName, mode, version, status, findings, updatedAt, sample: true };
 }
 
 function dash() {

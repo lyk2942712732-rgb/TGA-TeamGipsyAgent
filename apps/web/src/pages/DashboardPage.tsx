@@ -5,6 +5,7 @@ import {
 import type { LucideIcon } from "lucide-react";
 import type { SystemHealthResult } from "../api/catalog-query-adapter";
 import type { DashboardResponse } from "../api/operations-query-adapter";
+import { EmptyState } from "../components/ui/EmptyState";
 import {
   buildDashboardView, SEVERITY_LABELS,
   type ActiveTaskView, type AttentionView, type MetricView, type ReportView, type SystemRowView,
@@ -53,15 +54,16 @@ export function DashboardPage({ value, health, onNew, onTask, onTasks, onRuntime
     <div className="dashboard-columns">
       <section className="ref-card">
         <header className="ref-card-head"><h2>需要你的处理</h2></header>
-        <ul className="attention-items">
-          {view.attention.map((item) => <AttentionRow
-            key={item.id}
-            item={item}
-            onApprovals={onApprovals}
-            onTask={onTask}
-            onTasks={onTasks}
-          />)}
-        </ul>
+        {view.attention.length
+          ? <ul className="attention-items">
+            {view.attention.map((item) => <AttentionRow
+              key={item.id}
+              item={item}
+              onApprovals={onApprovals}
+              onTask={onTask}
+            />)}
+          </ul>
+          : <EmptyState label="暂无需要处理的事项" />}
         <footer className="card-footer-link">
           <button className="ref-link-button" onClick={() => onApprovals()}>查看全部（{view.attentionTotal}）<ChevronRight size={14} /></button>
         </footer>
@@ -69,14 +71,15 @@ export function DashboardPage({ value, health, onNew, onTask, onTasks, onRuntime
 
       <section className="ref-card">
         <header className="ref-card-head"><h2>活动任务</h2></header>
-        <ul className="active-task-items">
-          {view.activeTasks.map((task) => <ActiveTaskRow
-            key={task.taskId}
-            task={task}
-            onOpen={onRuntime}
-            onTasks={onTasks}
-          />)}
-        </ul>
+        {view.activeTasks.length
+          ? <ul className="active-task-items">
+            {view.activeTasks.map((task) => <ActiveTaskRow
+              key={task.taskId}
+              task={task}
+              onOpen={onRuntime}
+            />)}
+          </ul>
+          : <EmptyState label="暂无活动任务" />}
         <footer className="card-footer-link">
           <button className="ref-link-button" onClick={onTasks}>查看全部任务（{view.activeTotal}）<ChevronRight size={14} /></button>
         </footer>
@@ -96,14 +99,15 @@ export function DashboardPage({ value, health, onNew, onTask, onTasks, onRuntime
 
       <section className="ref-card">
         <header className="ref-card-head"><h2>最近结果 / 报告</h2></header>
-        <ul className="report-rows">
-          {view.reports.map((report) => <ReportRow
-            key={report.id}
-            report={report}
-            onOpen={onTask}
-            onReports={onReports}
-          />)}
-        </ul>
+        {view.reports.length
+          ? <ul className="report-rows">
+            {view.reports.map((report) => <ReportRow
+              key={report.id}
+              report={report}
+              onOpen={onTask}
+            />)}
+          </ul>
+          : <EmptyState label="暂无已完成任务" />}
         <footer className="card-footer-link">
           <button className="ref-link-button" onClick={onReports}>查看全部报告 <ChevronRight size={14} /></button>
         </footer>
@@ -128,36 +132,31 @@ function MetricCard({ metric }: { metric: MetricView }) {
   </article>;
 }
 
-function AttentionRow({ item, onApprovals, onTask, onTasks }: {
+function AttentionRow({ item, onApprovals, onTask }: {
   item: AttentionView;
   onApprovals: (taskId?: string) => void;
   onTask: (taskId: string) => void;
-  onTasks: () => void;
 }) {
-  // Sample rows carry no real task id, so they open the section index rather
-  // than routing to a task that does not exist.
-  const open = () => {
-    if (item.sample) return item.kind === "approval" ? onApprovals() : onTasks();
-    return item.kind === "approval" ? onApprovals(item.taskId) : onTask(item.taskId);
-  };
+  const open = () => (
+    item.kind === "approval" ? onApprovals(item.taskId) : onTask(item.taskId)
+  );
   return <li>
     <span className={`severity-chip tone-${item.severity}`}>{SEVERITY_LABELS[item.severity]}</span>
     <div className="attention-copy">
       <strong>{item.title}</strong>
       <small>任务: {item.taskName} · Solver: {item.solver}</small>
     </div>
-    <time dateTime={item.sample ? undefined : item.updatedAt}>{item.sample ? item.updatedAt : relativeTime(item.updatedAt)}</time>
+    <time dateTime={item.updatedAt}>{relativeTime(item.updatedAt)}</time>
     <button className="ref-secondary-button" onClick={open}>{item.action}</button>
   </li>;
 }
 
-function ActiveTaskRow({ task, onOpen, onTasks }: {
+function ActiveTaskRow({ task, onOpen }: {
   task: ActiveTaskView;
   onOpen: (taskId: string) => void;
-  onTasks: () => void;
 }) {
   return <li>
-    <button className="active-task-row" onClick={() => task.sample ? onTasks() : onOpen(task.taskId)}>
+    <button className="active-task-row" onClick={() => onOpen(task.taskId)}>
       <span className="active-task-icon" aria-hidden="true"><Bot size={16} /></span>
       <span className="active-task-name">
         <strong>{task.name}</strong>
@@ -196,18 +195,17 @@ function SystemRow({ item }: { item: SystemRowView }) {
   </li>;
 }
 
-function ReportRow({ report, onOpen, onReports }: {
+function ReportRow({ report, onOpen }: {
   report: ReportView;
   onOpen: (taskId: string) => void;
-  onReports: () => void;
 }) {
   return <li>
     <span className="report-icon" aria-hidden="true"><FileText size={16} /></span>
-    <button className="report-main" onClick={() => report.sample ? onReports() : onOpen(report.id)}>
+    <button className="report-main" onClick={() => onOpen(report.id)}>
       <strong>{report.title}</strong>
     </button>
     <span className="chip tone-neutral">{modeLabel(report.mode)}</span>
-    <time>{report.sample ? report.updatedAt : relativeTime(report.updatedAt)}</time>
+    <time dateTime={report.updatedAt}>{relativeTime(report.updatedAt)}</time>
     <em className="report-status">完成</em>
   </li>;
 }

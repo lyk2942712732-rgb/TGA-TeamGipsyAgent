@@ -8,10 +8,12 @@ import { DetailTabs, type DetailTab } from "../components/ui/DetailTabs";
 import { useToast } from "../components/ui/Toast";
 
 /**
- * Design skeleton with one real row.
+ * 策略与预算.
  *
- * `/api/v2/catalog/policies` returns a single hard-coded placeholder record, so
- * the template list below is illustrative apart from that entry.
+ * `/api/v2/catalog/policies` currently projects a single record describing the
+ * immutable execution-policy contract frozen at task creation.  There is no
+ * editable policy-template store behind it yet, so the list shows exactly that
+ * record instead of a catalogue of invented templates.
  */
 
 type PolicyRow = {
@@ -21,44 +23,10 @@ type PolicyRow = {
   network: string;
   highImpact: string;
   status: "启用" | "草稿";
-  sample: boolean;
   network_rules: string[];
   high_impact_rules: string[];
   budget_rules: string[];
 };
-
-const SAMPLE_POLICIES: PolicyRow[] = [
-  {
-    id: "safe-readonly", summary: "只读观察默认执行策略", modes: "全部", network: "关闭", highImpact: "禁止", status: "启用", sample: true,
-    network_rules: ["完全禁止出网", "仅允许读取任务工作区"],
-    high_impact_rules: ["禁止任何写入", "禁止不可逆操作"],
-    budget_rules: ["最大运行 30 分钟", "Token 50k", "Tool Call 100"],
-  },
-  {
-    id: "standard-pentest", summary: "渗透测试默认执行策略", modes: "渗透测试", network: "受限", highImpact: "需审批", status: "启用", sample: true,
-    network_rules: ["仅允许任务 Scope", "禁止私网/回环/元数据地址", "30 请求/分钟 · 并发 2"],
-    high_impact_rules: ["文件写入：每次审批", "资源修改/删除：每次审批", "不可逆动作必须给出替代方案"],
-    budget_rules: ["最大运行 120 分钟", "Token 200k", "Tool Call 500 · Artifact 2 GB"],
-  },
-  {
-    id: "isolated-code-analysis", summary: "隔离源码分析执行策略", modes: "逆向研究", network: "关闭", highImpact: "需审批", status: "启用", sample: true,
-    network_rules: ["完全禁止出网", "仅允许读取本地源码"],
-    high_impact_rules: ["写入限制在私有工作区", "禁止对外发起请求"],
-    budget_rules: ["最大运行 90 分钟", "Token 150k", "Tool Call 300"],
-  },
-  {
-    id: "malware-static-only", summary: "样本静态分析执行策略", modes: "逆向", network: "关闭", highImpact: "禁止", status: "启用", sample: true,
-    network_rules: ["完全禁止出网", "禁止执行样本"],
-    high_impact_rules: ["仅允许静态分析", "禁止动态执行"],
-    budget_rules: ["最大运行 60 分钟", "Token 120k", "Artifact 1 GB"],
-  },
-  {
-    id: "custom-lab", summary: "CTF 靶场自定义执行策略", modes: "CTF", network: "目标范围", highImpact: "预授权", status: "草稿", sample: true,
-    network_rules: ["仅允许题目目标范围", "允许靶场回环地址"],
-    high_impact_rules: ["靶场内写入预授权", "禁止跨题目横向访问"],
-    budget_rules: ["最大运行 45 分钟", "Token 80k", "Tool Call 200"],
-  },
-];
 
 const TABS: DetailTab[] = [
   { id: "execution", label: "执行策略" },
@@ -71,7 +39,7 @@ export function PoliciesPage() {
   const toast = useToast();
   const [tab, setTab] = useState("execution");
   const [search, setSearch] = useState("");
-  const [selectedId, setSelectedId] = useState(SAMPLE_POLICIES[1].id);
+  const [selectedId, setSelectedId] = useState("");
 
   const query = useQuery({ queryKey: ["catalog", "policies"], queryFn: () => fetchProductCatalog("policies") });
 
@@ -82,13 +50,12 @@ export function PoliciesPage() {
     network: "任务契约决定",
     highImpact: "任务契约决定",
     status: "启用",
-    sample: false,
     network_rules: ["执行策略在创建任务时冻结为不可变快照"],
     high_impact_rules: ["高影响操作经 ToolGovernanceGateway 裁决"],
     budget_rules: ["预算由 Solver Definition 的 default_budget 提供"],
   }));
 
-  const rows = [...real, ...SAMPLE_POLICIES].filter((row) => (
+  const rows = real.filter((row) => (
     !search.trim() || row.id.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase())
   ));
   const selected = rows.find((row) => row.id === selectedId) ?? rows[0] ?? null;

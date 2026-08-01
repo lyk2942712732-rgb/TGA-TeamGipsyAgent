@@ -37,20 +37,17 @@ describe("TaskListPage", () => {
     expect(await screen.findByRole("heading", { name: "Alpha task" })).toBeInTheDocument();
   });
 
-  it("keeps real tasks ahead of the reference sample rows", async () => {
+  it("lists only the tasks the API returned", async () => {
     renderPage();
     const table = await screen.findByRole("table", { name: "任务列表" });
     const names = [...table.querySelectorAll("tbody .task-name-cell strong")].map((node) => node.textContent);
-    expect(names[0]).toBe("Alpha task");
-    expect(names).toContain("Web API 安全测试");
+    expect(names).toEqual(["Alpha task"]);
   });
 
-  it("does not navigate to a sample task that was never created", async () => {
-    const user = userEvent.setup();
+  it("shows an empty state rather than fabricated rows when no task exists", async () => {
     mocks.fetchTaskList.mockResolvedValue({ tasks: [], total: 0 });
     renderPage();
-    const table = await screen.findByRole("table", { name: "任务列表" });
-    await user.click(within(table).getByText("Web API 安全测试"));
-    expect(screen.getByTestId("location")).not.toHaveTextContent("sample-");
+    expect(await screen.findByText("没有匹配的任务")).toBeInTheDocument();
+    expect(screen.queryByText("Web API 安全测试")).not.toBeInTheDocument();
   });
 });
