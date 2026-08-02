@@ -7,6 +7,7 @@ import type { LucideIcon } from "lucide-react";
 import { useState } from "react";
 import { fetchSystemHealth, type SystemComponent } from "../api/catalog-query-adapter";
 import { fetchDashboard } from "../api/operations-query-adapter";
+import { runtimeApi } from "../runtime/api-v2";
 import { CatalogTable, type Column } from "../components/ui/CatalogTable";
 import { DetailTabs, type DetailTab } from "../components/ui/DetailTabs";
 import { EmptyState } from "../components/ui/EmptyState";
@@ -77,6 +78,26 @@ export function SystemPage() {
     void client.invalidateQueries({ queryKey: ["dashboard"] });
   };
 
+  /**
+   * There is no catalog-wide refresh endpoint, so this refreshes every server the
+   * MCP registry actually reports and then re-probes health.
+   */
+  const refreshMcpCatalog = async () => {
+    try {
+      const { servers } = await runtimeApi.mcpServers();
+      if (!servers.length) {
+        toast.notify("没有已配置的 MCP Server");
+        return;
+      }
+      await Promise.all(servers.map((server) => runtimeApi.refreshMCPServer(server.id)));
+      toast.notify(`已刷新 ${servers.length} 个 MCP Server`);
+    } catch (reason) {
+      toast.notify(reason instanceof Error ? reason.message : "刷新 MCP Catalog 失败");
+    } finally {
+      refreshAll();
+    }
+  };
+
   const metric = (key: string) => view?.metrics.find((item) => item.key === key)?.value ?? null;
 
   const columns: Array<Column<SystemComponent>> = [
@@ -140,7 +161,7 @@ export function SystemPage() {
           <div className="system-actions">
             <button className="ref-secondary-button" onClick={refreshAll}><RefreshCw size={14} />刷新系统状态</button>
             <a className="ref-secondary-button" href="/settings/models"><SquareCheck size={14} />验证模型连接</a>
-            <button className="ref-secondary-button" onClick={() => toast.notifyUnavailable("刷新 MCP Catalog")}><RotateCw size={14} />刷新 MCP Catalog</button>
+            <button className="ref-secondary-button" onClick={() => void refreshMcpCatalog()}><RotateCw size={14} />刷新 MCP Catalog</button>
             <button className="ref-secondary-button" onClick={() => toast.notifyUnavailable("重建索引校验")}><ScanLine size={14} />重建索引校验</button>
             <button className="ref-secondary-button" onClick={() => toast.notifyUnavailable("系统诊断报告")}><FileSearch size={14} />系统诊断报告</button>
           </div>
@@ -148,15 +169,9 @@ export function SystemPage() {
 
         <section className="ref-card">
           <header className="ref-card-head"><h2>资源使用</h2></header>
-          {/* No host-metrics endpoint exists; the bars stay unfilled rather than
-              showing an invented utilisation figure. */}
-          <ul className="resource-list">
-            {["CPU", "内存", "磁盘"].map((label) => <li key={label}>
-              <span>{label}</span>
-              <i><em style={{ width: "0%" }} /></i>
-              <b className="field-empty">—</b>
-            </li>)}
-          </ul>
+          {/* The backend exposes no host-metrics endpoint, so rather than draw
+              three permanently empty gauges the card says why it is blank. */}
+          <EmptyState label="后端未提供主机资源指标接口" />
         </section>
       </aside>
     </div>

@@ -10,16 +10,14 @@ from uuid import uuid4
 
 from tga.contracts import (
     AgentEvent,
-    ArtifactIndex,
     ArtifactRecord,
-    CandidateFindingRecord,
     ChallengeContract,
     ContextMetric,
     SessionRecord,
     TGATask,
 )
 from tga.evidence.database import utc_now
-from tga.infrastructure.persistence.errors import ArtifactImmutableError, PersistenceConflict
+from tga.infrastructure.persistence.errors import ArtifactImmutableError
 class TaskRepository:
     def get_task(self, task_id: str) -> TGATask | None:
         row = self.conn.execute("SELECT payload_json FROM tasks WHERE id=?", (task_id,)).fetchone()
@@ -45,30 +43,6 @@ class TaskRepository:
             raise KeyError(f"task not found: {task.id}")
         self._commit()
 
-    def add_candidate_finding(self, finding: CandidateFindingRecord) -> None:
-        payload = finding.model_copy(update={"status": "candidate"}).model_dump_json()
-        now = utc_now()
-        self.conn.execute(
-            "INSERT OR REPLACE INTO findings(id, task_id, payload_json, status, evidence_artifact_id, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (finding.id, finding.task_id, payload, "candidate", finding.evidence_artifact_id, now, now),
-        )
-        self._commit()
-
-    def confirm_finding(self, finding_id: str, evidence_artifact_id: str) -> None:
-        row = self.conn.execute("SELECT payload_json FROM findings WHERE id=?", (finding_id,)).fetchone()
-        if row is None:
-            raise KeyError(f"finding not found: {finding_id}")
-        finding = CandidateFindingRecord.model_validate_json(row["payload_json"])
-        confirmed = finding.model_copy(
-            update={"status": "confirmed", "evidence_artifact_id": evidence_artifact_id}
-        )
-        self.conn.execute(
-            "UPDATE findings SET payload_json=?, status=?, evidence_artifact_id=?, updated_at=? WHERE id=?",
-            (confirmed.model_dump_json(), "confirmed", evidence_artifact_id, utc_now(), finding_id),
-        )
-        self._commit()
-
     def add_flag(self, task_id: str, value: str, evidence_artifact_id: str) -> None:
         existing = self.conn.execute(
             "SELECT 1 FROM flags WHERE task_id=? AND value=?",
@@ -90,17 +64,6 @@ class TaskRepository:
                 (task_id,),
             ).fetchall()
         ]
-
-    def list_findings(self, task_id: str) -> list[CandidateFindingRecord]:
-        rows = self.conn.execute(
-            "SELECT payload_json FROM findings WHERE task_id=? ORDER BY created_at", (task_id,)
-        ).fetchall()
-        return [CandidateFindingRecord.model_validate_json(row["payload_json"]) for row in rows]
-
-    # v2 runtime repository -------------------------------------------------
-    # All v2 writes live here so manager, observer and API readers do not
-    # reach into SQLite independently.
-
 
 class SessionRepository:
     def acquire_runtime_lease(self, task_id: str, owner_id: str, *, ttl_seconds: float) -> bool:
@@ -131,10 +94,10 @@ class SessionRepository:
 
     def create_session(self, session: SessionRecord) -> SessionRecord:
         self.conn.execute(
-            "INSERT OR IGNORE INTO sessions(task_id,schema_version,status,active_solver_id,turn_count,max_turns,started_at,finished_at,stop_reason,workspace_path,mcp_catalog_version) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT OR IGNORE INTO sessions(task_id,schema_version,status,turn_count,max_turns,started_at,finished_at,stop_reason,workspace_path,mcp_catalog_version) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
-                session.task_id, session.schema_version, session.status, session.active_solver_id, session.turn_count,
+                session.task_id, session.schema_version, session.status, session.turn_count,
                 session.max_turns, session.started_at, session.finished_at, session.stop_reason,
                 session.workspace_path, session.mcp_catalog_version,
             ),
@@ -147,7 +110,7 @@ class SessionRepository:
         return SessionRecord.model_validate(dict(row)) if row else None
 
     def update_session(self, task_id: str, **changes: Any) -> SessionRecord:
-        allowed = {"schema_version", "status", "active_solver_id", "turn_count", "max_turns", "started_at", "finished_at", "stop_reason", "workspace_path", "mcp_catalog_version"}
+        allowed = {"schema_version", "status", "turn_count", "max_turns", "started_at", "finished_at", "stop_reason", "workspace_path", "mcp_catalog_version"}
         values = {key: value for key, value in changes.items() if key in allowed}
         if not values:
             session = self.get_session(task_id)
@@ -193,66 +156,16 @@ class SessionRepository:
 
 class ArtifactRepository:
     def add_artifact(self, artifact: ArtifactRecord) -> None:
-        task_row = self.conn.execute(
-            "SELECT payload_json FROM tasks WHERE id=?", (artifact.task_id,)
-        ).fetchone()
-        schema_version = (
-            int(json.loads(task_row["payload_json"]).get("schema_version") or 0)
-            if task_row else 0
-        )
-        payload = artifact.model_dump_json()
-        if schema_version == 6:
-            existing = self.conn.execute(
-                "SELECT task_id,payload_json,schema_version FROM artifacts WHERE id=?",
-                (artifact.id,),
-            ).fetchone()
-            if existing is not None:
-                if (
-                    existing["task_id"] == artifact.task_id
-                    and existing["payload_json"] == payload
-                    and int(existing["schema_version"]) == 6
-                ):
-                    return
-                raise ArtifactImmutableError(
-                    f"artifact id is immutable: {artifact.id}"
-                )
-            self.conn.execute(
-                "INSERT INTO artifacts(id,task_id,intent_id,payload_json,created_at,schema_version) "
-                "VALUES (?,?,?,?,?,6)",
-                (
-                    artifact.id, artifact.task_id, artifact.intent_id,
-                    payload, artifact.created_at,
-                ),
-            )
-        else:
-            self.conn.execute(
-                "INSERT OR REPLACE INTO artifacts(id, task_id, intent_id, payload_json, created_at) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (
-                    artifact.id, artifact.task_id, artifact.intent_id,
-                    payload, artifact.created_at,
-                ),
-            )
-        self._commit()
+        """Delegate to the single schema-v6 Artifact writer.
 
-    def upsert_artifact_index(self, index: ArtifactIndex) -> ArtifactIndex:
-        self.conn.execute(
-            "INSERT INTO artifact_indexes(artifact_id,task_id,payload_json,created_at) VALUES (?, ?, ?, ?) "
-            "ON CONFLICT(artifact_id) DO UPDATE SET payload_json=excluded.payload_json",
-            (index.artifact_id, index.task_id, index.model_dump_json(), index.created_at),
-        )
-        self._commit()
-        return index
+        `SqliteEvidenceRepository` owns Artifact persistence, including task
+        and intent ownership checks and append-only enforcement.  This method
+        exists only so `EvidenceStore` keeps its historical call shape; it must
+        never write `artifacts` itself.
+        """
+        from tga.infrastructure.persistence.repositories import SqliteEvidenceRepository
 
-    def get_artifact_index(self, artifact_id: str) -> ArtifactIndex | None:
-        row = self.conn.execute("SELECT payload_json FROM artifact_indexes WHERE artifact_id=?", (artifact_id,)).fetchone()
-        return ArtifactIndex.model_validate_json(row["payload_json"]) if row else None
-
-    def list_artifact_indexes(self, task_id: str) -> list[ArtifactIndex]:
-        rows = self.conn.execute(
-            "SELECT payload_json FROM artifact_indexes WHERE task_id=? ORDER BY created_at,artifact_id", (task_id,)
-        ).fetchall()
-        return [ArtifactIndex.model_validate_json(row["payload_json"]) for row in rows]
+        SqliteEvidenceRepository(self).add_artifact(artifact)
 
     def get_artifact(self, artifact_id: str) -> ArtifactRecord | None:
         row = self.conn.execute("SELECT payload_json FROM artifacts WHERE id=?", (artifact_id,)).fetchone()
@@ -285,35 +198,18 @@ class EventRepository:
         self, task_id: str, type: str, payload: dict[str, Any], *,
         solver_id: str | None = None, intent_id: str | None = None,
     ) -> AgentEvent:
-        # Event payloads are an evolvable audit envelope.  Persisting optional
-        # fields as JSON null made older clients reject an entire snapshot when
-        # a control event had no action_id.  Omit absent values at the write
-        # boundary instead; concrete false/zero values remain intact.
-        from tga.domain.events import normalize_event_payload
+        """Delegate to the single schema-v6 Event writer.
 
-        payload = normalize_event_payload(type, _compact_event_payload(payload))
-        event_id = f"evt_{datetime.now(UTC).strftime('%Y%m%d%H%M%S%f')}_{uuid4().hex[:8]}"
-        now = utc_now()
-        seq = int(self.conn.execute(
-            "INSERT INTO agent_event_sequences(task_id, next_seq) VALUES (?, 2) "
-            "ON CONFLICT(task_id) DO UPDATE SET next_seq=agent_event_sequences.next_seq + 1 "
-            "RETURNING next_seq - 1",
-            (task_id,),
-        ).fetchone()[0])
-        self.conn.execute(
-            "INSERT INTO agent_events(id,schema_version,task_id,solver_id,intent_id,seq,type,payload_json,created_at) VALUES (?, 6, ?, ?, ?, ?, ?, ?, ?)",
-            (event_id, task_id, solver_id, intent_id, seq, type, json.dumps(payload, ensure_ascii=False), now),
-        )
-        self._commit()
-        event = AgentEvent(
-            schema_version=6, id=event_id, task_id=task_id,
-            solver_id=solver_id, intent_id=intent_id, seq=seq, type=type,
-            payload=payload, created_at=now,
-        )
-        from tga.infrastructure.events import runtime_event_bus
+        `SqliteEventRepository` owns event persistence: sequence allocation,
+        payload normalization, task-ownership checks and bus publication all
+        live there.  This method exists only so `EvidenceStore` keeps its
+        historical call shape; it must never write `agent_events` itself.
+        """
+        from tga.infrastructure.persistence.repositories import SqliteEventRepository
 
-        runtime_event_bus.publish(event)
-        return event
+        return SqliteEventRepository(self).append_agent_event(
+            task_id, type, payload, solver_id=solver_id, intent_id=intent_id
+        )
 
     def list_agent_events(self, task_id: str, *, after_seq: int = 0, limit: int | None = 200) -> list[AgentEvent]:
         if limit is None:

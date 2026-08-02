@@ -12,6 +12,7 @@ from apps.api.main import app
 from apps.api.routes import tasks as task_routes
 
 from tga.contracts import ExecutionPolicy, TGATask
+from tests.runtime_fixtures import task as v6_task
 from tga.evidence.store import EvidenceStore
 from tga.infrastructure.persistence import PersistenceBundle
 from tga.rag import NullRAGRetriever
@@ -24,7 +25,6 @@ from tga.domain.skills.models import (
     TaskCommonSkillSnapshot,
 )
 from tga.skills.loader import Skill
-from tga.skills.models import SkillBundleSnapshot, SkillSnapshot
 from tga.skills.retrieval import (
     RegistrySkillRetriever,
     RetrievedSkill,
@@ -82,14 +82,15 @@ def test_selector_is_deterministic_filters_missing_capabilities_and_bounds_conte
     selector = SkillSelector(StaticRetriever(values))
     request = SkillSelectionRequest(
         mode="ctf",
+        task_id="task_selector",
         goal="Inspect this web challenge",
         prompt="https://example.test",
         mode_config={"subtype": "web"},
         available_capabilities=("http.request",),
     )
 
-    first = selector.select(request)
-    second = selector.select(request)
+    first = selector.select(request, created_at="2026-01-01T00:00:00Z")
+    second = selector.select(request, created_at="2026-01-01T00:00:00Z")
 
     assert first == second
     assert [item.name for item in first.skills] == ["a-web", "b-web"]
@@ -128,22 +129,53 @@ def test_manual_selector_preserves_user_order_and_rejects_invalid_choices() -> N
         RetrievedSkill(_skill("second-web", body="second", capabilities=[], tags=["web"]), "builtin"),
     ]
     selector = SkillSelector(StaticRetriever(values))
-    selected = selector.select(SkillSelectionRequest(
-        mode="ctf", goal="web", available_capabilities=("http.request",),
-        selected_skill_names=("second-web", "first-web"),
-    ))
+    selected = selector.select(
+        SkillSelectionRequest(
+            mode="ctf", task_id="task_manual", goal="web",
+            available_capabilities=("http.request",),
+            selected_skill_names=("second-web", "first-web"),
+        ),
+        created_at="2026-01-01T00:00:00Z",
+    )
     assert selected.selector.endswith(":manual")
     assert [item.name for item in selected.skills] == ["second-web", "first-web"]
-    assert all(item.selection_reasons == ["用户在创建任务时手动选择"] for item in selected.skills)
+    assert all(item.selection_reasons == ("用户在创建任务时手动选择",) for item in selected.skills)
 
     with pytest.raises(ValueError, match="unavailable capabilities"):
-        selector.select(SkillSelectionRequest(
-            mode="ctf", goal="web", available_capabilities=(), selected_skill_names=("first-web",),
-        ))
+        selector.select(
+            SkillSelectionRequest(
+                mode="ctf", task_id="task_manual", goal="web",
+                available_capabilities=(), selected_skill_names=("first-web",),
+            ),
+            created_at="2026-01-01T00:00:00Z",
+        )
     with pytest.raises(ValueError, match="do not exist or are incompatible"):
-        selector.select(SkillSelectionRequest(
-            mode="ctf", goal="web", available_capabilities=("http.request",), selected_skill_names=("missing",),
-        ))
+        selector.select(
+            SkillSelectionRequest(
+                mode="ctf", task_id="task_manual", goal="web",
+                available_capabilities=("http.request",), selected_skill_names=("missing",),
+            ),
+            created_at="2026-01-01T00:00:00Z",
+        )
+
+
+def test_selector_rejects_a_third_skill_instead_of_silently_dropping_it() -> None:
+    values = [
+        RetrievedSkill(_skill("a-web", body="A", capabilities=[], tags=["web"]), "builtin"),
+        RetrievedSkill(_skill("b-web", body="B", capabilities=[], tags=["web"]), "builtin"),
+        RetrievedSkill(_skill("c-web", body="C", capabilities=[], tags=["web"]), "builtin"),
+    ]
+    selector = SkillSelector(StaticRetriever(values))
+
+    with pytest.raises(ValueError, match="at most 2 items"):
+        selector.select(
+            SkillSelectionRequest(
+                mode="ctf", task_id="task_three", goal="web",
+                available_capabilities=(),
+                selected_skill_names=("a-web", "b-web", "c-web"),
+            ),
+            created_at="2026-01-01T00:00:00Z",
+        )
 
 
 def test_task_creation_freezes_custom_skill_and_injects_body_into_system_prompt(tmp_path: Path, monkeypatch) -> None:
@@ -239,7 +271,7 @@ def test_task_creation_freezes_custom_skill_and_injects_body_into_system_prompt(
 
 def test_skill_bundle_is_rendered_in_first_system_message_contract() -> None:
     body = "SYSTEM_SKILL_BODY_MARKER"
-    task = TGATask(
+    task = v6_task(
         id="skill_prompt_task",
         name="Skill prompt",
         mode="ctf",
@@ -295,7 +327,7 @@ def test_skill_preview_api_uses_task_policy_and_returns_selection_reasons(monkey
 
     assert response.status_code == 200, response.text
     payload = response.json()
-    assert payload["selector"].startswith("task-skill-selector-v1:")
+    assert payload["selector"].startswith("task-common:task-skill-selector-v1:")
     assert payload["count"] >= 1
     assert any(item["name"] == "web-recon" for item in payload["skills"])
     assert all(item["selection_reasons"] for item in payload["skills"])

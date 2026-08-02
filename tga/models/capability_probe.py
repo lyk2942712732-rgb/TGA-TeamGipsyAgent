@@ -7,7 +7,6 @@ from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Any
 
-from tga.contracts import TGATask
 from tga.models.base import ModelMessage
 from tga.runtime.tooling import ToolDefinitionBuilder
 from tga.tools.mcp_registry import MCPCatalogSnapshot
@@ -97,17 +96,19 @@ class ProviderCapabilityProbe:
         return result
 
     def _product_tools(self) -> list[dict[str, Any]]:
-        task = TGATask(id="provider_probe", name="Provider probe", mode="ctf", goal="verify protocol")
         from tga.capabilities.registry import build_default_registry
 
         registry = build_default_registry()
+        # The probe runs before any model verification exists, so it cannot
+        # build a schema-v6 Task.  Only the mode shapes the tool catalog.
+        mode = "ctf"
         names = {
             item["name"].replace(".", "_"): item["name"]
             for item in registry.snapshot()["capabilities"]
-            if task.mode in item["modes"]
+            if mode in item["modes"]
         }
         return ToolDefinitionBuilder(
-            task=task,
+            mode=mode,
             solver_definition=SimpleNamespace(sandbox_profile_id=None),
             registry=registry,
             tool_names=names,

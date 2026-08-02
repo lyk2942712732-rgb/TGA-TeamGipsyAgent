@@ -7,6 +7,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from apps.api.main import app
+from tests.runtime_fixtures import task as v6_task
 from tga.application.services.skill_candidate_activation_service import (
     SkillCandidateActivationService,
 )
@@ -373,7 +374,7 @@ def test_team_runtime_automatically_freezes_rag_skill_and_recovery_uses_snapshot
     monkeypatch.setenv("TGA_SKILL_CORPUS_DB", str(corpus_path))
     monkeypatch.setenv("TGA_RUN_ROOT", str(tmp_path / "runs"))
 
-    task = TGATask(
+    task = v6_task(
         id="task_runtime_rag",
         name="Runtime RAG",
         mode="ctf",

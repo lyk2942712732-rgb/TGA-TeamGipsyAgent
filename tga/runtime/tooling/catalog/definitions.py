@@ -7,8 +7,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from tga.contracts import TGATask
 from tga.runtime.completion_validators import task_completion_tool_schema
+from tga.modes import TaskMode
 from tga.runtime.tooling.requests import ToolClass
 
 
@@ -42,7 +42,7 @@ class RuntimeToolCatalog(BaseModel):
 
     @classmethod
     def from_runtime(
-        cls, *, task: TGATask, solver_definition, registry, tool_names, mcp_snapshot
+        cls, *, mode: TaskMode, solver_definition, registry, tool_names, mcp_snapshot
     ):
         values: list[ToolCatalogEntry] = []
         snapshot = {item["name"]: item for item in registry.snapshot()["capabilities"]}
@@ -180,7 +180,7 @@ class RuntimeToolCatalog(BaseModel):
         control_schemas["review_finding"] = control_schemas["review_evidence"]
         for name, (description, roles) in controls.items():
             parameters = (
-                task_completion_tool_schema(task.mode)
+                task_completion_tool_schema(mode)
                 if name == "propose_task_completion"
                 else control_schemas.get(name, generic_schema)
             )

@@ -10,6 +10,7 @@ from typing import Any
 from tga.infrastructure.skills.catalog import FileSkillCatalog
 from tga.infrastructure.solver_definitions.registry import SolverDefinitionRegistry
 from tga.infrastructure.team_templates.registry import TeamTemplateRegistry
+from tga.modes import MODE_PROFILES, TASK_MODES, default_execution_policy
 
 
 class CatalogQueries:
@@ -39,7 +40,7 @@ class CatalogQueries:
             items = builder(errors)
         except (OSError, ValueError) as exc:
             return {
-                "schema_version": 1, "kind": kind, "supported": False,
+                "view_version": 1, "kind": kind, "supported": False,
                 "reason": f"catalog source is unavailable: {type(exc).__name__}",
                 "items": [], "errors": [], "offset": offset, "limit": limit,
                 "total": 0, "next_offset": None,
@@ -52,7 +53,7 @@ class CatalogQueries:
         page = items[bounded_offset:bounded_offset + bounded_limit]
         next_offset = bounded_offset + len(page)
         return {
-            "schema_version": 1, "kind": kind, "supported": True,
+            "view_version": 1, "kind": kind, "supported": True,
             "reason": None, "items": page, "errors": errors[:50],
             "offset": bounded_offset, "limit": bounded_limit,
             "total": len(items),
@@ -74,7 +75,27 @@ class CatalogQueries:
 
     @staticmethod
     def _policies(_errors):
-        return [{"id": "task-execution-policy", "type": "execution", "status": "available", "source": "Task creation contract", "editable": False}]
+        """Project the per-mode ExecutionPolicy presets frozen at task creation.
+
+        These are the only policy records the system actually has: one immutable
+        preset per task mode, resolved by `default_execution_policy`.  There is
+        no editable policy store, so every record is reported non-editable.
+        """
+        items = []
+        for mode in TASK_MODES:
+            policy = default_execution_policy(mode)
+            items.append({
+                "id": f"{mode}-execution-policy",
+                "type": "execution",
+                "mode": mode,
+                "mode_label": MODE_PROFILES[mode].label,
+                "preset": policy.preset,
+                "status": "available",
+                "source": "Task creation contract",
+                "editable": False,
+                "execution_policy": policy.model_dump(mode="json"),
+            })
+        return items
 
     def _resources(self, errors):
         items: list[dict[str, Any]] = []

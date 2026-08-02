@@ -100,7 +100,7 @@ class OperationalQueries:
             _system_status("mcp", "MCP", "unavailable", "暂不可用：未在 Dashboard 聚合中探测", False),
         ]
         return DashboardResponse.model_validate({
-            "schema_version": 1,
+            "view_version": 1,
             "generated_at": _utc_now(),
             "metrics": metrics,
             "needs_attention": attention[:12],
@@ -139,7 +139,7 @@ class OperationalQueries:
         bounded_limit = max(1, min(int(limit), 200))
         selected = values[bounded_offset:bounded_offset + bounded_limit]
         return GlobalApprovalPage.model_validate({
-            "schema_version": 1,
+            "view_version": 1,
             "offset": bounded_offset,
             "limit": bounded_limit,
             "total": len(values),

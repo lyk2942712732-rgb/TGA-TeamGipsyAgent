@@ -8,8 +8,7 @@ import type { DashboardResponse, OperationalTaskSummary } from "../api/operation
  * design is denser than a fresh install, but padding the lists with invented
  * tasks and approvals made an empty install indistinguishable from a busy one,
  * so the lists now render exactly what the backend reports and fall back to an
- * empty state.  `sampleFields` remains the single source of truth for fields
- * the design shows and the backend cannot supply.
+ * empty state.
  */
 
 export type MetricView = {
@@ -72,7 +71,6 @@ export type DashboardView = {
   attentionTotal: number;
   activeTotal: number;
   runningTasks: ActiveTaskView[];
-  sampleFields: string[];
 };
 
 const STATUS_LABELS: Record<string, string> = {
@@ -107,7 +105,6 @@ export function buildDashboardView(
     attentionTotal: value.needs_attention.length,
     activeTotal: value.active_tasks.length,
     runningTasks: activeTasks.filter((task) => task.status === "running"),
-    sampleFields: describeSampleFields(value),
   };
 }
 
@@ -223,17 +220,3 @@ function severityOf(risk: string | null | undefined, kind: AttentionView["kind"]
 export const SEVERITY_LABELS: Record<AttentionView["severity"], string> = {
   high: "高", medium: "中", low: "低",
 };
-
-/**
- * Fields the reference design shows and no endpoint supplies.  Not rendered:
- * this is the checklist for what still needs a backend contract.
- */
-function describeSampleFields(value: DashboardResponse): string[] {
-  const fields = [
-    "指标卡的「较昨天」环比（无历史快照表）",
-    "「已完成 (7天)」的 7 日窗口（聚合只返回最近完成列表）",
-    "活动任务的「候选发现」与 Solver 总数（任务摘要无此字段）",
-    "系统状态的 Scheduler 健康（后端无只读健康契约）",
-  ];
-  return fields;
-}

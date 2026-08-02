@@ -1,10 +1,10 @@
 from tga.contracts import TGATask
 from tga.tools.tool_policy import is_allowed
-from tests.runtime_fixtures import execution_policy
+from tests.runtime_fixtures import execution_policy, task as v6_task
 
 
 def test_active_tool_blocked_in_passive():
-    task = TGATask(
+    task = v6_task(
         id="task_1",
         name="audit",
         mode="penetration_test",
@@ -17,7 +17,7 @@ def test_active_tool_blocked_in_passive():
 
 
 def test_out_of_scope_tool_blocked():
-    task = TGATask(
+    task = v6_task(
         id="task_1",
         name="audit",
         mode="penetration_test",

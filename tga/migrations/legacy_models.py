@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 SolverStatus = Literal["starting", "running", "waiting", "completed", "failed", "cancelled"]
@@ -13,6 +13,22 @@ MemoryKind = Literal["fact", "evidence", "failure_boundary", "hint", "constraint
 RiskLevel = Literal["passive", "active", "destructive"]
 StrategyStatus = Literal["pending", "testing", "succeeded", "failed", "blocked"]
 ExtractionStatus = Literal["not_requested", "blocked_out_of_scope", "failed", "extracted"]
+
+
+class LegacyV5Task(BaseModel):
+    """A schema-v5 task payload, read only by the offline migrator.
+
+    The runtime `TGATask` is strictly schema 6, so migration reads legacy rows
+    through this permissive model instead of relaxing the runtime contract.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    id: str = Field(pattern=r"^[A-Za-z0-9_-]{1,128}$")
+    name: str = Field(min_length=1, max_length=255)
+    mode: str
+    goal: str = Field(min_length=1, max_length=8000)
+    schema_version: int
 
 
 class SolverRecord(BaseModel):
@@ -91,7 +107,7 @@ class StrategyCard(BaseModel):
 
 
 __all__ = [
-    "ExtractionStatus", "MemoryEntry", "MemoryKind", "RiskLevel",
+    "ExtractionStatus", "LegacyV5Task", "MemoryEntry", "MemoryKind", "RiskLevel",
     "SolverRecord", "SolverRole", "SolverStatus", "StrategyCard", "StrategySource",
     "StrategyStatus", "StrategyStep",
 ]

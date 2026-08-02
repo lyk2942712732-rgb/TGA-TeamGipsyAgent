@@ -7,6 +7,7 @@ import pytest
 from pydantic import BaseModel, ValidationError
 
 from tga.contracts import ModelSnapshot, TGATask
+from tests.runtime_fixtures import task as v6_task
 from tga.domain.planning.intents import Intent
 from tga.domain.skills.models import SolverSkillSnapshot
 from tga.migrations.skill_bundles import legacy_skill_bundle_to_task_common
@@ -22,7 +23,10 @@ from tga.application.services.skill_selection_service import (
     SolverSkillSelectionService,
 )
 from tga.application.services.solver_factory import SolverFactory
-from tga.skills.models import SkillBundleSnapshot, SkillSnapshot as LegacySkillSnapshot
+from tga.migrations.skill_bundles import (
+    LegacySkillBundleSnapshot,
+    LegacySkillSnapshot,
+)
 
 
 EXPECTED_DEFINITIONS = {
@@ -58,7 +62,7 @@ def _model() -> ModelSnapshot:
 
 
 def _task(task_id: str, mode: str = "ctf") -> TGATask:
-    return TGATask(id=task_id, name=task_id, mode=mode, goal="test solver definition")
+    return v6_task(id=task_id, name=task_id, mode=mode, goal="test solver definition")
 
 
 def _intent(task_id: str, intent_id: str = "intent_1", kind: str = "recon") -> Intent:
@@ -213,7 +217,7 @@ def test_legacy_task_skill_bundle_remains_losslessly_readable() -> None:
     body = "Legacy task guidance."
     import hashlib
 
-    legacy = SkillBundleSnapshot(
+    legacy = LegacySkillBundleSnapshot(
         selector="task-skill-selector-v1:manual",
         skills=[LegacySkillSnapshot(
             name=f"legacy-{index}", version="1", origin="builtin", modes=["ctf"],
@@ -379,7 +383,7 @@ def test_solver_selector_honors_scene_and_explicit_mode_authority(
 ) -> None:
     definitions = SolverDefinitionRegistry.builtin()
     templates = TeamTemplateRegistry.builtin(definitions=definitions)
-    task = TGATask(
+    task = v6_task(
         id=f"selector_{mode}", name="selector", mode=mode, goal="select",
         mode_config=mode_config,
     )

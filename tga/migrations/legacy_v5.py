@@ -21,10 +21,9 @@ from tga.migrations.converters import (
 )
 from tga.domain.planning.global_plan import GlobalPlan
 from tga.domain.planning.local_plan import LocalPlan
-from tga.migrations.legacy_models import MemoryEntry, StrategyCard
+from tga.migrations.legacy_models import LegacyV5Task, MemoryEntry, StrategyCard
 from tga.migrations.evidence_models import LegacyArtifactRecord, LegacyFinding
 from tga.domain.task.hints import TaskHint
-from tga.domain.task.models import TGATask
 
 
 class LegacyV5TaskReader:
@@ -54,9 +53,9 @@ class LegacyV5TaskReader:
         if task_row is None:
             raise KeyError(f"task not found: {task_id}")
         task_payload = json.loads(task_row["payload_json"])
-        current_payload = dict(task_payload)
-        current_payload.pop("skill_bundle_snapshot", None)
-        TGATask.model_validate(current_payload)
+        # Validate through the legacy model: the runtime TGATask is strictly
+        # schema 6 and must not be relaxed to read historical rows.
+        LegacyV5Task.model_validate(task_payload)
         result: dict[str, Any] = {"task": task_payload}
         for key, table, order in (
             ("intents", "intents", "created_at,id"),

@@ -13,11 +13,17 @@ from pathlib import Path
 from typing import Any, Callable
 from uuid import uuid4
 
-from tga.domain.task.models import TGATask
+from tga.domain.governance.models import ExecutionPolicy
+from tga.domain.task.models import TGATask, default_mode_config
 from tga.domain.task.spec import TaskSpec
-from tga.migrations.skill_bundles import legacy_skill_bundle_to_task_common
+from tga.evidence.database import apply_schema, schema_content_hash, utc_now
+from tga.migrations.legacy_models import LegacyV5Task
+from tga.modes import normalize_mode
+from tga.migrations.skill_bundles import (
+    LegacySkillBundleSnapshot,
+    legacy_skill_bundle_to_task_common,
+)
 from tga.infrastructure.persistence import PersistenceBundle
-from tga.skills.models import SkillBundleSnapshot
 
 
 SOURCE_SCHEMA = 5
@@ -57,14 +63,42 @@ def _read_task_payload(path: Path) -> dict[str, Any]:
         raise _fail("INVALID_TASK", "task payload failed validation") from exc
 
 
-def _read_task(path: Path) -> TGATask:
+def _read_task(path: Path) -> LegacyV5Task:
+    """Read the source task through the permissive legacy model.
+
+    The runtime `TGATask` is strictly schema 6, so a schema-5 row can only be
+    read here.  Conversion to a valid v6 task happens in `_to_v6_task`.
+    """
     payload = _read_task_payload(path)
-    if int(payload.get("schema_version") or 0) == SOURCE_SCHEMA:
-        payload.pop("skill_bundle_snapshot", None)
+    try:
+        return LegacyV5Task.model_validate(payload)
+    except Exception as exc:
+        raise _fail("INVALID_TASK", "task payload failed validation") from exc
+
+
+def _to_v6_task(legacy: LegacyV5Task) -> TGATask:
+    """Convert one legacy task payload into a valid schema-v6 task."""
+    payload = legacy.model_dump()
+    payload.pop("skill_bundle_snapshot", None)
+    mode = normalize_mode(str(payload.get("mode") or "ctf"))
+    payload["mode"] = mode
+    payload["schema_version"] = TARGET_SCHEMA
+    if not payload.get("mode_config"):
+        payload["mode_config"] = default_mode_config(
+            mode, flag_format=payload.get("flag_format")
+        ).model_dump(mode="json")
+    if not payload.get("execution_policy"):
+        payload["execution_policy"] = ExecutionPolicy().model_dump(mode="json")
+    if not payload.get("model_snapshot"):
+        raise _fail(
+            "LEGACY_MODEL_SNAPSHOT_MISSING",
+            "schema-v6 tasks require a model_snapshot; the legacy task has none, "
+            "so the migration cannot produce a replayable task",
+        )
     try:
         return TGATask.model_validate(payload)
     except Exception as exc:
-        raise _fail("INVALID_TASK", "task payload failed validation") from exc
+        raise _fail("INVALID_TASK", "task payload failed schema-v6 validation") from exc
 
 
 def _legacy_counts(path: Path) -> dict[str, int]:
@@ -120,25 +154,142 @@ def _archive_legacy_runtime(path: Path, destination: Path) -> None:
     })
 
 
-def _mark_temporary_database_v6(path: Path, task: TGATask) -> None:
-    migrated = task.model_copy(update={"schema_version": TARGET_SCHEMA})
+CARRIED_TABLES = (
+    "artifacts", "findings", "flags", "intents", "agent_events",
+    "agent_event_sequences", "challenge_contracts", "context_metrics",
+)
+
+
+def _build_v6_database(path: Path, source: Path, task: TGATask) -> None:
+    """Create a brand-new schema-v6 database and copy legacy rows explicitly.
+
+    The migrator never reuses the legacy physical schema.  It applies the single
+    authoritative `schema_v6.sql`, then reads the source read-only and writes
+    only rows that belong to schema-v6 tables.  Runtime startup therefore never
+    has to patch structure.
+    """
+    migrated = task
     connection = sqlite3.connect(path)
+    connection.row_factory = sqlite3.Row
+    reader = sqlite3.connect(f"file:{source.as_posix()}?mode=ro", uri=True)
+    reader.row_factory = sqlite3.Row
     try:
+        connection.execute("PRAGMA foreign_keys = OFF")
         connection.execute("BEGIN IMMEDIATE")
+        apply_schema(connection)
+        created_at = _source_task_created_at(reader, migrated.id)
         connection.execute(
-            "UPDATE tasks SET payload_json=? WHERE id=?",
-            (migrated.model_dump_json(), migrated.id),
+            "INSERT INTO tasks(id,payload_json,created_at) VALUES (?,?,?)",
+            (migrated.id, migrated.model_dump_json(), created_at),
         )
-        connection.execute(
-            "UPDATE sessions SET schema_version=? WHERE task_id=?",
-            (TARGET_SCHEMA, migrated.id),
-        )
+        _copy_session(reader, connection, migrated.id)
+        for table in CARRIED_TABLES:
+            _copy_table(reader, connection, table)
         connection.commit()
     except Exception:
         connection.rollback()
         raise
     finally:
+        reader.close()
         connection.close()
+
+
+def _source_task_created_at(reader: sqlite3.Connection, task_id: str) -> str:
+    row = reader.execute(
+        "SELECT created_at FROM tasks WHERE id=?", (task_id,)
+    ).fetchone()
+    return str(row["created_at"]) if row is not None else utc_now()
+
+
+def _copy_session(
+    reader: sqlite3.Connection, target: sqlite3.Connection, task_id: str
+) -> None:
+    """Project the legacy session onto the v6 task lifecycle aggregate.
+
+    `active_solver_id`, `turn_count` and `max_turns` were single-agent concepts.
+    Only task-level lifecycle fields carry over; Solver execution state is
+    rebuilt from solver_runs, never inferred from a legacy session row.
+    """
+    if not _reader_has_table(reader, "sessions"):
+        return
+    row = reader.execute(
+        "SELECT * FROM sessions WHERE task_id=?", (task_id,)
+    ).fetchone()
+    if row is None:
+        return
+    columns = set(row.keys())
+    target.execute(
+        "INSERT INTO sessions(task_id,schema_version,status,turn_count,max_turns,"
+        "started_at,finished_at,stop_reason,workspace_path,mcp_catalog_version) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?)",
+        (
+            task_id,
+            TARGET_SCHEMA,
+            str(row["status"]),
+            int(row["turn_count"] or 0) if "turn_count" in columns else 0,
+            max(1, int(row["max_turns"] or 1)) if "max_turns" in columns else 1,
+            row["started_at"] if "started_at" in columns else None,
+            row["finished_at"] if "finished_at" in columns else None,
+            str(row["stop_reason"] or "") if "stop_reason" in columns else "",
+            str(row["workspace_path"] or "") if "workspace_path" in columns else "",
+            str(row["mcp_catalog_version"] or "") if "mcp_catalog_version" in columns else "",
+        ),
+    )
+
+
+def _copy_table(
+    reader: sqlite3.Connection, target: sqlite3.Connection, table: str
+) -> None:
+    """Copy the intersection of legacy and v6 columns for one table."""
+    if not _reader_has_table(reader, table):
+        return
+    target_columns = [
+        str(row["name"])
+        for row in target.execute(f"PRAGMA table_info({table})").fetchall()
+    ]
+    source_columns = {
+        str(row["name"])
+        for row in reader.execute(f"PRAGMA table_info({table})").fetchall()
+    }
+    shared = [name for name in target_columns if name in source_columns]
+    if not shared:
+        return
+    column_list = ",".join(shared)
+    placeholders = ",".join("?" for _ in shared)
+    rows = reader.execute(f"SELECT {column_list} FROM {table}").fetchall()
+    if not rows:
+        return
+    # schema_version is authoritative in the new database, never inherited.
+    target.executemany(
+        f"INSERT OR REPLACE INTO {table}({column_list}) VALUES ({placeholders})",
+        [tuple(row[name] for name in shared) for row in rows],
+    )
+    if "schema_version" in shared:
+        target.execute(
+            f"UPDATE {table} SET schema_version=?", (TARGET_SCHEMA,)
+        )
+
+
+def _reader_has_table(reader: sqlite3.Connection, name: str) -> bool:
+    return reader.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)
+    ).fetchone() is not None
+
+
+def _fresh_schema_object_names() -> set[str]:
+    """Table and index names produced by applying schema_v6.sql to an empty DB."""
+    probe = sqlite3.connect(":memory:")
+    try:
+        apply_schema(probe)
+        return {
+            str(row[0])
+            for row in probe.execute(
+                "SELECT name FROM sqlite_master "
+                "WHERE type IN ('table','index') AND name NOT LIKE 'sqlite_%'"
+            ).fetchall()
+        }
+    finally:
+        probe.close()
 
 
 def _prepare_single_file_publication(path: Path) -> None:
@@ -160,11 +311,6 @@ def _copy_database(source: Path, destination: Path) -> None:
     finally:
         destination_connection.close()
         source_connection.close()
-
-
-def _drop_legacy_runtime_tables(connection: sqlite3.Connection) -> None:
-    for table in LEGACY_RUNTIME_TABLES:
-        connection.execute(f"DROP TABLE IF EXISTS {table}")
 
 
 def migrate_database(
@@ -251,17 +397,13 @@ def migrate_database(
         _archive_legacy_runtime(database, legacy_runtime_archive)
         if fault_hook:
             fault_hook("after_backup")
-        shutil.copy2(database, temporary)
-        _mark_temporary_database_v6(temporary, task)
+        # Build a brand-new v6 database instead of mutating a legacy copy, so
+        # a migrated database is byte-structurally identical to a fresh one.
+        temporary.unlink(missing_ok=True)
+        _build_v6_database(temporary, database, _to_v6_task(task))
         bundle = PersistenceBundle.open(temporary)
         try:
-            migrated_task = task.model_copy(update={"schema_version": TARGET_SCHEMA})
             with bundle.transaction():
-                bundle.tasks.update_task(migrated_task)
-                bundle.database.conn.execute(
-                    "UPDATE sessions SET schema_version=? WHERE task_id=?",
-                    (TARGET_SCHEMA, task.id),
-                )
                 bundle.tasks.save_task_spec(
                     TaskSpec(
                         task_id=task.id,
@@ -278,7 +420,7 @@ def migrate_database(
                 if legacy_skill_payload is not None:
                     bundle.tasks.save_task_common_skill_snapshot(
                         legacy_skill_bundle_to_task_common(
-                            SkillBundleSnapshot.model_validate(legacy_skill_payload),
+                            LegacySkillBundleSnapshot.model_validate(legacy_skill_payload),
                             task_id=task.id,
                             created_at=datetime.now(UTC).isoformat().replace(
                                 "+00:00", "Z"
@@ -294,7 +436,6 @@ def migrate_database(
                         "legacy_runtime_writes_disabled": True,
                     },
                 )
-                _drop_legacy_runtime_tables(bundle.database.conn)
             check = bundle.database.conn.execute("PRAGMA integrity_check").fetchone()[0]
             if check != "ok":
                 raise _fail("MIGRATED_DB_INVALID", "integrity check failed")
@@ -415,6 +556,27 @@ def verify_database(db_path: str | Path) -> dict[str, Any]:
             raise _fail(
                 "VERIFY_SCHEMA_METADATA_MISSING",
                 "schema-v6 metadata is missing",
+            )
+        if str(metadata[0]) != schema_content_hash():
+            raise _fail(
+                "VERIFY_SCHEMA_HASH_MISMATCH",
+                "database schema hash does not match schema_v6.sql",
+            )
+        expected = _fresh_schema_object_names()
+        actual = {
+            str(row[0])
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master "
+                "WHERE type IN ('table','index') AND name NOT LIKE 'sqlite_%'"
+            ).fetchall()
+        }
+        if actual != expected:
+            unexpected = sorted(actual - expected)
+            absent = sorted(expected - actual)
+            raise _fail(
+                "VERIFY_SCHEMA_OBJECTS_MISMATCH",
+                "database objects differ from a fresh schema-v6 database "
+                f"(unexpected: {unexpected}; missing: {absent})",
             )
     except sqlite3.Error as exc:
         raise _fail("VERIFY_DATABASE_INVALID", "database verification query failed") from exc

@@ -279,6 +279,7 @@ class TaskOrchestrator:
         priority: int = 0,
     ) -> Intent:
         self._require_role(supervisor_solver_id, "supervisor", label="Supervisor")
+        self._require_authorized_resources(allowed_resource_ids)
         now = utc_now()
         digest = hashlib.sha256(
             f"{self.task.id}\0{kind}\0{title}\0{objective}".encode()
@@ -692,31 +693,13 @@ class TaskOrchestrator:
             return {"accepted": False, "reason": "finding_not_found"}
         return {"accepted": False, "reason": "review_service_required"}
 
-    def propose_task_completion(
-        self,
-        *,
-        solver_id: str,
-        proposal: dict[str, Any],
-        validator: Callable[[dict[str, Any]], dict[str, Any]],
-    ) -> dict[str, Any]:
-        """Compatibility facade for the single task-completion service.
-
-        Completion is a task aggregate transition.  Keep this public method
-        for callers that already use the orchestrator API, but keep all state
-        writes in ``complete_task`` below.
-        """
-        return self.complete_task(
-            solver_id=solver_id,
-            proposal=proposal,
-            validator=validator,
-        )
-
     def complete_task(
         self,
         *,
         solver_id: str,
         proposal: dict[str, Any],
         validator: Callable[[dict[str, Any]], dict[str, Any]],
+        on_accepted: Callable[[dict[str, Any]], None] | None = None,
     ) -> dict[str, Any]:
         """Atomically apply the only task-level completion transition."""
         self._require_role(solver_id, "supervisor", label="Supervisor")
@@ -785,6 +768,8 @@ class TaskOrchestrator:
                     {"proposal_id": proposal_id, "validation": result},
                     solver_id=solver_id,
                 )
+                if on_accepted is not None:
+                    on_accepted(result)
             return result
 
     def run_serial(
@@ -831,7 +816,7 @@ class TaskOrchestrator:
                 self.repositories.solvers.update_solver_status(reporter.id, "failed")
                 raise
         if completion_proposal is not None and completion_validator is not None:
-            self.propose_task_completion(
+            self.complete_task(
                 solver_id=self.state().supervisor_solver_id or "",
                 proposal=completion_proposal,
                 validator=completion_validator,
@@ -1114,6 +1099,25 @@ class TaskOrchestrator:
         if solver is None or solver.task_id != self.task.id or solver.orchestration_role != role:
             raise PermissionError(f"{label} authority is required")
         return solver
+
+    def _require_authorized_resources(self, resource_ids: tuple[str, ...]) -> None:
+        """TaskSpec authorizes task inputs; artifacts are authorized by ownership.
+
+        An Intent may scope task-input resources (``input_*``) only when the
+        TaskSpec declares them.  Artifact ids produced during the run are
+        checked at the tool boundary against task ownership instead.
+        """
+        scoped = [item for item in resource_ids if item.startswith("input_")]
+        if not scoped:
+            return
+        spec = self.repositories.tasks.get_task_spec(self.task.id)
+        authorized = {item.id for item in (spec.resources if spec else ())}
+        unknown = sorted(set(scoped) - authorized)
+        if unknown:
+            raise ValueError(
+                "allowed_resource_ids are not authorized by TaskSpec: "
+                + ", ".join(unknown)
+            )
 
     def _set_state(self, status: str):
         state = self.state()

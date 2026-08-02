@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from tga.contracts import TGATask
+from tests.runtime_fixtures import task as v6_task
 from tga.capabilities.registry import build_default_registry
 from tga.evidence.artifacts import ArtifactStore
 from tga.evidence.store import EvidenceStore
@@ -28,16 +29,15 @@ from tga.tools.mcp_config import MCPVisibilityConfig, load_mcp_config
 
 
 def _task(task_id: str, mode: str, **updates) -> TGATask:
-    payload = {
-        "id": task_id,
-        "name": task_id,
-        "mode": mode,
-        "task_entry_url": "https://target.example",
-        "goal": "complete the requested analysis",
-        "flag_format": r"CTF\{[^}]+\}" if mode == "ctf" else None,
-    }
-    payload.update(updates)
-    return TGATask.model_validate(payload)
+    return v6_task(
+        id=task_id,
+        name=task_id,
+        mode=mode,
+        task_entry_url="https://target.example",
+        goal="complete the requested analysis",
+        flag_format=r"CTF\{[^}]+\}" if mode == "ctf" else None,
+        **updates,
+    )
 
 
 def _context(tmp_path, task: TGATask, *, text: str = "evidence"):
@@ -56,7 +56,9 @@ def _context(tmp_path, task: TGATask, *, text: str = "evidence"):
     coordinator.start(task_id=task.id, solver_id=agent_id)
     artifacts = ArtifactStore(root / "artifacts")
     artifact = artifacts.save_text(
-        task_id=task.id, intent_id="act_1", kind="tool_output", text=text,
+        # A task-scoped evidence Artifact belongs to no Intent; "act_1" was a
+        # legacy action id that the v6 writer correctly rejects.
+        task_id=task.id, intent_id=None, kind="tool_output", text=text,
         tool="test.evidence", target=task.default_action_target(),
     )
     store.add_artifact(artifact)
@@ -148,7 +150,6 @@ def test_completion_service_rejects_active_intents_before_mode_validation(tmp_pa
 
 def test_each_mode_drives_prompt_capabilities_and_skills():
     capabilities = build_default_registry().snapshot()["capabilities"]
-    capabilities = build_default_registry().snapshot()["capabilities"]
     for mode in TASK_MODES:
         task = _task(f"profile_{mode}", mode)
         prompt = build_agent_system_prompt(task)
@@ -156,14 +157,20 @@ def test_each_mode_drives_prompt_capabilities_and_skills():
         assert MODE_PROFILES[mode].completion_focus in prompt
         assert any(mode in item["modes"] for item in capabilities)
         available = tuple(item["name"] for item in capabilities if mode in item["modes"])
-        selection = SkillSelector().select(SkillSelectionRequest(
-            mode=mode,
-            goal=task.goal,
-            prompt=task.session_input.prompt,
-            mode_config=task.mode_config.model_dump(mode="json") if task.mode_config else {},
-            available_capabilities=available,
-        ))
-        assert selection.selector.startswith("task-skill-selector-v1:")
+        snapshot = SkillSelector().select(
+            SkillSelectionRequest(
+                mode=mode,
+                goal=task.goal,
+                task_id=task.id,
+                prompt=task.session_input.prompt,
+                mode_config=task.mode_config.model_dump(mode="json"),
+                available_capabilities=available,
+            ),
+            created_at="2026-01-01T00:00:00Z",
+        )
+        assert snapshot.task_id == task.id
+        assert snapshot.selector.startswith("task-common:task-skill-selector-v1:")
+        assert len(snapshot.skills) <= 2
 
 
 def test_ctf_requires_an_artifact_backed_non_placeholder_flag(tmp_path):
@@ -216,7 +223,9 @@ def test_finish_rejects_an_artifact_owned_by_another_task(tmp_path):
     foreign = ArtifactStore(tmp_path / "foreign" / "artifacts").save_text(
         task_id="owner_b", intent_id=None, kind="tool_output", text="foreign evidence",
     )
-    store.add_artifact(foreign)
+    # Persisting a foreign Artifact into this task's database is itself
+    # rejected by the single v6 writer, so the completion validator is
+    # exercised against an id this task does not own.
     result = validator_for(task.mode).validate(
         context=context,
         submission=TaskCompletionSubmission(

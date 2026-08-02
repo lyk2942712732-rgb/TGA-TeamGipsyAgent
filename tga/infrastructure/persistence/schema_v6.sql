@@ -1,3 +1,117 @@
+-- TGA schema v6. Single authoritative DDL for a schema-v6 evidence database.
+-- Applying this file to an empty database yields a complete, runnable schema.
+-- Runtime startup never alters an existing database; upgrades go through
+-- `tga migrate`, which builds a new database from this file only.
+
+-- Core task, lifecycle and evidence tables -------------------------------
+CREATE TABLE IF NOT EXISTS tasks (
+    id TEXT PRIMARY KEY,
+    payload_json TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS intents (
+    id TEXT PRIMARY KEY,
+    task_id TEXT NOT NULL,
+    global_plan_id TEXT,
+    assigned_solver_id TEXT,
+    payload_json TEXT NOT NULL,
+    status TEXT NOT NULL,
+    priority INTEGER NOT NULL DEFAULT 0,
+    version INTEGER NOT NULL DEFAULT 1,
+    claimed_at TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    schema_version INTEGER NOT NULL DEFAULT 6
+);
+
+CREATE TABLE IF NOT EXISTS artifacts (
+    id TEXT PRIMARY KEY,
+    task_id TEXT NOT NULL,
+    intent_id TEXT,
+    payload_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    schema_version INTEGER NOT NULL DEFAULT 6
+);
+
+CREATE TABLE IF NOT EXISTS findings (
+    id TEXT PRIMARY KEY,
+    task_id TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    status TEXT NOT NULL,
+    evidence_artifact_id TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    schema_version INTEGER NOT NULL DEFAULT 6
+);
+
+CREATE TABLE IF NOT EXISTS flags (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id TEXT NOT NULL,
+    value TEXT NOT NULL,
+    evidence_artifact_id TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+
+-- Task lifecycle aggregate. Solver-level execution state lives in
+-- solver_instances / solver_runs; this table holds only task lifecycle.
+CREATE TABLE IF NOT EXISTS sessions (
+    task_id TEXT PRIMARY KEY,
+    schema_version INTEGER NOT NULL DEFAULT 6,
+    status TEXT NOT NULL,
+    turn_count INTEGER NOT NULL DEFAULT 0,
+    max_turns INTEGER NOT NULL,
+    started_at TEXT,
+    finished_at TEXT,
+    stop_reason TEXT NOT NULL DEFAULT '',
+    workspace_path TEXT NOT NULL DEFAULT '',
+    mcp_catalog_version TEXT NOT NULL DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS context_metrics (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id TEXT NOT NULL,
+    solver_id TEXT NOT NULL,
+    turn INTEGER NOT NULL,
+    payload_json TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS agent_events (
+    id TEXT PRIMARY KEY,
+    schema_version INTEGER NOT NULL DEFAULT 6,
+    task_id TEXT NOT NULL,
+    solver_id TEXT,
+    intent_id TEXT,
+    seq INTEGER NOT NULL,
+    type TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE(task_id, seq)
+);
+
+CREATE TABLE IF NOT EXISTS agent_event_sequences (
+    task_id TEXT PRIMARY KEY,
+    next_seq INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS runtime_leases (
+    task_id TEXT PRIMARY KEY,
+    owner_id TEXT NOT NULL,
+    expires_at REAL NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS challenge_contracts (
+    task_id TEXT PRIMARY KEY,
+    payload_json TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_v6_context_metrics_task_turn ON context_metrics(task_id, solver_id, turn);
+
+-- Schema-v6 domain tables ------------------------------------------------
+
 CREATE TABLE IF NOT EXISTS schema_metadata (
     version INTEGER PRIMARY KEY,
     applied_at TEXT NOT NULL,

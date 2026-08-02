@@ -9,6 +9,7 @@ from pathlib import Path
 
 from scripts.migrate_schema_v5_to_v6 import migrate_database, verify_database
 from tga.cli.main import main as cli_main
+from tests.runtime_fixtures import task as v6_task
 from tga.contracts import SessionRecord, TGATask
 from tga.evidence.store import EvidenceStore
 from tga.migrations.legacy_v5 import LegacyV5TaskReader
@@ -29,7 +30,7 @@ from apps.api.main import app
 def _create_v5_database(path) -> None:
     store = EvidenceStore(path)
     try:
-        task = TGATask(id="legacy_1", name="Legacy", mode="ctf", goal="Solve")
+        task = v6_task(id="legacy_1", name="Legacy", mode="ctf", goal="Solve")
         store.create_task(task)
         store.create_session(SessionRecord(task_id=task.id, schema_version=6))
         store.append_agent_event(task.id, "LEGACY_EVENT", {"value": 1})

@@ -1,0 +1,1 @@
+{"name": "demo", "mode": "ctf", "goal": "solve", "target": "http://127.0.0.1:1", "scope": ["127.0.0.1:1"]}

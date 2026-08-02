@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from tga.contracts import TGATask
+from tests.runtime_fixtures import task as v6_task
 from tga.evidence.store import EvidenceStore
 from tga.evidence.artifacts import ArtifactStore
 from tga.domain.knowledge import KnowledgeItem
@@ -43,7 +44,7 @@ NOW = "2026-07-30T00:00:00Z"
 
 
 def _task(task_id: str, *, active_workers: int = 2) -> TGATask:
-    return TGATask(
+    return v6_task(
         id=task_id,
         name="parallel orchestration",
         mode="ctf",

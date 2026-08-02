@@ -15,7 +15,8 @@ from urllib.parse import unquote
 
 from fastapi import APIRouter, HTTPException, Request
 
-from tga.contracts import ExecutionPolicy, LocalComputeExecutionPolicy, MCPCapabilitySnapshot, MCPCapabilityTool, NetworkExecutionPolicy, TGATask
+from tga.contracts import ExecutionPolicy, LocalComputeExecutionPolicy, MCPCapabilitySnapshot, MCPCapabilityTool, NetworkExecutionPolicy
+from tga.tools.mcp_authorization import OperatorMCPContext
 from tga.tools.mcp_config import MCPServerConfig, delete_mcp_server, load_mcp_config, patch_mcp_server, upsert_mcp_server
 from tga.tools.mcp_importer import DEFAULT_MAX_PACKAGE_BYTES, MCPImageImporter, MCPImportError
 from tga.tools.mcp_manager import MCPManager
@@ -208,9 +209,10 @@ def test_mcp_method(server_id: str, tool_name: str, payload: MCPMethodTestReques
         raise HTTPException(status_code=409, detail="active MCP method test requires confirm_active=true")
     method_policy = server.methods.get(route.method)
     allowed_modes = method_policy.modes if method_policy and method_policy.modes is not None else server.visibility.modes
-    task = TGATask(
-        id="mcp_method_test", name="MCP method test", mode=allowed_modes[0],
-        goal="Explicit operator-authorized MCP method test",
+    # An operator method test is not a Task: it has no goal, no solver and no
+    # verified model snapshot.  Authorize it through the explicit MCP context.
+    context = OperatorMCPContext(
+        mode=allowed_modes[0],
         execution_policy=ExecutionPolicy(
             network=NetworkExecutionPolicy(
                 access="custom" if server.transport == "streamable_http" else "disabled",
@@ -218,11 +220,9 @@ def test_mcp_method(server_id: str, tool_name: str, payload: MCPMethodTestReques
                 custom_origins=[server.http.url] if server.http is not None else [],
             ),
             # Explicit operator testing of an active local MCP method still
-            # needs a non-host execution boundary under the v5 policy model.
+            # needs a non-host execution boundary.
             local_compute=LocalComputeExecutionPolicy(mode="isolated"),
         ),
-        session_input={"prompt": "Explicit operator-authorized MCP method test"},
-        schema_version=6,
         mcp_capabilities=MCPCapabilitySnapshot(
             catalog_version=snapshot.version,
             server_ids=[server_id],
@@ -230,7 +230,7 @@ def test_mcp_method(server_id: str, tool_name: str, payload: MCPMethodTestReques
         ),
     )
     outcome = manager.call_tool(
-        task=task, route=route, arguments=payload.arguments,
+        context=context, route=route, arguments=payload.arguments,
         catalog_version=snapshot.version, trace_id=f"trace_method_test_{os.urandom(8).hex()}",
     )
     _append_mcp_method_test_audit(

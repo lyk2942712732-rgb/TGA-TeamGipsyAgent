@@ -2,11 +2,23 @@
   "id": "task_web_ctf_demo",
   "name": "web-ctf-demo",
   "mode": "ctf",
-  "target": "http://127.0.0.1:8081",
-  "scope": ["127.0.0.1:8081"],
-  "intensity": "normal",
-  "allow_active_scan": true,
   "goal": "Solve the challenge and recover the flag.",
-  "flag_format": "flag\\{[^}]+\\}"
+  "modeOptions": {
+    "flag_format": "flag\\{[^}]+\\}"
+  },
+  "input": {
+    "text": "The authorized challenge entry point is http://127.0.0.1:8081"
+  },
+  "executionPolicy": {
+    "preset": "autonomous_ctf",
+    "network": {
+      "access": "custom",
+      "interaction": "interact",
+      "custom_origins": ["http://127.0.0.1:8081"],
+      "deny_loopback": false,
+      "deny_private_networks": false
+    },
+    "local_compute": {"mode": "isolated"}
+  }
 }
 

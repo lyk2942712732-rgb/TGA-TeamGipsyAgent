@@ -16,7 +16,7 @@ describe("Phase 12 frontend event baseline", () => {
     const events: RuntimeEvent[] = Array.from({ length: 10_000 }, (_, index) => ({
       schemaVersion: 6, id: `perf-${index + 1}`, taskId: "perf", seq: index + 1,
       type: "BENCHMARK_EVENT", solverId: "supervisor", intentId: null,
-      payload: { schema_version: 1, index }, createdAt: "2026-07-30T00:00:00Z",
+      payload: { payload_version: 1, index }, createdAt: "2026-07-30T00:00:00Z",
     }));
     const started = performance.now();
     const result = mergeRuntimeEvents(store, events);

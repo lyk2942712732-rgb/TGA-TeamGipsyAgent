@@ -514,16 +514,33 @@ class SqliteEvidenceRepository:
         return total, [Artifact.model_validate_json(row["payload_json"]) for row in rows]
 
     def add_artifact(self, artifact: Artifact) -> None:
+        """Insert one immutable Artifact row.
+
+        Artifacts are append-only in schema v6.  Re-inserting a byte-identical
+        row for the same task is a no-op so retried handlers stay idempotent;
+        any other id collision is an immutability violation.
+        """
         _require_task(self.conn, artifact.task_id)
         if artifact.intent_id is not None:
             _require_owned(self.conn, "intents", artifact.intent_id, artifact.task_id, "artifact intent")
+        payload = artifact.model_dump_json()
+        existing = self.conn.execute(
+            "SELECT task_id,payload_json FROM artifacts WHERE id=?", (artifact.id,)
+        ).fetchone()
+        if existing is not None:
+            if (
+                existing["task_id"] == artifact.task_id
+                and existing["payload_json"] == payload
+            ):
+                return
+            raise ArtifactImmutableError(f"artifact id is immutable: {artifact.id}")
         try:
             self.conn.execute(
                 "INSERT INTO artifacts(id,task_id,intent_id,payload_json,created_at,schema_version) "
                 "VALUES (?,?,?,?,?,6)",
                 (
                     artifact.id, artifact.task_id, artifact.intent_id,
-                    artifact.model_dump_json(), artifact.created_at,
+                    payload, artifact.created_at,
                 ),
             )
         except sqlite3.IntegrityError as exc:
@@ -2006,7 +2023,11 @@ class SqliteEventRepository:
         from tga.domain.events import normalize_event_payload
 
         _require_task(self.conn, task_id)
-        payload = normalize_event_payload(type, payload)
+        # Event payloads are an evolvable audit envelope.  Persisting optional
+        # fields as JSON null made clients reject an entire snapshot when a
+        # control event had no action_id.  Omit absent values at the single
+        # write boundary instead; concrete false/zero values remain intact.
+        payload = normalize_event_payload(type, _compact_event_payload(payload))
         now = utc_now()
         seq = int(
             self.conn.execute(
@@ -2056,6 +2077,19 @@ class SqliteEventRepository:
 def _require_task(conn: sqlite3.Connection, task_id: str) -> None:
     if conn.execute("SELECT 1 FROM tasks WHERE id=?", (task_id,)).fetchone() is None:
         raise OwnershipError(f"task does not exist: {task_id}")
+
+
+def _compact_event_payload(value: Any) -> Any:
+    """Drop absent (None) values so the audit envelope stays forward-compatible."""
+    if isinstance(value, dict):
+        return {
+            str(key): _compact_event_payload(item)
+            for key, item in value.items()
+            if item is not None
+        }
+    if isinstance(value, list):
+        return [_compact_event_payload(item) for item in value]
+    return value
 
 
 def _require_owned(

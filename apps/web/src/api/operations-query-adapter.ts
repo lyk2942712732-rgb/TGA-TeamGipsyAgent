@@ -19,7 +19,7 @@ export type OperationalTaskSummary = {
 };
 
 export type DashboardResponse = {
-  schema_version: 1;
+  view_version: 1;
   generated_at: string;
   metrics: {
     running_tasks: number | null;
@@ -92,7 +92,7 @@ export type ApprovalQuery = {
 };
 
 export type GlobalApprovalPage = {
-  schema_version: 1;
+  view_version: 1;
   offset: number;
   limit: number;
   total: number;

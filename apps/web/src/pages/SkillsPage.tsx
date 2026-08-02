@@ -61,7 +61,7 @@ export function SkillsPage() {
     const needle = search.trim().toLocaleLowerCase();
     return all.filter((item) => (!needle
       || item.name.toLocaleLowerCase().includes(needle)
-      || skillLabel(item.name).includes(needle)
+      || skillLabel(item.name, item.summary).toLocaleLowerCase().includes(needle)
       || item.tags.some((value) => value.toLocaleLowerCase().includes(needle)))
       && (!tag || skillCategory(item.tags) === tag)
       && (!mode || item.modes.includes(mode as TaskMode)));
@@ -86,10 +86,11 @@ export function SkillsPage() {
   const columns: Array<Column<SkillSetting>> = [
     {
       id: "name", header: "Skill 名称",
-      // An imported Skill has no Chinese label, so its id is not printed twice.
+      // A Skill whose Markdown has no heading falls back to its id, so the id is
+      // not printed twice.
       render: (row) => <span className="task-name-cell">
-        <strong>{skillLabel(row.name)}</strong>
-        {skillLabel(row.name) === row.name ? null : <small>{row.name}</small>}
+        <strong>{skillLabel(row.name, row.summary)}</strong>
+        {skillLabel(row.name, row.summary) === row.name ? null : <small>{row.name}</small>}
       </span>,
     },
     { id: "category", header: "类别", render: (row) => <span className="cell-muted">{skillCategory(row.tags)}</span> },
@@ -273,7 +274,7 @@ function SkillDetailPanel({ skill, tab, onTab, onRemoved }: {
   return <section className="ref-detail-panel" aria-label={`${skill.name} 详情`}>
     <header className="ref-detail-head">
       <div className="ref-detail-title">
-        <h2>{skillLabel(skill.name)}</h2>
+        <h2>{skillLabel(skill.name, skill.summary)}</h2>
         <span className="ref-version-chip">v{skill.version}</span>
         <span className="ref-chip tone-info">{skillCategory(skill.tags)}</span>
         <span className="ref-chip tone-muted">{skill.source === "builtin" ? "内置" : "自定义"}</span>

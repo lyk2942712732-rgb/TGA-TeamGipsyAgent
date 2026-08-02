@@ -363,7 +363,7 @@ class DashboardMetrics(ApiDTO):
 
 
 class DashboardResponse(ApiDTO):
-    schema_version: Literal[1] = 1
+    view_version: Literal[1] = 1
     generated_at: str
     metrics: DashboardMetrics
     needs_attention: list[DashboardAttentionItem] = Field(default_factory=list, max_length=20)
@@ -409,7 +409,7 @@ class GlobalApprovalFilters(ApiDTO):
 
 
 class GlobalApprovalPage(PageMeta):
-    schema_version: Literal[1] = 1
+    view_version: Literal[1] = 1
     items: list[GlobalApprovalItem]
     filters: GlobalApprovalFilters = Field(default_factory=GlobalApprovalFilters)
 
@@ -421,7 +421,7 @@ class CatalogError(ApiDTO):
 
 
 class CatalogPage(PageMeta):
-    schema_version: Literal[1] = 1
+    view_version: Literal[1] = 1
     kind: Literal[
         "resources", "reports", "knowledge-bases", "teams", "solvers",
         "policies", "skills",
@@ -430,42 +430,6 @@ class CatalogPage(PageMeta):
     reason: str | None = None
     items: list[dict[str, Any]] = Field(default_factory=list, max_length=200)
     errors: list[CatalogError] = Field(default_factory=list, max_length=50)
-
-
-# Compatibility names retained for earlier application callers.
-class TaskSummaryProjection(ApiDTO):
-    schema_version: int = 1
-    task_id: str
-    name: str
-    mode: str
-    goal: str
-    status: str = "created"
-    updated_at: str = ""
-
-
-class SessionProjection(ApiDTO):
-    schema_version: int = 1
-    task_id: str
-    status: str
-    active_solver_id: str | None = None
-    turn_count: int = 0
-    max_turns: int = 0
-
-
-class EvidenceProjection(ApiDTO):
-    schema_version: int = 1
-    task_id: str
-    artifacts: list[dict[str, Any]] = Field(default_factory=list)
-    claims: list[dict[str, Any]] = Field(default_factory=list)
-    findings: list[dict[str, Any]] = Field(default_factory=list)
-
-
-class TimelineProjection(ApiDTO):
-    schema_version: int = 1
-    task_id: str
-    after_seq: int = 0
-    next_after_seq: int = 0
-    events: list[dict[str, Any]] = Field(default_factory=list)
 
 
 __all__ = [name for name in globals() if name.endswith(("Projection", "Response", "Page", "Envelope", "Aggregate"))]

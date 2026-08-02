@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 
 from apps.api.main import app
 from tga.contracts import SessionRecord, TGATask
+from tests.runtime_fixtures import task as v6_task
 from tga.domain.governance.models import ActionEffect
 from tga.domain.solver.team_runtime import TeamRuntimeState
 from tga.evidence.store import EvidenceStore
@@ -28,7 +29,7 @@ def _seed_task(
     approval_status: str | None = None, risk: str = "active",
     capability: str = "workspace.write", expires_in_hours: int = 24,
 ) -> dict[str, str]:
-    task = TGATask(
+    task = v6_task(
         id=task_id, name=f"Task {task_id}", mode="ctf",
         goal="Exercise operational queries", schema_version=6,
     )

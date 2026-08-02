@@ -6,6 +6,7 @@ from pathlib import Path
 from datetime import UTC, datetime, timedelta
 
 from tga.contracts import ModelSnapshot, SessionRecord, TGATask
+from tests.runtime_fixtures import task as v6_task
 from tga.domain.governance.models import ActionEffect
 from tga.evidence.store import EvidenceStore
 from tga.infrastructure.persistence import PersistenceBundle
@@ -20,7 +21,7 @@ from tga.runtime.tooling.requests import ActionContext, ApprovalRequest, Authori
 def _seed(tmp_path: Path, task_id: str) -> EvidenceStore:
     root = tmp_path / task_id
     store = EvidenceStore(root / "evidence.db")
-    task = TGATask(
+    task = v6_task(
         id=task_id, name=task_id, mode="ctf", goal="test", schema_version=6
     )
     store.create_task(task)
@@ -30,14 +31,16 @@ def _seed(tmp_path: Path, task_id: str) -> EvidenceStore:
     assert state.supervisor_solver_id is not None
     store.create_session(SessionRecord(
         task_id=task_id, status="created", schema_version=6,
-        active_solver_id=state.supervisor_solver_id,
     ))
     return store
 
 
 def _pending_approval(store: EvidenceStore, task_id: str, action_id: str, deadline: str) -> GovernedAction:
     now = datetime.now(UTC).isoformat().replace("+00:00", "Z")
-    solver_id = store.get_session(task_id).active_solver_id
+    # Solver identity is authoritative in TaskOrchestratorState, never on the
+    # task lifecycle record.
+    state = PersistenceBundle(store).orchestration.get_state(task_id)
+    solver_id = state.supervisor_solver_id if state is not None else None
     assert solver_id is not None
     action = GovernedAction(
         id=action_id,
@@ -156,7 +159,7 @@ def test_scheduler_recover_rearms_approval_without_scheduling_runnable_sessions(
     store = _seed(tmp_path, "approval_restart")
     deadline = (datetime.now(UTC) + timedelta(minutes=5)).isoformat().replace("+00:00", "Z")
     action = _pending_approval(store, "approval_restart", "governed_restart", deadline)
-    solver_id = store.get_session("approval_restart").active_solver_id
+    solver_id = action.context.solver_id
     SessionCoordinator(store).start(task_id="approval_restart", solver_id=solver_id)
     SessionCoordinator(store).await_approval(task_id="approval_restart", action_id=action.id)
     store.close()
@@ -170,7 +173,8 @@ def test_scheduler_recover_rearms_approval_without_scheduling_runnable_sessions(
 def test_new_approval_replaces_previous_action_timer(tmp_path: Path) -> None:
     store = _seed(tmp_path, "approval_replace")
     coordinator = SessionCoordinator(store)
-    solver_id = store.get_session("approval_replace").active_solver_id
+    state = PersistenceBundle(store).orchestration.get_state("approval_replace")
+    solver_id = state.supervisor_solver_id if state is not None else None
     coordinator.start(task_id="approval_replace", solver_id=solver_id)
     first_deadline = (datetime.now(UTC) + timedelta(minutes=5)).isoformat().replace("+00:00", "Z")
     first = _pending_approval(store, "approval_replace", "governed_first", first_deadline)
@@ -274,7 +278,7 @@ def test_scheduler_blocks_retryable_runtime_configuration_failure(tmp_path: Path
 
 
 def test_manager_classifies_unavailable_provider_credentials(monkeypatch) -> None:
-    task = TGATask(
+    task = v6_task(
         id="provider_credentials", name="provider credentials", mode="ctf", goal="test",
         model_snapshot=ModelSnapshot(
             model="test-model", capability_fingerprint="a" * 64,
@@ -297,7 +301,7 @@ def test_manager_classifies_unavailable_provider_credentials(monkeypatch) -> Non
 
 
 def test_manager_classifies_stale_model_snapshot(monkeypatch) -> None:
-    task = TGATask(
+    task = v6_task(
         id="provider_stale", name="provider stale", mode="ctf", goal="test",
         model_snapshot=ModelSnapshot(
             model="test-model", capability_fingerprint="a" * 64,

@@ -21,6 +21,7 @@ from tga.runtime.coordinator import SessionCoordinator, SessionOutcome
 from tga.runtime.handlers import build_tool_handlers, lifecycle_event_payload, safe_model_content, safe_tool_call_arguments
 from tga.runtime.prompts import build_agent_system_prompt
 from tga.runtime.prompt_settings import prompt_snapshot_for_task
+from tga.runtime.resources import authorized_asset_ids
 from tga.runtime.solver_session import SolverSessionState
 from tga.runtime.agents.transcript import RepositorySolverTranscript
 from tga.runtime.agents.model_loop import ModelLoop
@@ -115,6 +116,8 @@ class AgentSessionRunner:
         self.assignment = self.persistence.orchestration.get_assignment_for_solver(
             self.solver_id
         )
+        # TaskSpec is the authoritative resource source for this session.
+        self.task_spec = self.persistence.tasks.get_task_spec(task.id)
         self.transcript = RepositorySolverTranscript(
             repository=self.persistence.transcripts,
             task_id=task.id,
@@ -166,6 +169,7 @@ class AgentSessionRunner:
                         self.assignment.allowed_resources
                         if self.assignment is not None else None
                     ),
+                    task_spec=self.task_spec,
                 ).build()),
             ]
         while True:
@@ -254,11 +258,7 @@ class AgentSessionRunner:
                         or context_stats.get("estimated_tokens")
                         or max(1, len(json.dumps(working_messages, ensure_ascii=False)) // 4)
                     )
-                    estimated_output = int(
-                        self.task.model_snapshot.max_output_tokens
-                        if self.task.model_snapshot is not None
-                        else getattr(self.client, "max_tokens", 4096)
-                    )
+                    estimated_output = int(self.task.model_snapshot.max_output_tokens)
                     token_reservation = token_budget.reserve_model_tokens(
                         idempotency_key=(
                             f"model-reservation:{self.task.id}:{self.solver_id}:"
@@ -788,7 +788,7 @@ class AgentSessionRunner:
         definition = SolverDefinitionRegistry.builtin().require(solver.definition_id)
         self.retrieval_policy = self._retrieval_policy_for(solver)
         catalog = RuntimeToolCatalog.from_runtime(
-            task=self.task,
+            mode=self.task.mode,
             solver_definition=definition,
             registry=self.registry,
             tool_names=self.tool_by_name,
@@ -878,6 +878,10 @@ class AgentSessionRunner:
             event_repository=self.persistence.events,
             allowed_resource_ids=(
                 self.assignment.allowed_resources if self.assignment is not None else None
+            ),
+            task_resource_ids=authorized_asset_ids(
+                self.task_spec,
+                self.assignment.allowed_resources if self.assignment is not None else None,
             ),
             lease_validator=(
                 (lambda: self.execution_context.is_active())

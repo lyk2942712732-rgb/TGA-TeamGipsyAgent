@@ -16,7 +16,7 @@ from tga.tools.mcp_registry import provider_tool_name
 from tga.tools.mcp_registry import MCPToolRoute
 from tga.tools.mcp_registry import MCPDiscoveredTool, MCPServerDiscovery, build_catalog_snapshot
 from tga.tools.mcp_transport import StdioTransport, build_stdio_command, build_transport
-from tests.runtime_fixtures import mcp_policy, mcp_snapshot
+from tests.runtime_fixtures import mcp_policy, mcp_snapshot, task as v6_task
 
 
 def _config(tmp_path: Path, *, max_inline: int = 32000, max_artifact: int = 1024 * 1024) -> Path:
@@ -47,7 +47,7 @@ def _config(tmp_path: Path, *, max_inline: int = 32000, max_artifact: int = 1024
 
 
 def _task(snapshot, server: str = "fixture", *, mode: str = "ctf") -> TGATask:
-    return TGATask(
+    return v6_task(
         id="task_dynamic",
         name="dynamic",
         mode=mode,
@@ -59,7 +59,7 @@ def _task(snapshot, server: str = "fixture", *, mode: str = "ctf") -> TGATask:
 
 
 def _schema_v4_task(snapshot, *, task_id: str = "task_v4") -> TGATask:
-    return TGATask(
+    return v6_task(
         id=task_id,
         name=task_id,
         mode="incident_response",
@@ -116,7 +116,7 @@ def test_dynamic_initialize_list_and_call(tmp_path: Path) -> None:
     route = snapshot.route("mcp__fixture__echo")
     assert route is not None
     outcome = manager.call_tool(
-        task=_task(discovered), route=route, arguments={"text": "done"}, catalog_version=snapshot.version
+        context=_task(discovered), route=route, arguments={"text": "done"}, catalog_version=snapshot.version
     )
     assert outcome.ok
     assert outcome.content == [{"type": "text", "text": "done"}]
@@ -147,14 +147,14 @@ def test_schema_v4_existing_session_is_denied_immediately_after_global_disable(t
     route = manager.snapshot_for_task(task).route("mcp__fixture__echo")
     assert route is not None
     assert manager.call_tool(
-        task=task, route=route, arguments={"text": "before"}, catalog_version=created_catalog.version,
+        context=task, route=route, arguments={"text": "before"}, catalog_version=created_catalog.version,
     ).ok
 
     payload = json.loads(config_path.read_text(encoding="utf-8"))
     payload["servers"]["fixture"]["enabled"] = False
     config_path.write_text(json.dumps(payload), encoding="utf-8")
     denied = manager.call_tool(
-        task=task, route=route, arguments={"text": "after"}, catalog_version=created_catalog.version,
+        context=task, route=route, arguments={"text": "after"}, catalog_version=created_catalog.version,
     )
 
     assert denied.ok is False
@@ -185,7 +185,7 @@ def test_invalid_arguments_do_not_start_call(tmp_path: Path) -> None:
     snapshot = manager.refresh()
     route = snapshot.route("mcp__fixture__echo")
     assert route is not None
-    outcome = manager.call_tool(task=_task(snapshot), route=route, arguments={}, catalog_version=snapshot.version)
+    outcome = manager.call_tool(context=_task(snapshot), route=route, arguments={}, catalog_version=snapshot.version)
     assert not outcome.ok
     assert outcome.error and outcome.error.code == "INVALID_ARGUMENTS"
     assert outcome.timings == {}
@@ -195,7 +195,7 @@ def test_forged_undiscovered_method_is_rejected(tmp_path: Path) -> None:
     manager = MCPManager(config_path=_config(tmp_path), cache_path=tmp_path / "cache.json")
     snapshot = manager.refresh()
     route = MCPToolRoute(provider_name="mcp__fixture__not_real", server_id="fixture", method="not_real", input_schema={"type": "object"})
-    outcome = manager.call_tool(task=_task(snapshot, "fail"), route=route, arguments={}, catalog_version=snapshot.version)
+    outcome = manager.call_tool(context=_task(snapshot, "fail"), route=route, arguments={}, catalog_version=snapshot.version)
     assert not outcome.ok
     assert outcome.error and outcome.error.code == "TOOL_NOT_VISIBLE"
     assert outcome.timings == {}
@@ -235,7 +235,7 @@ def test_method_policy_adds_host_side_argument_constraints(tmp_path: Path) -> No
     snapshot = manager.refresh()
     route = snapshot.route("mcp__fixture__echo")
     assert route is not None
-    outcome = manager.call_tool(task=_task(snapshot), route=route, arguments={"text": "too long"}, catalog_version=snapshot.version)
+    outcome = manager.call_tool(context=_task(snapshot), route=route, arguments={"text": "too long"}, catalog_version=snapshot.version)
     assert not outcome.ok
     assert outcome.error and outcome.error.code == "INVALID_ARGUMENTS"
 
@@ -249,8 +249,8 @@ def test_server_rate_limit_is_enforced(tmp_path: Path) -> None:
     snapshot = manager.refresh()
     route = snapshot.route("mcp__fixture__echo")
     assert route is not None
-    first = manager.call_tool(task=_task(snapshot), route=route, arguments={"text": "one"}, catalog_version=snapshot.version)
-    second = manager.call_tool(task=_task(snapshot), route=route, arguments={"text": "two"}, catalog_version=snapshot.version)
+    first = manager.call_tool(context=_task(snapshot), route=route, arguments={"text": "one"}, catalog_version=snapshot.version)
+    second = manager.call_tool(context=_task(snapshot), route=route, arguments={"text": "two"}, catalog_version=snapshot.version)
     assert first.ok
     assert not second.ok
     assert second.error and second.error.code == "POLICY_DENIED" and second.error.phase == "rate_limit"
@@ -370,7 +370,7 @@ def test_protocol_and_process_failures_are_classified(tmp_path: Path, mode: str,
     manager.config, _ = load_mcp_config(path)
     manager.snapshot = snapshot
     manager._catalog_versions[snapshot.version] = snapshot
-    outcome = manager.call_tool(task=_task(snapshot, "fail"), route=route, arguments={}, catalog_version=snapshot.version)
+    outcome = manager.call_tool(context=_task(snapshot, "fail"), route=route, arguments={}, catalog_version=snapshot.version)
     assert not outcome.ok
     assert outcome.error and outcome.error.code == expected
     assert outcome.error.phase in {"initialize", "transport_start"}

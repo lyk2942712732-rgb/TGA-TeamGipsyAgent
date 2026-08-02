@@ -124,13 +124,13 @@ def main() -> int:
             ),
             "artifact_count": len(artifacts),
             "event_types": [
-                name for name in ("SESSION_STARTED", "MANAGER_DECISION", "TOOL_EXECUTION_START", "TOOL_EXECUTION_END", "FINISH_ACCEPTED", "SESSION_STOPPED")
+                name for name in ("SESSION_STARTED", "MANAGER_DECISION", "TOOL_EXECUTION_START", "TOOL_EXECUTION_END", "TASK_COMPLETION_ACCEPTED", "SESSION_STOPPED")
                 if name in event_types
             ],
             "flag_count": len(snapshot.get("flags") or []),
         }
         print(result)
-        required_events = {"SESSION_STARTED", "MANAGER_DECISION", "TOOL_EXECUTION_START", "TOOL_EXECUTION_END", "FINISH_ACCEPTED", "SESSION_STOPPED"}
+        required_events = {"SESSION_STARTED", "MANAGER_DECISION", "TOOL_EXECUTION_START", "TOOL_EXECUTION_END", "TASK_COMPLETION_ACCEPTED", "SESSION_STOPPED"}
         return 0 if (
             result["status"] == "completed"
             and result["http_action_succeeded"]

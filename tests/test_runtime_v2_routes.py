@@ -23,7 +23,7 @@ from tga.runtime.task_creation import build_mcp_capability_snapshot
 from tga.infrastructure.persistence import PersistenceBundle
 from tga.runtime.tooling.requests import ActionContext, AuthorizationDecision, GovernedAction
 from tga.models.capability_probe import ProviderCapabilityProbe
-from tests.runtime_fixtures import configure_verified_model
+from tests.runtime_fixtures import configure_verified_model, task as v6_task
 
 
 def _fixture_mcp_manager(tmp_path: Path, *, risk: str = "passive") -> MCPManager:
@@ -68,7 +68,7 @@ def _preflight_and_create(client: TestClient, payload: dict):
 
 def _seed_session(tmp_path, monkeypatch) -> str:
     monkeypatch.setenv("TGA_RUN_ROOT", str(tmp_path / "runs"))
-    task = TGATask(id="runtime_v2", name="runtime", mode="ctf", goal="solve", schema_version=6)
+    task = v6_task(id="runtime_v2", name="runtime", mode="ctf", goal="solve", schema_version=6)
     store = EvidenceStore(tmp_path / "runs" / task.id / "evidence.db")
     try:
         store.create_task(task)
@@ -369,7 +369,7 @@ def test_v2_sse_disconnect_closes_transport_without_mutating_session(tmp_path, m
 def test_v2_start_recovers_a_created_session(tmp_path, monkeypatch):
     monkeypatch.setenv("TGA_RUN_ROOT", str(tmp_path / "runs"))
     configure_verified_model(monkeypatch)
-    task = TGATask(id="recover", name="recover", mode="ctf", goal="solve", schema_version=6)
+    task = v6_task(id="recover", name="recover", mode="ctf", goal="solve", schema_version=6)
     store = EvidenceStore(tmp_path / "runs" / task.id / "evidence.db")
     try:
         store.create_task(task)

@@ -7,14 +7,12 @@ from tga.application.projections.models import (
     EventPage,
     EvidenceClaimProjection,
     EvidencePageResponse,
-    EvidenceProjection,
     FindingProjection,
     IntentPage,
     IntentProjection,
     KnowledgeProjection,
     RetrievalRunProjection,
     RuntimeSnapshotResponse,
-    SessionProjection,
     SessionAggregate,
     SolverResponse,
     SolverProjection,
@@ -22,20 +20,16 @@ from tga.application.projections.models import (
     SolverRunPage,
     TeamProjection,
     TeamResponse,
-    TaskSummaryProjection,
-    TimelineProjection,
     WorkerResultProjection,
 )
-from tga.application.projections.queries import TaskProjectionQueries
 
 __all__ = [
     "ActionProjection", "ApprovalPage", "ApprovalProjection",
     "ArtifactProjection", "EventEnvelope", "EventPage",
-    "EvidenceClaimProjection", "EvidencePageResponse", "EvidenceProjection",
+    "EvidenceClaimProjection", "EvidencePageResponse",
     "FindingProjection", "IntentPage", "IntentProjection",
     "KnowledgeProjection",
     "RetrievalRunProjection", "RuntimeSnapshotResponse", "SessionAggregate",
-    "SessionProjection", "SolverProjection", "SolverResponse", "SolverRunPage", "SolverRunProjection",
-    "TaskProjectionQueries", "TaskSummaryProjection", "TeamProjection",
-    "TeamResponse", "TimelineProjection", "WorkerResultProjection",
+    "SolverProjection", "SolverResponse", "SolverRunPage", "SolverRunProjection",
+    "TeamProjection", "TeamResponse", "WorkerResultProjection",
 ]

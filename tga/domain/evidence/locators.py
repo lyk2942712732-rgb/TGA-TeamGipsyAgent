@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field, model_validator
 
 
 LocatorKind = Literal[
-    "text_range", "line_range", "json_path", "page", "binary_offset",
+    "whole_artifact", "text_range", "line_range", "json_path", "page", "binary_offset",
     "legacy_whole_artifact",
 ]
 
@@ -43,6 +43,7 @@ class EvidenceLocator(BaseModel):
             "binary_length": self.binary_length,
         }
         allowed: dict[str, set[str]] = {
+            "whole_artifact": set(),
             "text_range": {"char_start", "char_end"},
             "line_range": {"line_start", "line_end"},
             "json_path": {"json_path"},
@@ -80,4 +81,3 @@ class EvidenceLocator(BaseModel):
 
 
 __all__ = ["EvidenceLocator", "LocatorKind"]
-

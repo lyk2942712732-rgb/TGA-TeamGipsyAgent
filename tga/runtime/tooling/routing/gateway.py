@@ -71,6 +71,7 @@ class ToolGovernanceGateway:
         retrieval_handlers: dict[str, Any] | None = None,
         event_repository=None,
         allowed_resource_ids: tuple[str, ...] | None = None,
+        task_resource_ids: tuple[str, ...] = (),
         lease_validator: Callable[[], bool] | None = None,
         artifact_result_handler: Callable[[RawExecutionResult], None] | None = None,
         sandbox_config_digest: str | None = None,
@@ -84,6 +85,8 @@ class ToolGovernanceGateway:
         self.execution_backend_router = execution_backend_router
         self.events = event_repository
         self.allowed_resource_ids = allowed_resource_ids
+        # Authoritative TaskSpec resource ids, projected once per session.
+        self.task_resource_ids = tuple(task_resource_ids)
         self.lease_validator = lease_validator
         self.artifact_result_handler = artifact_result_handler
         self.sandbox_config_digest = sandbox_config_digest
@@ -493,12 +496,10 @@ class ToolGovernanceGateway:
     ) -> str | None:
         input_id = str(arguments.get("input_id") or "")
         if input_id and capability.startswith("input_"):
-            owned = {
-                item.id for item in self.task.session_input.files
-                if self.allowed_resource_ids is None
-                or item.id in self.allowed_resource_ids
-            }
-            if input_id not in owned:
+            # TaskSpec resources are the authoritative authorization source;
+            # session_input is unverified task material, not authority.  These
+            # ids are already narrowed to the SolverAssignment scope.
+            if input_id not in self.task_resource_ids:
                 return "The requested input is not owned by this Task."
         artifact_id = str(arguments.get("artifact_id") or "")
         if artifact_id:

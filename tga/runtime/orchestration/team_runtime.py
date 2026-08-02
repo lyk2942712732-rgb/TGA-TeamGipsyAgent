@@ -93,7 +93,9 @@ class TeamRuntime:
                 updated_at=now,
                 provenance={
                     "source": "phase6_task_orchestrator",
-                    "allowed_resource_ids": [item.id for item in self.task.session_input.files],
+                    "allowed_resource_ids": [
+                        item.resource_id for item in self.task.session_input.files
+                    ],
                 },
             )
             self.repositories.plans.save_global_plan(GlobalPlan(

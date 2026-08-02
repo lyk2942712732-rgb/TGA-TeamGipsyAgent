@@ -64,7 +64,7 @@ class CreateTaskRequest(BaseModel):
     mode_options: dict[str, Any] = Field(default_factory=dict, alias="modeOptions")
     input: CreateSessionInputRequest
     execution_policy: ExecutionPolicy = Field(alias="executionPolicy")
-    selected_skills: list[str] | None = Field(default=None, alias="selectedSkills", max_length=3)
+    selected_skills: list[str] | None = Field(default=None, alias="selectedSkills", max_length=2)
     preflight_fingerprint: str | None = Field(
         default=None, alias="preflightFingerprint", pattern=r"^[a-f0-9]{64}$"
     )
@@ -81,7 +81,7 @@ class SkillPreviewRequest(BaseModel):
     prompt: str = Field(default="", max_length=16_384)
     file_names: list[str] = Field(default_factory=list, alias="fileNames", max_length=64)
     execution_policy: ExecutionPolicy = Field(alias="executionPolicy")
-    selected_skills: list[str] | None = Field(default=None, alias="selectedSkills", max_length=3)
+    selected_skills: list[str] | None = Field(default=None, alias="selectedSkills", max_length=2)
 
 
 class LLMSettingsRequest(BaseModel):

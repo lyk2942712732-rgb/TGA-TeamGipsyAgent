@@ -7,8 +7,10 @@ from pathlib import Path
 from typing import Any
 
 from tga.contracts import SessionFile, TGATask
+from tga.domain.task.spec import TaskSpec
 from tga.inputs import MAX_MODEL_IMAGE_BYTES, SessionWorkspace
 from tga.runtime.prompt_settings import prompt_snapshot_for_task
+from tga.runtime.resources import authorized_session_files
 
 
 class SessionContextBuilder:
@@ -20,6 +22,7 @@ class SessionContextBuilder:
         supports_vision: bool | None,
         allowed_resource_ids: tuple[str, ...] | None = None,
         task_root: Path | None = None,
+        task_spec: TaskSpec | None = None,
     ) -> None:
         self.task = task
         self.workspace = workspace.resolve()
@@ -27,10 +30,7 @@ class SessionContextBuilder:
             task_root.resolve() if task_root is not None else self.workspace.parent
         )
         self.supports_vision = supports_vision
-        self.files = [
-            item for item in task.session_input.files
-            if allowed_resource_ids is None or item.id in allowed_resource_ids
-        ]
+        self.files = authorized_session_files(task, task_spec, allowed_resource_ids)
 
     def build(self) -> list[dict[str, Any]]:
         content: list[dict[str, Any]] = [

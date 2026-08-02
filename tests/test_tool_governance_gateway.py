@@ -7,6 +7,7 @@ import pytest
 from pydantic import ValidationError
 
 from tga.capabilities.registry import build_default_registry
+from tests.runtime_fixtures import task as v6_task
 from tga.contracts import ActionEffect, TGATask
 from tga.domain.solver.instances import ToolPolicySnapshot
 from tga.infrastructure.persistence import PersistenceBundle
@@ -38,7 +39,7 @@ NOW = "2026-07-30T00:00:00Z"
 
 
 def _task(task_id: str = "tool_governance") -> TGATask:
-    return TGATask(id=task_id, name="governance", mode="ctf", goal="govern tools")
+    return v6_task(id=task_id, name="governance", mode="ctf", goal="govern tools")
 
 
 def _policy(*capabilities: str, profile: str = "test") -> ToolPolicySnapshot:
@@ -71,7 +72,7 @@ def _catalog(task: TGATask, definition_id: str = "ctf-web-solver") -> RuntimeToo
         for item in registry.snapshot()["capabilities"]
     }
     return RuntimeToolCatalog.from_runtime(
-        task=task,
+        mode=task.mode,
         solver_definition=SolverDefinitionRegistry.builtin().require(definition_id),
         registry=registry,
         tool_names=tool_names,

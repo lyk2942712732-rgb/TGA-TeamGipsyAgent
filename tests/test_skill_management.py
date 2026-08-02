@@ -24,6 +24,19 @@ Compare a baseline and one bounded request, then preserve both results.
 """
 
 
+def _select(*, mode: str, goal: str, available_capabilities: tuple[str, ...]):
+    """Freeze a Task Common Skill snapshot the way task creation does."""
+    return SkillSelector().select(
+        SkillSelectionRequest(
+            mode=mode,
+            goal=goal,
+            task_id=f"task_{mode}",
+            available_capabilities=available_capabilities,
+        ),
+        created_at="2026-01-01T00:00:00Z",
+    )
+
+
 def test_custom_skill_crud_is_scene_aware_and_runtime_visible(tmp_path: Path, monkeypatch) -> None:
     custom_root = tmp_path / "custom-skills"
     monkeypatch.setenv("TGA_CUSTOM_SKILLS_ROOT", str(custom_root))
@@ -41,13 +54,17 @@ def test_custom_skill_crud_is_scene_aware_and_runtime_visible(tmp_path: Path, mo
     detail = client.get("/api/v2/settings/skills/custom-web-proof")
     assert detail.status_code == 200
     assert "authorization boundary" in detail.json()["skill"]["body"]
-    selected = SkillSelector().select(SkillSelectionRequest(
-        mode="penetration_test", goal="test an auth boundary", available_capabilities=("http.request", "artifact.inspect"),
-    ))
+    selected = _select(
+        mode="penetration_test",
+        goal="test an auth boundary",
+        available_capabilities=("http.request", "artifact.inspect"),
+    )
     assert {skill.name for skill in selected.skills} >= {"custom-web-proof"}
-    incompatible = SkillSelector().select(SkillSelectionRequest(
-        mode="reverse_engineering", goal="test an auth boundary", available_capabilities=("http.request", "artifact.inspect"),
-    ))
+    incompatible = _select(
+        mode="reverse_engineering",
+        goal="test an auth boundary",
+        available_capabilities=("http.request", "artifact.inspect"),
+    )
     assert "custom-web-proof" not in {skill.name for skill in incompatible.skills}
 
     updated = client.put("/api/v2/settings/skills/custom-web-proof", json={
@@ -59,9 +76,11 @@ def test_custom_skill_crud_is_scene_aware_and_runtime_visible(tmp_path: Path, mo
     })
     assert updated.status_code == 200, updated.text
     assert updated.json()["skill"]["version"] == "2"
-    selected = SkillSelector().select(SkillSelectionRequest(
-        mode="ctf", goal="inspect a web target", available_capabilities=("http.request",),
-    ))
+    selected = _select(
+        mode="ctf",
+        goal="inspect a web target",
+        available_capabilities=("http.request",),
+    )
     assert "custom-web-proof" in {skill.name for skill in selected.skills}
 
     deleted = client.delete("/api/v2/settings/skills/custom-web-proof")

@@ -38,7 +38,7 @@ class ExecutionPipelineAdapter:
             )
         try:
             denial = self.handlers.state.mcp_manager.policy.authorize(
-                task=self.handlers.state.task,
+                context=self.handlers.state.task,
                 server=server,
                 route=route,
                 arguments=action.normalized_arguments,

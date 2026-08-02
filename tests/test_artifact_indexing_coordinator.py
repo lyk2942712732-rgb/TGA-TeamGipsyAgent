@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 
 from tga.contracts import TGATask
+from tests.runtime_fixtures import task as v6_task
 from tga.domain.evidence import Artifact
 from tga.domain.retrieval import OwnerScope, RetrievalPolicy
 from tga.domain.task.spec import TaskSpec
@@ -35,7 +36,7 @@ def _policy() -> RetrievalPolicy:
 
 def test_artifact_indexing_is_idempotent_and_advances_context_snapshot(tmp_path: Path) -> None:
     bundle = PersistenceBundle.open(tmp_path / "evidence.db")
-    task = TGATask(id="task_auto_index", name="Auto index", mode="ctf", goal="find marker")
+    task = v6_task(id="task_auto_index", name="Auto index", mode="ctf", goal="find marker")
     bundle.tasks.create_task(task)
     bundle.tasks.save_task_spec(TaskSpec(task_id=task.id, objective=task.goal))
     raw_values: dict[str, bytes] = {}
@@ -94,7 +95,7 @@ def test_artifact_indexing_is_idempotent_and_advances_context_snapshot(tmp_path:
 
 def test_artifact_indexing_failure_is_persisted_and_retryable(tmp_path: Path) -> None:
     bundle = PersistenceBundle.open(tmp_path / "evidence.db")
-    task = TGATask(id="task_retry_index", name="Retry index", mode="ctf", goal="retry")
+    task = v6_task(id="task_retry_index", name="Retry index", mode="ctf", goal="retry")
     bundle.tasks.create_task(task)
     bundle.tasks.save_task_spec(TaskSpec(task_id=task.id, objective=task.goal))
     raw = b"recoverable marker"

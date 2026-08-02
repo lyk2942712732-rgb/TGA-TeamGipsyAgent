@@ -1,0 +1,1 @@
+{"version":1,"servers":{"demo":{"transport":"stdio","stdio":{"source":"docker_image","image":"demo-mcp:latest"}}}}

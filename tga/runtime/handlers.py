@@ -1,4 +1,4 @@
-﻿"""Concrete governed tool handlers used by the native ReAct runtime."""
+"""Concrete governed tool handlers used by the native ReAct runtime."""
 
 from __future__ import annotations
 
@@ -16,9 +16,11 @@ from uuid import uuid4
 from tga.contracts import ActionResult, ActionSpec, ArtifactRecord, TGAError, TGATask
 from tga.evidence.artifacts import ArtifactStore
 from tga.evidence.store import EvidenceStore
+from tga.infrastructure.persistence.bundle import PersistenceBundle
 from tga.inputs import SessionWorkspace, task_artifact_root
 from tga.runtime.coordinator import SessionOutcome
 from tga.runtime.handler_services import ArtifactService, ObserverExecutionCoordinator
+from tga.runtime.resources import authorized_session_files
 from tga.runtime.tool_handlers.plan_knowledge import PlanKnowledgeHandler
 from tga.runtime.tool_handlers.task_completion import TaskCompletionHandler
 from tga.runtime.observer import DeterministicObserver, ObserverCoordinator
@@ -114,6 +116,8 @@ class HandlerState:
         self.remote_flag_verifier = remote_flag_verifier
         self.allowed_resource_ids = allowed_resource_ids
         self.execution_context = execution_context
+        # Authoritative resource scope for this Solver session.
+        self.task_spec = PersistenceBundle(store).tasks.get_task_spec(task.id)
         self.observer = ObserverCoordinator(observer=DeterministicObserver(), store=store, cooldown_seconds=0)
         self.observer_directive = ""
         self.artifact_retrievals = 0
@@ -297,29 +301,6 @@ class CapabilityToolHandler(HandlerRuntime):
                     {"value": candidate, "artifact_ids": result.artifact_ids},
                     solver_id=self.solver_id,
                 )
-            for finding in result.candidate_findings:
-                if finding.task_id != self.task.id:
-                    continue
-                evidence_id = str(finding.evidence_artifact_id or "")
-                evidence = self.store.get_artifact(evidence_id) if evidence_id else None
-                persisted = finding.model_copy(update={
-                    "status": "candidate",
-                    "evidence_artifact_id": evidence_id or None,
-                })
-                self.store.add_candidate_finding(persisted)
-                self.store.append_agent_event(
-                    self.task.id,
-                    "FINDING_CANDIDATE",
-                    {
-                        "finding_id": persisted.id,
-                        "title": persisted.title,
-                        "target": persisted.target,
-                        "severity": persisted.severity,
-                        "status": persisted.status,
-                        "evidence_artifact_id": evidence_id or None,
-                    },
-                    solver_id=self.solver_id,
-                )
             payload = {
                 "ok": result.status == "succeeded",
                 "status": result.status,
@@ -327,7 +308,6 @@ class CapabilityToolHandler(HandlerRuntime):
                 "facts": result.facts,
                 "leads": result.leads,
                 "candidate_flags": result.candidate_flags,
-                "candidate_findings": [item.model_dump(mode="json") for item in result.candidate_findings],
                 "artifacts": excerpts,
                 "error": result.error.model_dump(mode="json") if result.error else None,
             }
@@ -391,11 +371,11 @@ class InputToolHandler(HandlerRuntime):
         name = action.capability
         arguments = action.arguments
         call_id = str(action.authorization.get("tool_call_id") or "")
-        files = [
-            item for item in self.task.session_input.files
-            if self.state.allowed_resource_ids is None
-            or item.id in self.state.allowed_resource_ids
-        ]
+        files = authorized_session_files(
+            self.task,
+            self.state.task_spec,
+            self.state.allowed_resource_ids,
+        )
         input_id = str(arguments.get("input_id") or "")
         item = next((candidate for candidate in files if candidate.id == input_id), None) if input_id else None
         if name != "input_list" and item is None:
@@ -664,7 +644,7 @@ class MCPToolHandler(HandlerRuntime):
                 update={"execution_policy": approved_policy}
             )
             validation_error = self.mcp_manager.policy.authorize(
-                task=execution_task,
+                context=execution_task,
                 server=server_config,
                 route=route,
                 arguments=action.arguments,
@@ -723,7 +703,7 @@ class MCPToolHandler(HandlerRuntime):
         )
         started = time.perf_counter()
         outcome = self.mcp_manager.call_tool(
-            task=execution_task,
+            context=execution_task,
             route=route,
             arguments=action.arguments,
             catalog_version=current_snapshot.version,

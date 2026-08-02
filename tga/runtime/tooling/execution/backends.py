@@ -532,7 +532,7 @@ class RemoteMCPBackend:
                 started_at=started,
             )
         outcome = self.manager.call_authorized_tool(
-            task=self.task,
+            context=self.task,
             route=route,
             arguments=request.arguments,
             catalog_version=snapshot.version,

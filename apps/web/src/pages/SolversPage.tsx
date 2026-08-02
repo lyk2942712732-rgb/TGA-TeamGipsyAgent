@@ -9,7 +9,7 @@ import { EmptyState } from "../components/ui/EmptyState";
 import { ErrorState } from "../components/ui/ErrorState";
 import { LoadingSkeleton } from "../components/ui/LoadingSkeleton";
 import { useToast } from "../components/ui/Toast";
-import { skillLabel, solverDescription, solverPromptSteps, termLabel } from "../i18n/catalog";
+import { termLabel } from "../i18n/catalog";
 import { MODE_PROFILES } from "../modes";
 
 /**
@@ -144,6 +144,7 @@ export function SolversPage() {
         {selected ? <SolverDetail
           record={selected}
           model={llm.data?.configured ? llm.data.model : null}
+          temperature={llm.data?.configured ? llm.data.temperature ?? null : null}
           tab={tab}
           onTab={setTab}
         /> : null}
@@ -151,9 +152,10 @@ export function SolversPage() {
   </div>;
 }
 
-function SolverDetail({ record, model, tab, onTab }: {
+function SolverDetail({ record, model, temperature, tab, onTab }: {
   record: SolverDefinitionRecord;
   model: string | null;
+  temperature: number | null;
   tab: string;
   onTab: (id: string) => void;
 }) {
@@ -184,23 +186,21 @@ function SolverDetail({ record, model, tab, onTab }: {
         <div className="solver-prompt-block">
           <h3>System Prompt 模板</h3>
           <div className="solver-prompt-box">
-            <ol>{solverPromptSteps(record.id, sentences(record.system_prompt_template)).map((line, index) => <li key={index}>{line}</li>)}</ol>
+            <ol>{sentences(record.system_prompt_template).map((line, index) => <li key={index}>{line}</li>)}</ol>
             {/* The English source template stays one click away, unedited. */}
             <button className="ref-link-button" onClick={() => onTab("instructions")}>查看完整模板</button>
           </div>
         </div>
 
-        <div className="solver-form-grid">
-          <label>温度<input value="0.2" readOnly aria-readonly="true" /></label>
-          <label>最大输出 Tokens<input value={record.default_budget.max_output_tokens ?? ""} readOnly aria-readonly="true" /></label>
-          <label>超时（秒）<input value={record.default_budget.deadline ?? "—"} readOnly aria-readonly="true" /></label>
-        </div>
-        <div className="solver-form-grid cols-2">
-          <label>输出格式<select value="JSON" disabled><option>JSON</option></select></label>
-          <label>结构化输出<select value={record.output_contract.name} disabled><option>{record.output_contract.name}</option></select></label>
-        </div>
-
-        <FieldGrid columns={2} fields={budgetFields(record.default_budget)} />
+        {/* Sampling settings live on the single configured provider, not on a
+            Solver Definition; the deadline and token caps come from the
+            definition's own default_budget. */}
+        <FieldGrid columns={2} fields={[
+          { label: "温度", value: temperature, missing: temperature === null },
+          { label: "截止时间", value: record.default_budget.deadline, missing: !record.default_budget.deadline },
+          { label: "结构化输出", value: <code className="cell-mono">{record.output_contract.name}</code> },
+          ...budgetFields(record.default_budget),
+        ]} />
       </> : null}
 
       {tab === "instructions" ? <pre className="ref-prompt">{record.system_prompt_template}</pre> : null}
@@ -213,7 +213,7 @@ function SolverDetail({ record, model, tab, onTab }: {
 
       {tab === "skills" ? <FieldGrid fields={[
         { label: "默认 Skill 标签", value: <ChipList values={record.default_skill_tags.map(termLabel)} tone="neutral" /> },
-        { label: "必需 Skill", value: <ChipList values={record.required_skill_names.map(skillLabel)} /> },
+        { label: "必需 Skill", value: <ChipList values={record.required_skill_names} /> },
       ]} /> : null}
 
       {tab === "contract" ? <FieldGrid fields={[
@@ -253,11 +253,11 @@ function budgetFields(budget: SolverDefinitionRecord["default_budget"]) {
 }
 
 /**
- * The catalog has no description field.  Each shipped definition has a written
- * Chinese description; anything unknown falls back to the template's opener.
+ * The catalog has no description field, so the definition's own prompt template
+ * supplies the summary line rather than frontend-authored copy.
  */
 function describe(record: SolverDefinitionRecord): string {
-  return solverDescription(record.id, sentences(record.system_prompt_template)[0] ?? "");
+  return sentences(record.system_prompt_template)[0] ?? "";
 }
 
 function sentences(template: string): string[] {

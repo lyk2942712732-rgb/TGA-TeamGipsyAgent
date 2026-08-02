@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import json
 from datetime import UTC, datetime, timedelta
@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from tests.runtime_fixtures import configure_verified_model, task as v6_task
 from tga.contracts import (
     ActionEffect,
     ActionSpec,
@@ -101,7 +102,7 @@ def _pending_governed_action(
 
 
 def _task(task_id: str, *, policy: ExecutionPolicy | None = None) -> TGATask:
-    return TGATask(
+    return v6_task(
         id=task_id,
         name=task_id,
         mode="ctf",
@@ -138,7 +139,10 @@ class CancelDuringProvider:
         }
 
 
-def test_cancel_discards_late_provider_tool_calls(tmp_path: Path) -> None:
+def test_cancel_discards_late_provider_tool_calls(tmp_path: Path, monkeypatch) -> None:
+    # Running a session requires a verified provider whose fingerprint matches
+    # the Task model snapshot.
+    configure_verified_model(monkeypatch)
     task = _task("cancel_boundary")
     store = EvidenceStore(tmp_path / task.id / "evidence.db")
     store.create_task(task)

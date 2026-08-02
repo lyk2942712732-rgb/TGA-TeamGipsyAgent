@@ -8,7 +8,9 @@ from pathlib import Path
 import pytest
 
 from tga.domain.evidence.artifacts import Artifact
+from tests.runtime_fixtures import task as v6_task
 from tga.domain.evidence.claims import EvidenceClaim
+from tga.evidence.database import DatabaseSchemaMismatchError
 from tga.domain.evidence.locators import EvidenceLocator
 from tga.domain.planning.global_plan import GlobalPlan
 from tga.domain.planning.intents import Intent, IntentDependency
@@ -19,7 +21,6 @@ from tga.domain.solver.runs import SolverRun
 from tga.domain.task.hints import TaskHint
 from tga.domain.task.interventions import UserIntervention
 from tga.domain.task.models import ModelSnapshot, TGATask
-from tga.application.projections import TaskProjectionQueries
 from tga.infrastructure.persistence import (
     ArtifactImmutableError,
     IntentClaimConflict,
@@ -34,7 +35,7 @@ NOW = "2026-07-30T00:00:00Z"
 
 
 def _task(task_id: str = "task_1") -> TGATask:
-    return TGATask(id=task_id, name="Task", mode="ctf", goal="Solve it", schema_version=6)
+    return v6_task(id=task_id, name="Task", mode="ctf", goal="Solve it", schema_version=6)
 
 
 def _intent(intent_id: str = "intent_1", *, task_id: str = "task_1") -> Intent:
@@ -152,7 +153,8 @@ def test_new_database_has_schema_v6_tables_and_indexes(tmp_path) -> None:
         bundle.close()
 
 
-def test_reopen_refreshes_schema_v6_content_hash_after_additive_schema_change(tmp_path) -> None:
+def test_reopen_rejects_a_database_whose_schema_hash_does_not_match(tmp_path) -> None:
+    """A schema hash mismatch is a hard failure, never a silent re-stamp."""
     database_path = tmp_path / "evidence.db"
     PersistenceBundle.open(database_path).close()
     with sqlite3.connect(database_path) as connection:
@@ -160,21 +162,14 @@ def test_reopen_refreshes_schema_v6_content_hash_after_additive_schema_change(tm
             "UPDATE schema_metadata SET content_sha256='stale' WHERE version=6"
         )
 
-    bundle = PersistenceBundle.open(database_path)
-    try:
-        stored = bundle.database.conn.execute(
+    with pytest.raises(DatabaseSchemaMismatchError, match="schema content hash"):
+        PersistenceBundle.open(database_path)
+
+    with sqlite3.connect(database_path) as connection:
+        stored = connection.execute(
             "SELECT content_sha256 FROM schema_metadata WHERE version=6"
         ).fetchone()[0]
-        schema_path = (
-            Path(__file__).parents[1]
-            / "tga"
-            / "infrastructure"
-            / "persistence"
-            / "schema_v6.sql"
-        )
-        assert stored == hashlib.sha256(schema_path.read_bytes()).hexdigest()
-    finally:
-        bundle.close()
+    assert stored == "stale"
 
 
 def test_global_plan_compare_and_swap_rejects_stale_writer(persistence) -> None:
@@ -391,8 +386,8 @@ def test_remaining_repository_ports_and_projections_round_trip(persistence) -> N
     assert persistence.solvers.get_solver("solver_1") == _solver()
     assert persistence.transcripts.list_messages("task_1", "solver_1")[0]["content"] == "Starting analysis"
     assert persistence.knowledge.list_knowledge("task_1") == [knowledge]
-    queries = TaskProjectionQueries(persistence)
-    assert queries.task_summary("task_1").status == "active"
-    assert queries.solvers("task_1")[0].solver_id == "solver_1"
-    assert queries.intents("task_1")[0].intent_id == "intent_1"
-    assert queries.knowledge("task_1")[0].knowledge_id == "knowledge_1"
+    # Reads go through the repositories only; no legacy projection query layer.
+    assert persistence.plans.get_global_plan("task_1").status == "active"
+    assert persistence.solvers.list_solvers("task_1")[0].id == "solver_1"
+    assert persistence.plans.get_global_plan("task_1").intents[0].id == "intent_1"
+    assert persistence.knowledge.list_knowledge("task_1")[0].id == "knowledge_1"

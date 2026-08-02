@@ -21,10 +21,16 @@ ChallengeStatus = Literal["unknown", "active", "solved", "blocked", "expired"]
 
 
 class SessionRecord(BaseModel):
+    """Task-level lifecycle only.
+
+    Multi-Solver execution state is authoritative in TaskOrchestratorState,
+    SolverInstance and SolverRun.  A Task lifecycle never names one active
+    Solver.
+    """
+
     task_id: str
     schema_version: int = 6
     status: SessionStatus = "created"
-    active_solver_id: str | None = None
     turn_count: int = 0
     max_turns: int = 48
     started_at: str | None = None

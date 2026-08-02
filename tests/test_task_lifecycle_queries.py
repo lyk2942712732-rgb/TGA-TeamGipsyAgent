@@ -2,6 +2,7 @@ from fastapi.testclient import TestClient
 
 from apps.api.main import app
 from tga.contracts import SessionRecord, TGATask
+from tests.runtime_fixtures import task as v6_task
 from tga.domain.task.spec import TaskSpec
 from tga.evidence.store import EvidenceStore
 from tga.infrastructure.persistence import PersistenceBundle
@@ -11,7 +12,7 @@ from tga.runtime.service import TaskRuntimeService
 def _seed(tmp_path, monkeypatch, *, task_id: str = "lifecycle_task") -> str:
     run_root = tmp_path / "runs"
     monkeypatch.setenv("TGA_RUN_ROOT", str(run_root))
-    task = TGATask(
+    task = v6_task(
         id=task_id,
         name="Lifecycle task",
         mode="ctf",

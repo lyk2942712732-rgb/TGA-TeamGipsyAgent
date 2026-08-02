@@ -11,6 +11,7 @@ from apps.api.main import app
 from apps.api.routes import events as event_routes
 from apps.api.routes import sessions as session_routes
 from tga.contracts import SessionRecord, TGATask
+from tests.runtime_fixtures import task as v6_task
 from tga.domain.governance.models import ActionEffect
 from tga.domain.evidence.artifacts import Artifact
 from tga.evidence.store import EvidenceStore
@@ -26,7 +27,7 @@ def _seed_team(tmp_path: Path, monkeypatch, task_id: str = "phase9_team") -> dic
     run_root = tmp_path / "runs"
     monkeypatch.setenv("TGA_RUN_ROOT", str(run_root))
     monkeypatch.setattr(session_routes, "_schedule_runtime_runner", lambda _task_id: False)
-    task = TGATask(
+    task = v6_task(
         id=task_id,
         name="Phase 9 team",
         mode="ctf",
@@ -356,7 +357,7 @@ def test_event_envelope_has_intent_and_sse_reconnect_uses_db_then_event_bus(
     event = page["events"][0]
     assert event["schema_version"] == 6
     assert event["intent_id"] == ids["intent_id"]
-    assert event["payload"]["schema_version"] == 1
+    assert event["payload"]["payload_version"] == 1
     assert page["next_after_seq"] == event["seq"]
     assert timeline == page
 

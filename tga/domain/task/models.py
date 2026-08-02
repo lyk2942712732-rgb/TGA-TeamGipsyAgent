@@ -20,6 +20,16 @@ ResourceKind = Literal[
 ]
 SessionFileKind = Literal["task_input"]
 MediaKind = Literal["image", "text", "document", "archive", "binary", "other"]
+# MediaKind is detected at staging time; ResourceRef.kind is the authoritative
+# retrieval class used by TaskSpec resources.
+_RESOURCE_KIND_BY_MEDIA: dict[str, str] = {
+    "image": "image",
+    "archive": "archive",
+    "text": "file",
+    "document": "file",
+    "binary": "file",
+    "other": "file",
+}
 
 
 class ResourceProvenance(BaseModel):
@@ -130,6 +140,28 @@ class SessionFile(BaseModel):
             "container_path": self.container_path,
             "purpose": "task input",
         }
+
+    @property
+    def resource_id(self) -> str:
+        """Stable TaskSpec ResourceRef id derived from the immutable asset id."""
+        return f"input_{self.id.removeprefix('asset_')}"
+
+    def resource_ref(self) -> "ResourceRef":
+        """Project this staged file into an authoritative TaskSpec target resource."""
+        return ResourceRef(
+            id=self.resource_id,
+            role="target",
+            kind=_RESOURCE_KIND_BY_MEDIA.get(self.media_kind, "file"),
+            label=self.original_name,
+            uri=f"input://{self.resource_id}",
+            mime_type=self.mime_type,
+            size=self.size,
+            sha256=self.sha256,
+            provenance=self.provenance,
+            status="available",
+            metadata={"asset_id": self.id, "relative_path": self.relative_path},
+            summary=f"Task input {self.original_name} ({self.mime_type}, {self.size} bytes).",
+        )
 
 
 class SessionInput(BaseModel):
@@ -307,39 +339,37 @@ class TGATask(BaseModel):
     mcp_capabilities: MCPCapabilitySnapshot = Field(default_factory=MCPCapabilitySnapshot)
     goal: str = Field(min_length=1, max_length=8000)
     flag_format: str | None = None
-    mode_config: ModeConfig | None = None
-    execution_policy: ExecutionPolicy | None = None
-    model_snapshot: ModelSnapshot | None = None
+    mode_config: ModeConfig
+    execution_policy: ExecutionPolicy
+    model_snapshot: ModelSnapshot
     agent_prompt_snapshot: dict[str, Any] | None = None
     execution_budget: dict[str, int] = Field(default_factory=dict)
     insecure_tls_origins: list[str] = Field(default_factory=list, max_length=8)
-    schema_version: int = 6
+    schema_version: Literal[6] = 6
 
     @model_validator(mode="before")
     @classmethod
     def apply_current_defaults(cls, value: Any) -> Any:
+        """Normalize the mode discriminator only.
+
+        Defaults for mode_config, execution_policy and model_snapshot are never
+        invented here: a persisted task must already carry them, otherwise it is
+        not a valid schema-v6 task.  Creation-time defaults belong to the task
+        creation form and CreateTaskCommand.
+        """
         if not isinstance(value, dict):
             return value
         current = dict(value)
         if "mode" in current:
             current["mode"] = normalize_mode(current["mode"])
-        mode = current.get("mode") or "ctf"
-        if not current.get("mode_config"):
-            current["mode_config"] = default_mode_config(
-                mode, flag_format=current.get("flag_format")
-            ).model_dump(mode="json")
-        if not current.get("execution_policy"):
-            current["execution_policy"] = ExecutionPolicy().model_dump(mode="json")
-        if mode != "ctf":
+        if current.get("mode") != "ctf":
             current["flag_format"] = None
         return current
 
     @model_validator(mode="after")
     def validate_authorized_scope(self) -> "TGATask":
-        if self.mode_config is None or self.mode_config.mode != self.mode:
+        if self.mode_config.mode != self.mode:
             raise ValueError("mode_config discriminator must match task mode")
-        if self.execution_policy is None:
-            raise ValueError("execution_policy is required")
         self.execution_policy.network.seed_origins = _canonical_http_origins(
             self.execution_policy.network.seed_origins, field_name="seed_origins",
         )

@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 
 from tga.application.services.intervention_service import InterventionService
+from tests.runtime_fixtures import task as v6_task
 from tga.domain.knowledge.items import KnowledgeItem
 from tga.domain.skills.models import SkillSnapshot, TaskCommonSkillSnapshot
 from tga.domain.task.models import TGATask
@@ -17,7 +18,7 @@ NOW = "2026-07-30T00:00:00Z"
 
 
 def _task() -> TGATask:
-    return TGATask(id="task_context", name="Context", mode="ctf", goal="Solve target")
+    return v6_task(id="task_context", name="Context", mode="ctf", goal="Solve target")
 
 
 def _skill(name: str, body: str) -> SkillSnapshot:

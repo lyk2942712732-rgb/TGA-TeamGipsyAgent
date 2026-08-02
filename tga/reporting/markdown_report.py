@@ -253,7 +253,8 @@ def _append_runtime_sections(lines: list[str], snapshot: dict[str, Any]) -> None
         f"- Status: {session.get('status', 'unknown')}",
         f"- Turns: {session.get('turn_count', 0)}/{session.get('max_turns', 'unknown')}",
         f"- Stop Reason: {session.get('stop_reason') or 'none'}",
-        f"- Active Solver: {session.get('active_solver_id') or 'none'}",
+        f"- Supervisor Solver: {session.get('supervisor_solver_id') or 'none'}",
+        f"- Active Solvers: {session.get('active_solver_count', 0)}",
     ])
     if profile.id == "ctf":
         lines.extend([
@@ -302,7 +303,10 @@ def _append_runtime_sections(lines: list[str], snapshot: dict[str, Any]) -> None
             evidence_id = payload.get("evidence_artifact_id")
             lines.append(f"- seq {event.get('seq')}: {payload.get('value')} artifact={evidence_id} persisted={evidence_id in artifact_ids}")
     lines.extend(["", "## Completion Validation"])
-    finish_events = [event for event in events if event.get("type") in {"FINISH_ATTEMPTED", "FINISH_REJECTED", "FINISH_ACCEPTED"}]
+    finish_events = [
+        event for event in events
+        if event.get("type") in {"FINISH_ATTEMPTED", "FINISH_REJECTED", "TASK_COMPLETION_ACCEPTED"}
+    ]
     if not finish_events:
         lines.append("- no accepted task completion proposal recorded")
     for event in finish_events:

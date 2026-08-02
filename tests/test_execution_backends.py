@@ -4,12 +4,14 @@ import base64
 import hashlib
 import json
 import subprocess
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 from tga.capabilities.registry import build_default_registry
+from tests.runtime_fixtures import task as v6_task
 from tga.contracts import (
     ExecutionPolicy,
     HighImpactExecutionPolicy,
@@ -31,6 +33,44 @@ from tga.runtime.tooling.execution import (
 from tga.runtime.tooling.execution.adapters import process_spec
 from tga.sandbox.config import SandboxConfig
 from tga.sandbox.models import ExecResult, SandboxHandle, SandboxState
+
+
+def _seed_intent(store, task, intent_id: str) -> None:
+    """Persist one Intent so Artifact ownership checks can resolve it."""
+    from tga.domain.planning.global_plan import GlobalPlan
+    from tga.domain.planning.intents import Intent
+    from tga.evidence.database import utc_now
+    from tga.infrastructure.persistence import PersistenceBundle
+
+    now = utc_now()
+    PersistenceBundle(store).plans.save_global_plan(GlobalPlan(
+        id=f"global_plan_{task.id}",
+        task_id=task.id,
+        version=1,
+        status="active",
+        intents=[Intent(
+            id=intent_id,
+            task_id=task.id,
+            kind="validation",
+            title="Execution intent",
+            objective="produce execution artifacts",
+            created_at=now,
+            updated_at=now,
+        )],
+        created_at=now,
+        updated_at=now,
+    ))
+
+
+def _host_argv(spec) -> tuple[str, ...]:
+    """Run a container process spec with the host interpreter.
+
+    ``process_spec`` targets the sandbox image, where the interpreter is
+    ``python3``.  The audit policy under test is inside the payload, not in the
+    interpreter path, so substituting the host interpreter keeps the assertion
+    intact while staying runnable off-image.
+    """
+    return (sys.executable, *spec.argv[1:])
 
 
 def _config(*, runtime: str = "enforced") -> SandboxConfig:
@@ -60,7 +100,7 @@ def _config(*, runtime: str = "enforced") -> SandboxConfig:
 
 
 def _task() -> TGATask:
-    return TGATask(
+    return v6_task(
         id="task_execution",
         name="execution",
         mode="ctf",
@@ -146,7 +186,7 @@ def test_catalog_routes_each_capability_to_one_backend() -> None:
         input_schema={"type": "object", "properties": {}},
     )
     catalog = RuntimeToolCatalog.from_runtime(
-        task=_task(),
+        mode=_task().mode,
         solver_definition=SolverDefinitionRegistry.builtin().require("ctf-web-solver"),
         registry=registry, tool_names=tool_names,
         mcp_snapshot=SimpleNamespace(routes=(remote,)),
@@ -272,7 +312,9 @@ def test_shell_and_python_cannot_bypass_typed_capabilities() -> None:
         {"source": "import subprocess; subprocess.run(['echo', 'blocked'])"},
         30,
     )
-    completed = subprocess.run(spec.argv, capture_output=True, text=True, check=False)
+    completed = subprocess.run(
+        _host_argv(spec), capture_output=True, text=True, check=False
+    )
     assert completed.returncode != 0
     assert "workspace.python audit policy blocked subprocess.Popen" in completed.stderr
 
@@ -289,7 +331,7 @@ def test_workspace_python_cannot_read_a_sibling_solver(tmp_path: Path) -> None:
         30,
     )
     completed = subprocess.run(
-        spec.argv, cwd=current, capture_output=True, text=True, check=False
+        _host_argv(spec), cwd=current, capture_output=True, text=True, check=False
     )
     assert completed.returncode != 0
     assert "outside the Solver workspace" in completed.stderr
@@ -324,6 +366,9 @@ def test_artifact_ingestion_is_the_single_execution_output_boundary(tmp_path: Pa
     store = EvidenceStore(tmp_path / "evidence.db")
     try:
         store.create_task(task)
+        # Ingested Artifacts reference the executing Intent, so the Intent has
+        # to exist for the v6 writer's ownership check.
+        _seed_intent(store, task, "intent_execution")
         workspace = (
             tmp_path / "runs" / task.id / "workspace" / "solver-runs" / "run_execution"
         )

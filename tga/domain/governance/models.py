@@ -6,7 +6,6 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-from tga.domain.evidence.records import CandidateFindingRecord
 
 
 RiskLevel = Literal["passive", "active", "destructive"]
@@ -124,7 +123,6 @@ class ActionResult(BaseModel):
     facts: list[str] = Field(default_factory=list)
     leads: list[str] = Field(default_factory=list)
     candidate_flags: list[str] = Field(default_factory=list)
-    candidate_findings: list[CandidateFindingRecord] = Field(default_factory=list)
     error: TGAError | None = None
 
 

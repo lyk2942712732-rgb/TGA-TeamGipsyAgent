@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from tga.application.commands import InterventionRequest, RuntimeCommands
+from tests.runtime_fixtures import task as v6_task
 from tga.contracts import ActionResult, ActionSpec, ArtifactRecord, SessionInput, TGATask
 from tga.evidence.store import EvidenceStore
 from tga.infrastructure.persistence import ArtifactImmutableError, PersistenceBundle
@@ -42,7 +43,7 @@ def test_initial_prompt_is_persisted_as_authoritative_directive_not_hint(tmp_pat
     service = TaskRuntimeService(
         run_root=tmp_path / "runs", manager=_StartManager()
     )
-    task = TGATask(
+    task = v6_task(
         id="task_prompt",
         name="Prompt",
         mode="ctf",
@@ -65,7 +66,7 @@ def test_initial_prompt_is_persisted_as_authoritative_directive_not_hint(tmp_pat
 
 
 def test_intervention_command_creates_hint_without_memory_strategy_or_knowledge(tmp_path) -> None:
-    task = TGATask(id="task_hint", name="Hint", mode="ctf", goal="Solve")
+    task = v6_task(id="task_hint", name="Hint", mode="ctf", goal="Solve")
     store = EvidenceStore(tmp_path / task.id / "evidence.db")
     try:
         store.create_task(task)
@@ -95,7 +96,7 @@ def test_intervention_command_creates_hint_without_memory_strategy_or_knowledge(
 
 
 def test_start_session_creates_one_durable_solver_and_new_plan_without_legacy_authority(tmp_path) -> None:
-    task = TGATask(id="task_single", name="Single", mode="ctf", goal="Solve")
+    task = v6_task(id="task_single", name="Single", mode="ctf", goal="Solve")
     store = EvidenceStore(tmp_path / task.id / "evidence.db")
     try:
         store.create_task(task)
@@ -119,7 +120,7 @@ def test_start_session_creates_one_durable_solver_and_new_plan_without_legacy_au
 
 
 def test_manager_lifecycle_facade_keeps_task_orchestrator_state_in_sync(tmp_path) -> None:
-    task = TGATask(id="task_facade", name="Facade", mode="ctf", goal="Solve")
+    task = v6_task(id="task_facade", name="Facade", mode="ctf", goal="Solve")
     store = EvidenceStore(tmp_path / task.id / "evidence.db")
     try:
         store.create_task(task)
@@ -138,7 +139,7 @@ def test_manager_lifecycle_facade_keeps_task_orchestrator_state_in_sync(tmp_path
 
 
 def test_legacy_artifact_adapter_is_append_only_and_visible_to_v6_repository(tmp_path) -> None:
-    task = TGATask(id="task_artifact_v6", name="Artifact", mode="ctf", goal="Solve")
+    task = v6_task(id="task_artifact_v6", name="Artifact", mode="ctf", goal="Solve")
     store = EvidenceStore(tmp_path / task.id / "evidence.db")
     try:
         store.create_task(task)
@@ -164,7 +165,7 @@ def test_legacy_artifact_adapter_is_append_only_and_visible_to_v6_repository(tmp
 
 
 def test_successful_tool_summary_becomes_solver_candidate_knowledge(tmp_path) -> None:
-    task = TGATask(id="task_tool_knowledge", name="Knowledge", mode="ctf", goal="Solve")
+    task = v6_task(id="task_tool_knowledge", name="Knowledge", mode="ctf", goal="Solve")
     store = EvidenceStore(tmp_path / task.id / "evidence.db")
     try:
         store.create_task(task)
@@ -195,7 +196,7 @@ def test_successful_tool_summary_becomes_solver_candidate_knowledge(tmp_path) ->
 
 
 def test_v6_observer_never_writes_legacy_memory_or_strategy_authority(tmp_path) -> None:
-    task = TGATask(id="task_observer_v6", name="Observer", mode="ctf", goal="Solve")
+    task = v6_task(id="task_observer_v6", name="Observer", mode="ctf", goal="Solve")
     store = EvidenceStore(tmp_path / task.id / "evidence.db")
     observer = ObserverCoordinator(
         observer=DeterministicObserver(), store=store, cooldown_seconds=0

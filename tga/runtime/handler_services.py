@@ -132,24 +132,8 @@ class ArtifactService:
         return artifact, created
 
     def _index_artifact(self, artifact: ArtifactRecord):
-        self._index_artifact_for_retrieval(artifact)
-        existing = self.store.get_artifact_index(artifact.id)
-        if existing is not None:
-            return existing
-        if artifact.tool == "input_materialize":
-            return None
-        path = task_artifact_root(self.run_root / self.task.id, self.task) / artifact.path
-        try:
-            raw = path.read_bytes()
-        except OSError:
-            return None
-        index = build_artifact_index(
-            task_id=self.task.id,
-            artifact_id=artifact.id,
-            raw=raw,
-            document_type="html" if path.suffix.casefold() in {".html", ".htm"} else None,
-        )
-        return self.store.upsert_artifact_index(index)
+        """Index one artifact into the single retrieval projection."""
+        return self._index_artifact_for_retrieval(artifact)
 
     def _index_artifact_for_retrieval(self, artifact: ArtifactRecord):
         repositories = PersistenceBundle(self.store)
@@ -238,8 +222,23 @@ class ArtifactService:
                 return str(payload.get("final_url") or "") or None
         return None
     def _artifact_excerpt(self, artifact: ArtifactRecord, limit: int = 16_000) -> str:
-        index = self.store.get_artifact_index(artifact.id)
-        if index is not None:
+        """Derive a bounded readable excerpt from the immutable artifact bytes.
+
+        The readable index is a derived view, so it is computed on demand
+        instead of being persisted as a second index of record.
+        """
+        path = task_artifact_root(self.run_root / self.task.id, self.task) / artifact.path
+        try:
+            raw = path.read_bytes()
+        except OSError:
+            return ""
+        if artifact.tool != "input_materialize":
+            index = build_artifact_index(
+                task_id=self.task.id,
+                artifact_id=artifact.id,
+                raw=raw,
+                document_type="html" if path.suffix.casefold() in {".html", ".htm"} else None,
+            )
             retrieval = retrieve_segments(index, limit=min(limit, 6000))
             return json.dumps(
                 {
@@ -251,11 +250,7 @@ class ArtifactService:
                 },
                 ensure_ascii=False,
             )
-        path = task_artifact_root(self.run_root / self.task.id, self.task) / artifact.path
-        try:
-            return path.read_bytes()[: min(limit, 6000)].decode("utf-8", errors="replace")
-        except OSError:
-            return ""
+        return raw[: min(limit, 6000)].decode("utf-8", errors="replace")
     def _artifact_text(self, task_id: str, artifact: ArtifactRecord) -> str:
         if task_id != self.task.id or artifact.task_id != task_id:
             return ""

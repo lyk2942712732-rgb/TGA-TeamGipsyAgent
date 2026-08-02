@@ -46,13 +46,23 @@ const TABS: DetailTab[] = [
   { id: "knowledge", label: "Knowledge" },
 ];
 
-const TYPE_TONES: Record<string, string> = {
-  JSON: "tone-info", SQL: "tone-violet", XML: "tone-ok", ZIP: "tone-warn", RAW: "tone-info",
-  High: "tone-danger", Medium: "tone-warn", Low: "tone-ok",
-  Claim: "tone-info", Doc: "tone-muted",
+/**
+ * Tones keyed by the vocabularies the backend actually stores: `Finding.severity`
+ * and the shared `candidate | confirmed | rejected` review status.  An Artifact's
+ * 类型 is a free-form media type or kind, so it stays untinted.
+ */
+const SEVERITY_TONES: Record<string, string> = {
+  critical: "tone-danger", high: "tone-danger", medium: "tone-warn",
+  low: "tone-ok", info: "tone-info",
+};
+const SEVERITY_LABELS: Record<string, string> = {
+  critical: "严重", high: "高", medium: "中", low: "低", info: "提示",
 };
 const STATUS_TONES: Record<string, string> = {
-  已确认: "tone-ok", 已入库: "tone-ok", 待复核: "tone-warn", 已驳回: "tone-danger",
+  confirmed: "tone-ok", candidate: "tone-warn", rejected: "tone-danger",
+};
+const STATUS_LABELS: Record<string, string> = {
+  confirmed: "已确认", candidate: "待复核", rejected: "已驳回",
 };
 
 export function ResourcesPage() {
@@ -96,17 +106,22 @@ export function ResourcesPage() {
     {
       id: "name", header: "文件名",
       render: (row) => <span className="cell-with-icon">
-        <span className={`file-badge ${TYPE_TONES[row.type] ?? "tone-muted"}`} aria-hidden="true">{row.type.slice(0, 4)}</span>
+        <span className={`file-badge ${SEVERITY_TONES[row.type] ?? "tone-muted"}`} aria-hidden="true">{row.type.slice(0, 4)}</span>
         <strong className="ellipsis">{row.name}</strong>
       </span>,
     },
-    { id: "type", header: "类型", render: (row) => <span className="cell-muted">{row.type}</span> },
+    { id: "type", header: "类型", render: (row) => <span className="cell-muted">{SEVERITY_LABELS[row.type] ?? row.type}</span> },
     { id: "task", header: "来源任务", render: (row) => <span className="cell-muted">{row.taskName}</span> },
     { id: "solver", header: "来源 Solver", render: (row) => row.solver ? <span className="cell-muted">{row.solver}</span> : dash() },
     { id: "size", header: "大小", render: (row) => row.size ? <span className="cell-muted">{row.size}</span> : dash() },
     { id: "hash", header: "Hash", render: (row) => row.hash ? <code className="cell-mono">{row.hash.slice(0, 10)}…</code> : dash() },
     { id: "created", header: "创建时间", render: (row) => <span className="cell-muted">{row.createdAt}</span> },
-    { id: "status", header: "状态", render: (row) => <span className={`ref-chip ${STATUS_TONES[row.status] ?? "tone-muted"}`}>{row.status}</span> },
+    {
+      id: "status", header: "状态",
+      render: (row) => <span className={`ref-chip ${STATUS_TONES[row.status] ?? "tone-muted"}`}>
+        {STATUS_LABELS[row.status] ?? row.status}
+      </span>,
+    },
   ];
 
   return <div className="ref-page">

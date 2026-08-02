@@ -4,6 +4,7 @@ from fastapi.testclient import TestClient
 
 from apps.api.main import app
 from tga.contracts import TGATask
+from tests.runtime_fixtures import task as v6_task
 from tga.runtime.prompt_settings import (
     load_agent_prompt_settings,
     save_agent_prompt_settings,
@@ -13,7 +14,7 @@ from tga.runtime.prompts import build_agent_system_prompt
 
 
 def _task(*, snapshot: dict | None = None) -> TGATask:
-    return TGATask(
+    return v6_task(
         id="prompt_task",
         name="prompt task",
         mode="ctf",

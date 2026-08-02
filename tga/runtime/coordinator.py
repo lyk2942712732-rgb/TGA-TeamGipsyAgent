@@ -11,8 +11,12 @@ import hashlib
 from dataclasses import dataclass
 from typing import Any
 
-from tga.contracts import CandidateFindingRecord, ChallengeContract, SessionRecord, TGATask
+from tga.contracts import ChallengeContract, SessionRecord, TGATask
+from tga.domain.evidence.claims import EvidenceClaim
+from tga.domain.evidence.findings import Finding
+from tga.domain.evidence.locators import EvidenceLocator
 from tga.evidence.store import EvidenceStore, utc_now
+from tga.infrastructure.persistence.bundle import PersistenceBundle
 
 
 SESSION_TRANSITIONS: dict[str, set[str]] = {
@@ -71,22 +75,17 @@ class SessionCoordinator:
                     task_id=task.id,
                     schema_version=task.schema_version,
                     max_turns=max_turns,
-                    active_solver_id=supervisor_solver_id,
                     workspace_path="workspace",
                     mcp_catalog_version=task.mcp_capabilities.catalog_version,
                 ))
             elif session.max_turns > max_turns:
                 session = self.store.update_session(task.id, max_turns=max_turns)
-            elif session.active_solver_id is None:
-                session = self.store.update_session(
-                    task.id, active_solver_id=supervisor_solver_id
-                )
 
             if task.mode == "ctf" and self.store.get_challenge(task.id) is None:
                 self.store.upsert_challenge(ChallengeContract(
                     task_id=task.id,
                     entry_url=task.task_entry_url,
-                    allowed_origins=list(task.execution_policy.network.seed_origins if task.execution_policy else []),
+                    allowed_origins=list(task.execution_policy.network.seed_origins),
                     status="unknown",
                     flag_format=task.flag_format,
                 ))
@@ -138,11 +137,9 @@ class SessionCoordinator:
         if session is None:
             raise KeyError(f"session not found: {task_id}")
         if session.status == "running":
-            effective_solver_id = solver_id or session.active_solver_id
             with self.store.transaction():
                 session = self.store.update_session(
                     task_id,
-                    active_solver_id=effective_solver_id,
                     started_at=session.started_at or utc_now(),
                     finished_at=None,
                     stop_reason="",
@@ -252,6 +249,86 @@ class SessionCoordinator:
             details=outcome.details,
         )
 
+    def _record_completion_evidence(
+        self, *, task_id: str, claims: list[Any], solver_id: str | None
+    ) -> None:
+        """Persist completion claims through Artifact -> EvidenceClaim -> Finding.
+
+        Findings are always created as candidates.  Confirmation requires a
+        reviewed EvidenceClaim and is never inferred from task completion.
+        """
+        evidence = PersistenceBundle(self.store).evidence
+        for claim in claims:
+            if not isinstance(claim, dict) or claim.get("kind") not in {"finding", "vulnerability"}:
+                continue
+            statement = str(claim.get("statement") or "").strip()
+            if not statement:
+                continue
+            artifact_id = next(
+                (
+                    item
+                    for item in (str(value) for value in claim.get("evidence_artifact_ids") or [])
+                    if (artifact := evidence.get_artifact(item)) is not None
+                    and artifact.task_id == task_id
+                ),
+                None,
+            )
+            digest = hashlib.sha256(
+                f"{task_id}\0{claim.get('kind')}\0{statement}".encode("utf-8")
+            ).hexdigest()[:16]
+            now = utc_now()
+            evidence_claims: list[EvidenceClaim] = []
+            if artifact_id is not None:
+                evidence_claim = EvidenceClaim(
+                    id=f"claim_{digest}",
+                    task_id=task_id,
+                    statement=statement[:8_000],
+                    artifact_id=artifact_id,
+                    locator=EvidenceLocator(kind="whole_artifact"),
+                    status="candidate",
+                    created_by_solver_id=solver_id,
+                    created_at=now,
+                )
+                if evidence.get_evidence_claim(evidence_claim.id) is None:
+                    evidence.add_evidence_claim(evidence_claim)
+                    self.store.append_agent_event(
+                        task_id,
+                        "EVIDENCE_CLAIM_CREATED",
+                        {
+                            "evidence_claim_id": evidence_claim.id,
+                            "artifact_id": artifact_id,
+                            "status": "candidate",
+                        },
+                        solver_id=solver_id,
+                    )
+                evidence_claims.append(evidence_claim)
+            finding = Finding(
+                id=f"finding_{digest}",
+                task_id=task_id,
+                title=statement[:500],
+                description=statement[:8_000],
+                target=(task.default_action_target() if (task := self.store.get_task(task_id)) else task_id),
+                severity="medium" if claim.get("kind") == "vulnerability" else "info",
+                status="candidate",
+                evidence_claims=evidence_claims,
+                created_by_solver_id=solver_id,
+                created_at=now,
+            )
+            evidence.save_finding(finding)
+            self.store.append_agent_event(
+                task_id,
+                "FINDING_CANDIDATE",
+                {
+                    "finding_id": finding.id,
+                    "title": finding.title,
+                    "target": finding.target,
+                    "severity": finding.severity,
+                    "status": "candidate",
+                    "evidence_claim_ids": finding.evidence_claim_ids,
+                },
+                solver_id=solver_id,
+            )
+
     def _transition(self, *, task_id: str, status: str, reason: str, solver_id: str | None = None, finished: bool = False, summary: str = "", evidence_artifact_ids: list[str] | None = None, error: dict[str, Any] | None = None, turn_count: int | None = None, details: dict[str, Any] | None = None) -> SessionRecord:
         with self.store.transaction():
             session = self.store.get_session(task_id)
@@ -269,10 +346,8 @@ class SessionCoordinator:
                 update.setdefault("finished_at", None)
                 if session.started_at is None:
                     update.setdefault("started_at", utc_now())
-            if solver_id is not None:
-                update["active_solver_id"] = solver_id
             session = self.store.update_session(task_id, **update)
-            effective_solver_id = solver_id or session.active_solver_id
+            effective_solver_id = solver_id
             challenge = self.store.get_challenge(task_id)
             if status == "running" and challenge is not None and challenge.status in {"unknown", "blocked"}:
                 previous = challenge.status
@@ -293,49 +368,13 @@ class SessionCoordinator:
                     {"max_turns": session.max_turns, "status": status},
                     solver_id=effective_solver_id,
                 )
-                self.store.append_agent_event(
-                    task_id,
-                    "AGENT_STARTED",
-                    {"role": "main"},
-                    solver_id=effective_solver_id,
-                )
             if status == "completed":
                 completion = {"reason": reason, "summary": summary, "evidence_artifact_ids": evidence_artifact_ids or [], **(details or {})}
-                for claim in completion.get("claims") or []:
-                    if not isinstance(claim, dict) or claim.get("kind") not in {"finding", "vulnerability"}:
-                        continue
-                    statement = str(claim.get("statement") or "").strip()
-                    claim_evidence = [str(item) for item in claim.get("evidence_artifact_ids") or []]
-                    evidence_id = next((
-                        item for item in claim_evidence
-                        if (artifact := self.store.get_artifact(item)) is not None and artifact.task_id == task_id
-                    ), "")
-                    if not statement:
-                        continue
-                    digest = hashlib.sha256(f"{task_id}\0{claim.get('kind')}\0{statement}".encode("utf-8")).hexdigest()[:16]
-                    finding = CandidateFindingRecord(
-                        id=f"finding_{digest}",
-                        task_id=task_id,
-                        title=statement[:255],
-                        target=(self.store.get_task(task_id).default_action_target() if self.store.get_task(task_id) else task_id),
-                        severity="medium" if claim.get("kind") == "vulnerability" else "info",
-                        evidence_artifact_id=evidence_id or None,
-                        evidence_excerpt=statement[:500],
-                    )
-                    self.store.add_candidate_finding(finding)
-                    self.store.append_agent_event(
-                        task_id,
-                        "FINDING_CANDIDATE",
-                        {
-                            "finding_id": finding.id,
-                            "title": finding.title,
-                            "target": finding.target,
-                            "severity": finding.severity,
-                            "status": "candidate",
-                            "evidence_artifact_id": evidence_id or None,
-                        },
-                        solver_id=solver_id,
-                    )
+                self._record_completion_evidence(
+                    task_id=task_id,
+                    claims=completion.get("claims") or [],
+                    solver_id=solver_id,
+                )
                 structured = completion.get("structured_result") if isinstance(completion.get("structured_result"), dict) else {}
                 flag = str(structured.get("flag") or "").strip()
                 proof_id = str(structured.get("proof_artifact_id") or "").strip()
@@ -349,8 +388,9 @@ class SessionCoordinator:
                         challenge = challenge.model_copy(update={"status": "solved", "status_reason": "completion_validator", "completion_proof_artifact_id": proof_id, "solved_at": utc_now()})
                         self.store.upsert_challenge(challenge)
                         self.store.append_agent_event(task_id, "CHALLENGE_STATUS_CHANGED", {"status": "solved", "reason": "completion_validator", "completion_proof_artifact_id": proof_id}, solver_id=solver_id)
-                self.store.append_agent_event(task_id, "FINISH_ACCEPTED", completion, solver_id=solver_id)
-                self.store.append_agent_event(task_id, "AGENT_FINISHED", completion, solver_id=solver_id)
+                # TASK_COMPLETION_ACCEPTED is written once by TaskOrchestrator,
+                # which owns the completion decision.  The lifecycle boundary
+                # only records the resulting session transition below.
             if not (status == "running" and reason == "session_started"):
                 self.store.append_agent_event(task_id, "SESSION_STOPPED" if status in {"completed", "cancelled", "failed", "blocked"} else "SESSION_CONTROLLED", {"action": status, "reason": reason, "status": status, "error": error}, solver_id=solver_id)
             return session

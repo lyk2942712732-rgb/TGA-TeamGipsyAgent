@@ -186,7 +186,7 @@ def list_skill_corpus() -> dict[str, Any]:
     bundle = _corpus_bundle()
     try:
         return {
-            "schema_version": 1,
+            "view_version": 1,
             "publications": [
                 item.model_dump(mode="json")
                 for item in bundle.retrieval.list_skill_publications()

@@ -2,12 +2,13 @@ from fastapi.testclient import TestClient
 
 from apps.api.main import app
 from tga.contracts import ExecutionPolicy, ResourceProvenance, SessionFile, SessionInput, SessionRecord, TGATask
+from tests.runtime_fixtures import task as v6_task
 from tga.evidence.artifacts import ArtifactStore
 from tga.evidence.store import EvidenceStore
 
 
 def _task(task_id: str) -> TGATask:
-    return TGATask(
+    return v6_task(
         id=task_id,
         name=task_id,
         mode="ctf",
@@ -68,7 +69,7 @@ def test_schema_v4_artifact_endpoint_reads_workspace_artifacts(tmp_path, monkeyp
         sha256="b" * 64, kind="task_input", mediaKind="text",
         provenance=ResourceProvenance(source="user_upload", original_name="task.txt"),
     )
-    task = TGATask(
+    task = v6_task(
         id="preview_v4", name="preview v4", mode="reverse_engineering", goal="inspect",
         mode_config={"mode": "reverse_engineering"}, execution_policy=ExecutionPolicy(),
         session_input=SessionInput(files=[task_file]), schema_version=6,

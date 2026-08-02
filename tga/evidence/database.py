@@ -1,12 +1,25 @@
-"""SQLite connection, schema migration, and rollback-only unit of work."""
+"""SQLite connection, schema loading, and rollback-only unit of work."""
 
 from __future__ import annotations
 
 import sqlite3
+import hashlib
 import json
 import time
 from datetime import UTC, datetime
 from pathlib import Path
+
+
+SCHEMA_VERSION = 6
+SCHEMA_PATH = (
+    Path(__file__).parents[1] / "infrastructure" / "persistence" / "schema_v6.sql"
+)
+# Tables that only ever existed before schema v6.  Their presence means the
+# file was created by an older build and must go through `tga migrate`.
+PRE_V6_TABLES = frozenset({
+    "solvers", "memory_entries", "actions", "strategy_cards", "events",
+    "artifact_indexes",
+})
 
 
 def utc_now() -> str:
@@ -19,7 +32,27 @@ class DatabaseSchemaVersionError(ValueError):
         self.schema_version = schema_version
 
 
+class DatabaseSchemaMismatchError(ValueError):
+    """Raised when an existing database does not match the v6 physical schema."""
+
+    code = "DATABASE_SCHEMA_MISMATCH"
+
+    def __init__(self, detail: str):
+        super().__init__(
+            f"database physical schema is not schema v6 ({detail}); "
+            "rebuild it with `tga migrate --apply`"
+        )
+        self.detail = detail
+
+
 class Database:
+    """Own one schema-v6 SQLite connection.
+
+    Opening a database never alters its structure.  An empty file receives the
+    single authoritative `schema_v6.sql`; an existing file is validated and
+    rejected when it was built by an older schema.
+    """
+
     def __init__(self, db_path: str | Path):
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -32,24 +65,54 @@ class Database:
         self.conn.execute("PRAGMA synchronous = NORMAL")
         self.conn.row_factory = sqlite3.Row
         try:
-            self._reject_unsupported_task_schema()
-            schema_path = Path(__file__).with_name("schema.sql")
-            self.conn.executescript(schema_path.read_text(encoding="utf-8"))
-            self._migrate_schema()
-            v6_schema = Path(__file__).parents[1] / "infrastructure" / "persistence" / "schema_v6.sql"
-            self.conn.executescript(v6_schema.read_text(encoding="utf-8"))
-            schema_hash = __import__("hashlib").sha256(v6_schema.read_bytes()).hexdigest()
-            self.conn.execute(
-                "INSERT INTO schema_metadata(version,applied_at,content_sha256) VALUES (6,?,?) "
-                "ON CONFLICT(version) DO UPDATE SET "
-                "applied_at=excluded.applied_at,content_sha256=excluded.content_sha256 "
-                "WHERE schema_metadata.content_sha256<>excluded.content_sha256",
-                (utc_now(), schema_hash),
-            )
-            self._commit()
+            self._load_schema()
         except Exception:
             self.conn.close()
             raise
+
+    def _load_schema(self) -> None:
+        """Create a fresh v6 database, or validate an existing one."""
+        if self._is_empty():
+            self.conn.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
+            self.conn.execute(
+                "INSERT INTO schema_metadata(version,applied_at,content_sha256) "
+                "VALUES (?,?,?)",
+                (SCHEMA_VERSION, utc_now(), schema_content_hash()),
+            )
+            self._commit()
+            return
+        self._reject_pre_v6_database()
+        self._reject_unsupported_task_schema()
+
+    def _is_empty(self) -> bool:
+        row = self.conn.execute(
+            "SELECT COUNT(*) AS total FROM sqlite_master "
+            "WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+        ).fetchone()
+        return int(row["total"]) == 0
+
+    def _reject_pre_v6_database(self) -> None:
+        names = {
+            row["name"]
+            for row in self.conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        }
+        legacy = sorted(PRE_V6_TABLES.intersection(names))
+        if legacy:
+            raise DatabaseSchemaMismatchError(
+                f"pre-v6 tables present: {', '.join(legacy)}"
+            )
+        if "schema_metadata" not in names:
+            raise DatabaseSchemaMismatchError("schema_metadata table is missing")
+        row = self.conn.execute(
+            "SELECT version,content_sha256 FROM schema_metadata "
+            "ORDER BY version DESC LIMIT 1"
+        ).fetchone()
+        if row is None or int(row["version"]) != SCHEMA_VERSION:
+            raise DatabaseSchemaMismatchError("schema_metadata does not record version 6")
+        if str(row["content_sha256"]) != schema_content_hash():
+            raise DatabaseSchemaMismatchError("schema content hash does not match schema_v6.sql")
 
     def _reject_unsupported_task_schema(self) -> None:
         exists = self.conn.execute(
@@ -62,7 +125,7 @@ class Database:
                 version = int(json.loads(row["payload_json"]).get("schema_version") or 0)
             except (TypeError, ValueError, json.JSONDecodeError) as exc:
                 raise DatabaseSchemaVersionError(0) from exc
-            if version != 6:
+            if version != SCHEMA_VERSION:
                 raise DatabaseSchemaVersionError(version)
 
     def transaction(self):
@@ -118,78 +181,23 @@ class Database:
         if self._tx_depth == 0:
             self.conn.commit()
 
-    def _migrate_schema(self) -> None:
-        columns = {row["name"] for row in self.conn.execute("PRAGMA table_info(sessions)").fetchall()}
-        if "schema_version" not in columns:
-            self.conn.execute("ALTER TABLE sessions ADD COLUMN schema_version INTEGER NOT NULL DEFAULT 2")
-        if "workspace_path" not in columns:
-            self.conn.execute("ALTER TABLE sessions ADD COLUMN workspace_path TEXT NOT NULL DEFAULT ''")
-        if "mcp_catalog_version" not in columns:
-            self.conn.execute("ALTER TABLE sessions ADD COLUMN mcp_catalog_version TEXT NOT NULL DEFAULT ''")
-        event_columns = {row["name"] for row in self.conn.execute("PRAGMA table_info(agent_events)").fetchall()}
-        if "schema_version" not in event_columns:
-            self.conn.execute("ALTER TABLE agent_events ADD COLUMN schema_version INTEGER NOT NULL DEFAULT 2")
-        if "intent_id" not in event_columns:
-            self.conn.execute("ALTER TABLE agent_events ADD COLUMN intent_id TEXT")
-        table_additions = {
-            "intents": {
-                "global_plan_id": "TEXT",
-                "assigned_solver_id": "TEXT",
-                "priority": "INTEGER NOT NULL DEFAULT 0",
-                "version": "INTEGER NOT NULL DEFAULT 1",
-                "claimed_at": "TEXT",
-                "schema_version": "INTEGER NOT NULL DEFAULT 6",
-            },
-            "artifacts": {"schema_version": "INTEGER NOT NULL DEFAULT 6"},
-            "findings": {"schema_version": "INTEGER NOT NULL DEFAULT 6"},
-            "solver_leases": {
-                "fencing_token": "INTEGER NOT NULL DEFAULT 1",
-                "renewed_at": "TEXT NOT NULL DEFAULT ''",
-            },
-            "knowledge_items": {
-                "subject": "TEXT",
-                "structured_value": "TEXT",
-            },
-            "governed_actions": {
-                "attempt": "INTEGER NOT NULL DEFAULT 1",
-                "execution_profile_id": "TEXT",
-                "sandbox_config_digest": "TEXT",
-            },
-            "solver_runs": {
-                "turn_count": "INTEGER NOT NULL DEFAULT 0",
-                "max_turns": "INTEGER NOT NULL DEFAULT 1",
-            },
-            "sandbox_instances": {
-                "solver_run_id": "TEXT",
-                "image_digest": "TEXT",
-                "toolset_digest": "TEXT",
-            },
-        }
-        for table, requested in table_additions.items():
-            table_exists = self.conn.execute(
-                "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
-                (table,),
-            ).fetchone()
-            if table_exists is None:
-                continue
-            existing = {
-                row["name"]
-                for row in self.conn.execute(f"PRAGMA table_info({table})").fetchall()
-            }
-            for name, declaration in requested.items():
-                if name not in existing:
-                    self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {declaration}")
-        sandbox_exists = self.conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='sandbox_instances'"
-        ).fetchone()
-        if sandbox_exists is not None:
-            # Released legacy rows are cleanup-only; active legacy rows cannot be
-            # safely attributed to a SolverRun and must not be reused.
-            self.conn.execute(
-                "UPDATE sandbox_instances SET state='released',destroy_after=COALESCE(destroy_after,?) "
-                "WHERE solver_run_id IS NULL AND state IN ('acquiring','ready')",
-                (utc_now(),),
-            )
-            self.conn.execute("DROP INDEX IF EXISTS idx_v6_sandbox_active_task")
     def close(self) -> None:
         self.conn.close()
+
+
+def schema_content_hash() -> str:
+    """Content hash of the single authoritative schema file."""
+    return hashlib.sha256(SCHEMA_PATH.read_bytes()).hexdigest()
+
+
+def apply_schema(conn: sqlite3.Connection) -> str:
+    """Apply schema_v6.sql to an empty connection and record its hash."""
+    conn.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
+    content_hash = schema_content_hash()
+    conn.execute(
+        "INSERT INTO schema_metadata(version,applied_at,content_sha256) VALUES (?,?,?) "
+        "ON CONFLICT(version) DO UPDATE SET applied_at=excluded.applied_at,"
+        "content_sha256=excluded.content_sha256",
+        (SCHEMA_VERSION, utc_now(), content_hash),
+    )
+    return content_hash

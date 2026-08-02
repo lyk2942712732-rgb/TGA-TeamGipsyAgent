@@ -34,14 +34,17 @@ class TaskCompletionService:
             result = validate(value)
             if result.get("accepted") and finalize_validated is not None:
                 finalize_validated(result)
-            if result.get("accepted") and session_completion is not None:
-                session_completion(result)
             return result
+
+        def on_accepted(result: dict[str, Any]) -> None:
+            if session_completion is not None:
+                session_completion(result)
 
         result = self.orchestrator.complete_task(
             solver_id=solver_id,
             proposal=proposal,
             validator=validate_and_finalize,
+            on_accepted=on_accepted,
         )
         return result
 

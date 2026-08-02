@@ -2,12 +2,19 @@
   "id": "task_web_audit_demo",
   "name": "local-web-audit-demo",
   "mode": "penetration_test",
-  "target": "http://127.0.0.1:8080",
-  "scope": [
-    "127.0.0.1:8080"
-  ],
-  "intensity": "normal",
-  "allow_active_scan": true,
   "goal": "Find and prove common web vulnerabilities in scope.",
-  "flag_format": null
+  "input": {
+    "text": "The authorized target is http://127.0.0.1:8080"
+  },
+  "executionPolicy": {
+    "preset": "custom",
+    "network": {
+      "access": "custom",
+      "interaction": "interact",
+      "custom_origins": ["http://127.0.0.1:8080"],
+      "deny_loopback": false,
+      "deny_private_networks": false
+    },
+    "local_compute": {"mode": "isolated"}
+  }
 }

@@ -1,4 +1,4 @@
-import { ApiError, apiBase, requestJson } from "./client";
+import { requestJson } from "./client";
 
 export type CatalogAvailability = {
   supported: boolean;
@@ -77,189 +77,52 @@ export async function fetchTeamTemplates(query = ""): Promise<{ items: TeamTempl
   return { items: result.items as unknown as TeamTemplateRecord[], total: result.total };
 }
 
-export type ResourceTab = "artifacts" | "evidence" | "findings" | "knowledge";
-
-export type ResourceSearchQuery = {
-  taskId?: string;
-  tab: ResourceTab;
-  query?: string;
-  status?: string;
+/**
+ * ExecutionPolicy presets, served verbatim by `/api/v2/catalog/policies`.  One
+ * record per task mode, matching `tga.modes.default_execution_policy`.
+ */
+export type ExecutionPolicyContract = {
+  preset: string;
+  network: {
+    access: string;
+    interaction: string;
+    seed_origins: string[];
+    custom_origins: string[];
+    custom_domains: string[];
+    custom_cidrs: string[];
+    custom_ports: number[];
+    deny_private_networks: boolean;
+    deny_loopback: boolean;
+    deny_link_local: boolean;
+    deny_cloud_metadata: boolean;
+    rate_limit_per_minute: number;
+    concurrency: number;
+    request_timeout_seconds: number;
+  };
+  local_compute: {
+    mode: string;
+    timeout_seconds: number;
+    concurrency: number;
+    network_inheritance: string;
+  };
+  high_impact: { mode: string; allowed_actions: string[] };
 };
 
-export type ResourceRow = {
+export type ExecutionPolicyRecord = {
   id: string;
-  taskId: string;
-  kind: ResourceTab;
-  title: string;
-  status: string | null;
-  type: string | null;
-  sourceSolverId: string | null;
-  sourceIntentId: string | null;
-  artifactId: string | null;
-  evidenceClaimIds: string[];
-  locator: Record<string, unknown> | null;
-  hash: string | null;
-  target: string | null;
-  createdAt: string | null;
-  raw: Record<string, unknown>;
+  type: string;
+  mode: string;
+  mode_label: string;
+  preset: string;
+  status: string;
+  source: string;
+  editable: boolean;
+  execution_policy: ExecutionPolicyContract;
 };
 
-export type ResourceSearchResult = CatalogAvailability & {
-  taskId: string | null;
-  tab: ResourceTab;
-  items: ResourceRow[];
-  total: number;
-};
-
-type Page<T> = { items: T[]; total: number };
-type TaskEvidenceResponse = {
-  task_id: string;
-  artifacts: Page<Record<string, unknown>>;
-  evidence_claims: Page<Record<string, unknown>>;
-  findings: Page<Record<string, unknown>>;
-};
-
-export async function fetchResourceSearch(query: ResourceSearchQuery): Promise<ResourceSearchResult> {
-  const taskId = query.taskId?.trim();
-  if (!taskId) {
-    return unsupportedResource(query.tab, "当前 API 未提供跨任务资源聚合查询。请输入 Task ID 读取该任务的真实资源投影。");
-  }
-  if (query.tab === "knowledge") {
-    return unsupportedResource(query.tab, "当前 API 未提供独立 Knowledge 列表；资源页不会从 Runtime 事件或 Artifact 推断 Knowledge。", taskId);
-  }
-
-  const response = await requestJson<TaskEvidenceResponse>(
-    `/api/v2/tasks/${encodeURIComponent(taskId)}/evidence?offset=0&limit=100`,
-  );
-  const source = query.tab === "artifacts"
-    ? response.artifacts.items
-    : query.tab === "evidence"
-      ? response.evidence_claims.items
-      : response.findings.items;
-  const normalized = source.map((item) => normalizeResourceRow(query.tab, taskId, item));
-  const needle = query.query?.trim().toLocaleLowerCase();
-  const items = normalized.filter((item) => {
-    const matchesStatus = !query.status || item.status === query.status;
-    const matchesText = !needle || [item.id, item.title, item.target, item.type]
-      .some((value) => value?.toLocaleLowerCase().includes(needle));
-    return matchesStatus && matchesText;
-  });
-  return { supported: true, reason: null, taskId, tab: query.tab, items, total: items.length };
-}
-
-function unsupportedResource(tab: ResourceTab, reason: string, taskId: string | null = null): ResourceSearchResult {
-  return { supported: false, reason, taskId, tab, items: [], total: 0 };
-}
-
-function normalizeResourceRow(tab: ResourceTab, taskId: string, item: Record<string, unknown>): ResourceRow {
-  if (tab === "artifacts") {
-    const id = text(item.artifact_id) ?? "";
-    return {
-      id,
-      taskId,
-      kind: tab,
-      title: text(item.target) ?? id,
-      status: null,
-      type: text(item.media_type) ?? text(item.kind),
-      sourceSolverId: null,
-      sourceIntentId: text(item.intent_id),
-      artifactId: id,
-      evidenceClaimIds: [],
-      locator: null,
-      hash: text(item.sha256),
-      target: text(item.target),
-      createdAt: text(item.created_at),
-      raw: item,
-    };
-  }
-  if (tab === "evidence") {
-    const id = text(item.claim_id) ?? "";
-    return {
-      id,
-      taskId,
-      kind: tab,
-      title: text(item.statement_preview) ?? id,
-      status: text(item.status),
-      type: "Evidence Claim",
-      sourceSolverId: text(item.created_by_solver_id),
-      sourceIntentId: null,
-      artifactId: text(item.artifact_id),
-      evidenceClaimIds: [],
-      locator: record(item.locator),
-      hash: null,
-      target: null,
-      createdAt: text(item.created_at),
-      raw: item,
-    };
-  }
-  const id = text(item.finding_id) ?? "";
-  return {
-    id,
-    taskId,
-    kind: tab,
-    title: text(item.title) ?? id,
-    status: text(item.status),
-    type: text(item.severity),
-    sourceSolverId: text(item.created_by_solver_id),
-    sourceIntentId: null,
-    artifactId: null,
-    evidenceClaimIds: texts(item.evidence_claim_ids),
-    locator: null,
-    hash: null,
-    target: text(item.target),
-    createdAt: text(item.created_at),
-    raw: item,
-  };
-}
-
-export type ReportListQuery = { taskId?: string; query?: string };
-export type ReportRecord = { taskId: string; markdown: string };
-export type ReportListResult = CatalogAvailability & { items: ReportRecord[] };
-
-export async function fetchReportList(query: ReportListQuery): Promise<ReportListResult> {
-  const taskId = query.taskId?.trim();
-  if (!taskId) {
-    return {
-      supported: false,
-      reason: "当前 API 仅提供按 Task 读取报告正文，未提供报告目录、版本或状态聚合。请输入 Task ID 读取真实报告。",
-      items: [],
-    };
-  }
-  const response = await fetch(`${apiBase}/api/v2/tasks/${encodeURIComponent(taskId)}/report`);
-  if (!response.ok) throw new ApiError(response.status, `报告读取失败（${response.status}）`);
-  const markdown = await response.text();
-  const needle = query.query?.trim().toLocaleLowerCase();
-  const items = !needle || markdown.toLocaleLowerCase().includes(needle) ? [{ taskId, markdown }] : [];
-  return { supported: true, reason: null, items };
-}
-
-export type KnowledgeBaseQuery = { scope?: string; query?: string; tab?: string };
-export type KnowledgeBaseResult = CatalogAvailability & { items: never[] };
-
-export async function fetchKnowledgeBases(_query: KnowledgeBaseQuery): Promise<KnowledgeBaseResult> {
-  return {
-    supported: false,
-    reason: "当前 Retrieval Repository 尚未暴露全局 Knowledge Base HTTP 查询。页面不会直接读取 SQLite，也不会把任务 Transcript 或 Candidate Knowledge 伪装成知识库。",
-    items: [],
-  };
-}
-
-export type ConfigurationCatalogKind = "teams" | "solvers" | "policies";
-export type ConfigurationCatalogQuery = { kind: ConfigurationCatalogKind; query?: string; tab?: string; status?: string };
-export type ConfigurationCatalogResult = CatalogAvailability & { kind: ConfigurationCatalogKind; items: never[] };
-
-export async function fetchConfigurationCatalog(query: ConfigurationCatalogQuery): Promise<ConfigurationCatalogResult> {
-  const labels: Record<ConfigurationCatalogKind, string> = {
-    teams: "Team Template",
-    solvers: "Solver Definition",
-    policies: "Policy/Budget Profile",
-  };
-  return {
-    supported: false,
-    reason: `当前 API 未提供 ${labels[query.kind]} Catalog。运行时 Team/Solver Snapshot 不会被当作可编辑的全局 Definition。`,
-    kind: query.kind,
-    items: [],
-  };
+export async function fetchExecutionPolicies(query = ""): Promise<{ items: ExecutionPolicyRecord[]; total: number }> {
+  const result = await fetchProductCatalog("policies", query);
+  return { items: result.items as unknown as ExecutionPolicyRecord[], total: result.total };
 }
 
 export type SystemComponent = {
@@ -345,16 +208,4 @@ function component(
 
 function unsupportedComponent(id: string, label: string, detail: string): SystemComponent {
   return component(id, label, "unsupported", detail, null);
-}
-
-function text(value: unknown): string | null {
-  return typeof value === "string" && value.length ? value : null;
-}
-
-function texts(value: unknown): string[] {
-  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
-}
-
-function record(value: unknown): Record<string, unknown> | null {
-  return value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
 }

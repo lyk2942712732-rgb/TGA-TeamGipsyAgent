@@ -152,6 +152,10 @@ class TaskCommonSkillSnapshot(BaseModel):
         _validate_skill_bundle(self.skills, self.total_chars)
         return self
 
+    @property
+    def fingerprint(self) -> str:
+        return ":".join(item.content_sha256[:12] for item in self.skills) or "empty"
+
 
 class SolverSkillSnapshot(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)

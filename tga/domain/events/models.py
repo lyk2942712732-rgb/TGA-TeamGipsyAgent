@@ -48,10 +48,15 @@ REQUIRED_PAYLOAD_FIELDS: dict[str, frozenset[str]] = {
 
 
 class VersionedEventPayload(BaseModel):
-    """A transport-safe payload with hard structural and byte bounds."""
+    """A transport-safe payload with hard structural and byte bounds.
+
+    ``payload_version`` versions the payload body only.  The surrounding event
+    envelope carries its own ``schema_version`` (6); keeping the names distinct
+    prevents the two from being read as one version.
+    """
 
     model_config = ConfigDict(extra="allow")
-    schema_version: int = Field(default=1, ge=1, le=1_000)
+    payload_version: int = Field(default=1, ge=1, le=1_000)
 
     @model_validator(mode="after")
     def validate_bounds(self) -> "VersionedEventPayload":
@@ -63,7 +68,7 @@ class VersionedEventPayload(BaseModel):
 
 
 def normalize_event_payload(event_type: str, payload: dict[str, Any]) -> dict[str, Any]:
-    value = VersionedEventPayload.model_validate({"schema_version": 1, **payload}).model_dump(
+    value = VersionedEventPayload.model_validate({"payload_version": 1, **payload}).model_dump(
         mode="json"
     )
     required = REQUIRED_PAYLOAD_FIELDS.get(event_type)

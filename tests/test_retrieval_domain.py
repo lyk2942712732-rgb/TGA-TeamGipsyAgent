@@ -7,6 +7,7 @@ import pytest
 from pydantic import ValidationError
 
 from tga.contracts import TGATask
+from tests.runtime_fixtures import task as v6_task
 from tga.domain.evidence import Artifact
 from tga.domain.knowledge import KnowledgeItem
 from tga.domain.planning import GlobalPlan, Intent
@@ -477,7 +478,7 @@ def test_task_artifact_hit_only_bridges_to_candidate_evidence_and_not_verified_k
     tmp_path: Path,
 ) -> None:
     bundle = PersistenceBundle.open(tmp_path / "retrieval.db")
-    task = TGATask(id="task_artifact_rag", name="RAG", mode="ctf", goal="inspect")
+    task = v6_task(id="task_artifact_rag", name="RAG", mode="ctf", goal="inspect")
     owner = OwnerScope(scope="task", task_id=task.id)
     knowledge_base = KnowledgeBase(id="kb_artifacts", name="Artifacts", owner=owner, created_at=NOW)
     try:
@@ -594,7 +595,7 @@ def test_context_pack_orders_then_truncates_to_policy_token_budget(tmp_path: Pat
 
 def test_context_builder_injects_bounded_labeled_untrusted_reference(tmp_path: Path) -> None:
     bundle = PersistenceBundle.open(tmp_path / "retrieval.db")
-    task = TGATask(id="task_context_rag", name="Context", mode="ctf", goal="find reference")
+    task = v6_task(id="task_context_rag", name="Context", mode="ctf", goal="find reference")
     task_owner = OwnerScope(scope="task", task_id=task.id)
     global_owner = OwnerScope(scope="global")
     knowledge_base = KnowledgeBase(id="kb_context", name="Context", owner=global_owner, created_at=NOW)

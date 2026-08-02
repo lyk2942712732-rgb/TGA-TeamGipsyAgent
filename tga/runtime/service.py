@@ -13,7 +13,7 @@ from tga.contracts import TGATask
 from tga.evidence.store import EvidenceStore
 from tga.evidence.database import DatabaseSchemaVersionError
 from tga.reporting.markdown_report import render_markdown_report
-from tga.runtime.protocol import RUNTIME_SCHEMA_VERSION
+from tga.runtime.protocol import RUNTIME_API_VERSION
 from tga.infrastructure.persistence.bundle import PersistenceBundle
 from tga.domain.task.spec import TaskDirective, TaskSpec
 from tga.domain.skills.models import TaskCommonSkillSnapshot
@@ -107,10 +107,13 @@ class TaskRuntimeService:
                     created_at=created_at,
                     provenance={"source": "session_input.prompt"},
                 )] if prompt else [],
-                resources=[],
+                # TaskSpec is the authoritative resource source. Every staged
+                # input is projected here so runtime authorization never reads
+                # session_input directly.
+                resources=[item.resource_ref() for item in task.session_input.files],
                 provenance={
                     "source": "task_creation",
-                    "session_resources_projected": False,
+                    "session_resources_projected": True,
                     "initial_prompt_is_hint": False,
                 },
             ))
@@ -138,17 +141,16 @@ class TaskRuntimeService:
                     "access": task.execution_policy.network.access,
                 },
             )
-            if task.model_snapshot is not None:
-                store.append_agent_event(
-                    task.id,
-                    "MODEL_CONFIG_SNAPSHOTTED",
-                    {
-                        "provider": task.model_snapshot.provider,
-                        "model": task.model_snapshot.model,
-                        "verification_id": task.model_snapshot.verification_id,
-                        "capability_fingerprint": task.model_snapshot.capability_fingerprint,
-                    },
-                )
+            store.append_agent_event(
+                task.id,
+                "MODEL_CONFIG_SNAPSHOTTED",
+                {
+                    "provider": task.model_snapshot.provider,
+                    "model": task.model_snapshot.model,
+                    "verification_id": task.model_snapshot.verification_id,
+                    "capability_fingerprint": task.model_snapshot.capability_fingerprint,
+                },
+            )
             common_skills = persistence.tasks.get_task_common_skill_snapshot(task.id)
             if common_skills is not None:
                 store.append_agent_event(
@@ -175,7 +177,7 @@ class TaskRuntimeService:
         finally:
             store.close()
         result = self.command("start_session", task.id, initial_hint=initial_hint)
-        return {"schema_version": RUNTIME_SCHEMA_VERSION, "task_id": task.id, **result}
+        return {"api_version": RUNTIME_API_VERSION, "task_id": task.id, **result}
 
     def run_task(self, task_id: str) -> dict[str, Any]:
         self._require_executable_database(task_id)
@@ -268,23 +270,11 @@ class TaskRuntimeService:
                 store, task_id, after_seq=event_after, limit=100
             )
             challenge = store.get_challenge(task_id)
-            artifact_indexes = store.list_artifact_indexes(task_id)[-100:]
             artifact_indexing = repositories.retrieval.list_artifact_index_projections(
                 task_id
             )[-100:]
-            legacy_indexes = {
-                item.artifact_id: {
-                    "artifact_id": item.artifact_id,
-                    "document_type": item.document_type,
-                    "extraction_status": item.extraction_status,
-                    "summary": item.summary,
-                    "segment_count": len(item.segments),
-                    "source_refs": [segment.ref for segment in item.segments[:16]],
-                }
-                for item in artifact_indexes
-            }
-            for item in artifact_indexing:
-                legacy_indexes.setdefault(item.artifact_id, {}).update({
+            artifact_index_payload = [
+                {
                     "artifact_id": item.artifact_id,
                     "indexing_status": item.status,
                     "indexing_attempt": item.attempt,
@@ -298,7 +288,9 @@ class TaskRuntimeService:
                     "indexing_error_message": item.error_message,
                     "indexing_retryable": item.retryable,
                     "indexing_updated_at": item.updated_at,
-                })
+                }
+                for item in artifact_indexing
+            ]
             events = event_page["events"]
             http_sessions: dict[str, dict[str, Any]] = {}
             observer_directives: list[dict[str, Any]] = []
@@ -427,9 +419,7 @@ class TaskRuntimeService:
                 "latest_seq": latest_seq,
                 "challenge": challenge.model_dump(mode="json") if challenge else {},
                 "flags": flags,
-                "artifact_indexes": [
-                    *legacy_indexes.values()
-                ],
+                "artifact_indexes": artifact_index_payload,
                 "http_sessions": list(http_sessions.values()),
                 "observer": {"directives": observer_directives[-20:]},
                 "context_metrics": context_metrics,
@@ -502,7 +492,7 @@ class TaskRuntimeService:
                 },
                 "config_snapshot": {
                     "mode_config": task.mode_config.model_dump(mode="json") if task.mode_config else {},
-                    "execution_policy": task.execution_policy.model_dump(mode="json") if task.execution_policy else {},
+                    "execution_policy": task.execution_policy.model_dump(mode="json"),
                     "execution_budget": task.execution_budget,
                     "model": task.model_snapshot.model_dump(mode="json") if task.model_snapshot else None,
                     "mcp_capabilities": task.mcp_capabilities.model_dump(mode="json"),
@@ -746,10 +736,11 @@ class TaskRuntimeService:
         self._require_executable_database(task_id)
         store = EvidenceStore(self.task_root(task_id) / "evidence.db")
         try:
-            artifact = PersistenceBundle(store).evidence.get_artifact(artifact_id)
+            repositories = PersistenceBundle(store)
+            artifact = repositories.evidence.get_artifact(artifact_id)
             if artifact is None or artifact.task_id != task_id:
                 raise KeyError(f"artifact does not belong to task: {artifact_id}")
-            return store.get_artifact_index(artifact_id)
+            return repositories.retrieval.get_artifact_index_projection(artifact_id)
         finally:
             store.close()
 

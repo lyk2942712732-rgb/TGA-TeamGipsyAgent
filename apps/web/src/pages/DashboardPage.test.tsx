@@ -4,7 +4,7 @@ import type { DashboardResponse } from "../api/operations-query-adapter";
 import { DashboardPage } from "./DashboardPage";
 
 const value: DashboardResponse = {
-  schema_version: 1,
+  view_version: 1,
   generated_at: "2026-07-30T00:00:00Z",
   metrics: { running_tasks: 2, pending_approvals: 1, awaiting_user_input: 1, blocked_tasks: 1, active_solvers: 3 },
   needs_attention: [{ id: "approval:action_one", kind: "approval", task_id: "task_one", task_name: "任务一", title: "等待审批", description: "filesystem.write", status: "pending", risk: "active", action_id: "action_one", updated_at: "2026-07-30T00:00:00Z" }],

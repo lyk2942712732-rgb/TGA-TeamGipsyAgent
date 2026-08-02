@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from tga.contracts import ActionSpec, ArtifactRecord, SessionRecord, TGATask
+from tests.runtime_fixtures import task as v6_task
 from tga.evidence.artifacts import ArtifactStore
 from tga.evidence.store import EvidenceStore, utc_now
 from tga.runtime.coordinator import SessionCoordinator, SessionTransitionError
@@ -17,7 +18,7 @@ from tga.runtime.orchestration import TaskOrchestrator
 
 
 def _task(task_id: str = "tx_task") -> TGATask:
-    return TGATask(
+    return v6_task(
         id=task_id,
         name="transaction test",
         mode="ctf",
@@ -76,8 +77,11 @@ def test_running_transition_updates_session_challenge_and_events_atomically(tmp_
     assert {event.type for event in store.list_agent_events(task.id)} >= {
         "CHALLENGE_STATUS_CHANGED",
         "SESSION_STARTED",
-        "AGENT_STARTED",
     }
+    # Legacy single-agent lifecycle events are no longer persisted.
+    assert not {"AGENT_STARTED", "AGENT_FINISHED", "FINISH_ACCEPTED"}.intersection(
+        event.type for event in store.list_agent_events(task.id)
+    )
     store.close()
 
 
@@ -237,7 +241,7 @@ def test_completion_event_failure_rolls_back_session_solver_challenge_and_flag(t
     original_append = store.append_agent_event
 
     def fail_terminal_event(task_id: str, event_type: str, payload: dict, *, solver_id: str | None = None):
-        if event_type == "AGENT_FINISHED":
+        if event_type == "SESSION_STOPPED":
             raise RuntimeError("inject completion event failure")
         return original_append(task_id, event_type, payload, solver_id=solver_id)
 
@@ -262,6 +266,6 @@ def test_completion_event_failure_rolls_back_session_solver_challenge_and_flag(t
     assert PersistenceBundle(store).solvers.get_solver(solver_id).status == "running"
     assert store.get_challenge(task.id).status == "active"  # type: ignore[union-attr]
     assert store.list_flags(task.id) == []
-    terminal = {"FLAG_CONFIRMED", "FINISH_ACCEPTED", "AGENT_FINISHED", "SESSION_STOPPED"}
+    terminal = {"FLAG_CONFIRMED", "TASK_COMPLETION_ACCEPTED", "SESSION_STOPPED"}
     assert not terminal.intersection(event.type for event in store.list_agent_events(task.id))
     store.close()

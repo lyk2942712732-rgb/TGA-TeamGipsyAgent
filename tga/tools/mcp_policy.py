@@ -6,7 +6,7 @@ import json
 import re
 from typing import Any
 
-from tga.contracts import TGATask
+from tga.tools.mcp_authorization import MCPAuthorizationContext
 from tga.tools.mcp_config import MCPServerConfig
 from tga.tools.mcp_registry import MCPCatalogSnapshot, MCPToolRoute
 
@@ -15,7 +15,7 @@ SENSITIVE_KEY = re.compile(r"password|passwd|secret|token|authorization|api[_-]?
 
 
 class MCPPolicy:
-    def catalog_denial(self, *, task: TGATask, server: MCPServerConfig, method: str) -> str | None:
+    def catalog_denial(self, *, context: MCPAuthorizationContext, server: MCPServerConfig, method: str) -> str | None:
         if server.enabled_tools and method not in server.enabled_tools:
             return "method is not enabled for this server"
         visibility = server.visibility
@@ -23,51 +23,51 @@ class MCPPolicy:
         if method_policy is not None and not method_policy.enabled:
             return "method is disabled"
         modes = method_policy.modes if method_policy and method_policy.modes is not None else visibility.modes
-        if task.mode not in modes:
-            return f"method is not available in {task.mode} mode"
+        if context.mode not in modes:
+            return f"method is not available in {context.mode} mode"
         if visibility.allow_methods and method not in visibility.allow_methods:
             return "method is not in the server allowlist"
         if method in visibility.deny_methods:
             return "method is in the server denylist"
         return None
 
-    def call_denial(self, *, task: TGATask, server_id: str, server: MCPServerConfig, method: str) -> str | None:
-        if server_id not in task.mcp_capabilities.server_ids:
+    def call_denial(self, *, context: MCPAuthorizationContext, server_id: str, server: MCPServerConfig, method: str) -> str | None:
+        if server_id not in context.mcp_capabilities.server_ids:
             return "MCP server was not in the Session creation capability snapshot"
-        if not any(item.server_id == server_id and item.method == method for item in task.mcp_capabilities.tools):
+        if not any(item.server_id == server_id and item.method == method for item in context.mcp_capabilities.tools):
             return "MCP method was not in the Session creation capability snapshot"
-        denial = self.catalog_denial(task=task, server=server, method=method)
+        denial = self.catalog_denial(context=context, server=server, method=method)
         if denial:
             return denial
         risk = self.risk_for(server=server, method=method)
         if risk == "destructive":
             action = f"mcp:{server_id}.{method}"
-            boundary = task.execution_policy.high_impact
+            boundary = context.execution_policy.high_impact
             if boundary.mode == "forbidden":
                 return f"high-impact MCP method is forbidden: {action}"
             if boundary.mode == "approval_required":
                 return f"APPROVAL_REQUIRED:{action}"
             if action not in boundary.allowed_actions:
                 return f"high-impact MCP method is not allowlisted: {action}"
-        if risk == "active" and not self._active_boundary_allows(task):
+        if risk == "active" and not self._active_boundary_allows(context):
             return "active MCP method is blocked by the Session execution boundaries"
         return None
 
-    def visible(self, *, task: TGATask, server: MCPServerConfig, method: str, server_id: str | None = None) -> bool:
+    def visible(self, *, context: MCPAuthorizationContext, server: MCPServerConfig, method: str, server_id: str | None = None) -> bool:
         # Catalog visibility intentionally ignores risk; calls use authorize.
         if server_id is not None:
-            if server_id not in task.mcp_capabilities.server_ids:
+            if server_id not in context.mcp_capabilities.server_ids:
                 return False
-            if not any(item.server_id == server_id and item.method == method for item in task.mcp_capabilities.tools):
+            if not any(item.server_id == server_id and item.method == method for item in context.mcp_capabilities.tools):
                 return False
-        return self.catalog_denial(task=task, server=server, method=method) is None
+        return self.catalog_denial(context=context, server=server, method=method) is None
 
     def filter_snapshot(
-        self, *, task: TGATask, snapshot: MCPCatalogSnapshot, servers: dict[str, MCPServerConfig]
+        self, *, context: MCPAuthorizationContext, snapshot: MCPCatalogSnapshot, servers: dict[str, MCPServerConfig]
     ) -> MCPCatalogSnapshot:
-        allowed_servers = set(task.mcp_capabilities.server_ids)
+        allowed_servers = set(context.mcp_capabilities.server_ids)
         allowed_methods = {
-            (item.server_id, item.method) for item in task.mcp_capabilities.tools
+            (item.server_id, item.method) for item in context.mcp_capabilities.tools
         }
         routes = tuple(
             route
@@ -76,14 +76,14 @@ class MCPPolicy:
             and (route.server_id, route.method) in allowed_methods
             and route.server_id in servers
             and servers[route.server_id].enabled
-            and self.catalog_denial(task=task, server=servers[route.server_id], method=route.method) is None
+            and self.catalog_denial(context=context, server=servers[route.server_id], method=route.method) is None
         )
         return snapshot.model_copy(update={"routes": routes})
 
     def authorize(
-        self, *, task: TGATask, server: MCPServerConfig, route: MCPToolRoute, arguments: dict[str, Any]
+        self, *, context: MCPAuthorizationContext, server: MCPServerConfig, route: MCPToolRoute, arguments: dict[str, Any]
     ) -> str | None:
-        denial = self.call_denial(task=task, server_id=route.server_id, server=server, method=route.method)
+        denial = self.call_denial(context=context, server_id=route.server_id, server=server, method=route.method)
         if denial:
             return denial
         if server.transport == "stdio" and server.stdio and server.stdio.source == "docker_image":
@@ -103,8 +103,8 @@ class MCPPolicy:
         return method_policy.risk if method_policy and method_policy.risk else server.visibility.risk
 
     @staticmethod
-    def _active_boundary_allows(task: TGATask) -> bool:
-        policy = task.execution_policy
+    def _active_boundary_allows(context: MCPAuthorizationContext) -> bool:
+        policy = context.execution_policy
         return bool(
             policy
             and (

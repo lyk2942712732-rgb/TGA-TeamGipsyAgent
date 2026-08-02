@@ -14,7 +14,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
-from tga.contracts import TGATask
+from tga.tools.mcp_authorization import MCPAuthorizationContext
 from tga.tools.mcp_config import DEFAULT_CACHE_PATH, MCPConfig, MCPServerConfig, configured_mcp_path, load_mcp_config
 from tga.tools.mcp_policy import MCPPolicy
 from tga.tools.mcp_registry import (
@@ -142,7 +142,7 @@ class MCPManager:
         return self.refresh(workspace=workspace)
 
     def refresh(
-        self, *, workspace: Path | None = None, task: TGATask | None = None
+        self, *, workspace: Path | None = None, context: MCPAuthorizationContext | None = None
     ) -> MCPCatalogSnapshot:
         with self._lock:
             try:
@@ -174,8 +174,8 @@ class MCPManager:
                     server_id,
                     server,
                     config_hash=config_hash,
-                    workspace=workspace if task is not None else None,
-                    task=task,
+                    workspace=workspace if context is not None else None,
+                    context=context,
                 )
                 discoveries.append(
                     discovery.model_copy(
@@ -193,22 +193,22 @@ class MCPManager:
             self._write_cache(discoveries)
             return self.snapshot
 
-    def snapshot_for_task(self, task: TGATask, *, workspace: Path | None = None) -> MCPCatalogSnapshot:
+    def snapshot_for_task(self, context: MCPAuthorizationContext, *, workspace: Path | None = None) -> MCPCatalogSnapshot:
         if os.environ.get("TGA_SANDBOX_RUNTIME") == "enforced":
             return self.policy.filter_snapshot(
-                task=task,
-                snapshot=self.refresh(workspace=workspace, task=task),
+                context=context,
+                snapshot=self.refresh(workspace=workspace, context=context),
                 servers=self.config.servers if self.config else {},
             )
         snapshot = self.ensure_catalog(workspace=workspace)
         if self.config is None:
             return snapshot
-        return self.policy.filter_snapshot(task=task, snapshot=snapshot, servers=self.config.servers)
+        return self.policy.filter_snapshot(context=context, snapshot=snapshot, servers=self.config.servers)
 
     def call_tool(
         self,
         *,
-        task: TGATask,
+        context: MCPAuthorizationContext,
         route: MCPToolRoute,
         arguments: dict[str, Any],
         catalog_version: str,
@@ -228,7 +228,7 @@ class MCPManager:
         if server is None or not server.enabled:
             return self._failure(route, trace_id, request_id, catalog_version, "CONFIG_ERROR", "route server is not configured and enabled", "config")
         try:
-            policy_error = self.policy.authorize(task=task, server=server, route=route, arguments=arguments)
+            policy_error = self.policy.authorize(context=context, server=server, route=route, arguments=arguments)
         except Exception as exc:
             return self._failure(route, trace_id, request_id, catalog_version, "INVALID_ARGUMENTS", f"schema validation failed safely: {exc}", "policy")
         if policy_error:
@@ -236,7 +236,7 @@ class MCPManager:
             return self._failure(route, trace_id, request_id, catalog_version, code, policy_error, "policy")
 
         return self._call_authorized(
-            task=task,
+            context=context,
             route=route,
             arguments=arguments,
             catalog_version=catalog_version,
@@ -249,7 +249,7 @@ class MCPManager:
     def call_authorized_tool(
         self,
         *,
-        task: TGATask,
+        context: MCPAuthorizationContext,
         route: MCPToolRoute,
         arguments: dict[str, Any],
         catalog_version: str,
@@ -280,7 +280,7 @@ class MCPManager:
                 "CONFIG_ERROR", "route server is not configured and enabled", "config",
             )
         return self._call_authorized(
-            task=task,
+            context=context,
             route=route,
             arguments=arguments,
             catalog_version=catalog_version,
@@ -293,7 +293,7 @@ class MCPManager:
     def _call_authorized(
         self,
         *,
-        task: TGATask,
+        context: MCPAuthorizationContext,
         route: MCPToolRoute,
         arguments: dict[str, Any],
         catalog_version: str,
@@ -327,7 +327,7 @@ class MCPManager:
         timings["discovery_ms"] = 0  # The immutable catalog was discovered before this call.
         phase = "transport_start"
         try:
-            transport = self._build_transport(server, workspace=workspace, task=task)
+            transport = self._build_transport(server, workspace=workspace, context=context)
             phase_start = time.perf_counter()
             transport.connect()
             timings["container_start_ms"] = _elapsed_ms(phase_start)
@@ -457,20 +457,20 @@ class MCPManager:
             global_semaphore.release()
 
     def read_resource(
-        self, *, task: TGATask, server_id: str, uri: str,
+        self, *, context: MCPAuthorizationContext, server_id: str, uri: str,
         workspace: Path | None = None,
     ) -> dict[str, Any]:
         """Perform a side-effect-free MCP resources/read behind task policy."""
 
         self.ensure_catalog(workspace=workspace)
-        if server_id not in task.mcp_capabilities.server_ids:
+        if server_id not in context.mcp_capabilities.server_ids:
             raise PermissionError("MCP_SERVER_NOT_IN_SESSION_SNAPSHOT")
         server = self.config.servers.get(server_id) if self.config else None
         if server is None or not server.enabled:
             raise PermissionError("MCP_SERVER_NOT_AVAILABLE")
         transport: MCPTransport | None = None
         try:
-            transport = self._build_transport(server, workspace=workspace, task=task)
+            transport = self._build_transport(server, workspace=workspace, context=context)
             transport.connect()
             initialize = self._initialize(transport, f"init_{uuid4().hex[:12]}", server.timeout_seconds)
             transport.send({"jsonrpc": "2.0", "method": "notifications/initialized"})
@@ -493,7 +493,7 @@ class MCPManager:
             if transport is not None:
                 transport.close()
 
-    def status_snapshot(self, task: TGATask | None = None) -> dict[str, Any]:
+    def status_snapshot(self, context: MCPAuthorizationContext | None = None) -> dict[str, Any]:
         self.ensure_catalog()
         configured = self.config.servers if self.config else {}
         by_id = {item.server_id: item for item in self.snapshot.servers}
@@ -502,8 +502,8 @@ class MCPManager:
             discovery = by_id.get(server_id)
             call_health = self._call_health.get(server_id) or {}
             visible_count = None
-            if task is not None:
-                visible_count = sum(1 for route in self.policy.filter_snapshot(task=task, snapshot=self.snapshot, servers=configured).routes if route.server_id == server_id)
+            if context is not None:
+                visible_count = sum(1 for route in self.policy.filter_snapshot(context=context, snapshot=self.snapshot, servers=configured).routes if route.server_id == server_id)
             records.append(
                 {
                     "server": server_id,
@@ -562,11 +562,11 @@ class MCPManager:
 
     def _discover(
         self, server_id: str, server: MCPServerConfig, *, config_hash: str,
-        workspace: Path | None, task: TGATask | None = None,
+        workspace: Path | None, context: MCPAuthorizationContext | None = None,
     ) -> MCPServerDiscovery:
         transport: MCPTransport | None = None
         try:
-            transport = self._build_transport(server, workspace=workspace, task=task)
+            transport = self._build_transport(server, workspace=workspace, context=context)
             transport.connect()
             initialize = self._initialize(transport, f"init_{uuid4().hex[:12]}", server.timeout_seconds)
             transport.send({"jsonrpc": "2.0", "method": "notifications/initialized"})
@@ -608,11 +608,11 @@ class MCPManager:
         server: MCPServerConfig,
         *,
         workspace: Path | None,
-        task: TGATask | None,
+        context: MCPAuthorizationContext | None,
     ) -> MCPTransport:
         factory = None
-        if self.sandbox_process_factory is not None and task is not None:
-            factory = lambda: self.sandbox_process_factory(task, server, workspace)
+        if self.sandbox_process_factory is not None and context is not None:
+            factory = lambda: self.sandbox_process_factory(context, server, workspace)
         return build_transport(
             server,
             workspace=workspace,

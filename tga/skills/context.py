@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from tga.skills.models import SkillBundleSnapshot
+from tga.domain.skills.models import TaskCommonSkillSnapshot
 
 
 class SkillContextAssembler:
     """One formatting boundary shared by system, audit, and future RAG context."""
 
-    def system_block(self, bundle: SkillBundleSnapshot | None) -> str:
+    def system_block(self, bundle: TaskCommonSkillSnapshot | None) -> str:
         if bundle is None or not bundle.skills:
             return ""
         sections = [
@@ -20,7 +20,7 @@ class SkillContextAssembler:
         for skill in bundle.skills:
             sections.extend([
                 f"## Skill: {skill.name} (version {skill.version})",
-                f"Required capabilities: {', '.join(skill.capabilities) or 'none'}",
+                f"Required capabilities: {', '.join(skill.required_capabilities) or 'none'}",
                 skill.body,
             ])
         sections.append(
@@ -28,7 +28,7 @@ class SkillContextAssembler:
         )
         return "\n\n".join(sections)
 
-    def manifest(self, bundle: SkillBundleSnapshot | None) -> list[dict]:
+    def manifest(self, bundle: TaskCommonSkillSnapshot | None) -> list[dict]:
         if bundle is None:
             return []
         return [
@@ -36,10 +36,10 @@ class SkillContextAssembler:
                 "name": skill.name,
                 "version": skill.version,
                 "origin": skill.origin,
-                "capabilities": skill.capabilities,
-                "tags": skill.tags,
+                "capabilities": list(skill.required_capabilities),
+                "tags": list(skill.tags),
                 "content_sha256": skill.content_sha256,
-                "selection_reasons": skill.selection_reasons,
+                "selection_reasons": list(skill.selection_reasons),
             }
             for skill in bundle.skills
         ]

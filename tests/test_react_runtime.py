@@ -1,10 +1,13 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import hashlib
 import json
 from pathlib import Path
 
+import pytest
+
 from tga.contracts import ResourceProvenance, SessionFile, SessionInput, TGATask
+from tests.runtime_fixtures import configure_verified_model, task as v6_task
 from tga.evidence.store import EvidenceStore
 from tga.infrastructure.persistence import PersistenceBundle
 from tga.runtime.manager import Manager, RuntimeLimits
@@ -12,6 +15,12 @@ from tga.tools.mcp_manager import MCPManager
 from tga.domain.skills.models import SkillSnapshot, TaskCommonSkillSnapshot
 from tga.domain.task.spec import TaskSpec
 from tga.domain.retrieval import OwnerScope
+
+
+@pytest.fixture(autouse=True)
+def verified_model(monkeypatch):
+    """A schema-v6 task carries a model_snapshot, so the provider must verify."""
+    configure_verified_model(monkeypatch)
 
 
 class FakeModelClient:
@@ -190,7 +199,7 @@ def _seed_task(tmp_path: Path, *, task_id: str, flag: str = "CTF{model_independe
         mediaKind="text",
         provenance=ResourceProvenance(source="user_upload", original_name="challenge.txt"),
     )
-    task = TGATask(
+    task = v6_task(
         id=task_id,
         name="model-independent ReAct",
         mode="ctf",
@@ -206,7 +215,13 @@ def _seed_task(tmp_path: Path, *, task_id: str, flag: str = "CTF{model_independe
     store = EvidenceStore(tmp_path / task.id / "evidence.db")
     store.create_task(task)
     bundle = PersistenceBundle(store)
-    bundle.tasks.save_task_spec(TaskSpec(task_id=task.id, objective=task.goal))
+    # TaskSpec is the authoritative resource source, exactly as task creation
+    # projects staged inputs.
+    bundle.tasks.save_task_spec(TaskSpec(
+        task_id=task.id,
+        objective=task.goal,
+        resources=[entry.resource_ref() for entry in task.session_input.files],
+    ))
     store.close()
     return task, item
 
@@ -277,11 +292,9 @@ def test_fake_model_drives_real_react_tool_feedback_and_completion(tmp_path: Pat
         event_types = [event.type for event in store.list_agent_events(task.id)]
         assert "ARTIFACT_SAVED" in event_types
         assert "TOOL_EXECUTION_END" in event_types
-        finish_index = event_types.index("FINISH_ACCEPTED")
-        assert event_types[finish_index:finish_index + 3] == [
-            "FINISH_ACCEPTED", "AGENT_FINISHED", "SESSION_STOPPED"
-        ]
-        assert event_types.count("FINISH_ACCEPTED") == 1
+        finish_index = event_types.index("TASK_COMPLETION_ACCEPTED")
+        assert event_types.index("SESSION_STOPPED") > finish_index
+        assert event_types.count("TASK_COMPLETION_ACCEPTED") == 1
         assert store.list_flags(task.id)[0]["evidence_artifact_id"] == artifact_id
         durable_solvers = PersistenceBundle(store).solvers.list_solvers(task.id)
         assert len(durable_solvers) == 1
@@ -371,11 +384,9 @@ def test_finish_rejection_continues_to_real_evidence_and_completion(tmp_path: Pa
     events = snapshot["events"]
     types = [event["type"] for event in events]
     assert types.index("FINISH_REJECTED") < types.index("CONTINUATION_TRIGGERED") < types.index("ARTIFACT_SAVED")
-    finish_index = types.index("FINISH_ACCEPTED")
-    assert types[finish_index:finish_index + 3] == [
-        "FINISH_ACCEPTED", "AGENT_FINISHED", "SESSION_STOPPED"
-    ]
-    assert types.count("FINISH_ACCEPTED") == 1
+    finish_index = types.index("TASK_COMPLETION_ACCEPTED")
+    assert types.index("SESSION_STOPPED") > finish_index
+    assert types.count("TASK_COMPLETION_ACCEPTED") == 1
 
 
 def test_provider_failure_blocks_with_observable_reason(tmp_path: Path) -> None:

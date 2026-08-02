@@ -7,7 +7,7 @@ from tga.capabilities.runtime import ControlledActionExecutor, ExecutionBudget
 from tga.contracts import TGATask
 from tga.evidence.artifacts import ArtifactStore
 from tga.evidence.store import EvidenceStore
-from tests.runtime_fixtures import execution_policy
+from tests.runtime_fixtures import execution_policy, task as v6_task
 
 
 def test_legacy_executor_never_performs_http_network_io(tmp_path):
@@ -22,7 +22,7 @@ def test_legacy_executor_never_performs_http_network_io(tmp_path):
     try:
         from tga.contracts import ActionSpec
         base = f"http://127.0.0.1:{server.server_port}"
-        task = TGATask(id="preflight", name="preflight", mode="ctf", task_entry_url=f"{base}/", goal="test", execution_policy=execution_policy([base]))
+        task = v6_task(id="preflight", name="preflight", mode="ctf", task_entry_url=f"{base}/", goal="test", execution_policy=execution_policy([base]))
         executor = ControlledActionExecutor(artifact_store=ArtifactStore(tmp_path / "artifacts"), budget=ExecutionBudget(http_requests_per_minute=10_000, http_burst=128, http_concurrency=128))
         action = ActionSpec(
             id="act_preflight", task_id=task.id, solver_id="solver",
@@ -63,7 +63,7 @@ def test_http_cookie_profiles_are_isolated_by_task_solver_and_origin(tmp_path):
         sessions = HTTPSessionRegistry()
 
         def request(task_id: str, solver_id: str, target: str, path: str) -> str:
-            task = TGATask(id=task_id, name=task_id, mode="ctf", task_entry_url=f"{target}/", goal="test", execution_policy=execution_policy([base, other]))
+            task = v6_task(id=task_id, name=task_id, mode="ctf", task_entry_url=f"{target}/", goal="test", execution_policy=execution_policy([base, other]))
             action = ActionSpec(id=f"act_{task_id}_{solver_id}_{path[-3:]}", task_id=task_id, solver_id=solver_id, kind="http", capability="http.request", target=target, arguments={"method": "GET", "path": path}, rationale="cookie isolation test", risk="passive")
             _, raw, _, _ = execute_http(task=task, action=action, args=HTTPRequestArguments(method="GET", path=path), sessions=sessions)
             return raw.decode()

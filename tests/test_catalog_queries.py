@@ -9,7 +9,9 @@ from fastapi.testclient import TestClient
 
 from apps.api.main import app
 from tga.contracts import TGATask
+from tests.runtime_fixtures import task as v6_task
 from tga.evidence.store import EvidenceStore
+from tga.modes import TASK_MODES, default_execution_policy
 
 
 CATALOG_KINDS = (
@@ -20,7 +22,7 @@ CATALOG_KINDS = (
 
 def _store(run_root: Path, task_id: str, *, schema_version: int = 6) -> EvidenceStore:
     store = EvidenceStore(run_root / task_id / "evidence.db")
-    task = TGATask(
+    task = v6_task(
         id=task_id, name=f"Task {task_id}", mode="ctf",
         goal="Exercise catalog queries",
     )
@@ -64,7 +66,7 @@ def test_all_catalog_kinds_have_stable_bounded_api_shape(
     assert response.status_code == 200
     payload = response.json()
     assert payload == {
-        **payload, "schema_version": 1, "kind": kind, "supported": True,
+        **payload, "view_version": 1, "kind": kind, "supported": True,
         "reason": None, "offset": 0, "limit": 2,
     }
     assert len(payload["items"]) <= 2
@@ -220,3 +222,34 @@ def test_unknown_catalog_kind_has_structured_404(monkeypatch, tmp_path) -> None:
         "message": "catalog kind is not available",
         "kind": "unknown",
     }
+
+
+def test_policy_catalog_projects_one_real_execution_policy_per_mode(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setenv("TGA_RUN_ROOT", str(tmp_path / "runs"))
+
+    payload = TestClient(app).get(
+        "/api/v2/catalog/policies", params={"limit": 200}
+    ).json()
+
+    assert payload["total"] == len(TASK_MODES)
+    by_mode = {item["mode"]: item for item in payload["items"]}
+    assert set(by_mode) == set(TASK_MODES)
+    for mode in TASK_MODES:
+        record = by_mode[mode]
+        expected = default_execution_policy(mode)
+        assert record["id"] == f"{mode}-execution-policy"
+        assert record["editable"] is False
+        assert record["preset"] == expected.preset
+        assert record["execution_policy"] == expected.model_dump(mode="json")
+
+
+def test_policy_catalog_search_narrows_to_one_mode(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("TGA_RUN_ROOT", str(tmp_path / "runs"))
+
+    payload = TestClient(app).get(
+        "/api/v2/catalog/policies", params={"query": "penetration_test"}
+    ).json()
+
+    assert [item["mode"] for item in payload["items"]] == ["penetration_test"]

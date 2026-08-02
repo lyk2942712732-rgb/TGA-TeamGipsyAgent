@@ -10,11 +10,14 @@ from pathlib import PurePath
 from typing import Any
 
 from tga.modes import TaskMode
-from tga.skills.models import SkillBundleSnapshot, SkillSnapshot
+from tga.domain.skills.models import SkillSnapshot, TaskCommonSkillSnapshot
 from tga.skills.retrieval import RegistrySkillRetriever, SkillRetrievalQuery, SkillRetriever
 
 
-MAX_SELECTED_SKILLS = 3
+# The schema-v6 Task Common Skill snapshot admits at most two Skills.  The
+# selector shares that bound so a third Skill is rejected at the entry point
+# instead of being silently dropped later.
+MAX_SELECTED_SKILLS = 2
 MAX_SKILL_BODY_CHARS = 12_000
 MAX_SKILL_CONTEXT_CHARS = 24_000
 CUSTOM_SKILL_PRIORITY = 1_000
@@ -24,6 +27,7 @@ CUSTOM_SKILL_PRIORITY = 1_000
 class SkillSelectionRequest:
     mode: TaskMode
     goal: str
+    task_id: str
     prompt: str = ""
     file_names: tuple[str, ...] = ()
     mode_config: dict[str, Any] | None = None
@@ -44,7 +48,9 @@ class SkillSelector:
     def __init__(self, retriever: SkillRetriever | None = None) -> None:
         self.retriever = retriever or RegistrySkillRetriever()
 
-    def select(self, request: SkillSelectionRequest) -> SkillBundleSnapshot:
+    def select(
+        self, request: SkillSelectionRequest, *, created_at: str
+    ) -> TaskCommonSkillSnapshot:
         requested_names = request.selected_skill_names
         if requested_names is not None:
             if len(requested_names) > MAX_SELECTED_SKILLS:
@@ -77,7 +83,9 @@ class SkillSelector:
                         f"selected Skill {name} requires unavailable capabilities: {', '.join(missing)}"
                     )
                 ranked.append((10_000 - index, name, candidate, ["用户在创建任务时手动选择"]))
-            return self._snapshot(request, ranked, selection_mode="manual")
+            return self._snapshot(
+                request, ranked, selection_mode="manual", created_at=created_at
+            )
 
         for candidate in candidates:
             skill = candidate.skill
@@ -105,7 +113,9 @@ class SkillSelector:
             ranked.append((score, skill.name, candidate, list(dict.fromkeys(reasons))))
         ranked.sort(key=lambda item: (-item[0], item[1]))
 
-        return self._snapshot(request, ranked, selection_mode="automatic")
+        return self._snapshot(
+            request, ranked, selection_mode="automatic", created_at=created_at
+        )
 
     def _snapshot(
         self,
@@ -113,7 +123,8 @@ class SkillSelector:
         ranked: list[tuple[int, str, Any, list[str]]],
         *,
         selection_mode: str,
-    ) -> SkillBundleSnapshot:
+        created_at: str,
+    ) -> TaskCommonSkillSnapshot:
 
         selected: list[SkillSnapshot] = []
         used_chars = 0
@@ -133,20 +144,21 @@ class SkillSelector:
                 name=candidate.skill.name,
                 version=candidate.skill.version,
                 origin=candidate.origin,
-                modes=candidate.skill.modes,
-                capabilities=candidate.skill.capabilities,
-                tags=candidate.skill.tags,
+                modes=tuple(candidate.skill.modes),
+                required_capabilities=tuple(candidate.skill.capabilities),
+                tags=tuple(candidate.skill.tags),
                 body=body,
                 content_sha256=hashlib.sha256(body.encode("utf-8")).hexdigest(),
-                score=min(score, 10_000),
-                selection_reasons=reasons[:12],
+                selection_reasons=tuple(reasons[:16]),
             ))
             used_chars += len(body)
-        return SkillBundleSnapshot(
-            selector=f"{self.selector_id}:{self.retriever.retriever_id}:{selection_mode}",
-            query_summary=request.search_text[:2_000],
-            skills=selected,
+        return TaskCommonSkillSnapshot(
+            task_id=request.task_id,
+            selector=f"task-common:{self.selector_id}:{self.retriever.retriever_id}:{selection_mode}"[:128],
+            skills=tuple(selected),
             total_chars=sum(len(item.body) for item in selected),
+            created_at=created_at,
+            legacy_import=False,
         )
 
 

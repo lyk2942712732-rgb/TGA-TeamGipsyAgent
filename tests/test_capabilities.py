@@ -15,11 +15,11 @@ from tga.capabilities.runtime import ControlledActionExecutor, ExecutionBudget
 from tga.capabilities.schemas import HTTPRequestArguments
 from tga.contracts import ActionSpec, TGATask
 from tga.evidence.artifacts import ArtifactStore
-from tests.runtime_fixtures import execution_policy
+from tests.runtime_fixtures import execution_policy, task as v6_task
 
 
 def _task() -> TGATask:
-    return TGATask(
+    return v6_task(
         id="task_capability",
         name="capability test",
         mode="ctf",

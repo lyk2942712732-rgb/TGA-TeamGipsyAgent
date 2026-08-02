@@ -17,10 +17,7 @@ def test_cli_run_fails_clearly_without_a_configured_model(tmp_path: Path, monkey
                 "name": "demo",
                 "mode": "vulnerability_research",
                 "goal": "scan",
-                "mode_config": {"mode": "vulnerability_research"},
-                "execution_policy": {},
-                "session_input": {"prompt": "", "files": []},
-                "schema_version": 6,
+                "input": {"text": "scan the authorized target"},
             }
         ),
         encoding="utf-8",
@@ -28,8 +25,11 @@ def test_cli_run_fails_clearly_without_a_configured_model(tmp_path: Path, monkey
     run_root = tmp_path / "runs"
 
     monkeypatch.delenv("TGA_LLM_API_KEY", raising=False)
-    with pytest.raises(RuntimeError, match="runtime model is not configured"):
+    # The CLI shares the Web/API creation path, so an unconfigured model is
+    # rejected by preflight before any task is persisted.
+    with pytest.raises(SystemExit):
         main(["run", str(config), "--run-root", str(run_root)])
+    assert not run_root.exists()
 
 
 def test_cli_go_delegates_to_desktop_launcher(monkeypatch):

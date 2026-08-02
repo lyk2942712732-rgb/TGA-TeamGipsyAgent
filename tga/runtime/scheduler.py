@@ -265,7 +265,7 @@ class RuntimeScheduler:
                 return
             repositories = PersistenceBundle(store)
             orchestration = repositories.orchestration.get_state(task_id)
-            solver_id = session.active_solver_id or (
+            solver_id = (
                 orchestration.supervisor_solver_id if orchestration is not None else None
             )
             message = _redact_error(str(exc))[:1000]

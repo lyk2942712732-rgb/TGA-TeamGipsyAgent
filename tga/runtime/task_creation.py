@@ -19,7 +19,6 @@ from tga.modes import mode_profile, normalize_mode, validate_task_profile
 from tga.network_policy import input_network_seeds
 from tga.runtime.service import TaskRuntimeService
 from tga.runtime.prompt_settings import load_agent_prompt_settings, snapshot_for_mode
-from tga.domain.skills.snapshots import current_skill_bundle_to_task_common
 from tga.domain.skills.models import TaskCommonSkillSnapshot
 from tga.skills.selection import SkillSelectionRequest, SkillSelector
 from tga.tools.mcp_manager import MCPManager
@@ -164,22 +163,23 @@ class TaskCreationService:
             capabilities = build_mcp_capability_snapshot(self.mcp_manager)
             prompt_snapshot = snapshot_for_mode(load_agent_prompt_settings(), mode)
             mode_config = {**command.mode_options, "mode": mode}
+            created_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
             try:
-                skill_bundle = self.skill_selector.select(SkillSelectionRequest(
-                    mode=mode,
-                    goal=(command.goal or mode_profile(mode).default_goal).strip(),
-                    prompt=session_input.prompt,
-                    file_names=tuple(item.original_name for item in session_input.files),
-                    mode_config=mode_config,
-                    available_capabilities=available_capabilities(mode, capabilities, policy),
-                    selected_skill_names=command.selected_skill_names,
-                ))
+                task_common_skills = self.skill_selector.select(
+                    SkillSelectionRequest(
+                        mode=mode,
+                        task_id=task_id,
+                        goal=(command.goal or mode_profile(mode).default_goal).strip(),
+                        prompt=session_input.prompt,
+                        file_names=tuple(item.original_name for item in session_input.files),
+                        mode_config=mode_config,
+                        available_capabilities=available_capabilities(mode, capabilities, policy),
+                        selected_skill_names=command.selected_skill_names,
+                    ),
+                    created_at=created_at,
+                )
             except ValueError as exc:
                 raise TaskCreationError("SKILL_SELECTION_INVALID", str(exc)) from exc
-            created_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
-            task_common_skills = current_skill_bundle_to_task_common(
-                skill_bundle, task_id=task_id, created_at=created_at
-            )
             task = TGATask(
                 id=task_id,
                 name=command.name.strip(),
@@ -216,19 +216,19 @@ class TaskCreationService:
         fingerprint = self._preflight_fingerprint(
             command=command,
             task=task,
-            skill_fingerprint=skill_bundle.fingerprint,
+            skill_fingerprint=task_common_skills.fingerprint,
             provider=provider,
         )
         return TaskPreflight(
             fingerprint=fingerprint,
             task=task,
             task_common_skills=task_common_skills,
-            skill_fingerprint=skill_bundle.fingerprint,
+            skill_fingerprint=task_common_skills.fingerprint,
             checks=(
                 {"id": "model", "status": "passed", "detail": "verified model snapshot"},
                 {"id": "inputs", "status": "passed", "detail": f"{len(session_input.files)} staged inputs verified"},
                 {"id": "policy", "status": "passed", "detail": "mode and execution policy validated"},
-                {"id": "skills", "status": "passed", "detail": f"{len(skill_bundle.skills)} Skills selected"},
+                {"id": "skills", "status": "passed", "detail": f"{len(task_common_skills.skills)} Skills selected"},
                 {"id": "mcp", "status": "passed", "detail": f"catalog {capabilities.catalog_version}"},
             ),
         )

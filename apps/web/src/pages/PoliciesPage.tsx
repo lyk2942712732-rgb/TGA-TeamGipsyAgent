@@ -1,31 +1,43 @@
 import { useQuery } from "@tanstack/react-query";
-import { Copy, Info, PencilLine, Plus, Search } from "lucide-react";
-import { useState } from "react";
-import { fetchProductCatalog } from "../api/catalog-query-adapter";
+import { Info, Search } from "lucide-react";
+import { useMemo, useState } from "react";
+import { fetchExecutionPolicies, type ExecutionPolicyRecord } from "../api/catalog-query-adapter";
 import { CatalogTable, type Column } from "../components/ui/CatalogTable";
 import { EmptyState } from "../components/ui/EmptyState";
+import { ErrorState } from "../components/ui/ErrorState";
+import { LoadingSkeleton } from "../components/ui/LoadingSkeleton";
 import { DetailTabs, type DetailTab } from "../components/ui/DetailTabs";
-import { useToast } from "../components/ui/Toast";
+import { FieldGrid } from "../components/ui/FieldGrid";
 
 /**
  * 策略与预算.
  *
- * `/api/v2/catalog/policies` currently projects a single record describing the
- * immutable execution-policy contract frozen at task creation.  There is no
- * editable policy-template store behind it yet, so the list shows exactly that
- * record instead of a catalogue of invented templates.
+ * `/api/v2/catalog/policies` projects the immutable ExecutionPolicy preset each
+ * task mode freezes at creation time.  Every value on this page is read from
+ * that record; there is no editable policy store, so nothing here is writable
+ * and no rule text is authored in the frontend.
  */
 
-type PolicyRow = {
-  id: string;
-  summary: string;
-  modes: string;
-  network: string;
-  highImpact: string;
-  status: "启用" | "草稿";
-  network_rules: string[];
-  high_impact_rules: string[];
-  budget_rules: string[];
+const PRESET_LABELS: Record<string, string> = {
+  autonomous_ctf: "自主解题",
+  safe_observation: "安全观察",
+  offline_analysis: "离线分析",
+  custom: "自定义",
+};
+
+const NETWORK_ACCESS_LABELS: Record<string, string> = {
+  disabled: "禁用",
+  task_sources: "仅任务来源",
+  public_internet: "公网",
+  custom: "自定义",
+};
+
+const INTERACTION_LABELS: Record<string, string> = { observe: "只读观察", interact: "允许交互" };
+const COMPUTE_LABELS: Record<string, string> = { disabled: "禁用", isolated: "隔离容器" };
+const HIGH_IMPACT_LABELS: Record<string, string> = {
+  forbidden: "禁止",
+  approval_required: "需审批",
+  allowlisted: "白名单放行",
 };
 
 const TABS: DetailTab[] = [
@@ -36,59 +48,73 @@ const TABS: DetailTab[] = [
 ];
 
 export function PoliciesPage() {
-  const toast = useToast();
   const [tab, setTab] = useState("execution");
   const [search, setSearch] = useState("");
   const [selectedId, setSelectedId] = useState("");
 
-  const query = useQuery({ queryKey: ["catalog", "policies"], queryFn: () => fetchProductCatalog("policies") });
+  const query = useQuery({ queryKey: ["catalog", "policies"], queryFn: () => fetchExecutionPolicies() });
 
-  const real: PolicyRow[] = (query.data?.items ?? []).map((item) => ({
-    id: String(item.id ?? "task-execution-policy"),
-    summary: "任务创建时冻结的执行策略契约",
-    modes: "全部",
-    network: "任务契约决定",
-    highImpact: "任务契约决定",
-    status: "启用",
-    network_rules: ["执行策略在创建任务时冻结为不可变快照"],
-    high_impact_rules: ["高影响操作经 ToolGovernanceGateway 裁决"],
-    budget_rules: ["预算由 Solver Definition 的 default_budget 提供"],
-  }));
+  const rows = useMemo(() => {
+    const needle = search.trim().toLocaleLowerCase();
+    return (query.data?.items ?? []).filter((row) => !needle
+      || row.id.toLocaleLowerCase().includes(needle)
+      || row.mode.toLocaleLowerCase().includes(needle)
+      || row.mode_label.toLocaleLowerCase().includes(needle)
+      || row.preset.toLocaleLowerCase().includes(needle));
+  }, [query.data, search]);
 
-  const rows = real.filter((row) => (
-    !search.trim() || row.id.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase())
-  ));
   const selected = rows.find((row) => row.id === selectedId) ?? rows[0] ?? null;
 
-  const columns: Array<Column<PolicyRow>> = [
+  const columns: Array<Column<ExecutionPolicyRecord>> = [
     { id: "name", header: "名称", render: (row) => <strong className="policy-name">{row.id}</strong> },
-    { id: "modes", header: "适用模式", render: (row) => <span className="cell-muted">{row.modes}</span> },
-    { id: "network", header: "网络", render: (row) => <span className="cell-muted">{row.network}</span> },
-    { id: "impact", header: "高影响", render: (row) => <span className={row.highImpact === "需审批" ? "policy-warn" : ""}>{row.highImpact}</span> },
-    { id: "status", header: "状态", render: (row) => <span className={`ref-chip ${row.status === "启用" ? "tone-ok" : "tone-warn"}`}>{row.status}</span> },
+    { id: "modes", header: "适用模式", render: (row) => <span className="cell-muted">{row.mode_label}</span> },
+    { id: "preset", header: "预设", render: (row) => <span className="ref-chip tone-info">{PRESET_LABELS[row.preset] ?? row.preset}</span> },
+    {
+      id: "network", header: "网络",
+      render: (row) => <span className="cell-muted">
+        {NETWORK_ACCESS_LABELS[row.execution_policy.network.access] ?? row.execution_policy.network.access}
+        {" · "}
+        {INTERACTION_LABELS[row.execution_policy.network.interaction] ?? row.execution_policy.network.interaction}
+      </span>,
+    },
+    {
+      id: "impact", header: "高影响",
+      render: (row) => {
+        const mode = row.execution_policy.high_impact.mode;
+        const label = HIGH_IMPACT_LABELS[mode] ?? mode;
+        return <span className={mode === "approval_required" ? "policy-warn" : ""}>{label}</span>;
+      },
+    },
+    // The catalog only publishes presets the backend can actually resolve, and
+    // marks them non-editable; there is no draft state to render.
+    { id: "status", header: "状态", render: () => <span className="ref-chip tone-ok">启用</span> },
   ];
 
   return <div className="ref-page">
     <header className="ref-page-head">
       <div>
         <h1>策略与预算</h1>
-        <p>管理默认授权模板、工具策略与任务预算</p>
+        <p>任务模式在创建时冻结的执行策略预设（只读）</p>
       </div>
-      <button className="ref-primary-button" onClick={() => toast.notifyUnavailable("新建策略")}><Plus size={16} />新建策略</button>
     </header>
 
     <DetailTabs tabs={TABS} active={tab} onSelect={setTab} size="lg" />
 
-    {tab !== "execution"
-      ? <EmptyState label={`暂无${TABS.find((item) => item.id === tab)?.label}数据`} />
+    {tab !== "execution" ? <EmptyState label={`暂无${TABS.find((item) => item.id === tab)?.label}数据`} />
+      : query.isLoading ? <LoadingSkeleton label="正在读取执行策略预设" rows={5} />
+      : query.isError ? <ErrorState
+        description={query.error instanceof Error ? query.error.message : "无法读取执行策略目录"}
+        actionLabel="重试"
+        onAction={() => void query.refetch()}
+      />
       : <div className="ref-master-detail policies-layout ref-fill">
         <section className="ref-card">
-          <header className="ref-card-head"><h2>执行策略模板</h2></header>
+          <header className="ref-card-head"><h2>执行策略预设</h2></header>
           <label className="ref-search">
             <Search size={16} aria-hidden="true" />
             <input
               aria-label="搜索策略名称"
-              placeholder="搜索策略名称、模式或标签..."
+              placeholder="搜索策略名称、模式或预设..."
               value={search}
               onChange={(event) => setSearch(event.target.value)}
             />
@@ -99,39 +125,58 @@ export function PoliciesPage() {
             rowKey={(row) => row.id}
             selectedKey={selected?.id}
             onSelect={(row) => setSelectedId(row.id)}
+            emptyLabel="没有匹配的执行策略"
           />
         </section>
 
-        {selected ? <section className="ref-detail-panel" aria-label={`${selected.id} 详情`}>
-          <header className="ref-detail-head">
-            <div className="ref-detail-title">
-              <h2>{selected.id}</h2>
-              <span className={`ref-chip ${selected.status === "启用" ? "tone-ok" : "tone-warn"}`}>{selected.status}</span>
-            </div>
-          </header>
-          <p className="skill-summary">{selected.summary}</p>
-
-          <RuleBlock title="网络访问" rules={selected.network_rules} />
-          <RuleBlock title="高影响操作" rules={selected.high_impact_rules} />
-          <RuleBlock title="预算上限" rules={selected.budget_rules} />
-
-          <div className="policy-actions">
-            <button className="ref-secondary-button" onClick={() => toast.notifyUnavailable("复制模板")}><Copy size={14} />复制模板</button>
-            <button className="ref-primary-button" onClick={() => toast.notifyUnavailable("编辑新版本")}><PencilLine size={15} />编辑新版本</button>
-          </div>
-
-          <ul className="policy-notes">
-            <li><Info size={13} aria-hidden="true" />创建任务时生成不可变快照</li>
-            <li><Info size={13} aria-hidden="true" />Skill 与 Solver 不得扩大权限</li>
-          </ul>
-        </section> : null}
+        {selected ? <PolicyDetail record={selected} /> : null}
       </div>}
   </div>;
 }
 
-function RuleBlock({ title, rules }: { title: string; rules: string[] }) {
-  return <section className="policy-rule-block">
-    <h3>{title}</h3>
-    <ul>{rules.map((rule) => <li key={rule}>{rule}</li>)}</ul>
+function PolicyDetail({ record }: { record: ExecutionPolicyRecord }) {
+  const { network, local_compute: compute, high_impact: impact } = record.execution_policy;
+  return <section className="ref-detail-panel" aria-label={`${record.id} 详情`}>
+    <header className="ref-detail-head">
+      <div className="ref-detail-title">
+        <h2>{record.id}</h2>
+        <span className="ref-chip tone-info">{PRESET_LABELS[record.preset] ?? record.preset}</span>
+      </div>
+      <span className="ref-chip tone-ok">启用</span>
+    </header>
+    <p className="skill-summary">{record.mode_label} · 来源：{record.source}</p>
+
+    <h3 className="ref-subhead">网络访问</h3>
+    <FieldGrid columns={2} fields={[
+      { label: "访问范围", value: NETWORK_ACCESS_LABELS[network.access] ?? network.access },
+      { label: "交互方式", value: INTERACTION_LABELS[network.interaction] ?? network.interaction },
+      { label: "速率限制", value: `${network.rate_limit_per_minute} 次/分钟` },
+      { label: "并发限制", value: network.concurrency },
+      { label: "请求超时", value: `${network.request_timeout_seconds} 秒` },
+      { label: "拒绝私有网段", value: network.deny_private_networks ? "是" : "否" },
+      { label: "拒绝回环地址", value: network.deny_loopback ? "是" : "否" },
+      { label: "拒绝链路本地", value: network.deny_link_local ? "是" : "否" },
+      { label: "拒绝云元数据", value: network.deny_cloud_metadata ? "是" : "否" },
+      { label: "种子来源", value: network.seed_origins.join("、"), missing: !network.seed_origins.length },
+    ]} />
+
+    <h3 className="ref-subhead">本地计算</h3>
+    <FieldGrid columns={2} fields={[
+      { label: "执行模式", value: COMPUTE_LABELS[compute.mode] ?? compute.mode },
+      { label: "超时", value: `${compute.timeout_seconds} 秒` },
+      { label: "并发限制", value: compute.concurrency },
+      { label: "网络继承", value: compute.network_inheritance },
+    ]} />
+
+    <h3 className="ref-subhead">高影响操作</h3>
+    <FieldGrid columns={2} fields={[
+      { label: "处理方式", value: HIGH_IMPACT_LABELS[impact.mode] ?? impact.mode },
+      { label: "放行操作", value: impact.allowed_actions.join("、"), missing: !impact.allowed_actions.length },
+    ]} />
+
+    <ul className="policy-notes">
+      <li><Info size={13} aria-hidden="true" />创建任务时生成不可变快照</li>
+      <li><Info size={13} aria-hidden="true" />后端未提供策略编辑接口，此页为只读</li>
+    </ul>
   </section>;
 }

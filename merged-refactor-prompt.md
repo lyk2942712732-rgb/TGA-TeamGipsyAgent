@@ -310,8 +310,7 @@ Observer 不得执行工具、修改 Session 生命周期、确认完成或伪�
    - Session 状态
    - Solver 状态
    - Challenge 状态
-   - FINISH_ACCEPTED
-   - AGENT_FINISHED
+   - TASK_COMPLETION_ACCEPTED
    - SESSION_STOPPED
 5. 回滚后不得出现“状态已完成但事件缺失”“事件显示成功但 Artifact 未登记”或其他部分写入。
 6. 增加事务回滚和故障注入测试。
@@ -566,7 +565,7 @@ EvidenceStore 不应同时承担数据库连接、迁移、全部 Repository 和
 - `cancelled`：用户主动终止
 - `failed`：运行时不可恢复错误
 
-最终结果面板只在 `FINISH_ACCEPTED + AGENT_FINISHED` 后显示为“已确认最终结果”。
+最终结果面板只在 `TASK_COMPLETION_ACCEPTED + SESSION_STOPPED` 后显示为“已确认最终结果”。
 
 显示：
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Any
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, HTTPException, Query
 
@@ -92,11 +93,7 @@ def preflight_task(payload: CreateTaskRequest) -> dict[str, Any]:
             "content_sha256": result.skill_fingerprint,
         },
         "mcp_catalog_version": result.task.mcp_capabilities.catalog_version,
-        "model_verification_id": (
-            result.task.model_snapshot.verification_id
-            if result.task.model_snapshot is not None
-            else ""
-        ),
+        "model_verification_id": result.task.model_snapshot.verification_id,
     }
 
 
@@ -106,15 +103,20 @@ def preview_task_skills(payload: SkillPreviewRequest) -> dict[str, Any]:
     try:
         mode = normalize_mode(payload.mode)
         capabilities = build_mcp_capability_snapshot(_catalog_runner())
-        bundle = SkillSelector().select(SkillSelectionRequest(
-            mode=mode,
-            goal=payload.goal.strip(),
-            prompt=payload.prompt.strip(),
-            file_names=tuple(payload.file_names),
-            mode_config={**payload.mode_options, "mode": mode},
-            available_capabilities=available_capabilities(mode, capabilities, payload.execution_policy),
-            selected_skill_names=tuple(payload.selected_skills) if payload.selected_skills is not None else None,
-        ))
+        bundle = SkillSelector().select(
+            SkillSelectionRequest(
+                mode=mode,
+                # Preview is not bound to a persisted task yet.
+                task_id="preview",
+                goal=payload.goal.strip(),
+                prompt=payload.prompt.strip(),
+                file_names=tuple(payload.file_names),
+                mode_config={**payload.mode_options, "mode": mode},
+                available_capabilities=available_capabilities(mode, capabilities, payload.execution_policy),
+                selected_skill_names=tuple(payload.selected_skills) if payload.selected_skills is not None else None,
+            ),
+            created_at=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+        )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail={"code": "SKILL_PREVIEW_INVALID", "message": str(exc)}) from exc
     return {

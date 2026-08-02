@@ -8,6 +8,7 @@ from pathlib import Path
 from pydantic import BaseModel
 
 from tga import contracts
+from tests.runtime_fixtures import task as v6_task
 from tga.domain.events import records as event_records
 from tga.domain.evidence import indexes as evidence_indexes
 from tga.domain.evidence import records as evidence_records
@@ -81,7 +82,7 @@ def test_retired_runtime_type_and_hint_adapter_files_are_absent() -> None:
 
 
 def test_task_json_shape_remains_stable_through_public_export() -> None:
-    task = contracts.TGATask(id="architecture_snapshot", name="snapshot", mode="ctf", goal="solve")
+    task = v6_task(id="architecture_snapshot", name="snapshot", mode="ctf", goal="solve")
     payload = task.model_dump(mode="json")
 
     assert payload["id"] == "architecture_snapshot"

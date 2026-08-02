@@ -6,23 +6,54 @@ import argparse
 import json
 import sys
 import time
+from dataclasses import replace
 from pathlib import Path
 
 from tga.bootstrap.container import Container
-from tga.cli.config_loader import TaskConfigError, load_task_config
+from tga.cli.config_loader import TaskConfigError, load_task_request
 from tga.runtime.service import TaskRuntimeService
+from tga.runtime.task_creation import (
+    CreateTaskCommand,
+    CreatedTask,
+    TaskCreationError,
+    TaskCreationService,
+)
 
 
 def run_from_config(config: str, *, run_root: str, report_out: str | None = None) -> Path:
-    task = load_task_config(config)
+    """Create a task through the shared creation flow, then run it inline."""
+    created = _create_task(load_task_request(config), run_root=run_root, schedule=False)
     service = _service(run_root)
-    service.create_task(task)
-    service.run_task(task.id)
-    return service.write_report(task.id, output=report_out)
+    service.run_task(created.task_id)
+    return service.write_report(created.task_id, output=report_out)
 
 
 def _service(run_root: str) -> TaskRuntimeService:
     return Container(run_root).runtime_service()
+
+
+def _create_task(
+    command: CreateTaskCommand, *, run_root: str, schedule: bool
+) -> CreatedTask:
+    """Create a task through the single Preflight -> create -> schedule path.
+
+    CLI, Web and API all go through TaskCreationService, so Skill selection,
+    policy validation and the preflight fingerprint cannot diverge per surface.
+    """
+    from tga.runtime.manager import get_manager
+
+    container = Container(run_root)
+    scheduler = container.scheduler()
+    service = TaskCreationService(
+        run_root=run_root,
+        mcp_manager=get_manager().mcp_manager,
+        schedule=(scheduler.schedule if schedule else (lambda task_id: False)),
+        runtime_service=container.runtime_service(),
+    )
+    preflight = service.preflight(command)
+    return service.create(
+        replace(command, preflight_fingerprint=preflight.fingerprint)
+    )
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -34,12 +65,17 @@ def _build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--run-root", default="runs")
     run_parser.add_argument("--report-out", default=None)
 
-    create_parser = subparsers.add_parser("create", help="Create a durable v2 task without running it")
+    create_parser = subparsers.add_parser(
+        "create", help="Create a schema-v6 task through Preflight without running it"
+    )
     create_parser.add_argument("config", help="Path to task.json")
     create_parser.add_argument("--run-root", default="runs")
-    create_parser.add_argument("--hint", default=None)
+    create_parser.add_argument(
+        "--schedule", action="store_true",
+        help="Hand the created task to the Runtime scheduler",
+    )
 
-    start_parser = subparsers.add_parser("start", help="Run or recover an existing v2 task")
+    start_parser = subparsers.add_parser("start", help="Run or recover an existing task")
     start_parser.add_argument("task_id")
     start_parser.add_argument("--run-root", default="runs")
 
@@ -123,11 +159,19 @@ def main(argv: list[str] | None = None) -> int:
         return migration_main(migration_args)
     if args.command == "create":
         try:
-            task = load_task_config(args.config)
-            result = _service(args.run_root).create_task(task, initial_hint=args.hint)
-        except (TaskConfigError, KeyError, ValueError) as exc:
+            created = _create_task(
+                load_task_request(args.config),
+                run_root=args.run_root,
+                schedule=args.schedule,
+            )
+        except (TaskConfigError, TaskCreationError, KeyError, ValueError) as exc:
             parser.error(str(exc))
-        print(json.dumps(result, ensure_ascii=False))
+        print(json.dumps({
+            "task_id": created.task_id,
+            "status": created.status,
+            "scheduled": created.scheduled,
+            "mcp_catalog_version": created.mcp_capabilities.catalog_version,
+        }, ensure_ascii=False))
         return 0
     if args.command in {"start", "status", "observe", "cancel", "resume"}:
         service = _service(args.run_root)
@@ -156,7 +200,7 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         report_path = run_from_config(args.config, run_root=args.run_root, report_out=args.report_out)
-    except TaskConfigError as exc:
+    except (TaskConfigError, TaskCreationError) as exc:
         parser.error(str(exc))
     print(f"Wrote {report_path}")
     return 0
@@ -165,7 +209,7 @@ def main(argv: list[str] | None = None) -> int:
 def _snapshot_summary(snapshot: dict) -> dict:
     session = snapshot.get("session") or {}
     return {
-        "schema_version": int(snapshot.get("schema_version") or 2),
+        "schema_version": int(snapshot.get("schema_version") or 6),
         "task_id": (snapshot.get("task") or {}).get("id"),
         "status": session.get("status"),
         "turn_count": session.get("turn_count", 0),

@@ -6,11 +6,13 @@ from types import SimpleNamespace
 import pytest
 
 from tga.contracts import ResourceProvenance, SessionFile, SessionInput, TGATask
+from tests.runtime_fixtures import task as v6_task
 from tga.domain.evidence.artifacts import Artifact
 from tga.domain.evidence.claims import EvidenceClaim
 from tga.domain.evidence.findings import Finding
 from tga.domain.evidence.locators import EvidenceLocator
 from tga.domain.knowledge.items import KnowledgeItem
+from tga.domain.task.spec import TaskSpec
 from tga.domain.solver import (
     ReportResult,
     ReviewResult,
@@ -40,7 +42,7 @@ MODES_AND_WORKERS = {
 
 
 def _task(mode: str = "ctf", *, task_id: str | None = None) -> TGATask:
-    return TGATask(
+    return v6_task(
         id=task_id or f"serial_{mode}",
         name=f"serial {mode}",
         mode=mode,
@@ -52,6 +54,14 @@ def _task(mode: str = "ctf", *, task_id: str | None = None) -> TGATask:
 def _orchestrator(tmp_path: Path, task: TGATask):
     bundle = PersistenceBundle.open(tmp_path / task.id / "evidence.db")
     bundle.tasks.create_task(task)
+    # TaskSpec is the authoritative resource source, exactly as in
+    # TaskService.create_task; the orchestrator authorizes against it.
+    bundle.tasks.save_task_spec(TaskSpec(
+        task_id=task.id,
+        objective=task.goal,
+        resources=[item.resource_ref() for item in task.session_input.files],
+        provenance={"source": "test_fixture", "session_resources_projected": True},
+    ))
     return bundle, TaskOrchestrator(task=task, repositories=bundle)
 
 
@@ -114,13 +124,13 @@ def test_supervisor_worker_result_and_completion_are_separate_and_idempotent(tmp
         assert orchestrator.state().status == "running"
 
         with pytest.raises(PermissionError, match="Supervisor"):
-            orchestrator.propose_task_completion(
+            orchestrator.complete_task(
                 solver_id=assignment.solver_id,
                 proposal={"summary": "worker cannot complete"},
                 validator=lambda _proposal: {"accepted": True},
             )
 
-        completion = orchestrator.propose_task_completion(
+        completion = orchestrator.complete_task(
             solver_id=state.supervisor_solver_id,
             proposal={"summary": "supervisor completed after worker evidence"},
             validator=lambda proposal: {"accepted": True, "summary": proposal["summary"]},
@@ -434,7 +444,7 @@ def test_worker_submit_result_routes_through_gateway_without_legacy_execution(tm
             for item in registry.snapshot()["capabilities"]
         }
         catalog = RuntimeToolCatalog.from_runtime(
-            task=task,
+            mode=task.mode,
             solver_definition=definition,
             registry=registry,
             tool_names=tool_names,
@@ -606,7 +616,7 @@ def test_worker_context_and_gateway_hide_unassigned_task_inputs(tmp_path: Path) 
             kind="validation",
             title="Scoped worker",
             objective="inspect one assigned input",
-            allowed_resource_ids=(first.id,),
+            allowed_resource_ids=(first.resource_id,),
             priority=10,
         )
         assignment = orchestrator.dispatch_next()
@@ -616,6 +626,7 @@ def test_worker_context_and_gateway_hide_unassigned_task_inputs(tmp_path: Path) 
             workspace=tmp_path / "workspace",
             supports_vision=False,
             allowed_resource_ids=assignment.allowed_resources,
+            task_spec=bundle.tasks.get_task_spec(task.id),
         ).markdown()
         assert "allowed.txt" in context
         assert "hidden.txt" not in context
@@ -624,7 +635,7 @@ def test_worker_context_and_gateway_hide_unassigned_task_inputs(tmp_path: Path) 
         definition = SolverDefinitionRegistry.builtin().require(solver.definition_id)
         registry = build_default_registry()
         catalog = RuntimeToolCatalog.from_runtime(
-            task=task,
+            mode=task.mode,
             solver_definition=definition,
             registry=registry,
             tool_names={

@@ -9,7 +9,6 @@ from tga.domain.evidence.indexes import (
 from tga.domain.evidence.records import (
     ArtifactKind,
     ArtifactRecord,
-    CandidateFindingRecord,
 )
 from tga.domain.governance.models import (
     ActionEffect,

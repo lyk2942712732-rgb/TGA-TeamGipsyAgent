@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from tga.contracts import CtfModeConfig, ReverseAnalysisModeConfig, TGATask, ArtifactRecord, VulnerabilityResearchModeConfig
 from tga.core.flag_gate import is_placeholder_flag
 from tga.evidence.store import EvidenceStore
+from tga.infrastructure.persistence import PersistenceBundle
 from tga.modes import TaskMode
 from tga.runtime.completion import CompletionGate
 
@@ -184,8 +185,11 @@ class PenetrationTestCompletionValidator(BaseCompletionValidator):
         if unsupported:
             missing.append("evidence for claimed findings/impact: " + ", ".join(unsupported))
         confirmed_without_evidence = [
-            item.id for item in context.store.list_findings(context.task.id)
-            if item.status == "confirmed" and not item.evidence_artifact_id
+            item.id
+            for item in PersistenceBundle(context.store).evidence.list_findings(
+                context.task.id
+            )
+            if item.status == "confirmed" and not item.evidence_claims
         ]
         if confirmed_without_evidence:
             missing.append("evidence for confirmed Findings")

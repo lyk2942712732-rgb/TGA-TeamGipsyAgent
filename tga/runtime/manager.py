@@ -112,7 +112,7 @@ class Manager:
                 return TaskRuntimeService(run_root=self.run_root).runtime_snapshot(task.id)
             executor = self.executor or self._default_executor(task, store)
             solver_id = self._next_solver_id(
-                persistence, task.id, preferred_id=session.active_solver_id or supervisor_id
+                persistence, task.id, preferred_id=supervisor_id
             )
             while solver_id is not None:
                 queued_runs = tuple(
@@ -830,8 +830,6 @@ class Manager:
 
     @staticmethod
     def _require_model_snapshot(task: TGATask) -> None:
-        if task.model_snapshot is None:
-            return
         status = model_config_status()
         verification = status.get("verification") or {}
         if not status.get("configured"):

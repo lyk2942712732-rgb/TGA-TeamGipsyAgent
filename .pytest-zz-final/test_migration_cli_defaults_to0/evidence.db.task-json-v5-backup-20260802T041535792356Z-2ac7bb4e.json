@@ -1,0 +1,83 @@
+{
+  "agent_prompt_snapshot": null,
+  "execution_budget": {},
+  "execution_policy": {
+    "high_impact": {
+      "allowed_actions": [],
+      "mode": "forbidden"
+    },
+    "local_compute": {
+      "concurrency": 2,
+      "mode": "disabled",
+      "network_inheritance": "task_network_policy",
+      "timeout_seconds": 120
+    },
+    "network": {
+      "access": "disabled",
+      "concurrency": 2,
+      "custom_cidrs": [],
+      "custom_domains": [],
+      "custom_origins": [],
+      "custom_ports": [],
+      "deny_cloud_metadata": true,
+      "deny_link_local": true,
+      "deny_loopback": true,
+      "deny_private_networks": true,
+      "interaction": "observe",
+      "rate_limit_per_minute": 30,
+      "request_timeout_seconds": 30,
+      "seed_origins": []
+    },
+    "preset": "offline_analysis"
+  },
+  "flag_format": "[A-Za-z0-9_]{2,32}\\{[^{}\\s]{4,200}\\}",
+  "goal": "Solve",
+  "id": "legacy_1",
+  "insecure_tls_origins": [],
+  "mcp_capabilities": {
+    "catalog_version": "mcp_empty",
+    "created_at": null,
+    "server_ids": [],
+    "tools": []
+  },
+  "mode": "ctf",
+  "mode_config": {
+    "alternative_proof": null,
+    "deadline": null,
+    "expected_flag_count": 1,
+    "flag_format": "[A-Za-z0-9_]{2,32}\\{[^{}\\s]{4,200}\\}",
+    "mode": "ctf",
+    "subtype": "auto",
+    "verifier": {
+      "kind": "local_regex",
+      "tool_ref": null
+    }
+  },
+  "model_snapshot": {
+    "capabilities": {
+      "auto_tool_choice": false,
+      "chat_completions": false,
+      "forced_tool_choice": false,
+      "reasoning_content": false,
+      "tool_calling": false,
+      "vision": null
+    },
+    "capability_fingerprint": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "max_output_tokens": 1024,
+    "model": "test-model",
+    "provider": "openai-compatible",
+    "reasoning_mode": "auto",
+    "temperature": 0.2,
+    "timeout_seconds": 60,
+    "verification_id": "verify_test_provider",
+    "verified_at": "2026-01-01T00:00:00Z"
+  },
+  "name": "Legacy",
+  "schema_version": 5,
+  "session_input": {
+    "files": [],
+    "prompt": ""
+  },
+  "task_entry_url": null,
+  "workspace_id": null
+}
