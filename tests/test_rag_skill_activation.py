@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 
 from apps.api.main import app
 from tests.capability_fixtures import assignment_service, capability_ids
-from tests.runtime_fixtures import task as v6_task
+from tests.runtime_fixtures import execution_policy, task as v6_task
 from tga.application.services.skill_candidate_activation_service import (
     SkillCandidateActivationService,
 )
@@ -380,6 +380,7 @@ def test_team_runtime_automatically_freezes_rag_skill_and_recovery_uses_snapshot
         mode="ctf",
         goal="Inspect web endpoints and preserve evidence",
         mode_config={"mode": "ctf", "subtype": "web"},
+        execution_policy=execution_policy(process=True),
     )
     task_bundle = PersistenceBundle.open(
         tmp_path / "runs" / task.id / "evidence.db"

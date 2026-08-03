@@ -54,6 +54,7 @@ from tga.tools.mcp_manager import MCPManager
 from tga.tools.mcp_registry import MCPCatalogSnapshot
 from tga.modes import mode_profile
 from tga.sandbox.config import load_sandbox_config
+from tga.sandbox.readiness import ensure_kali_profile_ready
 
 
 COMPLETION_TOOLS = {"propose_task_completion", "submit_worker_result"}
@@ -118,6 +119,13 @@ class AgentSessionRunner:
             raise RuntimeError(
                 f"missing frozen Kali runtime snapshot: {durable_solver.id}"
             )
+        self.sandbox_config, _ = load_sandbox_config()
+        if binding.kali_profile is not None:
+            ensure_kali_profile_ready(
+                binding.kali_profile.id,
+                self.sandbox_config,
+                profile=binding.kali_profile,
+            )
         # The scheduler may hand us a fresh task projection. Replace only the
         # mutable policy surface with the Solver's immutable creation snapshot.
         self.task = task.model_copy(update={
@@ -136,7 +144,6 @@ class AgentSessionRunner:
         ).workspace
         self.workspace.mkdir(parents=True, exist_ok=True)
         self.mcp_manager = mcp_manager or MCPManager(cache_path=run_root / "mcp-cache.json")
-        self.sandbox_config, _ = load_sandbox_config()
         self.mcp_snapshot: MCPCatalogSnapshot = self.mcp_manager.snapshot_for_task(
             self.task, workspace=self.workspace
         )

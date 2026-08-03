@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from tga.cli.desktop import _prepare_frontend
+from tga.cli.desktop import DesktopLaunchError, _prepare_frontend
 from tga.cli.main import main
 
 
@@ -100,7 +100,6 @@ def test_desktop_prefers_windows_npm_cmd(tmp_path: Path, monkeypatch):
 
     # The mocked build does not create dist, so confirm the subprocess target
     # before the expected post-build validation raises a launch error.
-    from tga.cli.desktop import DesktopLaunchError
     try:
         _prepare_frontend(root=root, host="127.0.0.1", port=8000, build=True)
     except DesktopLaunchError:

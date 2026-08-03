@@ -20,6 +20,7 @@ from tga.runtime.tooling.execution.models import (
 from tga.runtime.tooling.results import ExecutionError
 from tga.sandbox.models import NetworkGrant, ProcessSpec
 from tga.sandbox.provider import SandboxError
+from tga.sandbox.readiness import ensure_kali_profile_ready
 
 
 def _now() -> str:
@@ -196,6 +197,11 @@ class KaliSandboxBackend:
                     "frozen Kali Profile does not match the authorized request",
                     code="KALI_PROFILE_SNAPSHOT_MISMATCH",
                 )
+            ensure_kali_profile_ready(
+                profile.id,
+                self.manager.config,
+                profile=profile,
+            )
             if request.capability not in {"kali.exec", "kali.session"}:
                 raise SandboxError(
                     f"unsupported Kali capability: {request.capability}",
@@ -323,11 +329,6 @@ class KaliSandboxBackend:
         self, request: AuthorizedExecutionRequest, started: str
     ) -> ExecutionResult | None:
         checks = (
-            (
-                self.manager.config.runtime != "enforced",
-                "SANDBOX_RUNTIME_DISABLED",
-                "Kali execution requires an enforced sandbox runtime.",
-            ),
             (
                 request.sandbox_config_digest
                 != (self.sandbox_config_digest or self.manager.config.digest),
@@ -582,12 +583,12 @@ def _failure(
     error = ExecutionError(code=code, message=message, retryable=retryable)
     return ExecutionResult(
         action_id=request.action_id,
-        status="blocked" if code in {"SANDBOX_RUNTIME_DISABLED", "EXECUTION_BACKEND_UNAVAILABLE"} else "failed",
+        status="blocked" if code in {"KALI_PROFILE_NOT_READY", "SANDBOX_RUNTIME_DISABLED", "EXECUTION_BACKEND_UNAVAILABLE"} else "failed",
         started_at=started_at or _now(),
         finished_at=_now(),
         structured_result={
             "ok": False,
-            "status": "blocked" if code in {"SANDBOX_RUNTIME_DISABLED", "EXECUTION_BACKEND_UNAVAILABLE"} else "failed",
+            "status": "blocked" if code in {"KALI_PROFILE_NOT_READY", "SANDBOX_RUNTIME_DISABLED", "EXECUTION_BACKEND_UNAVAILABLE"} else "failed",
             "error": error.model_dump(mode="json"),
         },
         execution_metadata={"backend": request.backend},

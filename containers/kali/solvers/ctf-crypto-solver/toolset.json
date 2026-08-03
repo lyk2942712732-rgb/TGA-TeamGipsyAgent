@@ -1,0 +1,9 @@
+{
+    "profile_id":  "ctf-crypto-v1",
+    "tools":  {
+                  "python3":  "image-managed",
+                  "sage":  "image-managed",
+                  "gp":  "image-managed",
+                  "openssl":  "image-managed"
+              }
+}

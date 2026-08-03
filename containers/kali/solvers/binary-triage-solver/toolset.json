@@ -1,0 +1,14 @@
+{
+    "profile_id":  "binary-triage-v1",
+    "tools":  {
+                  "python3":  "image-managed",
+                  "file":  "image-managed",
+                  "strings":  "image-managed",
+                  "checksec":  "image-managed",
+                  "yara":  "image-managed",
+                  "capa":  "image-managed",
+                  "exiftool":  "image-managed",
+                  "binwalk":  "image-managed",
+                  "radare2":  "image-managed"
+              }
+}

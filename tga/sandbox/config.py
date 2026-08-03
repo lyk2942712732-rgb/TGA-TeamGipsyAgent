@@ -5,7 +5,6 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import re
 from pathlib import Path
 from typing import Literal
 
@@ -15,6 +14,7 @@ from tga.sandbox.models import SandboxProfile
 
 
 DEFAULT_CONFIG_PATH = Path(__file__).resolve().parents[2] / "config" / "sandbox.json"
+RELEASE_DIGEST_PLACEHOLDER = "REPLACE_WITH_RELEASE_DIGEST"
 
 
 class DockerSandboxSettings(BaseModel):
@@ -63,29 +63,9 @@ class SandboxConfig(BaseModel):
     def profile_keys_match(self) -> "SandboxConfig":
         if not self.profiles:
             raise ValueError("at least one sandbox profile is required")
-        if self.runtime == "enforced" and not re.search(
-            r"@sha256:[a-f0-9]{64}$", self.docker_sandbox.template
-        ):
-            raise ValueError("enforced Docker Sandbox template requires a pinned image")
-        if self.runtime == "enforced" and any(
-            profile.provider == "sandboxd" for profile in self.profiles.values()
-        ) and not self.sandboxd.allowed_client_uids:
-            raise ValueError("enforced sandboxd requires allowed_client_uids")
         for key, profile in self.profiles.items():
             if key != profile.id:
                 raise ValueError(f"profile key {key!r} does not match id {profile.id!r}")
-            if (
-                self.runtime == "enforced"
-                and profile.provider != "remote_http"
-                and not re.search(r"@sha256:[a-f0-9]{64}$", profile.image or "")
-            ):
-                raise ValueError(f"enforced profile {key!r} requires a digest-pinned image")
-            if (
-                self.runtime == "enforced"
-                and profile.provider != "remote_http"
-                and profile.toolset_digest is None
-            ):
-                raise ValueError(f"enforced profile {key!r} requires a toolset digest")
         return self
 
     @property

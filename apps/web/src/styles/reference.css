@@ -231,6 +231,32 @@ html, body { height: 100%; overflow: hidden; }
 .ref-prompt { max-height: 340px; margin: 0; padding: var(--sp-4); border: 1px solid var(--c-border); border-radius: var(--r-md); color: var(--c-text); background: var(--c-surface-muted); font: 12.5px/1.7 ui-monospace, SFMono-Regular, Consolas, monospace; overflow: auto; white-space: pre-wrap; word-break: break-word; }
 .ref-hash { color: var(--c-text-muted); font: 11.5px ui-monospace, monospace; }
 
+.kali-health-card { display: grid; gap: var(--sp-4); margin-top: var(--sp-2); padding: var(--sp-4); border: 1px solid var(--c-border); border-left: 4px solid var(--c-warning); border-radius: var(--r-md); background: linear-gradient(135deg, var(--c-surface) 0%, var(--c-surface-muted) 100%); }
+.kali-health-card > header, .kali-health-card > footer { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); }
+.kali-health-card > header > div { display: grid; gap: 3px; }
+.kali-health-card > header span, .kali-health-grid span, .kali-health-reasons > span { color: var(--c-text-subtle); font-size: 10px; font-weight: 750; letter-spacing: .06em; text-transform: uppercase; }
+.kali-health-card > header h4 { color: var(--c-text); font: 750 15px/1.4 ui-monospace, Consolas, monospace; }
+.kali-health-card > p { color: var(--c-text-muted); font-size: 12.5px; line-height: 1.6; }
+.kali-health-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1px; overflow: hidden; border: 1px solid var(--c-border); border-radius: var(--r-sm); background: var(--c-border); }
+.kali-health-grid > div { display: grid; align-content: start; gap: 6px; min-width: 0; padding: 11px 12px; background: var(--c-surface); }
+.kali-health-grid .kali-health-wide { grid-column: 1 / -1; }
+.kali-health-grid strong, .kali-health-grid code { color: var(--c-text); font-size: 12px; overflow-wrap: anywhere; }
+.kali-health-reasons { display: grid; gap: 7px; }
+.kali-health-reasons ul { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.kali-health-reasons li { display: grid; grid-template-columns: minmax(150px, auto) 1fr; gap: 10px; padding: 8px 10px; border-radius: var(--r-sm); color: var(--c-text-muted); background: var(--c-warning-soft); font-size: 12px; line-height: 1.5; }
+.kali-health-reasons li strong { color: var(--c-warning); font: 700 11px/1.5 ui-monospace, Consolas, monospace; }
+.kali-health-card > footer { padding-top: var(--sp-2); border-top: 1px solid var(--c-border); }
+.kali-health-card > footer small { color: var(--c-text-subtle); font-size: 10.5px; }
+.kali-health-card > footer button { display: inline-flex; align-items: center; gap: 6px; }
+.kali-health-error { border-left-color: var(--c-danger); }
+.kali-missing-tools { padding: 8px 10px; border-radius: var(--r-sm); color: var(--c-danger); background: var(--c-danger-soft); }
+@media (max-width: 680px) {
+  .kali-health-grid { grid-template-columns: 1fr; }
+  .kali-health-grid .kali-health-wide { grid-column: auto; }
+  .kali-health-card > header, .kali-health-card > footer { align-items: flex-start; flex-direction: column; }
+  .kali-health-reasons li { grid-template-columns: 1fr; }
+}
+
 /* --- field grid --------------------------------------------------------- */
 .field-grid { display: grid; gap: var(--sp-3); margin: 0; }
 .field-grid.cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: var(--sp-6); }

@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "runtime": "disabled",
+  "runtime": "enforced",
   "terminal_grace_seconds": 900,
   "reconcile_interval_seconds": 60,
   "docker_sandbox": {

@@ -1,0 +1,15 @@
+{
+    "profile_id":  "ctf-classifier-v1",
+    "tools":  {
+                  "file":  "image-managed",
+                  "strings":  "image-managed",
+                  "exiftool":  "image-managed",
+                  "binwalk":  "image-managed",
+                  "yara":  "image-managed",
+                  "tshark":  "image-managed",
+                  "zsteg":  "image-managed",
+                  "pngcheck":  "image-managed",
+                  "pdfid":  "image-managed",
+                  "checksec":  "image-managed"
+              }
+}

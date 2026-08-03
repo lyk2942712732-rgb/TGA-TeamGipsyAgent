@@ -2,20 +2,92 @@ version: 1
 base:
   image: ghcr.io/team-gipsy/tga-kali-base
   context: base
-pilots:
-  - solver: surface-mapper
-    profile: pentest-surface-v1
-    image: tga-kali-surface-mapper
-    context: solvers/surface-mapper
-  - solver: ctf-web-solver
-    profile: ctf-web-v1
-    image: tga-kali-ctf-web
-    context: solvers/ctf-web-solver
+images:
+  - solver: architecture-analyst
+    profile: architecture-analysis-v1
+    image: tga-kali-architecture-analyst
+    context: solvers/architecture-analyst
+  - solver: binary-triage-solver
+    profile: binary-triage-v1
+    image: tga-kali-binary-triage-solver
+    context: solvers/binary-triage-solver
+  - solver: challenge-classifier
+    profile: ctf-classifier-v1
+    image: tga-kali-ctf-classifier
+    context: solvers/challenge-classifier
+  - solver: code-audit-solver
+    profile: code-audit-v1
+    image: tga-kali-code-audit
+    context: solvers/code-audit-solver
+  - solver: crash-root-cause-solver
+    profile: crash-triage-v1
+    image: tga-kali-crash-triage
+    context: solvers/crash-root-cause-solver
+  - solver: ctf-crypto-solver
+    profile: ctf-crypto-v1
+    image: tga-kali-ctf-crypto
+    context: solvers/ctf-crypto-solver
+  - solver: ctf-forensics-solver
+    profile: ctf-forensics-v1
+    image: tga-kali-ctf-forensics
+    context: solvers/ctf-forensics-solver
   - solver: ctf-pwn-solver
     profile: ctf-pwn-v1
     image: tga-kali-ctf-pwn
     context: solvers/ctf-pwn-solver
+  - solver: ctf-reverse-solver
+    profile: ctf-reverse-v1
+    image: tga-kali-ctf-reverse
+    context: solvers/ctf-reverse-solver
+  - solver: ctf-web-solver
+    profile: ctf-web-v1
+    image: tga-kali-ctf-web
+    context: solvers/ctf-web-solver
+  - solver: dynamic-analysis-solver
+    profile: dynamic-analysis-v1
+    image: tga-kali-dynamic-analysis
+    context: solvers/dynamic-analysis-solver
+  - solver: dynamic-fuzzing-solver
+    profile: dynamic-fuzzing-v1
+    image: tga-kali-dynamic-fuzzing
+    context: solvers/dynamic-fuzzing-solver
+  - solver: evidence-triage-solver
+    profile: evidence-triage-v1
+    image: tga-kali-evidence-triage
+    context: solvers/evidence-triage-solver
+  - solver: host-network-forensics-solver
+    profile: network-forensics-v1
+    image: tga-kali-network-forensics
+    context: solvers/host-network-forensics-solver
+  - solver: logic-config-recovery-solver
+    profile: logic-recovery-v1
+    image: tga-kali-logic-recovery
+    context: solvers/logic-config-recovery-solver
+  - solver: malware-solver
+    profile: malware-analysis-v1
+    image: tga-kali-malware-analysis
+    context: solvers/malware-solver
+  - solver: poc-reproduction-solver
+    profile: poc-reproduction-v1
+    image: tga-kali-poc-reproduction
+    context: solvers/poc-reproduction-solver
   - solver: static-analysis-solver
     profile: static-analysis-v1
     image: tga-kali-static-analysis
     context: solvers/static-analysis-solver
+  - solver: surface-mapper
+    profile: pentest-surface-v1
+    image: tga-kali-surface-mapper
+    context: solvers/surface-mapper
+  - solver: timeline-ioc-solver
+    profile: timeline-ioc-v1
+    image: tga-kali-timeline-ioc
+    context: solvers/timeline-ioc-solver
+  - solver: vulnerability-validator
+    profile: pentest-validation-v1
+    image: tga-kali-vulnerability-validator
+    context: solvers/vulnerability-validator
+  - solver: web-api-analyst
+    profile: pentest-web-api-v1
+    image: tga-kali-web-api-analyst
+    context: solvers/web-api-analyst

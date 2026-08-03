@@ -143,8 +143,8 @@ func TestWorkspaceRejectsInvalidTaskIdentity(t *testing.T) {
 	}
 }
 
-// The committed configuration is intentionally disabled, so Load rejects it.
-// Digest still has to agree with the Python control plane for the same bytes.
+// The committed configuration contains release digest placeholders, so Load
+// rejects it until images are published. Digest parity still applies.
 func TestCommittedConfigDigestMatchesControlPlane(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "config", "sandbox.json"))
 	if err != nil {

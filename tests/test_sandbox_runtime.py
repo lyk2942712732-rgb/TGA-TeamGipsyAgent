@@ -10,7 +10,14 @@ from pathlib import Path
 import pytest
 
 from tga.evidence.store import EvidenceStore
-from tga.sandbox.config import SandboxConfig, load_sandbox_config
+from tga.sandbox.config import (
+    SandboxConfig,
+    load_sandbox_config,
+)
+from tga.sandbox.readiness import (
+    ensure_kali_profile_ready,
+    inspect_kali_runtime_readiness,
+)
 from tga.sandbox.docker_provider import DockerSandboxProvider
 from tga.sandbox.manager import SandboxManager
 from tga.sandbox.models import ProcessSpec, SandboxHandle, SandboxState
@@ -117,7 +124,8 @@ def test_manager_rejects_disabled_runtime() -> None:
             fencing_token=1,
             idempotency_key="key",
         )
-    assert error.value.code == "SANDBOX_RUNTIME_DISABLED"
+    assert error.value.code == "KALI_PROFILE_NOT_READY"
+    assert error.value.reason == "runtime_disabled"
 
 
 def test_manager_isolates_solver_runs_and_reuses_only_the_same_run() -> None:
@@ -147,6 +155,59 @@ def test_manager_isolates_solver_runs_and_reuses_only_the_same_run() -> None:
     assert reused.fencing_token == 2
     assert second.instance_id != first.instance_id
     assert provider.calls == 3
+
+
+def test_unresolved_unused_profile_does_not_block_ready_profile() -> None:
+    payload = _config().model_dump(mode="json")
+    payload["profiles"]["raw-network"]["image"] = (
+        "example.invalid/network@sha256:REPLACE_WITH_RELEASE_DIGEST"
+    )
+    config = SandboxConfig.model_validate(payload)
+    provider = FakeProvider(config)
+    manager = SandboxManager(
+        config=config,
+        providers={"docker_sandbox": provider},
+    )
+
+    handle = manager.acquire(
+        task_id="task-1",
+        solver_id="solver-1",
+        solver_run_id="run-1",
+        profile_id="offline-analysis",
+        fencing_token=1,
+        idempotency_key="ready-profile",
+    )
+
+    assert handle.profile_id == "offline-analysis"
+    assert provider.calls == 1
+
+
+def test_unresolved_selected_profile_is_blocked_before_provider_call() -> None:
+    payload = _config().model_dump(mode="json")
+    payload["profiles"]["offline-analysis"]["image"] = (
+        "example.invalid/offline@sha256:REPLACE_WITH_RELEASE_DIGEST"
+    )
+    config = SandboxConfig.model_validate(payload)
+    provider = FakeProvider(config)
+    manager = SandboxManager(
+        config=config,
+        providers={"docker_sandbox": provider},
+    )
+
+    with pytest.raises(SandboxError) as error:
+        manager.acquire(
+            task_id="task-1",
+            solver_id="solver-1",
+            solver_run_id="run-1",
+            profile_id="offline-analysis",
+            fencing_token=1,
+            idempotency_key="unresolved-profile",
+        )
+
+    assert error.value.code == "KALI_PROFILE_NOT_READY"
+    assert error.value.profile_id == "offline-analysis"
+    assert error.value.reason == "unresolved_image_digest"
+    assert provider.calls == 0
 
 
 def test_manager_rejects_profile_change_within_solver_run() -> None:
@@ -390,18 +451,22 @@ def test_network_profile_cannot_be_assigned_to_standard_provider() -> None:
         SandboxConfig.model_validate(payload)
 
 
-def test_enforced_profile_requires_toolset_digest() -> None:
+def test_profile_without_toolset_digest_loads_but_execution_is_blocked() -> None:
     payload = _config().model_dump(mode="json")
     payload["profiles"]["offline-analysis"].pop("toolset_digest")
-    with pytest.raises(ValueError, match="requires a toolset digest"):
-        SandboxConfig.model_validate(payload)
+    config = SandboxConfig.model_validate(payload)
+    with pytest.raises(SandboxError) as error:
+        ensure_kali_profile_ready("offline-analysis", config)
+    assert error.value.reason == "toolset_digest_missing"
 
 
-def test_enforced_profile_requires_digest_pinned_image() -> None:
+def test_mutable_profile_image_loads_but_execution_is_blocked() -> None:
     payload = _config().model_dump(mode="json")
     payload["profiles"]["offline-analysis"]["image"] = "example.invalid/offline:latest"
-    with pytest.raises(ValueError, match="digest-pinned image"):
-        SandboxConfig.model_validate(payload)
+    config = SandboxConfig.model_validate(payload)
+    with pytest.raises(SandboxError) as error:
+        ensure_kali_profile_ready("offline-analysis", config)
+    assert error.value.reason == "unresolved_image_digest"
 
 
 def test_valid_config_without_tools_loads() -> None:
@@ -457,6 +522,7 @@ def test_committed_config_has_no_top_level_tools() -> None:
         "sandboxd",
         "profiles",
     }
+    assert payload["runtime"] == "enforced"
 
 
 def test_sandboxd_agrees_with_control_plane_config_digest() -> None:
@@ -478,10 +544,25 @@ def test_sandboxd_agrees_with_control_plane_config_digest() -> None:
     assert completed.returncode == 0, completed.stdout + completed.stderr
 
 
-def test_committed_placeholder_config_cannot_be_enforced(monkeypatch) -> None:
-    monkeypatch.setenv("TGA_SANDBOX_RUNTIME", "enforced")
-    with pytest.raises(ValueError, match="pinned image"):
-        load_sandbox_config(Path(__file__).parents[1] / "config" / "sandbox.json")
+def test_committed_placeholder_is_reported_without_blocking_config_load() -> None:
+    report = inspect_kali_runtime_readiness(
+        config_path=Path(__file__).parents[1] / "config" / "sandbox.json"
+    )
+    assert report.overall == "not_ready"
+    assert report.profiles["ctf-pwn-v1"].status == "unresolved_digest"
+    assert report.profiles["ctf-pwn-v1"].image.endswith(
+        "@sha256:REPLACE_WITH_RELEASE_DIGEST"
+    )
+
+
+def test_disabled_runtime_is_reported_without_hiding_image_status(monkeypatch) -> None:
+    monkeypatch.setenv("TGA_SANDBOX_RUNTIME", "disabled")
+    report = inspect_kali_runtime_readiness(
+        config_path=Path(__file__).parents[1] / "config" / "sandbox.json"
+    )
+    assert report.runtime_mode == "disabled"
+    assert report.profiles["ctf-pwn-v1"].status == "unresolved_digest"
+    assert report.profiles["ctf-pwn-v1"].runtime_status == "disabled"
 
 
 def test_mcp_migration_binds_core_tools_but_leaves_them_disabled() -> None:

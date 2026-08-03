@@ -1,0 +1,14 @@
+{
+    "profile_id":  "dynamic-analysis-v1",
+    "tools":  {
+                  "python3":  "image-managed",
+                  "gdb":  "image-managed",
+                  "lldb":  "image-managed",
+                  "strace":  "image-managed",
+                  "ltrace":  "image-managed",
+                  "rr":  "image-managed",
+                  "valgrind":  "image-managed",
+                  "qemu-x86_64":  "image-managed",
+                  "frida":  "image-managed"
+              }
+}

@@ -8,7 +8,10 @@ const mocks = vi.hoisted(() => ({
   fetchHostCapabilityProfiles: vi.fn(),
   fetchKaliProfiles: vi.fn(),
   fetchSolverDefinitions: vi.fn(),
+  fetchSolverKaliHealth: vi.fn(),
+  fetchSolverKaliHealthSummary: vi.fn(),
   fetchSolverManifest: vi.fn(),
+  checkSolverKaliHealth: vi.fn(),
   updateSolverCapabilities: vi.fn(),
 }));
 
@@ -66,6 +69,24 @@ describe("SolversPage capability editor", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.fetchSolverDefinitions.mockResolvedValue({ items: [solver], total: 1 });
+    mocks.fetchSolverKaliHealthSummary.mockResolvedValue({
+      items: [{ solver_id: solver.id, requires_kali: true, profile_id: "ctf-pwn-v1", status: "unresolved_digest" }],
+      total: 1,
+    });
+    mocks.fetchSolverKaliHealth.mockResolvedValue({
+      solver_id: solver.id,
+      requires_kali: true,
+      profile_id: "ctf-pwn-v1",
+      image: "ghcr.io/team-gipsy/tga-kali-ctf-pwn@sha256:REPLACE_WITH_RELEASE_DIGEST",
+      status: "unresolved_digest",
+      image_status: "unresolved_digest",
+      runtime_status: "sandboxd_unavailable",
+      checked_at: "2026-08-03T14:30:00Z",
+      reasons: [{ code: "unresolved_image_digest", message: "image digest has not been resolved" }],
+      missing_executables: [],
+      toolset: { expected_digest: "5f12", actual_digest: null, status: "not_checked" },
+    });
+    mocks.checkSolverKaliHealth.mockRejectedValue({ status: 501 });
     mocks.fetchSolverManifest.mockResolvedValue({ host_capabilities: [], kali: null });
     mocks.fetchHostCapabilityProfiles.mockResolvedValue({
       items: [{ id: "worker-default", capability_ids: ["artifact.inspect"] }],
@@ -127,5 +148,39 @@ describe("SolversPage capability editor", () => {
         kali: { profile_id: "ctf-pwn-v1", capabilities: ["kali.exec"] },
       },
     ));
+  });
+
+  it("shows an unresolved digest as unpublished with the real image reference", async () => {
+    renderPage();
+
+    expect(await screen.findAllByText("未发布")).not.toHaveLength(0);
+    expect(screen.getByText("ghcr.io/team-gipsy/tga-kali-ctf-pwn@sha256:REPLACE_WITH_RELEASE_DIGEST")).toBeInTheDocument();
+    expect(screen.getByText("unresolved_image_digest")).toBeInTheDocument();
+    expect(screen.queryByText("健康")).not.toBeInTheDocument();
+  });
+
+  it("uses overall runtime status instead of a healthy image status", async () => {
+    mocks.fetchSolverKaliHealthSummary.mockResolvedValue({
+      items: [{ solver_id: solver.id, requires_kali: true, profile_id: "ctf-pwn-v1", status: "runtime_unavailable" }], total: 1,
+    });
+    mocks.fetchSolverKaliHealth.mockResolvedValue({
+      solver_id: solver.id, requires_kali: true, profile_id: "ctf-pwn-v1", image: "example/image@sha256:" + "a".repeat(64),
+      status: "runtime_unavailable", image_status: "healthy", runtime_status: "sandboxd_unavailable", checked_at: null,
+      reasons: [{ code: "runtime_unavailable", message: "sandboxd is unavailable" }], missing_executables: [],
+      toolset: { expected_digest: "5f12", actual_digest: "5f12", status: "match" },
+    });
+    renderPage();
+
+    expect((await screen.findAllByText("Runtime 不可用")).length).toBeGreaterThan(0);
+    expect(screen.getByText("健康")).toBeInTheDocument();
+    expect(screen.getByText("sandboxd 不可用")).toBeInTheDocument();
+  });
+
+  it("reports deep checks as unavailable when the API returns 501", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByRole("button", { name: "重新检查" }));
+    expect(await screen.findByText("深度检查暂不可用")).toBeInTheDocument();
   });
 });

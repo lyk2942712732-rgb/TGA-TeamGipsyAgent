@@ -1,5 +1,6 @@
 ARG BASE_IMAGE=ghcr.io/team-gipsy/tga-kali-base@sha256:REPLACE_WITH_RELEASE_DIGEST
 FROM ${BASE_IMAGE}
+ARG DEBIAN_FRONTEND=noninteractive
 
 USER root
 RUN apt-get update \

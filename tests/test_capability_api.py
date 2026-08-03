@@ -42,6 +42,40 @@ def test_solver_tools_and_profile_apis_share_kali_assignments() -> None:
     assert "ctf-pwn-solver" in profile_payload["assigned_solver_ids"]
 
 
+def test_process_health_succeeds_when_kali_is_not_ready() -> None:
+    response = TestClient(app).get("/api/health")
+
+    assert response.status_code == 200
+    assert response.json()["process"] == "healthy"
+    assert response.json()["kali_runtime"] == "not_ready"
+
+
+def test_solver_kali_health_reports_selected_profile_only() -> None:
+    client = TestClient(app)
+    pwn = client.get("/api/v2/solvers/ctf-pwn-solver/kali-health")
+    reporter = client.get("/api/v2/solvers/security-reporter/kali-health")
+    summary = client.get("/api/v2/solvers/kali-health")
+
+    assert pwn.status_code == reporter.status_code == summary.status_code == 200
+    assert pwn.json()["profile_id"] == "ctf-pwn-v1"
+    assert pwn.json()["status"] == "unresolved_digest"
+    assert pwn.json()["image_status"] == "unresolved_digest"
+    assert pwn.json()["reasons"][0]["code"] == "unresolved_image_digest"
+    assert reporter.json()["status"] == "host_only"
+    items = {item["solver_id"]: item for item in summary.json()["items"]}
+    assert items["ctf-pwn-solver"]["status"] == "unresolved_digest"
+    assert items["security-reporter"]["status"] == "host_only"
+
+
+def test_solver_kali_deep_check_returns_501() -> None:
+    response = TestClient(app).post(
+        "/api/v2/solvers/ctf-pwn-solver/kali-health/check"
+    )
+
+    assert response.status_code == 501
+    assert response.json()["detail"]["code"] == "kali_deep_check_not_implemented"
+
+
 def test_host_profile_catalog_exposes_editable_solver_profiles() -> None:
     response = TestClient(app).get("/api/v2/capabilities/host-profiles")
 
@@ -166,10 +200,6 @@ def test_kali_profile_crud_and_bound_delete_conflict(
     template.update({
         "id": "temporary-test-v1",
         "display_name": "Temporary test",
-        "image_name": "example.invalid/tga/test",
-        "image_tag": "1",
-        "image_digest": None,
-        "image": "example.invalid/tga/test:1",
         "assigned_solver_count": 0,
         "assigned_solver_ids": [],
     })

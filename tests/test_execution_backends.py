@@ -174,7 +174,7 @@ def test_kali_backend_fails_closed_when_runtime_is_disabled(tmp_path: Path) -> N
         _request(sandbox_config_digest=config.digest)
     )
     assert result.status == "blocked"
-    assert result.error and result.error.code == "SANDBOX_RUNTIME_DISABLED"
+    assert result.error and result.error.code == "KALI_PROFILE_NOT_READY"
     assert manager.acquire_calls == []
 
 

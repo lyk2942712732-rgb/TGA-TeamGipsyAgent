@@ -1,0 +1,17 @@
+{
+    "profile_id":  "pentest-web-api-v1",
+    "tools":  {
+                  "python3":  "image-managed",
+                  "curl":  "image-managed",
+                  "http":  "image-managed",
+                  "mitmproxy":  "image-managed",
+                  "arjun":  "image-managed",
+                  "kr":  "image-managed",
+                  "ffuf":  "image-managed",
+                  "nuclei":  "image-managed",
+                  "sqlmap":  "image-managed",
+                  "jwt_tool":  "image-managed",
+                  "graphql-cop":  "image-managed",
+                  "wafw00f":  "image-managed"
+              }
+}

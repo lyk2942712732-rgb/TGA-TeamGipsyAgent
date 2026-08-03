@@ -4,13 +4,15 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 from apps.api.routes import router as runtime_v2_router
 from apps.api.routes.support import _runtime_scheduler
 from tga.models.bootstrap import model_config_status
 from tga.runtime.host_handler_contract import validate_runtime_host_handlers
+from tga.sandbox import KaliProfileNotReadyError, inspect_kali_runtime_readiness
 from tga.sandbox.lifecycle import SandboxLifecycleService
 
 @asynccontextmanager
@@ -41,7 +43,28 @@ app.add_middleware(
 app.include_router(runtime_v2_router, prefix="/api")
 
 
+@app.exception_handler(KaliProfileNotReadyError)
+def kali_profile_not_ready(
+    _request: Request, exc: KaliProfileNotReadyError
+) -> JSONResponse:
+    return JSONResponse(
+        status_code=503,
+        content={
+            "error": "kali_profile_not_ready",
+            "profile_id": exc.profile_id,
+            "reason": exc.reason,
+            "message": str(exc),
+        },
+    )
+
+
 @app.get("/api/health")
 def health() -> dict[str, str]:
     """Process health used by the desktop and browser launchers."""
-    return {"status": "ok", "service": "tga-runtime"}
+    readiness = inspect_kali_runtime_readiness()
+    return {
+        "status": "ok",
+        "process": "healthy",
+        "service": "tga-runtime",
+        "kali_runtime": readiness.overall,
+    }

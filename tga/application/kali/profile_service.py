@@ -283,7 +283,8 @@ def _image_parts(image: str) -> tuple[str, str, str | None]:
     base = image
     if "@sha256:" in image:
         base, digest_value = image.rsplit("@sha256:", 1)
-        digest = f"sha256:{digest_value}" if re.fullmatch(r"[a-f0-9]{64}", digest_value) else None
+        if re.fullmatch(r"[a-f0-9]{64}", digest_value) or digest_value == "REPLACE_WITH_RELEASE_DIGEST":
+            digest = f"sha256:{digest_value}"
     slash = base.rfind("/")
     colon = base.rfind(":")
     if colon > slash:

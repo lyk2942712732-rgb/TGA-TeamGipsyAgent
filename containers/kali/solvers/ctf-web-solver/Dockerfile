@@ -2,6 +2,7 @@ ARG BASE_IMAGE=ghcr.io/team-gipsy/tga-kali-base@sha256:REPLACE_WITH_RELEASE_DIGE
 ARG GO_BUILDER=golang:1.24-bookworm@sha256:1a6d4452c65dea36aac2e2d606b01b4a029ec90cc1ae53890540ce6173ea77ac
 
 FROM ${GO_BUILDER} AS go-tools
+ARG DEBIAN_FRONTEND=noninteractive
 
 ARG NUCLEI_VERSION=v3.4.10
 ARG DALFOX_VERSION=v2.12.0
@@ -9,6 +10,7 @@ RUN CGO_ENABLED=0 go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@${
     && CGO_ENABLED=0 go install github.com/hahwul/dalfox/v2@${DALFOX_VERSION}
 
 FROM ${BASE_IMAGE}
+ARG DEBIAN_FRONTEND=noninteractive
 
 USER root
 RUN apt-get update \

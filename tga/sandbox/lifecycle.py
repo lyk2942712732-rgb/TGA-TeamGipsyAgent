@@ -32,11 +32,6 @@ class SandboxLifecycleService:
     def start(self) -> None:
         if self.config.runtime != "enforced" or self._thread is not None:
             return
-        for provider in self.providers.values():
-            health = getattr(provider, "health", None)
-            if callable(health):
-                health()
-        self.run_once()
         self._thread = threading.Thread(
             target=self._loop,
             name="tga-sandbox-reconcile",

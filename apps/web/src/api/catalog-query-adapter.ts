@@ -78,6 +78,40 @@ export type SolverKaliDetail = {
   tools: KaliTool[];
 };
 
+export type KaliHealthStatus =
+  | "host_only"
+  | "unknown"
+  | "runtime_disabled"
+  | "unresolved_digest"
+  | "image_unreachable"
+  | "image_not_found"
+  | "image_unverified"
+  | "toolset_mismatch"
+  | "tools_missing"
+  | "runtime_unavailable"
+  | "healthy";
+
+export type SolverKaliHealthSummary = {
+  solver_id: string;
+  requires_kali: boolean;
+  profile_id: string | null;
+  status: KaliHealthStatus;
+};
+
+export type SolverKaliHealth = SolverKaliHealthSummary & {
+  image: string | null;
+  image_status: string;
+  runtime_status: string;
+  checked_at: string | null;
+  reasons: Array<{ code: string; message: string }>;
+  missing_executables: string[];
+  toolset: {
+    expected_digest: string | null;
+    actual_digest: string | null;
+    status: string;
+  };
+};
+
 export type HostCapabilityRecord = {
   id: string;
   display_name: string;
@@ -135,6 +169,9 @@ export const fetchHostCapabilities = () => requestJson<{ items: HostCapabilityRe
 export const fetchHostCapabilityProfiles = () => requestJson<{ items: HostCapabilityProfileRecord[]; total: number }>("/api/v2/capabilities/host-profiles");
 export const fetchKaliCapabilities = () => requestJson<{ items: KaliCapabilityRecord[]; total: number }>("/api/v2/capabilities/kali");
 export const fetchKaliProfiles = () => requestJson<{ items: KaliProfileRecord[]; total: number }>("/api/v2/kali/profiles");
+export const fetchSolverKaliHealth = (id: string) => requestJson<SolverKaliHealth>(`/api/v2/solvers/${encodeURIComponent(id)}/kali-health`);
+export const fetchSolverKaliHealthSummary = () => requestJson<{ items: SolverKaliHealthSummary[]; total: number }>("/api/v2/solvers/kali-health");
+export const checkSolverKaliHealth = (id: string) => requestJson<SolverKaliHealth>(`/api/v2/solvers/${encodeURIComponent(id)}/kali-health/check`, { method: "POST" });
 export const fetchSolverDefinition = (id: string) => requestJson<SolverDefinitionRecord>(`/api/v2/solvers/${encodeURIComponent(id)}`);
 export const fetchSolverManifest = (id: string, mode?: string) => requestJson<Record<string, unknown>>(`/api/v2/solvers/${encodeURIComponent(id)}/manifest-preview${mode ? `?mode=${encodeURIComponent(mode)}` : ""}`);
 export const updateSolverCapabilities = (

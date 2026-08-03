@@ -1,4 +1,4 @@
-"""Read the intentionally small Kali image build matrix without PyYAML."""
+"""Read and validate the Kali Solver image build matrix without PyYAML."""
 
 from __future__ import annotations
 
@@ -14,33 +14,50 @@ MATRIX_PATH = REPO_ROOT / "containers" / "kali" / "build-matrix.yaml"
 def load_matrix(path: Path = MATRIX_PATH) -> list[dict[str, str]]:
     values: list[dict[str, str]] = []
     current: dict[str, str] | None = None
-    in_pilots = False
+    in_images = False
+    saw_images = False
     for raw_line in path.read_text(encoding="utf-8").splitlines():
+        indent = len(raw_line) - len(raw_line.lstrip())
         line = raw_line.strip()
         if not line or line.startswith("#"):
             continue
-        if line == "pilots:":
-            in_pilots = True
+        if line == "images:" and indent == 0:
+            if saw_images:
+                raise ValueError("build matrix repeats images")
+            saw_images = True
+            in_images = True
             continue
-        if not in_pilots:
+        if indent == 0:
+            if in_images and current is not None:
+                values.append(current)
+                current = None
+            in_images = False
             continue
+        if not in_images:
+            continue
+        if indent not in (2, 4):
+            raise ValueError(f"invalid build matrix indentation: {raw_line!r}")
         if line.startswith("- "):
+            if indent != 2:
+                raise ValueError(f"invalid build matrix entry: {raw_line!r}")
             if current is not None:
                 values.append(current)
             current = {}
             line = line[2:]
+        elif indent != 4:
+            raise ValueError(f"invalid build matrix field: {raw_line!r}")
         if current is None or ":" not in line:
             raise ValueError(f"invalid build matrix line: {raw_line!r}")
         key, value = (item.strip() for item in line.split(":", 1))
         if key in current or not value:
             raise ValueError(f"invalid build matrix entry: {raw_line!r}")
         current[key] = value
-    if current is not None:
+    if in_images and current is not None:
         values.append(current)
 
     required = {"solver", "profile", "image", "context"}
     if not values:
-        raise ValueError("build matrix has no pilot images")
+        raise ValueError("build matrix has no images")
     for value in values:
         if set(value) != required:
             raise ValueError(f"build matrix entry must contain exactly {sorted(required)}")

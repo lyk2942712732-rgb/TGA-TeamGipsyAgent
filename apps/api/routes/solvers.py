@@ -20,6 +20,7 @@ from tga.infrastructure.solver_definitions.registry import SolverDefinitionRegis
 from tga.infrastructure.solver_definitions.registry import solver_definition_root
 from tga.infrastructure.file_lock import advisory_file_lock
 from tga.modes import default_execution_policy
+from tga.application.kali.health_service import SolverKaliHealthService
 
 
 router = APIRouter(prefix="/solvers", tags=["solvers"])
@@ -53,6 +54,12 @@ def solvers(query: str = Query(default="", max_length=255)) -> dict[str, Any]:
     return {"items": items, "total": len(items)}
 
 
+@router.get("/kali-health")
+def solver_kali_health_summary() -> dict[str, Any]:
+    items = SolverKaliHealthService(_assignments()).all()
+    return {"items": items, "total": len(items)}
+
+
 @router.get("/{solver_id}")
 def solver(solver_id: str) -> dict[str, Any]:
     assignments = _assignments()
@@ -61,6 +68,30 @@ def solver(solver_id: str) -> dict[str, Any]:
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="SolverDefinition not found") from exc
     return assignments.definition_detail(definition)
+
+
+@router.get("/{solver_id}/kali-health")
+def solver_kali_health(solver_id: str) -> dict[str, Any]:
+    try:
+        return SolverKaliHealthService(_assignments()).require(solver_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="SolverDefinition not found") from exc
+
+
+@router.post("/{solver_id}/kali-health/check")
+def check_solver_kali_health(solver_id: str) -> dict[str, Any]:
+    try:
+        _assignments().definitions.require(solver_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="SolverDefinition not found") from exc
+    raise HTTPException(
+        status_code=501,
+        detail={
+            "code": "kali_deep_check_not_implemented",
+            "message": "Kali deep health check is not available yet.",
+            "solver_id": solver_id,
+        },
+    )
 
 
 @router.put("/{solver_id}/capabilities")

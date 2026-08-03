@@ -16,6 +16,7 @@ from tga.sandbox.models import (
     SandboxState,
 )
 from tga.sandbox.provider import SandboxError, SandboxProvider
+from tga.sandbox.readiness import ensure_kali_profile_ready
 from tga.sandbox.repository import SandboxInstanceRepository
 
 
@@ -37,12 +38,8 @@ class SandboxManager:
         idempotency_key: str,
         profile: SandboxProfile | None = None,
     ) -> SandboxHandle:
-        if self.config.runtime != "enforced":
-            raise SandboxError(
-                "sandbox runtime is not enforced",
-                code="SANDBOX_RUNTIME_DISABLED",
-            )
         profile = profile or self.config.profile(profile_id)
+        ensure_kali_profile_ready(profile_id, self.config, profile=profile)
         if profile.provider == "remote_http":
             raise SandboxError("remote HTTP does not create a local sandbox", code="REMOTE_PROFILE")
         existing = (

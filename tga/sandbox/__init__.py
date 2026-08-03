@@ -14,10 +14,20 @@ from tga.sandbox.models import (
 )
 from tga.sandbox.provider import SandboxError, SandboxProvider
 from tga.sandbox.sandboxd_provider import SandboxdProvider
+from tga.sandbox.readiness import (
+    KaliProfileNotReadyError,
+    KaliProfileReadiness,
+    KaliReadinessReport,
+    ensure_kali_profile_ready,
+    inspect_kali_runtime_readiness,
+)
 
 __all__ = [
     "DockerSandboxProvider",
     "ExecResult",
+    "KaliProfileNotReadyError",
+    "KaliProfileReadiness",
+    "KaliReadinessReport",
     "NetworkGrant",
     "ProcessSpec",
     "SandboxConfig",
@@ -29,5 +39,7 @@ __all__ = [
     "SandboxProvider",
     "SandboxState",
     "SandboxdProvider",
+    "ensure_kali_profile_ready",
+    "inspect_kali_runtime_readiness",
     "load_sandbox_config",
 ]
