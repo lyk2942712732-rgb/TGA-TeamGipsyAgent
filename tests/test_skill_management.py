@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 from apps.api.main import app
 from tga.skills.registry import SkillRegistry
 from tga.skills.selection import SkillSelectionRequest, SkillSelector
+from tga.skills.store import SkillStore
 
 
 CUSTOM_SKILL = b"""---
@@ -86,6 +87,18 @@ def test_custom_skill_crud_is_scene_aware_and_runtime_visible(tmp_path: Path, mo
     deleted = client.delete("/api/v2/settings/skills/custom-web-proof")
     assert deleted.status_code == 200 and deleted.json()["deleted"] is True
     assert client.get("/api/v2/settings/skills/custom-web-proof").status_code == 404
+
+
+def test_skill_import_preserves_original_utf8_bytes(tmp_path: Path) -> None:
+    raw = CUSTOM_SKILL.replace(
+        b"# Workflow\n",
+        "# 工作流\n保留中文正文和尾随空行。\n\n# Workflow\n".encode("utf-8"),
+    )
+    store = SkillStore(tmp_path)
+
+    store.import_markdown(raw)
+
+    assert (tmp_path / "custom-web-proof.md").read_bytes() == raw
 
 
 def test_skill_management_rejects_builtin_overwrite_and_unsafe_uploads(tmp_path: Path, monkeypatch) -> None:

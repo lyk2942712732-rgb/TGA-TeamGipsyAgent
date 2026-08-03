@@ -975,6 +975,17 @@ class SqliteSolverRepository:
         )
         self.database._commit()
 
+    def get_definition_snapshot(
+        self, task_id: str, definition_id: str, content_sha256: str
+    ) -> SolverDefinition | None:
+        row = self.conn.execute(
+            "SELECT payload_json FROM solver_definitions_snapshot "
+            "WHERE task_id=? AND definition_id=? AND content_sha256=? "
+            "ORDER BY created_at DESC LIMIT 1",
+            (task_id, definition_id, content_sha256),
+        ).fetchone()
+        return SolverDefinition.model_validate_json(row["payload_json"]) if row else None
+
     def save_solver_skill_snapshot(self, snapshot: SolverSkillSnapshot) -> None:
         _require_task(self.conn, snapshot.task_id)
         digest = __import__("hashlib").sha256(snapshot.model_dump_json().encode()).hexdigest()

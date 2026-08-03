@@ -71,6 +71,8 @@ class SolverFactory:
             definition_id=definition.id,
             definition_version=definition.version,
             definition_content_sha256=definition.content_sha256,
+            definition_snapshot=definition.model_copy(deep=True),
+            execution_policy_snapshot=task.execution_policy.model_copy(deep=True),
             parent_solver_id=parent_solver_id,
             assigned_intent_id=intent.id if intent else None,
             orchestration_role=definition.orchestration_role,

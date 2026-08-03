@@ -104,16 +104,19 @@ class KaliSessionManager:
         if active >= self.max_sessions_per_run:
             raise SandboxError("Kali session limit reached", code="SESSION_LIMIT_REACHED")
         cwd = _relative_workspace_path(workspace, args.cwd)
-        process = self.manager.open_process(
-            handle,
-            ProcessSpec(
+        spec = ProcessSpec(
                 argv=(executable, *args.argv),
                 tool_id="kali.session",
                 working_directory=cwd,
                 timeout_seconds=profile.limits.timeout_seconds,
                 interactive=True,
-            ),
-        )
+            )
+        try:
+            process = self.manager.open_process(handle, spec, profile=profile)
+        except TypeError as exc:
+            if "unexpected keyword argument 'profile'" not in str(exc):
+                raise
+            process = self.manager.open_process(handle, spec)
         session_id = f"ks_{uuid.uuid4().hex}"
         self._sessions[session_id] = _Session(
             id=session_id,

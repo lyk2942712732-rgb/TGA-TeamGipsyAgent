@@ -9,6 +9,7 @@ from fastapi import APIRouter, HTTPException
 from apps.api.routes.support import _catalog_runner
 from tga.application.capabilities import CapabilityAssignmentService
 from tga.capabilities.mcp import health_snapshot
+from tga.runtime.host_handler_registry import HostHandlerRegistry
 
 
 router = APIRouter(tags=["capabilities"])
@@ -25,9 +26,12 @@ def _host_payload(capability_id: str) -> dict[str, Any]:
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Host capability not found") from exc
     solver_ids = assignments.solvers_for_host(item.id)
+    handler_registry = HostHandlerRegistry(host_registry=assignments.host_registry)
     return {
         **item.model_dump(mode="json"),
-        "handler_status": "ready",
+        "handler_status": (
+            "ready" if handler_registry.has_contract(item.handler_key) else "missing"
+        ),
         "assigned_solver_count": len(solver_ids),
         "assigned_solver_ids": list(solver_ids),
         "usage": {"calls": None, "failures": None, "last_called_at": None},
@@ -48,6 +52,13 @@ def capability_summary() -> dict[str, Any]:
 def host_capabilities() -> dict[str, Any]:
     assignments = _assignments()
     items = [_host_payload(item.id) for item in assignments.host_registry.all()]
+    return {"items": items, "total": len(items)}
+
+
+@router.get("/capabilities/host-profiles")
+def host_capability_profiles() -> dict[str, Any]:
+    assignments = _assignments()
+    items = [item.model_dump(mode="json") for item in assignments.host_registry.profiles()]
     return {"items": items, "total": len(items)}
 
 

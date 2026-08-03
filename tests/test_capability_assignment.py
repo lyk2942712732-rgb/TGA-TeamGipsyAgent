@@ -4,8 +4,11 @@ import pytest
 from pydantic import ValidationError
 
 from tga.application.capabilities import CapabilityAssignmentService
+from tga.application.capabilities import HostCapabilityRegistry
 from tga.application.kali import KaliProfileService
 from tga.domain.capabilities import SolverKaliBinding
+from tga.domain.governance.models import ExecutionPolicy
+from tga.domain.governance.models import HighImpactExecutionPolicy
 from tga.infrastructure.solver_definitions.registry import SolverDefinitionRegistry
 from tga.runtime.host_handler_contract import (
     RUNTIME_HOST_HANDLER_KEYS,
@@ -91,3 +94,119 @@ def test_missing_host_handler_fails_startup_validation() -> None:
 
     with pytest.raises(RuntimeError, match="input.read"):
         registry.validate_handlers(missing)
+
+
+def test_manifest_uses_frozen_capability_and_kali_runtime_snapshot() -> None:
+    assignments = CapabilityAssignmentService()
+    definition = assignments.definitions.require("ctf-pwn-solver")
+    kali_runtime = assignments.resolve_kali(definition)
+    assert kali_runtime is not None
+    snapshot = type("Snapshot", (), {
+        "host_capability_ids": tuple(
+            item.id for item in assignments.resolve_host(definition)
+        ),
+        "host_capability_profile_id": definition.host_capability_profile_id,
+        "kali": definition.kali,
+        "kali_runtime": kali_runtime,
+    })()
+    changed = definition.model_copy(update={
+        "host_capability_overrides": definition.host_capability_overrides.model_copy(
+            update={"remove": (snapshot.host_capability_ids[0],)}
+        ),
+        "kali": None,
+    })
+
+    manifest = assignments.manifest(
+        task_id="task-test",
+        solver_id="solver-test",
+        definition=changed,
+        intent_id=None,
+        capability_snapshot=snapshot,
+    )
+
+    assert tuple(item.id for item in manifest.host_capabilities) == snapshot.host_capability_ids
+    assert manifest.kali == kali_runtime
+
+
+def test_manifest_hides_kali_when_local_compute_is_disabled() -> None:
+    assignments = CapabilityAssignmentService()
+    definition = assignments.definitions.require("ctf-pwn-solver")
+
+    manifest = assignments.manifest(
+        task_id="task-test",
+        solver_id="solver-test",
+        definition=definition,
+        intent_id=None,
+        execution_policy=ExecutionPolicy(),
+    )
+
+    assert manifest.kali is None
+
+
+def test_manifest_filters_high_impact_host_capabilities_from_task_policy() -> None:
+    assignments = CapabilityAssignmentService()
+    definition = assignments.definitions.require("ctf-web-solver")
+    forbidden = ExecutionPolicy()
+
+    hidden = assignments.manifest(
+        task_id="task-test", solver_id="solver-test", definition=definition,
+        intent_id=None, execution_policy=forbidden,
+    )
+    approval = assignments.manifest(
+        task_id="task-test", solver_id="solver-test", definition=definition,
+        intent_id=None,
+        execution_policy=forbidden.model_copy(update={
+            "high_impact": HighImpactExecutionPolicy(mode="approval_required")
+        }),
+    )
+    allowlisted = assignments.manifest(
+        task_id="task-test", solver_id="solver-test", definition=definition,
+        intent_id=None,
+        execution_policy=forbidden.model_copy(update={
+            "high_impact": HighImpactExecutionPolicy(
+                mode="allowlisted", allowed_actions=["artifact.publish"]
+            )
+        }),
+    )
+
+    assert "artifact.publish" not in {item.id for item in hidden.host_capabilities}
+    assert "input.materialize" not in {item.id for item in hidden.host_capabilities}
+    assert "artifact.publish" in {item.id for item in approval.host_capabilities}
+    assert "input.materialize" in {item.id for item in approval.host_capabilities}
+    assert "artifact.publish" in {item.id for item in allowlisted.host_capabilities}
+    assert "input.materialize" not in {item.id for item in allowlisted.host_capabilities}
+
+
+def test_manifest_uses_complete_frozen_host_entries_after_registry_changes() -> None:
+    assignments = CapabilityAssignmentService()
+    definition = assignments.definitions.require("ctf-supervisor")
+    frozen = assignments.resolve_host(definition)
+    snapshot = type("Snapshot", (), {
+        "host_capability_ids": tuple(item.id for item in frozen),
+        "host_capabilities": frozen,
+        "host_capability_profile_id": definition.host_capability_profile_id,
+        "kali": definition.kali,
+        "kali_runtime": None,
+    })()
+    changed_definitions = tuple(
+        item.model_copy(update={
+            "description": f"changed current description for {item.id}",
+            "input_schema": {"type": "object", "properties": {"changed": {"type": "boolean"}}},
+        })
+        for item in assignments.host_registry.all()
+    )
+    changed_assignments = CapabilityAssignmentService(
+        host_registry=HostCapabilityRegistry(
+            changed_definitions, assignments.host_registry.profiles()
+        ),
+    )
+
+    manifest = changed_assignments.manifest(
+        task_id="task-test",
+        solver_id="solver-test",
+        definition=definition,
+        intent_id=None,
+        capability_snapshot=snapshot,
+    )
+
+    assert manifest.host_capabilities == frozen

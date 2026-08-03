@@ -1,1 +1,0 @@
-{"id": "task_demo", "name": "demo", "mode": "ctf", "goal": "solve", "modeOptions": {"flag_format": "flag\\{[^}]+\\}"}, "input": {"text": "target is http://127.0.0.1:1"}, "executionPolicy": {"preset": "custom", "network": {"access": "custom", "custom_origins": ["http://127.0.0.1:1"], "deny_private_networks": false, "deny_loopback": false, "deny_link_local": false}}}

@@ -55,6 +55,7 @@ class ToolGovernanceGateway:
         self,
         *,
         task,
+        execution_policy=None,
         manifest,
         repository,
         execution_adapter,
@@ -71,7 +72,12 @@ class ToolGovernanceGateway:
         approval_pending_handler: Callable[[GovernedAction], None] | None = None,
         approval_resolved_handler: Callable[[GovernedAction], None] | None = None,
     ) -> None:
-        self.task = task
+        self.execution_policy = (
+            execution_policy or task.execution_policy
+        ).model_copy(deep=True)
+        self.task = task.model_copy(update={
+            "execution_policy": self.execution_policy
+        })
         self.manifest = manifest
         self.repository = repository
         self.execution_adapter = execution_adapter
@@ -577,7 +583,11 @@ class ToolGovernanceGateway:
             request.action_context.execution_policy_snapshot_id,
             request.action_context.solver_capability_snapshot_id,
         )
-        if definition.tool_class != "execution":
+        policy_governed = (
+            definition.tool_class == "execution"
+            or definition.capability in {"artifact.publish", "input.materialize"}
+        )
+        if not policy_governed:
             return AuthorizationDecision(
                 allowed=True, reason="manifest and ownership checks passed",
                 policy_snapshot_ids=snapshots,
@@ -588,7 +598,7 @@ class ToolGovernanceGateway:
             task=self.task,
             risk=risk,
             action=str(request.arguments.get("method") or definition.capability),
-            sandboxed=self.task.execution_policy.local_compute.mode == "isolated",
+            sandboxed=self.execution_policy.local_compute.mode == "isolated",
         )
         if decision.code == "APPROVAL_REQUIRED":
             if effect == ActionEffect() or not request.model_intent.alternative_analysis:

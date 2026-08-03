@@ -39,12 +39,12 @@ from tga.runtime.tooling.execution import (
     RemoteMCPBackend,
 )
 from tga.runtime.kali import KaliSessionManager
-from tga.infrastructure.solver_definitions.registry import SolverDefinitionRegistry
 from tga.runtime.tooling.catalog import RuntimeToolCatalog
 from tga.runtime.tooling.catalog.manifest_builder import ToolManifestBuilder
 from tga.runtime.tooling.requests import ActionContext
 from tga.runtime.tooling.routing import GatewayToolDispatcher, ToolGovernanceGateway
 from tga.runtime.orchestration import TaskOrchestrator
+from tga.runtime.host_handler_registry import HostHandlerRegistry
 from tga.runtime.scheduling import BudgetManager
 from tga.runtime.scheduling import CancellationError
 from tga.infrastructure.persistence.errors import PersistenceConflict
@@ -86,12 +86,51 @@ class AgentSessionRunner:
         self.max_turns = max_turns
         self.coordinator = SessionCoordinator(store)
         self.capability_assignments = CapabilityAssignmentService()
+        self.persistence = PersistenceBundle(store)
+        durable_solver = self.persistence.solvers.get_solver(solver_id)
+        if durable_solver is None:
+            raise RuntimeError(f"durable SolverInstance not found: {solver_id}")
+        if durable_solver.execution_policy_snapshot is None:
+            raise RuntimeError(
+                f"missing frozen ExecutionPolicy snapshot: {durable_solver.id}"
+            )
+        binding = durable_solver.capability_binding_snapshot
+        if not binding.host_capabilities:
+            raise RuntimeError(
+                f"missing frozen Host capability manifest: {durable_solver.id}"
+            )
+        frozen_definition = durable_solver.definition_snapshot or (
+            self.persistence.solvers.get_definition_snapshot(
+                durable_solver.task_id,
+                durable_solver.definition_id,
+                durable_solver.definition_content_sha256,
+            )
+        )
+        if frozen_definition is None:
+            raise RuntimeError(
+                f"missing frozen SolverDefinition snapshot: {durable_solver.id}"
+            )
+        if frozen_definition.kali is not None and (
+            binding.kali_runtime is None
+            or binding.kali_profile is None
+            or binding.sandbox_config_digest is None
+        ):
+            raise RuntimeError(
+                f"missing frozen Kali runtime snapshot: {durable_solver.id}"
+            )
+        # The scheduler may hand us a fresh task projection. Replace only the
+        # mutable policy surface with the Solver's immutable creation snapshot.
+        self.task = task.model_copy(update={
+            "execution_policy": durable_solver.execution_policy_snapshot.model_copy(
+                deep=True
+            )
+        })
         self.solver_id = solver_id
         self.solver_lease = solver_lease
         self.execution_context = execution_context
         self.workspace = SolverSessionState(
             run_root=run_root,
-            task_id=task.id,
+            task_id=self.task.id,
             solver_id=self.solver_id,
             solver_run_id=(execution_context.run_id if execution_context else None),
         ).workspace
@@ -99,18 +138,17 @@ class AgentSessionRunner:
         self.mcp_manager = mcp_manager or MCPManager(cache_path=run_root / "mcp-cache.json")
         self.sandbox_config, _ = load_sandbox_config()
         self.mcp_snapshot: MCPCatalogSnapshot = self.mcp_manager.snapshot_for_task(
-            task, workspace=self.workspace
+            self.task, workspace=self.workspace
         )
-        self.session_dir = run_root / task.id / "solvers" / self.solver_id / "session"
+        self.session_dir = run_root / self.task.id / "solvers" / self.solver_id / "session"
         self.session_dir.mkdir(parents=True, exist_ok=True)
-        self.persistence = PersistenceBundle(store)
         self.retrieval_service = RetrievalService(
             self.persistence.retrieval,
             event_repository=self.persistence.events,
         )
         self.retrieval_policy: RetrievalPolicy | None = None
         self.task_orchestrator = TaskOrchestrator(
-            task=task, repositories=self.persistence, runner_lease=(
+            task=self.task, repositories=self.persistence, runner_lease=(
                 execution_context if execution_context is not None else solver_lease
             )
         )
@@ -118,7 +156,7 @@ class AgentSessionRunner:
             self.solver_id
         )
         # TaskSpec is the authoritative resource source for this session.
-        self.task_spec = self.persistence.tasks.get_task_spec(task.id)
+        self.task_spec = self.persistence.tasks.get_task_spec(self.task.id)
         self.transcript = RepositorySolverTranscript(
             repository=self.persistence.transcripts,
             task_id=task.id,
@@ -132,7 +170,7 @@ class AgentSessionRunner:
         )
         self.tool_by_name: dict[str, str] = {}
         self.handlers = build_tool_handlers(
-            task=task, store=store, run_root=run_root, client=client, executor=executor,
+            task=self.task, store=store, run_root=run_root, client=client, executor=executor,
             solver_id=self.solver_id, workspace=self.workspace, mcp_manager=self.mcp_manager,
             mcp_snapshot=self.mcp_snapshot,
             tool_by_name=self.tool_by_name,
@@ -688,7 +726,7 @@ class AgentSessionRunner:
         solver = self.persistence.solvers.get_solver(self.solver_id)
         if solver is None:
             return base
-        definition = SolverDefinitionRegistry.builtin().require(solver.definition_id)
+        definition = self._frozen_definition(solver)
         self.retrieval_policy = self._retrieval_policy_for(solver)
         assignment = self.assignment
         assigned = (
@@ -708,6 +746,18 @@ class AgentSessionRunner:
         if self.execution_context is None:
             return True
         return self.execution_context.is_active()
+
+    def _frozen_definition(self, solver):
+        definition = solver.definition_snapshot
+        if definition is None:
+            definition = self.persistence.solvers.get_definition_snapshot(
+                solver.task_id, solver.definition_id, solver.definition_content_sha256
+            )
+        if definition is None:
+            raise RuntimeError(
+                f"missing frozen SolverDefinition snapshot: {solver.definition_id}"
+            )
+        return definition
 
     def _has_model_token_limit(self) -> bool:
         return any(
@@ -751,7 +801,9 @@ class AgentSessionRunner:
                 )
                 local_step_id = step.id if step else None
         policy_digest = hashlib.sha256(
-            self.task.execution_policy.model_dump_json().encode()
+            solver.execution_policy_snapshot.model_dump_json().encode()
+            if solver.execution_policy_snapshot is not None
+            else self.task.execution_policy.model_dump_json().encode()
         ).hexdigest()
         skill = self.persistence.solvers.get_solver_skill_snapshot(self.solver_id)
         skill_id = (
@@ -791,9 +843,27 @@ class AgentSessionRunner:
         if solver is None:
             raise RuntimeError("durable SolverInstance is required for a Tool Manifest")
         intent = self._current_intent()
-        definition = SolverDefinitionRegistry.builtin().require(solver.definition_id)
+        definition = self._frozen_definition(solver)
         self.retrieval_policy = self._retrieval_policy_for(solver)
-        catalog = RuntimeToolCatalog.from_runtime(mcp_snapshot=self.mcp_snapshot)
+        self.handler_registry = HostHandlerRegistry(
+            host_registry=self.capability_assignments.host_registry,
+            host_capabilities=solver.capability_binding_snapshot.host_capabilities,
+        )
+        mcp_risks = {}
+        if self.mcp_manager.config is not None:
+            for route in self.mcp_snapshot.routes:
+                server = self.mcp_manager.config.servers.get(route.server_id)
+                if server is not None:
+                    mcp_risks[(route.server_id, route.method)] = (
+                        self.mcp_manager.policy.risk_for(
+                            server=server, method=route.method
+                        )
+                    )
+        catalog = RuntimeToolCatalog.from_runtime(
+            mcp_snapshot=self.mcp_snapshot,
+            execution_policy=solver.execution_policy_snapshot,
+            mcp_risks=mcp_risks,
+        )
         self.tool_manifest = ToolManifestBuilder(self.capability_assignments).build(
             task=self.task,
             solver=solver,
@@ -814,27 +884,6 @@ class AgentSessionRunner:
         retrieval_handlers = {
             "retrieval.search": self._gateway_retrieval_search,
         }
-        delegated_host_ids = (
-            set(control_handlers)
-            | set(resource_handlers)
-            | set(retrieval_handlers)
-            | {
-                "input.list", "input.get", "input.read", "input.search",
-                "input.view", "input.materialize", "artifact.list",
-                "artifact.inspect", "artifact.publish",
-            }
-        )
-        missing_host_handlers = sorted(
-            item.id
-            for item in self.tool_manifest.host_capabilities
-            if item.id not in delegated_host_ids
-        )
-        if missing_host_handlers:
-            raise RuntimeError(
-                "Host capabilities missing runtime handlers: "
-                + ", ".join(missing_host_handlers)
-            )
-
         def host_control(request):
             handler = control_handlers.get(request.capability)
             if handler is None:
@@ -879,23 +928,52 @@ class AgentSessionRunner:
                 )
             return self.execution_adapter.execute_authorized(request)
 
+        self.handler_registry.register_many(control_handlers, host_control)
+        self.handler_registry.register_many(resource_handlers, host_retrieval)
+        self.handler_registry.register_many(retrieval_handlers, host_retrieval)
+        self.handler_registry.register_many(
+            {
+                "input.list", "input.get", "input.read", "input.search",
+                "input.view", "input.materialize", "artifact.list",
+                "artifact.inspect", "artifact.publish",
+            },
+            host_retrieval,
+        )
+        missing_host_handlers = self.handler_registry.missing(
+            item.id for item in self.tool_manifest.host_capabilities
+        )
+        if missing_host_handlers:
+            raise RuntimeError(
+                "Host capabilities missing runtime handlers: "
+                + ", ".join(missing_host_handlers)
+            )
+
+        def registered_host_handler(request):
+            return self.handler_registry.execute(request.capability, request)
+
         sandbox_manager = getattr(self.executor, "sandbox_manager", None)
         if sandbox_manager is None:
             raise RuntimeError("production execution requires a SandboxManager")
         self.execution_backend_router = ExecutionBackendRouter(
             {
-                "host_control": HandlerExecutionBackend("host_control", host_control),
+                "host_control": HandlerExecutionBackend(
+                    "host_control", registered_host_handler
+                ),
                 "host_retrieval": HostRetrievalBackend(
                     workspace=self.workspace,
                     store=self.store,
                     artifact_service=self.handlers.artifacts,
-                    delegated=host_retrieval,
+                    delegated=registered_host_handler,
                 ),
                 "sandbox": KaliSandboxBackend(
                     manager=sandbox_manager,
                     task=self.task,
                     workspace=self.workspace,
                     sessions=self.kali_sessions,
+                    profile=solver.capability_binding_snapshot.kali_profile,
+                    sandbox_config_digest=(
+                        solver.capability_binding_snapshot.sandbox_config_digest
+                    ),
                 ),
                 "remote_mcp": RemoteMCPBackend(
                     manager=self.mcp_manager,
@@ -912,6 +990,7 @@ class AgentSessionRunner:
         )
         self.tool_gateway = ToolGovernanceGateway(
             task=self.task,
+            execution_policy=solver.execution_policy_snapshot,
             manifest=self.tool_manifest,
             repository=self.persistence.tool_governance,
             execution_adapter=self.execution_adapter,
@@ -939,7 +1018,9 @@ class AgentSessionRunner:
                 )
             ),
             artifact_result_handler=self.handlers.state.plan_knowledge.index_artifacts,
-            sandbox_config_digest=self.sandbox_config.digest,
+            sandbox_config_digest=(
+                solver.capability_binding_snapshot.sandbox_config_digest
+            ),
             approval_pending_handler=lambda action: SolverApprovalCoordinator(
                 self.store
             ).await_approval(

@@ -1,1 +1,0 @@
-{"id": "task_cli", "name": "demo", "mode": "vulnerability_research", "goal": "scan", "input": {"text": "scan the authorized target"}}

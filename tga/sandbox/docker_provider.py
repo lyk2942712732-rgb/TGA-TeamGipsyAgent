@@ -22,7 +22,7 @@ from tga.sandbox.models import (
     ProcessSpec,
     SandboxHandle,
     SandboxInspection,
-    SandboxState,
+        SandboxState,
     IDENTIFIER,
 )
 from tga.sandbox.provider import SandboxError, SandboxProcess
@@ -184,9 +184,10 @@ class DockerSandboxProvider:
         profile_id: str,
         fencing_token: int,
         idempotency_key: str,
+        profile=None,
     ) -> SandboxHandle:
         del idempotency_key
-        profile = self.config.profile(profile_id)
+        profile = profile or self.config.profile(profile_id)
         if not all(IDENTIFIER.fullmatch(value) for value in (task_id, solver_id, solver_run_id)):
             raise SandboxError("invalid task, solver, or SolverRun id", code="INVALID_IDENTITY")
         if profile.provider != self.provider_name:
@@ -249,15 +250,15 @@ class DockerSandboxProvider:
         self._check_version()
         self._list_sandboxes()
 
-    def exec(self, handle: SandboxHandle, spec: ProcessSpec) -> tuple[Iterator[ExecFrame], ExecResult]:
+    def exec(self, handle: SandboxHandle, spec: ProcessSpec, *, profile=None) -> tuple[Iterator[ExecFrame], ExecResult]:
         self._validate(handle)
-        profile = self.config.profile(handle.profile_id)
+        profile = profile or self.config.profile(handle.profile_id)
         timeout = min(
             spec.timeout_seconds or profile.limits.timeout_seconds,
             profile.limits.timeout_seconds,
         )
         inner_name = f"tga-p-{uuid.uuid4().hex[:16]}"
-        command = self._inner_command(handle, spec, inner_name, interactive=False)
+        command = self._inner_command(handle, spec, inner_name, interactive=False, profile=profile)
         try:
             completed = self._runner(
                 command,
@@ -288,12 +289,12 @@ class DockerSandboxProvider:
             stderr=captured_err,
         )
 
-    def open_process(self, handle: SandboxHandle, spec: ProcessSpec) -> SandboxProcess:
+    def open_process(self, handle: SandboxHandle, spec: ProcessSpec, *, profile=None) -> SandboxProcess:
         self._validate(handle)
-        profile = self.config.profile(handle.profile_id)
+        profile = profile or self.config.profile(handle.profile_id)
         process_id = uuid.uuid4().hex
         inner_name = f"tga-p-{process_id[:16]}"
-        command = self._inner_command(handle, spec, inner_name, interactive=True)
+        command = self._inner_command(handle, spec, inner_name, interactive=True, profile=profile)
         kwargs = {
             "stdin": subprocess.PIPE,
             "stdout": subprocess.PIPE,
@@ -400,8 +401,9 @@ class DockerSandboxProvider:
         inner_name: str,
         *,
         interactive: bool,
+        profile=None,
     ) -> list[str]:
-        profile = self.config.profile(handle.profile_id)
+        profile = profile or self.config.profile(handle.profile_id)
         image = profile.image or ""
         workspace = self._workspace(handle.task_id)
         marker = self._read_marker(handle.task_id, handle.solver_run_id)

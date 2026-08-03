@@ -7,7 +7,11 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Response, status
 
 from tga.application.capabilities import CapabilityAssignmentService
-from tga.sandbox.models import SandboxProfile
+from tga.application.kali import (
+    KaliProfileCreateCommand,
+    KaliProfileUpdateCommand,
+)
+from tga.infrastructure.persistence.errors import PersistenceConflict
 
 
 router = APIRouter(prefix="/kali/profiles", tags=["kali"])
@@ -17,18 +21,28 @@ def _assignments() -> CapabilityAssignmentService:
     return CapabilityAssignmentService()
 
 
-def _profile_payload(assignments: CapabilityAssignmentService, profile_id: str) -> dict[str, Any]:
+def _profile_payload(
+    assignments: CapabilityAssignmentService, profile_id: str
+) -> dict[str, Any]:
     try:
-        profile = assignments.kali_profiles.require(profile_id)
         solver_ids = assignments.solvers_for_kali_profile(profile_id)
+        detail = assignments.kali_profiles.detail(
+            profile_id, assigned_solver_ids=solver_ids
+        )
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Kali Profile not found") from exc
-    return {
-        **profile.model_dump(mode="json"),
-        "assigned_solver_count": len(solver_ids),
-        "assigned_solver_ids": list(solver_ids),
-        "image": f"{profile.image_name}:{profile.image_tag}",
-    }
+    return detail.model_dump(mode="json")
+
+
+def _require_current_revision(
+    assignments: CapabilityAssignmentService,
+    payload: KaliProfileCreateCommand | KaliProfileUpdateCommand,
+) -> None:
+    if payload.config_sha256 != assignments.kali_profiles.config_sha256:
+        raise HTTPException(
+            status_code=409,
+            detail="Kali Profile configuration changed; reload before saving",
+        )
 
 
 @router.get("")
@@ -42,11 +56,14 @@ def kali_profiles() -> dict[str, Any]:
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
-def create_kali_profile(payload: SandboxProfile) -> dict[str, Any]:
+def create_kali_profile(payload: KaliProfileCreateCommand) -> dict[str, Any]:
     assignments = _assignments()
+    _require_current_revision(assignments, payload)
     try:
         assignments.kali_profiles.create(payload)
     except FileExistsError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except PersistenceConflict as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except (OSError, ValueError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -59,12 +76,17 @@ def kali_profile(profile_id: str) -> dict[str, Any]:
 
 
 @router.put("/{profile_id}")
-def update_kali_profile(profile_id: str, payload: SandboxProfile) -> dict[str, Any]:
+def update_kali_profile(
+    profile_id: str, payload: KaliProfileUpdateCommand
+) -> dict[str, Any]:
     assignments = _assignments()
+    _require_current_revision(assignments, payload)
     try:
         assignments.kali_profiles.update(profile_id, payload)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Kali Profile not found") from exc
+    except PersistenceConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except (OSError, ValueError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return _profile_payload(_assignments(), profile_id)
@@ -83,6 +105,8 @@ def delete_kali_profile(profile_id: str) -> Response:
         assignments.kali_profiles.delete(profile_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Kali Profile not found") from exc
+    except PersistenceConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except (OSError, ValueError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return Response(status_code=status.HTTP_204_NO_CONTENT)
@@ -103,7 +127,8 @@ def verify_kali_profile(profile_id: str) -> dict[str, Any]:
     assignments = _assignments()
     profile = _profile_payload(assignments, profile_id)
     return {
-        "ok": True,
+        "ok": False,
+        "status": "not_implemented",
         "profile_id": profile_id,
         "supported_capabilities": profile["supported_capabilities"],
         "tool_count": len(profile["tools"]),
@@ -115,7 +140,12 @@ def verify_kali_profile(profile_id: str) -> dict[str, Any]:
 def refresh_kali_tool_inventory(profile_id: str) -> dict[str, Any]:
     assignments = _assignments()
     try:
-        assignments.kali_profiles.refresh_tool_inventory(profile_id)
+        profile = assignments.kali_profiles.refresh_tool_inventory(profile_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Kali Profile not found") from exc
-    return _profile_payload(assignments, profile_id)
+    return {
+        "ok": False,
+        "status": "not_implemented",
+        "profile_id": profile_id,
+        "tool_count": len(profile.tools),
+    }

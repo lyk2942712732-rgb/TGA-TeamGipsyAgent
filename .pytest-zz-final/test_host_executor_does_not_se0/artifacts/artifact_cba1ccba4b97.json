@@ -1,1 +1,0 @@
-{"action_id": "action_capability", "capability": "http.request", "status": "blocked", "error": {"code": "EXECUTION_BACKEND_REQUIRED", "message": "Execution capabilities must be routed through ToolGovernanceGateway and the Kali sandbox backend.", "retryable": false}}

@@ -1,1 +1,0 @@
-{"version": 1, "servers": {"fixture": {"transport": "stdio", "stdio": {"source": "local_process", "command": "fixture"}}}}

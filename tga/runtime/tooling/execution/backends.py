@@ -168,11 +168,15 @@ class KaliSandboxBackend:
         task,
         workspace: str | Path,
         sessions: KaliSessionManager | None = None,
+        profile=None,
+        sandbox_config_digest: str | None = None,
     ) -> None:
         self.manager = manager
         self.task = task
         self.workspace = Path(workspace).resolve()
         self.sessions = sessions or KaliSessionManager(manager)
+        self.profile = profile
+        self.sandbox_config_digest = sandbox_config_digest
 
     def execute(self, request: AuthorizedExecutionRequest) -> ExecutionResult:
         started = _now()
@@ -184,7 +188,14 @@ class KaliSandboxBackend:
             assert request.execution_profile_id is not None
             assert request.solver_run_id is not None
             assert request.fencing_token is not None
-            profile = self.manager.config.profile(request.execution_profile_id)
+            profile = self.profile or self.manager.config.profile(
+                request.execution_profile_id
+            )
+            if profile.id != request.execution_profile_id:
+                raise SandboxError(
+                    "frozen Kali Profile does not match the authorized request",
+                    code="KALI_PROFILE_SNAPSHOT_MISMATCH",
+                )
             if request.capability not in {"kali.exec", "kali.session"}:
                 raise SandboxError(
                     f"unsupported Kali capability: {request.capability}",
@@ -202,6 +213,7 @@ class KaliSandboxBackend:
                 profile_id=profile.id,
                 fencing_token=request.fencing_token,
                 idempotency_key=request.idempotency_key,
+                profile=profile,
             )
             if request.capability == "kali.session":
                 payload = self.sessions.execute(
@@ -242,10 +254,10 @@ class KaliSandboxBackend:
                     else None
                 ),
                 timeout_seconds=timeout,
-                network_grants=self._declared_network_grants(request),
+                network_grants=self._declared_network_grants(request, profile),
             )
             before = self._output_snapshot()
-            frames, raw = self.manager.exec(handle, spec)
+            frames, raw = self._exec(handle, spec, profile)
             values = tuple(frames)
             stdout = raw.stdout or b"".join(
                 item.data for item in values if item.stream == "stdout"
@@ -317,9 +329,16 @@ class KaliSandboxBackend:
                 "Kali execution requires an enforced sandbox runtime.",
             ),
             (
-                request.sandbox_config_digest != self.manager.config.digest,
+                request.sandbox_config_digest
+                != (self.sandbox_config_digest or self.manager.config.digest),
                 "SANDBOX_CONFIG_DIGEST_MISMATCH",
                 "The request was frozen against another sandbox configuration.",
+            ),
+            (
+                self.sandbox_config_digest is not None
+                and self.manager.config.digest != self.sandbox_config_digest,
+                "SANDBOX_CONFIG_DIGEST_MISMATCH",
+                "The active sandbox configuration differs from the frozen Solver configuration.",
             ),
             (
                 not request.execution_profile_id,
@@ -348,13 +367,23 @@ class KaliSandboxBackend:
                 )
         return None
 
+    def _exec(self, handle, spec, profile):
+        try:
+            return self.manager.exec(handle, spec, profile=profile)
+        except TypeError as exc:
+            if "unexpected keyword argument 'profile'" not in str(exc):
+                raise
+            return self.manager.exec(handle, spec)
+
     def _declared_network_grants(
-        self, request: AuthorizedExecutionRequest
+        self, request: AuthorizedExecutionRequest, profile=None
     ) -> tuple[NetworkGrant, ...]:
         values = request.arguments.get("network_targets") or ()
         if not values:
             return ()
-        profile = self.manager.config.profile(str(request.execution_profile_id))
+        profile = profile or self.profile or self.manager.config.profile(
+            str(request.execution_profile_id)
+        )
         if profile.provider != "sandboxd" or profile.network_mode != "target_allowlist":
             raise SandboxError(
                 "kali.exec network targets require a target_allowlist Profile",

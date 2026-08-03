@@ -93,6 +93,11 @@ export type HostCapabilityRecord = {
   assigned_solver_ids: string[];
 };
 
+export type HostCapabilityProfileRecord = {
+  id: string;
+  capability_ids: string[];
+};
+
 export type KaliCapabilityRecord = {
   id: "kali.exec" | "kali.session";
   display_name: string;
@@ -123,16 +128,18 @@ export type KaliProfileRecord = {
   enabled: boolean;
   assigned_solver_count: number;
   assigned_solver_ids: string[];
+  config_sha256: string;
 };
 
 export const fetchHostCapabilities = () => requestJson<{ items: HostCapabilityRecord[]; total: number }>("/api/v2/capabilities/host");
+export const fetchHostCapabilityProfiles = () => requestJson<{ items: HostCapabilityProfileRecord[]; total: number }>("/api/v2/capabilities/host-profiles");
 export const fetchKaliCapabilities = () => requestJson<{ items: KaliCapabilityRecord[]; total: number }>("/api/v2/capabilities/kali");
 export const fetchKaliProfiles = () => requestJson<{ items: KaliProfileRecord[]; total: number }>("/api/v2/kali/profiles");
 export const fetchSolverDefinition = (id: string) => requestJson<SolverDefinitionRecord>(`/api/v2/solvers/${encodeURIComponent(id)}`);
 export const fetchSolverManifest = (id: string, mode?: string) => requestJson<Record<string, unknown>>(`/api/v2/solvers/${encodeURIComponent(id)}/manifest-preview${mode ? `?mode=${encodeURIComponent(mode)}` : ""}`);
 export const updateSolverCapabilities = (
   id: string,
-  payload: Pick<SolverDefinitionRecord, "host_capability_profile_id" | "host_capability_overrides"> & { kali: { profile_id: string; capabilities: Array<"kali.exec" | "kali.session"> } | null },
+  payload: Pick<SolverDefinitionRecord, "host_capability_profile_id" | "host_capability_overrides"> & { expected_content_sha256: string; kali: { profile_id: string; capabilities: Array<"kali.exec" | "kali.session"> } | null },
 ) => requestJson<SolverDefinitionRecord>(`/api/v2/solvers/${encodeURIComponent(id)}/capabilities`, {
   method: "PUT",
   headers: { "Content-Type": "application/json" },
@@ -227,7 +234,7 @@ type LlmHealth = {
   verification?: { verified_at?: string | null; last_error?: { message?: string } | null };
 };
 type ToolHealth = { configured?: boolean; status?: string; records?: unknown[]; last_error?: string | null };
-type CapabilitySnapshot = { capabilities?: unknown[] | Record<string, unknown>; tools?: unknown[] };
+type CapabilitySnapshot = { host: unknown[]; kali: unknown[] };
 
 export async function fetchSystemHealth(): Promise<SystemHealthResult> {
   const started = performance.now();
@@ -238,10 +245,8 @@ export async function fetchSystemHealth(): Promise<SystemHealthResult> {
     requestJson<CapabilitySnapshot>("/api/v2/capabilities"),
   ]);
   const latencyMs = Math.max(0, Math.round(performance.now() - started));
-  const capabilityCount = Array.isArray(capabilities.capabilities)
-    ? capabilities.capabilities.length
-    : Object.keys(capabilities.capabilities ?? {}).length;
-  const toolCount = Array.isArray(capabilities.tools) ? capabilities.tools.length : 0;
+  const capabilityCount = capabilities.host.length + capabilities.kali.length;
+  const toolCount = Array.isArray(tools.records) ? tools.records.length : 0;
   return {
     components: [
       component("runtime", "Execution Runtime", process.status === "ok" ? "healthy" : "degraded", process.service, latencyMs),

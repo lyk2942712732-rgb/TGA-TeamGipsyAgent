@@ -56,6 +56,8 @@ class SandboxProfile(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     id: str
+    display_name: str | None = Field(default=None, min_length=1, max_length=128)
+    enabled: bool = True
     provider: Literal["docker_sandbox", "sandboxd", "remote_http"]
     image: str | None = None
     network_mode: Literal["none", "public_http", "target_allowlist", "remote"] = "none"

@@ -26,6 +26,7 @@ from tga.domain.solver import (
     CapabilityBindingSnapshot,
 )
 from tga.domain.task.models import ModelSnapshot
+from tga.domain.kali import SandboxProfileSnapshot
 from tga.evidence.database import utc_now
 from tga.infrastructure.persistence.errors import PersistenceConflict
 from tga.infrastructure.persistence import PersistenceBundle
@@ -316,9 +317,24 @@ class TeamRuntime:
     def _create_solver(
         self, *, solver_id: str, definition, intent, parent_solver_id: str | None, now: str
     ):
-        policy = self._capability_binding(definition)
-        available_capabilities = policy.host_capability_ids + (
-            policy.kali.capabilities if policy.kali is not None else ()
+        binding = self._capability_binding(definition)
+        available_capabilities = binding.host_capability_ids + (
+            binding.kali.capabilities if binding.kali is not None else ()
+        )
+        visible_manifest = self.assignments.manifest(
+            task_id=self.task.id,
+            solver_id=solver_id,
+            definition=definition,
+            intent_id=intent.id if intent else None,
+            execution_policy=self.task.execution_policy,
+            capability_snapshot=binding,
+        )
+        tool_policy_allowed_capabilities = tuple(
+            item.id for item in visible_manifest.host_capabilities
+        ) + (
+            visible_manifest.kali.capabilities
+            if visible_manifest.kali is not None
+            else ()
         )
         approved = ()
         candidates = ()
@@ -356,7 +372,7 @@ class TeamRuntime:
                         definition=definition,
                         intent=intent,
                         available_capabilities=available_capabilities,
-                        tool_policy_allowed_capabilities=available_capabilities,
+                        tool_policy_allowed_capabilities=tool_policy_allowed_capabilities,
                         policy=skill_policy,
                         workspace_id=self.task.workspace_id,
                         created_at=now,
@@ -377,7 +393,7 @@ class TeamRuntime:
             definition=definition,
             intent=intent,
             available_capabilities=available_capabilities,
-            tool_policy_allowed_capabilities=available_capabilities,
+            tool_policy_allowed_capabilities=tool_policy_allowed_capabilities,
             created_at=now,
         ), approved_candidates=approved,
             selection_decision_id=decision.id if decision else None,
@@ -390,7 +406,7 @@ class TeamRuntime:
             intent=intent,
             model_snapshot=self._model_snapshot(now),
             skill_snapshot=skill,
-            capability_binding_snapshot=policy,
+            capability_binding_snapshot=binding,
             parent_solver_id=parent_solver_id,
             created_at=now,
         )
@@ -537,19 +553,37 @@ class TeamRuntime:
         )
 
     def _capability_binding(self, definition) -> CapabilityBindingSnapshot:
-        host_capabilities = tuple(
-            item.id for item in self.assignments.resolve_host(definition)
-        )
+        host_entries = self.assignments.resolve_host(definition)
+        host_capabilities = tuple(item.id for item in host_entries)
+        kali_runtime = self.assignments.resolve_kali(definition)
+        kali_profile = None
+        if definition.kali is not None:
+            kali_profile = SandboxProfileSnapshot.model_validate(
+                self.assignments.kali_profiles.config.profile(
+                    definition.kali.profile_id
+                ).model_dump(mode="json")
+            )
+        sandbox_config_digest = self.assignments.kali_profiles.config.digest
         payload = {
             "definition": definition.id,
             "host_capability_profile_id": definition.host_capability_profile_id,
-            "host_capabilities": host_capabilities,
-            "kali": definition.kali.model_dump(mode="json") if definition.kali else None,
+            "host_capabilities": [item.model_dump(mode="json") for item in host_entries],
+            "kali": (
+                kali_runtime.model_dump(mode="json") if kali_runtime is not None else None
+            ),
+            "kali_profile": (
+                kali_profile.model_dump(mode="json") if kali_profile is not None else None
+            ),
+            "sandbox_config_digest": sandbox_config_digest,
         }
         return CapabilityBindingSnapshot(
             host_capability_profile_id=definition.host_capability_profile_id,
             host_capability_ids=host_capabilities,
+            host_capabilities=host_entries,
             kali=definition.kali,
+            kali_runtime=kali_runtime,
+            kali_profile=kali_profile,
+            sandbox_config_digest=sandbox_config_digest,
             content_sha256=hashlib.sha256(
                 json.dumps(payload, sort_keys=True).encode()
             ).hexdigest(),

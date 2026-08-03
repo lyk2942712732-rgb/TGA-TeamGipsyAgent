@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from pydantic import BaseModel, ValidationError
@@ -16,6 +17,7 @@ from tga.domain.solver.definitions import SolverDefinition
 from tga.domain.solver.results import WorkerResult
 from tga.infrastructure.skills.catalog import FileSkillCatalog
 from tga.infrastructure.solver_definitions.registry import SolverDefinitionRegistry
+from tga.infrastructure.solver_definitions.registry import solver_definition_root
 from tga.infrastructure.team_templates.registry import TeamTemplateRegistry
 from tga.runtime.orchestration.solver_selector import SolverSelector
 from tga.application.services.skill_selection_service import (
@@ -42,6 +44,15 @@ EXPECTED_DEFINITIONS = {
     "surface-mapper", "timeline-ioc-solver", "vulnerability-validator",
     "web-api-analyst",
 }
+
+
+def test_solver_definition_root_can_use_a_persistent_mount(
+    tmp_path: Path, monkeypatch
+) -> None:
+    configured = tmp_path / "solver-definitions"
+    monkeypatch.setenv("TGA_SOLVER_DEFINITION_ROOT", str(configured))
+
+    assert solver_definition_root() == configured.resolve()
 EXPECTED_MODES = {
     "ctf", "penetration_test", "incident_response", "vulnerability_research",
     "reverse_engineering",
@@ -308,6 +319,30 @@ def test_loaded_completion_authority_matches_orchestration_role() -> None:
     for definition in registry.all():
         if definition.orchestration_role == "worker":
             assert definition.completion_authority != "task"
+
+
+def test_agent_session_definition_falls_back_to_persisted_snapshot() -> None:
+    from tga.runtime.agent_session import AgentSessionRunner
+
+    definition = SolverDefinitionRegistry.builtin().require("ctf-supervisor")
+    calls = []
+    runner = object.__new__(AgentSessionRunner)
+    runner.persistence = SimpleNamespace(solvers=SimpleNamespace(
+        get_definition_snapshot=lambda task_id, definition_id, digest: (
+            calls.append((task_id, definition_id, digest)) or definition
+        )
+    ))
+    solver = SimpleNamespace(
+        task_id="task-frozen",
+        definition_id=definition.id,
+        definition_content_sha256=definition.content_sha256,
+        definition_snapshot=None,
+    )
+
+    assert runner._frozen_definition(solver) == definition
+    assert calls == [(
+        "task-frozen", definition.id, definition.content_sha256
+    )]
 
 
 def test_definition_scene_support_and_structured_worker_result() -> None:

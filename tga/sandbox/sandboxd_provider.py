@@ -52,8 +52,9 @@ class SandboxdProvider:
         profile_id: str,
         fencing_token: int,
         idempotency_key: str,
+        profile=None,
     ) -> SandboxHandle:
-        profile = self.config.profile(profile_id)
+        profile = profile or self.config.profile(profile_id)
         if profile.provider != self.provider_name:
             raise SandboxError("profile does not belong to sandboxd", code="PROFILE_PROVIDER_MISMATCH")
         self.health()
@@ -121,7 +122,7 @@ class SandboxdProvider:
             raise SandboxError("sandboxd host capabilities are incomplete", code="PROVIDER_UNAVAILABLE")
         self._health_checked = True
 
-    def exec(self, handle: SandboxHandle, spec: ProcessSpec) -> tuple[Iterator[ExecFrame], ExecResult]:
+    def exec(self, handle: SandboxHandle, spec: ProcessSpec, *, profile=None) -> tuple[Iterator[ExecFrame], ExecResult]:
         from tga.sandbox.api.sandbox.v1 import sandbox_pb2
 
         events = self._client().Exec(
@@ -156,7 +157,7 @@ class SandboxdProvider:
             raise SandboxError("sandboxd closed Exec without a result", code="INVALID_PROVIDER_RESPONSE")
         return iter(frames), result
 
-    def open_process(self, handle: SandboxHandle, spec: ProcessSpec) -> SandboxProcess:
+    def open_process(self, handle: SandboxHandle, spec: ProcessSpec, *, profile=None) -> SandboxProcess:
         process = _GrpcProcess(
             self._client(),
             handle=handle,

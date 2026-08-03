@@ -16,6 +16,7 @@ from tga.domain.task.spec import TaskSpec
 from tga.domain.solver import (
     ReportResult,
     ReviewResult,
+    SolverInstance,
     WorkerCoverage,
     WorkerResult,
 )
@@ -69,6 +70,13 @@ def test_five_modes_bootstrap_supervisor_and_dispatch_one_worker(
     tmp_path: Path, mode: str, expected_worker: str
 ) -> None:
     task = _task(mode)
+    task = task.model_copy(update={
+        "execution_policy": task.execution_policy.model_copy(update={
+            "local_compute": task.execution_policy.local_compute.model_copy(
+                update={"mode": "isolated"}
+            )
+        })
+    })
     bundle, orchestrator = _orchestrator(tmp_path, task)
     try:
         state = orchestrator.bootstrap()
@@ -84,6 +92,19 @@ def test_five_modes_bootstrap_supervisor_and_dispatch_one_worker(
         assert worker.capability_binding_snapshot.host_capability_profile_id == (
             definition.host_capability_profile_id
         )
+        assert worker.definition_snapshot == definition
+        assert worker.execution_policy_snapshot == task.execution_policy
+        assert worker.capability_binding_snapshot.host_capabilities
+        assert tuple(
+            item.id for item in worker.capability_binding_snapshot.host_capabilities
+        ) == worker.capability_binding_snapshot.host_capability_ids
+        if definition.kali is not None:
+            assert worker.capability_binding_snapshot.kali_runtime is not None
+            assert worker.capability_binding_snapshot.kali_profile is not None
+            assert worker.capability_binding_snapshot.sandbox_config_digest
+        assert SolverInstance.model_validate_json(
+            worker.model_dump_json()
+        ) == worker
         assert worker.parent_solver_id == supervisor.id
         assert assignment.intent.id == assignment.intent_id
         assert assignment.capability_binding_snapshot == worker.capability_binding_snapshot

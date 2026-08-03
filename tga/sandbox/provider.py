@@ -12,6 +12,7 @@ from tga.sandbox.models import (
     ProcessSpec,
     SandboxHandle,
     SandboxInspection,
+    SandboxProfile,
 )
 
 
@@ -45,10 +46,17 @@ class SandboxProvider(Protocol):
         profile_id: str,
         fencing_token: int,
         idempotency_key: str,
+        profile: SandboxProfile | None = None,
     ) -> SandboxHandle: ...
 
-    def exec(self, handle: SandboxHandle, spec: ProcessSpec) -> tuple[Iterator[ExecFrame], ExecResult]: ...
-    def open_process(self, handle: SandboxHandle, spec: ProcessSpec) -> SandboxProcess: ...
+    def exec(
+        self, handle: SandboxHandle, spec: ProcessSpec,
+        *, profile: SandboxProfile | None = None,
+    ) -> tuple[Iterator[ExecFrame], ExecResult]: ...
+    def open_process(
+        self, handle: SandboxHandle, spec: ProcessSpec,
+        *, profile: SandboxProfile | None = None,
+    ) -> SandboxProcess: ...
     def stop_process(self, process_id: str, *, fencing_token: int) -> None: ...
     def inspect(self, handle: SandboxHandle) -> SandboxInspection: ...
     def release(self, handle: SandboxHandle) -> None: ...

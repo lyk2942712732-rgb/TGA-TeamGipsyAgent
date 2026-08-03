@@ -7,7 +7,14 @@ from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 
 from tga.sandbox.config import SandboxConfig
-from tga.sandbox.models import ExecFrame, ExecResult, ProcessSpec, SandboxHandle, SandboxState
+from tga.sandbox.models import (
+    ExecFrame,
+    ExecResult,
+    ProcessSpec,
+    SandboxHandle,
+    SandboxProfile,
+    SandboxState,
+)
 from tga.sandbox.provider import SandboxError, SandboxProvider
 from tga.sandbox.repository import SandboxInstanceRepository
 
@@ -28,13 +35,14 @@ class SandboxManager:
         profile_id: str,
         fencing_token: int,
         idempotency_key: str,
+        profile: SandboxProfile | None = None,
     ) -> SandboxHandle:
         if self.config.runtime != "enforced":
             raise SandboxError(
                 "sandbox runtime is not enforced",
                 code="SANDBOX_RUNTIME_DISABLED",
             )
-        profile = self.config.profile(profile_id)
+        profile = profile or self.config.profile(profile_id)
         if profile.provider == "remote_http":
             raise SandboxError("remote HTTP does not create a local sandbox", code="REMOTE_PROFILE")
         existing = (
@@ -74,6 +82,7 @@ class SandboxManager:
                 profile_id=profile_id,
                 fencing_token=fencing_token,
                 idempotency_key=idempotency_key,
+                profile=profile,
             )
             if (
                 refreshed.instance_id != existing.instance_id
@@ -106,6 +115,7 @@ class SandboxManager:
             profile_id=profile_id,
             fencing_token=fencing_token,
             idempotency_key=idempotency_key,
+            profile=profile,
         )
         if handle.config_digest != self.config.digest:
             provider.destroy(handle)
@@ -122,9 +132,10 @@ class SandboxManager:
         return provider
 
     def exec(
-        self, handle: SandboxHandle, spec: ProcessSpec
+        self, handle: SandboxHandle, spec: ProcessSpec,
+        *, profile: SandboxProfile | None = None,
     ) -> tuple[Iterator[ExecFrame], ExecResult]:
-        profile = self.config.profile(handle.profile_id)
+        profile = profile or self.config.profile(handle.profile_id)
         if spec.argv and spec.argv[0] not in profile.allowed_executables:
             raise SandboxError(
                 f"executable {spec.argv[0]!r} is not allowed by profile {handle.profile_id}",
@@ -132,7 +143,9 @@ class SandboxManager:
             )
         self._event("SANDBOX_EXEC_STARTED", handle)
         try:
-            frames, result = self.provider_for(handle).exec(handle, spec)
+            frames, result = self.provider_for(handle).exec(
+                handle, spec, profile=profile
+            )
         except Exception:
             self._event("SANDBOX_EXEC_FAILED", handle)
             raise
@@ -143,14 +156,19 @@ class SandboxManager:
         )
         return frames, result
 
-    def open_process(self, handle: SandboxHandle, spec: ProcessSpec):
-        profile = self.config.profile(handle.profile_id)
+    def open_process(
+        self, handle: SandboxHandle, spec: ProcessSpec,
+        *, profile: SandboxProfile | None = None,
+    ):
+        profile = profile or self.config.profile(handle.profile_id)
         if spec.argv[0] not in profile.session_executables:
             raise SandboxError(
                 f"executable {spec.argv[0]!r} is not session-enabled by profile {handle.profile_id}",
                 code="SESSION_EXECUTABLE_NOT_ALLOWED",
             )
-        process = self.provider_for(handle).open_process(handle, spec)
+        process = self.provider_for(handle).open_process(
+            handle, spec, profile=profile
+        )
         self._event("SANDBOX_PROCESS_OPENED", handle, {"process_id": process.process_id})
         return process
 

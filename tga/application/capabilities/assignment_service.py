@@ -16,6 +16,9 @@ from tga.domain.capabilities import (
 from tga.domain.kali import KaliExecArguments, KaliSessionArguments
 
 
+HIGH_IMPACT_HOST_CAPABILITIES = {"artifact.publish", "input.materialize"}
+
+
 class CapabilityAssignmentService:
     def __init__(
         self,
@@ -66,6 +69,30 @@ class CapabilityAssignmentService:
             ))
         return tuple(values)
 
+    def resolve_host_snapshot(
+        self, capability_ids: tuple[str, ...], *, role: str, source: str
+    ) -> tuple[HostCapabilityManifestEntry, ...]:
+        values: list[HostCapabilityManifestEntry] = []
+        for capability_id in capability_ids:
+            capability = self.host_registry.require(capability_id)
+            if role not in capability.allowed_roles:
+                raise ValueError(
+                    f"Host capability {capability_id} does not allow role {role}"
+                )
+            values.append(HostCapabilityManifestEntry(
+                id=capability.id,
+                provider_tool_name=capability.id.replace(".", "_"),
+                display_name=capability.display_name,
+                category=capability.category,
+                description=capability.description,
+                risk=capability.risk,
+                input_schema=capability.input_schema,
+                output_schema=capability.output_schema,
+                handler_key=capability.handler_key,
+                source=source,
+            ))
+        return tuple(values)
+
     def resolve_kali(self, definition) -> KaliRuntimeManifest | None:
         binding = definition.kali
         if binding is None:
@@ -94,14 +121,59 @@ class CapabilityAssignmentService:
         intent_id: str | None,
         policy_fingerprints: tuple[str, ...] = (),
         mcp_entries: tuple[Any, ...] = (),
+        execution_policy=None,
+        capability_snapshot=None,
     ) -> SolverRuntimeManifest:
+        frozen_host_capabilities = getattr(capability_snapshot, "host_capabilities", ())
+        if capability_snapshot is not None and frozen_host_capabilities:
+            host_capabilities = frozen_host_capabilities
+        elif capability_snapshot is not None:
+            # Legacy snapshots cannot carry the complete contract. Keep this
+            # fallback for projections/tests; AgentSession rejects such records
+            # before starting a production run.
+            host_capabilities = self.resolve_host_snapshot(
+                capability_snapshot.host_capability_ids,
+                role=definition.orchestration_role,
+                source=capability_snapshot.host_capability_profile_id,
+            )
+        else:
+            host_capabilities = self.resolve_host(definition)
+        if execution_policy is not None:
+            high_impact = execution_policy.high_impact
+            allowed_actions = {item.casefold() for item in high_impact.allowed_actions}
+            host_capabilities = tuple(
+                item
+                for item in host_capabilities
+                if item.id not in HIGH_IMPACT_HOST_CAPABILITIES
+                or high_impact.mode == "approval_required"
+                or (
+                    high_impact.mode == "allowlisted"
+                    and item.id.casefold() in allowed_actions
+                )
+            )
+        kali = (
+            capability_snapshot.kali_runtime
+            if capability_snapshot is not None
+            and capability_snapshot.kali_runtime is not None
+            else self.resolve_kali(
+                definition.model_copy(update={"kali": capability_snapshot.kali})
+                if capability_snapshot is not None
+                else definition
+            )
+        )
+        if (
+            kali is not None
+            and execution_policy is not None
+            and execution_policy.local_compute.mode == "disabled"
+        ):
+            kali = None
         return SolverRuntimeManifest(
             task_id=task_id,
             solver_id=solver_id,
             solver_definition_id=definition.id,
             intent_id=intent_id,
-            host_capabilities=self.resolve_host(definition),
-            kali=self.resolve_kali(definition),
+            host_capabilities=host_capabilities,
+            kali=kali,
             policy_fingerprints=policy_fingerprints or (definition.content_sha256,),
             mcp_entries=mcp_entries,
         )

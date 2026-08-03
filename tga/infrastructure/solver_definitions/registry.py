@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from pathlib import Path
 
 from pydantic import ValidationError
@@ -50,6 +51,13 @@ BUILTIN_DEFINITION_IDS = {
 }
 
 
+def solver_definition_root() -> Path:
+    configured = os.environ.get("TGA_SOLVER_DEFINITION_ROOT")
+    return Path(configured).expanduser().resolve() if configured else (
+        Path(__file__).parents[3] / "resources" / "solver_definitions"
+    )
+
+
 class SolverDefinitionRegistry:
     def __init__(
         self,
@@ -73,7 +81,7 @@ class SolverDefinitionRegistry:
         kali_profiles: KaliProfileService | None = None,
     ) -> "SolverDefinitionRegistry":
         registry = cls(
-            Path(__file__).parents[3] / "resources" / "solver_definitions",
+            solver_definition_root(),
             host_registry=host_registry,
             kali_profiles=kali_profiles,
         )
@@ -160,4 +168,6 @@ class SolverDefinitionRegistry:
                 )
 
 
-__all__ = ["BUILTIN_DEFINITION_IDS", "SolverDefinitionRegistry"]
+__all__ = [
+    "BUILTIN_DEFINITION_IDS", "SolverDefinitionRegistry", "solver_definition_root",
+]

@@ -60,7 +60,7 @@ class SkillStore:
         path = self._path(skill.name)
         if path.exists() and not overwrite:
             raise FileExistsError(skill.name)
-        self._write_atomic(path, render_skill(skill))
+        self._write_atomic_bytes(path, raw)
         self.enable(skill.name)
         return load_skill(path)
 
@@ -126,6 +126,13 @@ class SkillStore:
         path.parent.mkdir(parents=True, exist_ok=True)
         temporary = path.with_suffix(".tmp")
         temporary.write_text(content, encoding="utf-8", newline="\n")
+        temporary.replace(path)
+
+    @staticmethod
+    def _write_atomic_bytes(path: Path, content: bytes) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_suffix(".tmp")
+        temporary.write_bytes(content)
         temporary.replace(path)
 
 

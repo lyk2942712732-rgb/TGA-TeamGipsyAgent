@@ -80,14 +80,28 @@ python -m pip install -e ".[dev]"
 
 ## 6. 配置 TGA 后端
 
+先把可编辑的 Kali Profile 和 Solver Definition 复制到代码目录之外的持久化目录。API 进程必须对配置文件、Definition 目录及其内部文件有读写权限：
+
+```bash
+sudo install -d -m 0750 -o "$USER" -g "$USER" /var/lib/tga/config
+cp config/sandbox.json /var/lib/tga/config/sandbox.json
+cp -a resources/solver_definitions /var/lib/tga/solver-definitions
+```
+
 配置非敏感运行参数；模型 API 密钥应由 systemd `EnvironmentFile`、密钥管理服务或进程环境注入，不能写入仓库：
 
 ```bash
 TGA_RUN_ROOT=/opt/tga/TGA-TeamGipsyAgent/runs
+TGA_SANDBOX_CONFIG_PATH=/var/lib/tga/config/sandbox.json
+TGA_SOLVER_DEFINITION_ROOT=/var/lib/tga/solver-definitions
 
 # OpenAI-compatible provider 非敏感参数
 TGA_LLM_TEMPERATURE=0.2
 ```
+
+`TGA_SANDBOX_CONFIG_PATH` 是 Kali Profile 的权威配置文件，`TGA_SOLVER_DEFINITION_ROOT` 是 Solver Definition 的权威目录。容器部署时必须把两者挂载到可写持久卷；滚动更新不能用镜像中的初始文件覆盖已保存配置。多个 API 实例必须使用同一个支持文件锁和原子替换的共享文件系统，否则各实例会产生不同配置。本实现不提供跨独立文件系统的分布式锁，多节点无共享存储时应改用数据库配置存储。
+
+管理 API 使用 SHA-256 乐观并发控制：Kali Profile 的 GET 响应包含 `config_sha256`，POST/PUT 必须原样带回；Solver Definition 的 PUT 必须带 GET 响应中的 `content_sha256` 作为 `expected_content_sha256`。版本过期时 API 返回 `409 Conflict`，客户端应重新 GET、合并修改后重试，不能盲目覆盖。
 
 产品只有真实 Provider 驱动的 ReAct 路径；模型未配置时任务会明确失败，不会退回旧规则执行架构。配置模型后可以先检查：
 

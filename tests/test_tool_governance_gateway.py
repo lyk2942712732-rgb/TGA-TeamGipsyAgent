@@ -7,12 +7,13 @@ from pydantic import ValidationError
 
 from tests.capability_fixtures import capability_binding, empty_mcp_catalog
 from tests.runtime_fixtures import task as v6_task
-from tga.contracts import ActionEffect, TGATask
+from tga.contracts import ActionEffect, HighImpactExecutionPolicy, TGATask
 from tga.infrastructure.persistence import PersistenceBundle
 from tga.infrastructure.persistence.errors import PersistenceConflict
 from tga.infrastructure.solver_definitions.registry import SolverDefinitionRegistry
 from tga.runtime.orchestration import TaskOrchestrator
 from tga.runtime.tooling.catalog import RuntimeToolCatalog
+from tga.tools.mcp_registry import MCPCatalogSnapshot, MCPToolRoute
 from tga.runtime.tooling.catalog.manifest_builder import ToolManifestBuilder
 from tga.runtime.tooling import ToolDefinitionBuilder
 from tga.runtime.tooling.governance import (
@@ -37,7 +38,18 @@ NOW = "2026-07-30T00:00:00Z"
 
 
 def _task(task_id: str = "tool_governance") -> TGATask:
-    return v6_task(id=task_id, name="governance", mode="ctf", goal="govern tools")
+    task = v6_task(id=task_id, name="governance", mode="ctf", goal="govern tools")
+    return task.model_copy(update={
+        "execution_policy": task.execution_policy.model_copy(update={
+            "local_compute": task.execution_policy.local_compute.model_copy(
+                update={"mode": "isolated"}
+            ),
+            "high_impact": HighImpactExecutionPolicy(
+                mode="allowlisted",
+                allowed_actions=["artifact.publish", "input.materialize"],
+            )
+        })
+    })
 
 
 def _solver(definition_id: str, *_capabilities: str, profile: str = "test"):
@@ -198,6 +210,36 @@ def test_role_manifests_are_distinct_and_respect_completion_authority() -> None:
     assert "propose_task_completion" not in reviewer_names
     assert "propose_task_completion" not in reporter_names
     assert not {"kali_exec", "kali_session"} & reporter_names
+
+
+def test_runtime_catalog_hides_mcp_tools_blocked_by_frozen_policy() -> None:
+    snapshot = MCPCatalogSnapshot(
+        version="mcp_test",
+        routes=(MCPToolRoute(
+            provider_name="mcp__test__run",
+            server_id="test",
+            method="run",
+        ),),
+    )
+    disabled = _task().execution_policy.model_copy(update={
+        "local_compute": _task().execution_policy.local_compute.model_copy(
+            update={"mode": "disabled"}
+        ),
+        "high_impact": HighImpactExecutionPolicy(mode="forbidden"),
+    })
+    visible = RuntimeToolCatalog.from_runtime(
+        mcp_snapshot=snapshot,
+        execution_policy=disabled,
+        mcp_risks={("test", "run"): "active"},
+    )
+    hidden_destructive = RuntimeToolCatalog.from_runtime(
+        mcp_snapshot=snapshot,
+        execution_policy=disabled,
+        mcp_risks={("test", "run"): "destructive"},
+    )
+
+    assert visible.entries == ()
+    assert hidden_destructive.entries == ()
 
 
 def test_manifest_schema_exposes_only_non_authoritative_model_governance() -> None:
@@ -469,6 +511,52 @@ def test_gateway_executes_allowed_tool_through_adapter_and_persists_terminal_sta
         assert [row["to_status"] for row in transitions] == [
             "proposed", "validated", "queued", "running", "succeeded",
         ]
+    finally:
+        bundle.close()
+
+
+def test_gateway_rejects_high_impact_host_tool_from_stale_manifest(tmp_path) -> None:
+    bundle = PersistenceBundle.open(tmp_path / "evidence.db")
+    allowed_task = _task("stale_manifest_policy")
+    forbidden_task = allowed_task.model_copy(update={
+        "execution_policy": allowed_task.execution_policy.model_copy(update={
+            "high_impact": HighImpactExecutionPolicy(mode="forbidden")
+        })
+    })
+    try:
+        bundle.tasks.create_task(forbidden_task)
+        _, solver = _dispatch_worker(
+            bundle, forbidden_task, intent_kind="binary_analysis"
+        )
+        definition = SolverDefinitionRegistry.builtin().require(solver.definition_id)
+        intent = bundle.plans.get_global_plan(forbidden_task.id).intents[0]
+        stale_solver = solver.model_copy(update={
+            "execution_policy_snapshot": allowed_task.execution_policy,
+        })
+        stale_manifest = ToolManifestBuilder().build(
+            task=allowed_task,
+            solver=stale_solver,
+            definition=definition,
+            intent=intent,
+            catalog=_catalog(allowed_task),
+        )
+        gateway = ToolGovernanceGateway(
+            task=forbidden_task,
+            execution_policy=forbidden_task.execution_policy,
+            manifest=stale_manifest,
+            repository=bundle.tool_governance,
+            execution_adapter=_ExecutionAdapter(),
+        )
+
+        result = gateway.handle(ToolRequest(
+            provider_tool_name="artifact_publish",
+            arguments={"relative_path": "report.txt", "label": "result"},
+            model_intent=ModelToolIntent(rationale="attempt stale capability"),
+            action_context=_context(task_id=forbidden_task.id, solver=solver),
+            tool_call_id="call_stale_manifest",
+        ))
+
+        assert result.error and result.error.code == "HIGH_IMPACT_FORBIDDEN"
     finally:
         bundle.close()
 
