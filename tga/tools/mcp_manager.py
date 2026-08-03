@@ -15,7 +15,7 @@ from uuid import uuid4
 from pydantic import BaseModel, Field
 
 from tga.tools.mcp_authorization import MCPAuthorizationContext
-from tga.tools.mcp_config import DEFAULT_CACHE_PATH, MCPConfig, MCPServerConfig, configured_mcp_path, load_mcp_config
+from tga.tools.mcp_config import MCPConfig, MCPServerConfig, configured_mcp_path, default_cache_path, load_mcp_config
 from tga.tools.mcp_policy import MCPPolicy
 from tga.tools.mcp_registry import (
     MCPCatalogSnapshot,
@@ -100,7 +100,7 @@ class MCPManager:
         sandbox_process_factory: Any | None = None,
     ) -> None:
         self.config_path = Path(config_path).expanduser().resolve() if config_path else configured_mcp_path()
-        self.cache_path = Path(cache_path or DEFAULT_CACHE_PATH).expanduser().resolve()
+        self.cache_path = Path(cache_path or default_cache_path()).expanduser().resolve()
         self.policy = policy or MCPPolicy()
         self.sandbox_process_factory = sandbox_process_factory
         self.config: MCPConfig | None = None
@@ -672,7 +672,7 @@ class MCPManager:
     def _load_cache(self, config: MCPConfig) -> list[MCPServerDiscovery]:
         payload: dict[str, Any] = {}
         candidates = [self.cache_path]
-        default_cache = Path(DEFAULT_CACHE_PATH).resolve()
+        default_cache = default_cache_path().resolve()
         if self.cache_path.resolve() != default_cache:
             candidates.append(default_cache)
         for candidate in candidates:

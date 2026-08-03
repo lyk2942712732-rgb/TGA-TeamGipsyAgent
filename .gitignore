@@ -229,3 +229,8 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Launcher build outputs
+/dist/
+/tga.exe
+/tga

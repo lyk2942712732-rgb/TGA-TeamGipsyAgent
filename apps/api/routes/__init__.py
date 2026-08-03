@@ -16,6 +16,7 @@ from apps.api.routes.reports import router as reports_router
 from apps.api.routes.sessions import router as sessions_router
 from apps.api.routes.skills import router as skills_router
 from apps.api.routes.solvers import router as solvers_router
+from apps.api.routes.system import router as system_router
 from apps.api.routes.tasks import router as tasks_router
 
 
@@ -36,5 +37,6 @@ for domain_router in (
     kali_router,
     solvers_router,
     catalog_router,
+    system_router,
 ):
     router.include_router(domain_router)

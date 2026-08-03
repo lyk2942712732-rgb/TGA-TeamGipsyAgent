@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from tga.deployment.paths import run_root as resolve_run_root
 from tga.modes import TaskMode
 
 from .loader import Skill, load_skill, load_skill_text
@@ -15,7 +16,7 @@ def custom_skill_root() -> Path:
     configured = os.environ.get("TGA_CUSTOM_SKILLS_ROOT")
     if configured:
         return Path(configured).resolve()
-    return (Path(os.environ.get("TGA_RUN_ROOT", "runs")) / "_skills").resolve()
+    return resolve_run_root() / "_skills"
 
 
 class SkillStore:

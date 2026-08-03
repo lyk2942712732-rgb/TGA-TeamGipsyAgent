@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
+from tga.deployment.paths import run_root as resolve_run_root
 from tga.evidence.store import EvidenceStore
 from tga.models.bootstrap import build_model_client
 from tga.infrastructure.solver_definitions.registry import SolverDefinitionRegistry
@@ -20,8 +21,8 @@ from tga.sandbox.repository import SandboxInstanceRepository
 class Container:
     run_root: Path
 
-    def __init__(self, run_root: str | Path = "runs") -> None:
-        object.__setattr__(self, "run_root", Path(run_root))
+    def __init__(self, run_root: str | Path | None = None) -> None:
+        object.__setattr__(self, "run_root", resolve_run_root(run_root))
 
     def evidence_store(self, task_id: str) -> EvidenceStore:
         return EvidenceStore(self.task_root(task_id) / "evidence.db")

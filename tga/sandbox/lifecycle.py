@@ -7,6 +7,7 @@ import threading
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+from tga.deployment.paths import run_root as resolve_run_root
 from tga.evidence.store import EvidenceStore
 from tga.sandbox.config import SandboxConfig, load_sandbox_config
 from tga.sandbox.docker_provider import DockerSandboxProvider
@@ -19,8 +20,8 @@ LOGGER = logging.getLogger(__name__)
 
 
 class SandboxLifecycleService:
-    def __init__(self, run_root: str | Path = "runs", *, config: SandboxConfig | None = None):
-        self.run_root = Path(run_root)
+    def __init__(self, run_root: str | Path | None = None, *, config: SandboxConfig | None = None):
+        self.run_root = resolve_run_root(run_root)
         self.config = config or load_sandbox_config()[0]
         self.providers = {
             "docker_sandbox": DockerSandboxProvider(self.config),
@@ -32,6 +33,9 @@ class SandboxLifecycleService:
     def start(self) -> None:
         if self.config.runtime != "enforced" or self._thread is not None:
             return
+        # Reconciliation starts in the background without an eager health
+        # probe: readiness is reported per profile at the execution boundary,
+        # so an absent sandboxd must degrade the deployment, not block boot.
         self._thread = threading.Thread(
             target=self._loop,
             name="tga-sandbox-reconcile",
