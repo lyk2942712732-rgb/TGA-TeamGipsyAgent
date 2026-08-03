@@ -28,7 +28,7 @@ class FileSkillCatalog:
                 name=skill.name,
                 version=skill.version,
                 modes=tuple(skill.modes),
-                required_capabilities=tuple(skill.capabilities),
+                capability_requirements=tuple(skill.capabilities),
                 tags=tuple(skill.tags),
                 body=skill.body,
                 origin=origin,

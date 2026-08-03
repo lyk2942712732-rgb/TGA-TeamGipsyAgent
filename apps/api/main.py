@@ -10,10 +10,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from apps.api.routes import router as runtime_v2_router
 from apps.api.routes.support import _runtime_scheduler
 from tga.models.bootstrap import model_config_status
+from tga.runtime.host_handler_contract import validate_runtime_host_handlers
 from tga.sandbox.lifecycle import SandboxLifecycleService
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    validate_runtime_host_handlers()
     sandbox_lifecycle = SandboxLifecycleService("runs")
     sandbox_lifecycle.start()
     status = model_config_status()

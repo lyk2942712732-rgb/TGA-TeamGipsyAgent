@@ -177,9 +177,16 @@ func (s *Service) OpenProcess(stream sandboxv1.SandboxService_OpenProcessServer)
 				}
 				return
 			}
+			if resize := message.GetResize(); resize != nil {
+				if err := s.runtime.ResizeProcess(stream.Context(), process.ID, start.FencingToken, resize.Cols, resize.Rows); err != nil {
+					inputDone <- err
+					return
+				}
+				continue
+			}
 			input := message.GetInput()
 			if input == nil {
-				inputDone <- errors.New("only input messages are accepted after start")
+				inputDone <- errors.New("only input or resize messages are accepted after start")
 				return
 			}
 			if len(input.Data) > 0 {
@@ -260,17 +267,20 @@ func processSpec(value *sandboxv1.ProcessSpec, profile config.Profile, solverID 
 	if !config.ValidIdentifier(solverID) {
 		return runtimepkg.ProcessSpec{}, errors.New("invalid solver id")
 	}
-	if len(value.Argv) > 0 {
-		allowed := false
-		for _, executable := range profile.AllowedExecutables {
-			if value.Argv[0] == executable {
-				allowed = true
-				break
-			}
+	// argv[0] must always be present and allowlisted by the Profile. There is
+	// no tool mapping that could supply an image or entrypoint instead.
+	if len(value.Argv) == 0 {
+		return runtimepkg.ProcessSpec{}, errors.New("process requires argv")
+	}
+	allowed := false
+	for _, executable := range profile.AllowedExecutables {
+		if value.Argv[0] == executable {
+			allowed = true
+			break
 		}
-		if !allowed {
-			return runtimepkg.ProcessSpec{}, errors.New("executable is not allowed by sandbox profile")
-		}
+	}
+	if !allowed {
+		return runtimepkg.ProcessSpec{}, errors.New("executable is not allowed by sandbox profile")
 	}
 	timeout := value.TimeoutSeconds
 	if timeout == 0 || int(timeout) > profile.Limits.TimeoutSeconds {
@@ -288,11 +298,12 @@ func processSpec(value *sandboxv1.ProcessSpec, profile config.Profile, solverID 
 	}
 	return runtimepkg.ProcessSpec{
 		Argv: value.Argv, Environment: value.Environment,
-		LogicalWorkspace: value.LogicalWorkspace,
-		Timeout:          time.Duration(timeout) * time.Second,
-		MaxOutputBytes:   profile.Limits.MaxOutputBytes,
-		SolverID:         solverID,
-		ToolID:           value.ToolId,
+		LogicalWorkspace: value.LogicalWorkspace, WorkingDirectory: value.WorkingDirectory,
+		Stdin: append([]byte(nil), value.Stdin...), Interactive: value.Interactive,
+		Timeout:        time.Duration(timeout) * time.Second,
+		MaxOutputBytes: profile.Limits.MaxOutputBytes,
+		SolverID:       solverID,
+		ToolID:         value.ToolId,
 	}, nil
 }
 

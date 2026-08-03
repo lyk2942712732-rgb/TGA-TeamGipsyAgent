@@ -26,6 +26,13 @@ and Artifact persistence are separate layers under `tga/tools/` and
 `tga/runtime/`. An MCP service cannot select its own Docker arguments, mounts,
 credentials, tool name, risk level, or task scope.
 
+MCP is reserved for independent external services. It is not a registration
+path for commands inside a Kali sandbox image: those tools live in the
+`SandboxProfile` image, are allowlisted by the Profile's `allowed_executables`,
+and are authorized by the Tool Catalog and `ToolGovernanceGateway`. Sandbox
+configuration keeps no per-tool image or argument mapping, so an MCP server
+image cannot be executed inside a sandbox instance.
+
 ## Configuration
 
 Set a deployment-specific file when necessary:

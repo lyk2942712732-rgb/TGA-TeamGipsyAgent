@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from types import SimpleNamespace
 from typing import Any
 
 from tga.models.base import ModelMessage
@@ -96,24 +95,17 @@ class ProviderCapabilityProbe:
         return result
 
     def _product_tools(self) -> list[dict[str, Any]]:
-        from tga.capabilities.registry import build_default_registry
+        from tga.application.capabilities import CapabilityAssignmentService
 
-        registry = build_default_registry()
-        # The probe runs before any model verification exists, so it cannot
-        # build a schema-v6 Task.  Only the mode shapes the tool catalog.
-        mode = "ctf"
-        names = {
-            item["name"].replace(".", "_"): item["name"]
-            for item in registry.snapshot()["capabilities"]
-            if mode in item["modes"]
-        }
-        return ToolDefinitionBuilder(
-            mode=mode,
-            solver_definition=SimpleNamespace(sandbox_profile_id=None),
-            registry=registry,
-            tool_names=names,
-            mcp_snapshot=MCPCatalogSnapshot(version="provider_probe"),
-        ).build()
+        assignments = CapabilityAssignmentService()
+        definition = assignments.definitions.require("ctf-pwn-solver")
+        manifest = assignments.manifest(
+            task_id="provider-probe",
+            solver_id="provider-probe",
+            definition=definition,
+            intent_id=None,
+        )
+        return ToolDefinitionBuilder(manifest=manifest).build()
 
     def _catalog_acceptance(self, tools: list[dict[str, Any]]) -> dict[str, Any]:
         result = self.client.chat_tools(

@@ -16,7 +16,7 @@ from tga.domain.planning.global_plan import GlobalPlan
 from tga.domain.planning.intents import Intent, IntentDependency
 from tga.domain.knowledge.items import KnowledgeItem
 from tga.domain.solver.budgets import SolverBudget
-from tga.domain.solver.instances import SolverInstance, SolverTimestamps, ToolPolicySnapshot
+from tga.domain.solver.instances import CapabilityBindingSnapshot, SolverInstance, SolverTimestamps
 from tga.domain.solver.runs import SolverRun
 from tga.domain.task.hints import TaskHint
 from tga.domain.task.interventions import UserIntervention
@@ -91,9 +91,9 @@ def _solver() -> SolverInstance:
             timeout_seconds=30,
             temperature=0,
         ),
-        tool_policy_snapshot=ToolPolicySnapshot(
-            profile="supervisor",
-            allowed_tool_groups=("control",),
+        capability_binding_snapshot=CapabilityBindingSnapshot(
+            host_capability_profile_id="supervisor-default",
+            host_capability_ids=("inspect_task_state",),
             content_sha256="d" * 64,
         ),
         budget=SolverBudget(

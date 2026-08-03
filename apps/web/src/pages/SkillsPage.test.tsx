@@ -20,7 +20,7 @@ const custom = {
   version: "1", source: "custom", summary: "Custom proof workflow", editable: true, body: "# Workflow\nPreserve evidence.",
 };
 const builtin = {
-  name: "binary-triage", modes: ["reverse_engineering", "ctf"], capabilities: ["workspace.read"], tags: ["binary"],
+  name: "binary-triage", modes: ["reverse_engineering", "ctf"], capabilities: ["input.read"], tags: ["binary"],
   version: "1", source: "builtin", summary: "Inspect binary metadata", editable: true, body: "# Workflow\nInspect metadata.",
 };
 

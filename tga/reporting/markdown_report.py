@@ -239,7 +239,7 @@ def _append_runtime_sections(lines: list[str], snapshot: dict[str, Any]) -> None
             f"- Case: {contract.get('case_id')} — {contract.get('title')}",
             f"- Theme: {contract.get('theme')}",
             f"- Goal: {quote_excerpt(str(contract.get('goal') or ''))}",
-            f"- Required Capabilities: {format_list(contract.get('required_capabilities') or [])}",
+            f"- Capability Requirements: {format_list(contract.get('capability_requirements') or [])}",
             f"- Action Budget: {contract.get('max_actions')}",
             f"- Semantic Attempt Budgets: manager={contract.get('manager_semantic_attempt_budget')} executor={contract.get('executor_semantic_attempt_budget')}",
             "- Submission Oracle: not required (removed by current v2 calibration)",

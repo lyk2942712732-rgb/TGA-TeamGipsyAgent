@@ -22,8 +22,7 @@ from tga.domain.solver import (
 from tga.infrastructure.persistence import PersistenceBundle, PersistenceConflict
 from tga.infrastructure.solver_definitions.registry import SolverDefinitionRegistry
 from tga.runtime.orchestration import TaskOrchestrator
-from tga.capabilities.registry import build_default_registry
-from tga.runtime.tooling.catalog import RuntimeToolCatalog
+from tests.capability_fixtures import empty_mcp_catalog
 from tga.runtime.tooling.catalog.manifest_builder import ToolManifestBuilder
 from tga.runtime.tooling.requests import ActionContext, ModelToolIntent, ToolRequest
 from tga.runtime.tooling.results import RawExecutionResult
@@ -82,12 +81,12 @@ def test_five_modes_bootstrap_supervisor_and_dispatch_one_worker(
         supervisor = bundle.solvers.get_solver(state.supervisor_solver_id)
         assert worker is not None and worker.definition_id == expected_worker
         definition = orchestrator.definitions.require(expected_worker)
-        assert set(worker.tool_policy_snapshot.allowed_capabilities) == set(
-            definition.required_capabilities
+        assert worker.capability_binding_snapshot.host_capability_profile_id == (
+            definition.host_capability_profile_id
         )
         assert worker.parent_solver_id == supervisor.id
         assert assignment.intent.id == assignment.intent_id
-        assert assignment.tool_policy_snapshot == worker.tool_policy_snapshot
+        assert assignment.capability_binding_snapshot == worker.capability_binding_snapshot
         assert assignment.budget == worker.budget
         assert worker.transcript_ref != supervisor.transcript_ref
         assert worker.private_workspace_ref != supervisor.private_workspace_ref
@@ -438,18 +437,7 @@ def test_worker_submit_result_routes_through_gateway_without_legacy_execution(tm
         assert assignment is not None
         solver = bundle.solvers.get_solver(assignment.solver_id)
         definition = SolverDefinitionRegistry.builtin().require(solver.definition_id)
-        registry = build_default_registry()
-        tool_names = {
-            f"tga_{item['name'].replace('.', '_')}": item["name"]
-            for item in registry.snapshot()["capabilities"]
-        }
-        catalog = RuntimeToolCatalog.from_runtime(
-            mode=task.mode,
-            solver_definition=definition,
-            registry=registry,
-            tool_names=tool_names,
-            mcp_snapshot=SimpleNamespace(function_tools=lambda: [], routes={}),
-        )
+        catalog = empty_mcp_catalog()
         manifest = ToolManifestBuilder().build(
             task=task,
             solver=solver,
@@ -478,7 +466,7 @@ def test_worker_submit_result_routes_through_gateway_without_legacy_execution(tm
             orchestration_role="worker",
             solver_definition_id=solver.definition_id,
             execution_policy_snapshot_id="execution:" + "a" * 64,
-            solver_tool_policy_snapshot_id="tool:" + "b" * 64,
+            solver_capability_snapshot_id="tool:" + "b" * 64,
             attempt=1,
             created_at="2026-07-30T00:00:00Z",
         )
@@ -633,17 +621,7 @@ def test_worker_context_and_gateway_hide_unassigned_task_inputs(tmp_path: Path) 
 
         solver = bundle.solvers.get_solver(assignment.solver_id)
         definition = SolverDefinitionRegistry.builtin().require(solver.definition_id)
-        registry = build_default_registry()
-        catalog = RuntimeToolCatalog.from_runtime(
-            mode=task.mode,
-            solver_definition=definition,
-            registry=registry,
-            tool_names={
-                f"tga_{item['name'].replace('.', '_')}": item["name"]
-                for item in registry.snapshot()["capabilities"]
-            },
-            mcp_snapshot=SimpleNamespace(function_tools=lambda: [], routes={}),
-        )
+        catalog = empty_mcp_catalog()
         manifest = ToolManifestBuilder().build(
             task=task, solver=solver, definition=definition,
             intent=assignment.intent, catalog=catalog,
@@ -677,7 +655,7 @@ def test_worker_context_and_gateway_hide_unassigned_task_inputs(tmp_path: Path) 
                 orchestration_role="worker",
                 solver_definition_id=solver.definition_id,
                 execution_policy_snapshot_id="execution:" + "a" * 64,
-                solver_tool_policy_snapshot_id="tool:" + "b" * 64,
+                solver_capability_snapshot_id="tool:" + "b" * 64,
                 attempt=1,
                 created_at="2026-07-30T00:00:00Z",
             ),

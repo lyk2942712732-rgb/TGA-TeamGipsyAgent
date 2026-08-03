@@ -1,4 +1,4 @@
 from tga.runtime.tooling.catalog.definitions import RuntimeToolCatalog, ToolCatalogEntry
-from tga.runtime.tooling.catalog.manifest import SolverToolManifest
+from tga.domain.capabilities.manifest import SolverRuntimeManifest
 
-__all__ = ["RuntimeToolCatalog", "SolverToolManifest", "ToolCatalogEntry"]
+__all__ = ["RuntimeToolCatalog", "SolverRuntimeManifest", "ToolCatalogEntry"]

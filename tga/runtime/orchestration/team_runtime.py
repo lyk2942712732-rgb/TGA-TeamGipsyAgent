@@ -15,7 +15,7 @@ from tga.application.services.skill_selection_service import (
     SolverSkillSelectionService,
 )
 from tga.application.services.solver_factory import SolverFactory
-from tga.capabilities.registry import build_default_registry
+from tga.application.capabilities import CapabilityAssignmentService
 from tga.domain.planning import GlobalPlan, Intent, LocalPlan, LocalPlanStep
 from tga.domain.retrieval import RetrievalPolicy
 from tga.domain.skills import SkillActivation
@@ -23,7 +23,7 @@ from tga.domain.solver import (
     SolverAssignment,
     SolverRun,
     TeamRuntimeState,
-    ToolPolicySnapshot,
+    CapabilityBindingSnapshot,
 )
 from tga.domain.task.models import ModelSnapshot
 from tga.evidence.database import utc_now
@@ -50,7 +50,7 @@ class TeamRuntime:
         self.template = template
         self.factory = SolverFactory()
         self.skills = SolverSkillSelectionService(FileSkillCatalog.builtin())
-        self.registry = build_default_registry()
+        self.assignments = CapabilityAssignmentService(definitions=definitions)
 
     def bootstrap(self) -> TeamRuntimeState:
         current = self.repositories.orchestration.get_state(self.task.id)
@@ -212,7 +212,7 @@ class TeamRuntime:
                 provenance.get("relevant_evidence_claim_ids") or ()
             ),
             skill_snapshot=skill,
-            tool_policy_snapshot=solver.tool_policy_snapshot,
+            capability_binding_snapshot=solver.capability_binding_snapshot,
             budget=solver.budget,
             attempt=attempt,
             status="accepted",
@@ -316,7 +316,10 @@ class TeamRuntime:
     def _create_solver(
         self, *, solver_id: str, definition, intent, parent_solver_id: str | None, now: str
     ):
-        policy = self._tool_policy(definition)
+        policy = self._capability_binding(definition)
+        available_capabilities = policy.host_capability_ids + (
+            policy.kali.capabilities if policy.kali is not None else ()
+        )
         approved = ()
         candidates = ()
         decision = None
@@ -344,7 +347,7 @@ class TeamRuntime:
                 if pack is not None:
                     activation = SkillCandidateActivationService(
                         repository=skill_corpus.retrieval,
-                        capability_registry=self.registry,
+                        assignment_service=self.assignments,
                     ).activate(
                         pack=pack,
                         task_id=self.task.id,
@@ -352,8 +355,8 @@ class TeamRuntime:
                         mode=self.task.mode,
                         definition=definition,
                         intent=intent,
-                        available_capabilities=policy.allowed_capabilities,
-                        tool_policy_allowed_capabilities=policy.allowed_capabilities,
+                        available_capabilities=available_capabilities,
+                        tool_policy_allowed_capabilities=available_capabilities,
                         policy=skill_policy,
                         workspace_id=self.task.workspace_id,
                         created_at=now,
@@ -373,8 +376,8 @@ class TeamRuntime:
             mode_config=self.task.mode_config.model_dump(mode="json"),
             definition=definition,
             intent=intent,
-            available_capabilities=policy.allowed_capabilities,
-            tool_policy_allowed_capabilities=policy.allowed_capabilities,
+            available_capabilities=available_capabilities,
+            tool_policy_allowed_capabilities=available_capabilities,
             created_at=now,
         ), approved_candidates=approved,
             selection_decision_id=decision.id if decision else None,
@@ -387,7 +390,7 @@ class TeamRuntime:
             intent=intent,
             model_snapshot=self._model_snapshot(now),
             skill_snapshot=skill,
-            tool_policy_snapshot=policy,
+            capability_binding_snapshot=policy,
             parent_solver_id=parent_solver_id,
             created_at=now,
         )
@@ -533,25 +536,20 @@ class TeamRuntime:
             max_context_tokens=24_000,
         )
 
-    def _tool_policy(self, definition) -> ToolPolicySnapshot:
-        mode_capabilities = {
-            item["name"]
-            for item in self.registry.snapshot()["capabilities"]
-            if self.task.mode in item["modes"]
-        }
-        capabilities = tuple(sorted(
-            set(definition.required_capabilities).intersection(mode_capabilities)
-        ))
+    def _capability_binding(self, definition) -> CapabilityBindingSnapshot:
+        host_capabilities = tuple(
+            item.id for item in self.assignments.resolve_host(definition)
+        )
         payload = {
             "definition": definition.id,
-            "profile": definition.tool_policy_profile,
-            "groups": definition.allowed_tool_groups,
-            "capabilities": capabilities,
+            "host_capability_profile_id": definition.host_capability_profile_id,
+            "host_capabilities": host_capabilities,
+            "kali": definition.kali.model_dump(mode="json") if definition.kali else None,
         }
-        return ToolPolicySnapshot(
-            profile=definition.tool_policy_profile,
-            allowed_tool_groups=definition.allowed_tool_groups,
-            allowed_capabilities=capabilities,
+        return CapabilityBindingSnapshot(
+            host_capability_profile_id=definition.host_capability_profile_id,
+            host_capability_ids=host_capabilities,
+            kali=definition.kali,
             content_sha256=hashlib.sha256(
                 json.dumps(payload, sort_keys=True).encode()
             ).hexdigest(),

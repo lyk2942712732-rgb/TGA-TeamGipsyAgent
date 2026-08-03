@@ -149,7 +149,7 @@ def test_legacy_artifact_adapter_is_append_only_and_visible_to_v6_repository(tmp
             kind="tool_output",
             path="artifact_one.txt",
             sha256="a" * 64,
-            tool="workspace.read",
+            tool="input.read",
             target="input.txt",
             created_at="2026-07-30T00:00:00Z",
         )
@@ -220,7 +220,7 @@ def test_v6_observer_never_writes_legacy_memory_or_strategy_authority(tmp_path) 
                 orchestration_role="worker",
                 solver_definition_id=solver.definition_id,
                 execution_policy_snapshot_id="execution:" + "a" * 64,
-                solver_tool_policy_snapshot_id="tool:" + "b" * 64,
+                solver_capability_snapshot_id="tool:" + "b" * 64,
                 created_at="2026-07-30T00:00:00Z",
             ),
             provider_tool_name="artifact_inspect",

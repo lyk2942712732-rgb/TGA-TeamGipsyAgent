@@ -3,7 +3,11 @@
 from tga.domain.solver.assignments import SolverAssignment
 from tga.domain.solver.budgets import SolverBudget, SolverBudgetUsage
 from tga.domain.solver.definitions import SolverDefinition, SolverOutputContract
-from tga.domain.solver.instances import SolverInstance, SolverTimestamps, ToolPolicySnapshot
+from tga.domain.solver.instances import (
+    CapabilityBindingSnapshot,
+    SolverInstance,
+    SolverTimestamps,
+)
 from tga.domain.solver.results import (
     ReportResult,
     ReviewResult,
@@ -19,7 +23,7 @@ from tga.domain.solver.leases import SolverLease, TaskOrchestratorLease
 __all__ = [
     "SolverAssignment", "SolverBudget", "SolverBudgetUsage",
     "ReportResult", "ReviewResult", "SolverDefinition", "SolverError", "SolverInstance", "SolverInstanceStatus",
-    "SolverOutputContract", "SolverTimestamps", "ToolPolicySnapshot", "WorkerCoverage",
+    "CapabilityBindingSnapshot", "SolverOutputContract", "SolverTimestamps", "WorkerCoverage",
     "SolverLease", "TaskOrchestratorLease", "TaskOrchestratorStatus",
     "SolverRun", "SolverRunState", "TeamRuntimeState", "WorkerResult", "WorkerResultStatus",
 ]

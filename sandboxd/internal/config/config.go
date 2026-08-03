@@ -12,7 +12,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"strings"
 )
 
 var identifier = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$`)
@@ -39,12 +38,6 @@ type Profile struct {
 	Limits             Limits   `json:"limits"`
 }
 
-type Tool struct {
-	ProfileID string   `json:"profile_id"`
-	Image     string   `json:"image"`
-	Args      []string `json:"args"`
-}
-
 type Sandboxd struct {
 	SocketPath        string   `json:"socket_path"`
 	RPCTimeoutSeconds int      `json:"rpc_timeout_seconds"`
@@ -61,8 +54,23 @@ type Config struct {
 	Sandboxd                 Sandboxd           `json:"sandboxd"`
 	DockerSandbox            json.RawMessage    `json:"docker_sandbox"`
 	Profiles                 map[string]Profile `json:"profiles"`
-	Tools                    map[string]Tool    `json:"tools"`
 	Digest                   string             `json:"-"`
+}
+
+// Digest returns the canonical SHA256 digest of a raw sandbox configuration.
+// Python's SandboxConfig.digest uses the same canonical JSON rule, so both
+// planes agree on the identity of one committed configuration file.
+func Digest(raw []byte) (string, error) {
+	var canonical any
+	if err := json.Unmarshal(raw, &canonical); err != nil {
+		return "", err
+	}
+	canonicalRaw, err := json.Marshal(canonical)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(canonicalRaw)
+	return hex.EncodeToString(sum[:]), nil
 }
 
 func Load(path string) (*Config, error) {
@@ -79,16 +87,11 @@ func Load(path string) (*Config, error) {
 	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
 		return nil, errors.New("config must contain exactly one JSON object")
 	}
-	var canonical any
-	if err := json.Unmarshal(raw, &canonical); err != nil {
-		return nil, err
-	}
-	canonicalRaw, err := json.Marshal(canonical)
+	digest, err := Digest(raw)
 	if err != nil {
 		return nil, err
 	}
-	sum := sha256.Sum256(canonicalRaw)
-	value.Digest = hex.EncodeToString(sum[:])
+	value.Digest = digest
 	if value.Version != 1 || value.Runtime != "enforced" {
 		return nil, errors.New("sandboxd requires version 1 with runtime=enforced")
 	}
@@ -153,23 +156,6 @@ func Load(path string) (*Config, error) {
 		}
 		value.Profiles[key] = profile
 	}
-	for key, tool := range value.Tools {
-		if !identifier.MatchString(key) || !pinnedImage.MatchString(tool.Image) {
-			return nil, fmt.Errorf("tool %q is invalid or not digest pinned", key)
-		}
-		_, ok := value.Profiles[tool.ProfileID]
-		if !ok {
-			return nil, fmt.Errorf("tool %q references an unknown profile", key)
-		}
-		if len(tool.Args) > 32 {
-			return nil, fmt.Errorf("tool %q has too many fixed args", key)
-		}
-		for _, argument := range tool.Args {
-			if strings.ContainsRune(argument, '\x00') {
-				return nil, fmt.Errorf("tool %q has an invalid fixed arg", key)
-			}
-		}
-	}
 	return &value, nil
 }
 
@@ -177,14 +163,6 @@ func (c *Config) Profile(id string) (Profile, error) {
 	value, ok := c.Profiles[id]
 	if !ok || value.Provider != "sandboxd" {
 		return Profile{}, errors.New("unknown sandboxd profile")
-	}
-	return value, nil
-}
-
-func (c *Config) Tool(id, profileID string) (Tool, error) {
-	value, ok := c.Tools[id]
-	if !ok || value.ProfileID != profileID {
-		return Tool{}, errors.New("tool is not authorized for this profile")
 	}
 	return value, nil
 }

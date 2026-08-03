@@ -144,6 +144,12 @@ class SandboxManager:
         return frames, result
 
     def open_process(self, handle: SandboxHandle, spec: ProcessSpec):
+        profile = self.config.profile(handle.profile_id)
+        if spec.argv[0] not in profile.session_executables:
+            raise SandboxError(
+                f"executable {spec.argv[0]!r} is not session-enabled by profile {handle.profile_id}",
+                code="SESSION_EXECUTABLE_NOT_ALLOWED",
+            )
         process = self.provider_for(handle).open_process(handle, spec)
         self._event("SANDBOX_PROCESS_OPENED", handle, {"process_id": process.process_id})
         return process

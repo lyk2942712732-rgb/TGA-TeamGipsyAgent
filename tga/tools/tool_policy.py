@@ -154,43 +154,11 @@ def _policy_decision(
             required_authorization=required, retryable=False,
         )
 
-    if normalized in {"artifact.inspect", "workspace.read"}:
-        return PolicyDecision(allowed=True)
-    if normalized == "workspace.write":
-        return PolicyDecision(allowed=True)
-    if normalized in {"workspace.python", "workspace.shell", "workspace.binary", "process.execute", "sandbox.exec"}:
+    if normalized in {"kali.exec", "kali.session"}:
         if policy.local_compute.mode == "disabled":
-            return deny("LOCAL_COMPUTE_DISABLED", "local compute is disabled", "local_compute.mode=isolated")
+            return deny("LOCAL_COMPUTE_DISABLED", "Kali execution is disabled", "local_compute.mode=isolated")
         if not sandboxed:
-            return deny("ISOLATED_COMPUTE_REQUIRED", "this execution entry point is not an isolated worker", "isolated local compute")
-        return PolicyDecision(allowed=True)
-
-    if normalized == "nmap.scan":
-        try:
-            address = ipaddress.ip_address(target)
-            enforce_address_policy(address, policy.network)
-            if policy.network.access == "disabled":
-                raise PermissionError("NETWORK_ACCESS_DISABLED")
-            if policy.network.access == "custom":
-                networks = [
-                    ipaddress.ip_network(item, strict=False)
-                    for item in policy.network.custom_cidrs
-                ]
-                if not any(
-                    address.version == network.version and address in network
-                    for network in networks
-                ):
-                    raise PermissionError("NETWORK_TARGET_NOT_IN_CUSTOM_ALLOWLIST")
-            elif policy.network.access == "task_sources":
-                seed_hosts = {
-                    urlparse(origin).hostname for origin in policy.network.seed_origins
-                }
-                if str(address) not in seed_hosts:
-                    raise PermissionError("NETWORK_ORIGIN_NOT_IN_TASK_SOURCES")
-        except (PermissionError, ValueError) as exc:
-            return deny(str(exc), "network target is outside the authorized access boundary", "network access policy")
-        if policy.network.interaction != "interact":
-            return deny("NETWORK_INTERACTION_NOT_AUTHORIZED", "network policy permits observation only", "network.interaction=interact")
+            return deny("ISOLATED_COMPUTE_REQUIRED", "Kali capability requires the isolated sandbox backend", "isolated local compute")
         return PolicyDecision(allowed=True)
 
     parsed = urlparse(target)
@@ -199,7 +167,7 @@ def _policy_decision(
         parsed.scheme in {"http", "https"} or bool(parsed.hostname)
         or normalized in (PASSIVE_TOOLS | ACTIVE_TOOLS | DESTRUCTIVE_TOOLS) and normalized not in LOCAL_TARGET_TOOLS
     )
-    if normalized == "http.request" or is_network:
+    if is_network:
         try:
             # Planning policy validates the declared origin and literal IP.
             # HTTP execution performs DNS and redirect revalidation immediately
@@ -216,7 +184,7 @@ def _policy_decision(
         effective_risk == "destructive"
         or "fuzz" in normalized
         or normalized in {"boofuzz", "dharma"}
-        or (normalized == "http.request" and (action or "GET").upper() in {"PUT", "PATCH", "DELETE"})
+        or normalized in {"artifact.publish", "input.materialize"}
     )
     if high_impact:
         requested = action or normalized

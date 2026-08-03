@@ -8,7 +8,7 @@ import pytest
 
 from tga.contracts import TGATask
 from tests.runtime_fixtures import task as v6_task
-from tga.capabilities.registry import build_default_registry
+from tga.application.capabilities import CapabilityAssignmentService
 from tga.evidence.artifacts import ArtifactStore
 from tga.evidence.store import EvidenceStore
 from tga.modes import MODE_PROFILES, TASK_MODES
@@ -23,7 +23,6 @@ from tga.runtime.completion_service import TaskCompletionService
 from tga.runtime.orchestration import TaskOrchestrator
 from tga.infrastructure.persistence import PersistenceBundle
 from tga.runtime.prompts import build_agent_system_prompt
-from tga.capabilities.registry import build_default_registry
 from tga.skills.selection import SkillSelectionRequest, SkillSelector
 from tga.tools.mcp_config import MCPVisibilityConfig, load_mcp_config
 
@@ -149,14 +148,13 @@ def test_completion_service_rejects_active_intents_before_mode_validation(tmp_pa
 
 
 def test_each_mode_drives_prompt_capabilities_and_skills():
-    capabilities = build_default_registry().snapshot()["capabilities"]
+    capabilities = CapabilityAssignmentService().host_registry.all()
     for mode in TASK_MODES:
         task = _task(f"profile_{mode}", mode)
         prompt = build_agent_system_prompt(task)
         assert MODE_PROFILES[mode].label in prompt
         assert MODE_PROFILES[mode].completion_focus in prompt
-        assert any(mode in item["modes"] for item in capabilities)
-        available = tuple(item["name"] for item in capabilities if mode in item["modes"])
+        available = tuple(item.id for item in capabilities) + ("kali.exec", "kali.session")
         snapshot = SkillSelector().select(
             SkillSelectionRequest(
                 mode=mode,

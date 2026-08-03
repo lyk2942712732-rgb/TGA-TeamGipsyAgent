@@ -1,4 +1,4 @@
-﻿import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -20,7 +20,7 @@ const mocks = vi.hoisted(() => ({
   })),
   fetchSkillSettings: vi.fn(async () => ({ schema_version: 3, skills: [
     { name: "web-recon", modes: ["ctf", "penetration_test"], capabilities: ["http.request"], tags: ["web"], version: "1", source: "builtin", summary: "Map web endpoints", editable: true },
-    { name: "binary-triage", modes: ["reverse_engineering"], capabilities: ["workspace.read"], tags: ["binary"], version: "1", source: "builtin", summary: "Inspect binary metadata", editable: true },
+    { name: "binary-triage", modes: ["reverse_engineering"], capabilities: ["input.read"], tags: ["binary"], version: "1", source: "builtin", summary: "Inspect binary metadata", editable: true },
   ] })),
 }));
 

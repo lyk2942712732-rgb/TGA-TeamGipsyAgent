@@ -62,7 +62,11 @@ class SandboxProfile(BaseModel):
     web_allow_hosts: tuple[str, ...] = ()
     allow_net_raw: bool = False
     allow_ptrace: bool = False
+    supported_capabilities: tuple[
+        Literal["kali.exec", "kali.session"], ...
+    ] = ("kali.exec",)
     allowed_executables: tuple[str, ...] = ()
+    session_executables: tuple[str, ...] = ()
     toolset_digest: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
     limits: ResourceLimits = Field(default_factory=ResourceLimits)
 
@@ -73,13 +77,13 @@ class SandboxProfile(BaseModel):
             raise ValueError("invalid sandbox profile id")
         return value
 
-    @field_validator("allowed_executables")
+    @field_validator("supported_capabilities", "allowed_executables", "session_executables")
     @classmethod
     def valid_executables(cls, values: tuple[str, ...]) -> tuple[str, ...]:
         if len(values) != len(set(values)):
             raise ValueError("allowed executables must be unique")
         for value in values:
-            if not IDENTIFIER.fullmatch(value):
+            if value not in {"kali.exec", "kali.session"} and not IDENTIFIER.fullmatch(value):
                 raise ValueError(f"invalid allowed executable: {value!r}")
         return values
 
@@ -95,6 +99,10 @@ class SandboxProfile(BaseModel):
             raise ValueError("target allowlists require sandboxd")
         if self.network_mode != "public_http" and self.web_allow_hosts:
             raise ValueError("web allow hosts require public_http network mode")
+        if "kali.session" in self.supported_capabilities and not self.session_executables:
+            raise ValueError("kali.session support requires session_executables")
+        if not set(self.session_executables).issubset(self.allowed_executables):
+            raise ValueError("session executables must be allowed executables")
         for resource in self.web_allow_hosts:
             if (
                 not re.fullmatch(
@@ -134,9 +142,15 @@ class ProcessSpec(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     argv: tuple[str, ...] = Field(default=(), max_length=256)
+    # Audit, governance and event-record identity only. It never selects a
+    # sandbox image or fixed arguments; the SandboxProfile owns the image and
+    # argv[0] is checked against the Profile's allowed_executables.
     tool_id: str | None = None
     environment: dict[str, str] = Field(default_factory=dict)
     logical_workspace: Literal["solver", "task_inputs", "task_shared"] = "solver"
+    working_directory: str = "."
+    stdin: bytes | None = Field(default=None, max_length=262_144)
+    interactive: bool = False
     timeout_seconds: int | None = Field(default=None, ge=1, le=7200)
     network_grants: tuple[NetworkGrant, ...] = ()
 
@@ -155,12 +169,21 @@ class ProcessSpec(BaseModel):
                 raise ValueError("invalid process environment")
         return values
 
+    @field_validator("working_directory")
+    @classmethod
+    def safe_working_directory(cls, value: str) -> str:
+        normalized = value.replace("\\", "/").strip("/") or "."
+        parts = normalized.split("/")
+        if normalized.startswith("/") or ".." in parts or any(not part for part in parts):
+            raise ValueError("working directory must remain relative to its logical workspace")
+        return normalized
+
     @model_validator(mode="after")
-    def command_or_tool(self) -> "ProcessSpec":
-        if not self.argv and not self.tool_id:
-            raise ValueError("process requires argv or a trusted tool id")
+    def command_and_optional_audit_tool(self) -> "ProcessSpec":
+        if not self.argv:
+            raise ValueError("process requires argv")
         if self.tool_id and not IDENTIFIER.fullmatch(self.tool_id):
-            raise ValueError("invalid trusted tool id")
+            raise ValueError("invalid audit tool id")
         return self
 
 

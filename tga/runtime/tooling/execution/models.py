@@ -96,7 +96,7 @@ class ExecutionResult(BaseModel):
 
     @property
     def output(self) -> dict[str, Any]:
-        """Compatibility projection for the model-facing gateway."""
+        """Project the backend result into the model-facing gateway payload."""
         payload = dict(self.structured_result)
         payload.setdefault("ok", self.status == "succeeded")
         payload.setdefault("status", self.status)
@@ -114,7 +114,7 @@ class ExecutionResult(BaseModel):
 
     @property
     def telemetry(self) -> dict[str, Any]:
-        """Compatibility projection for persisted schema-v6 results."""
+        """Project execution metadata into the persisted result telemetry."""
         return {
             **self.execution_metadata,
             "started_at": self.started_at,

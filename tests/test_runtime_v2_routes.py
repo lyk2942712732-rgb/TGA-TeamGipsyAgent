@@ -7,7 +7,6 @@ import pytest
 from fastapi.testclient import TestClient
 
 from apps.api.main import app
-from apps.api.routes import capabilities as capability_routes
 from apps.api.routes import events as event_routes
 from apps.api.routes import llm_settings as llm_routes
 from apps.api.routes import mcp as mcp_routes
@@ -234,7 +233,7 @@ def test_action_snapshot_and_events_recursively_redact_tool_secrets(tmp_path, mo
             orchestration_role="supervisor",
             solver_definition_id="ctf-supervisor",
             execution_policy_snapshot_id="execution:" + "a" * 64,
-            solver_tool_policy_snapshot_id="tool:" + "b" * 64,
+            solver_capability_snapshot_id="tool:" + "b" * 64,
             created_at=now,
         ),
         provider_tool_name="mcp__fixture__login",
@@ -443,15 +442,12 @@ def test_v2_settings_and_capabilities_routes(monkeypatch):
     monkeypatch.delenv("TGA_LLM_API_KEY", raising=False)
     monkeypatch.delenv("TGA_LLM_MODEL", raising=False)
 
-    runner = object()
-    class FakeRegistry:
-        def snapshot(self): return {"capabilities": [{"name": "workspace.write", "risk": "active"}]}
-    monkeypatch.setattr(capability_routes, "build_default_registry", lambda: FakeRegistry())
-    monkeypatch.setattr(capability_routes, "_catalog_runner", lambda: runner)
-    monkeypatch.setattr(capability_routes, "tool_catalog_snapshot", lambda value: {"tools": []} if value is runner else {})
-    monkeypatch.setattr(capability_routes, "health_snapshot", lambda value: {"records": []} if value is runner else {})
-    assert client.get("/api/v2/capabilities").json()["capabilities"][0]["name"] == "workspace.write"
-    assert client.get("/api/v2/tools/health").json()["configured"] is True
+    capabilities = client.get("/api/v2/capabilities").json()
+    assert "artifact.publish" in {item["id"] for item in capabilities["host"]}
+    assert {item["id"] for item in capabilities["kali"]} == {
+        "kali.exec", "kali.session",
+    }
+    assert client.get("/api/v2/tools/health").status_code == 200
     skills = client.get("/api/v2/settings/skills").json()
     prompts = client.get("/api/v2/settings/agent-prompts").json()
     assert skills["schema_version"] == 3 and skills["skills"]

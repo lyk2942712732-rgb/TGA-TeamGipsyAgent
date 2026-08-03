@@ -1,15 +1,13 @@
 from __future__ import annotations
 
-import hashlib
 from types import SimpleNamespace
 
 import pytest
 from pydantic import ValidationError
 
-from tga.capabilities.registry import build_default_registry
+from tests.capability_fixtures import capability_binding, empty_mcp_catalog
 from tests.runtime_fixtures import task as v6_task
 from tga.contracts import ActionEffect, TGATask
-from tga.domain.solver.instances import ToolPolicySnapshot
 from tga.infrastructure.persistence import PersistenceBundle
 from tga.infrastructure.persistence.errors import PersistenceConflict
 from tga.infrastructure.solver_definitions.registry import SolverDefinitionRegistry
@@ -42,17 +40,8 @@ def _task(task_id: str = "tool_governance") -> TGATask:
     return v6_task(id=task_id, name="governance", mode="ctf", goal="govern tools")
 
 
-def _policy(*capabilities: str, profile: str = "test") -> ToolPolicySnapshot:
-    payload = "\0".join(capabilities).encode()
-    return ToolPolicySnapshot(
-        profile=profile,
-        allowed_tool_groups=("control", "resource_read", "execution", "retrieval"),
-        allowed_capabilities=tuple(capabilities),
-        content_sha256=hashlib.sha256(payload).hexdigest(),
-    )
-
-
-def _solver(definition_id: str, *capabilities: str, profile: str = "test"):
+def _solver(definition_id: str, *_capabilities: str, profile: str = "test"):
+    del profile
     definition = SolverDefinitionRegistry.builtin().require(definition_id)
     return SimpleNamespace(
         id=f"solver_{definition_id}",
@@ -61,23 +50,13 @@ def _solver(definition_id: str, *capabilities: str, profile: str = "test"):
         orchestration_role=definition.orchestration_role,
         specialties=definition.specialties,
         completion_authority=definition.completion_authority,
-        tool_policy_snapshot=_policy(*capabilities, profile=profile),
+        capability_binding_snapshot=capability_binding(definition),
     ), definition
 
 
 def _catalog(task: TGATask, definition_id: str = "ctf-web-solver") -> RuntimeToolCatalog:
-    registry = build_default_registry()
-    tool_names = {
-        f"tga_{item['name'].replace('.', '_')}": item["name"]
-        for item in registry.snapshot()["capabilities"]
-    }
-    return RuntimeToolCatalog.from_runtime(
-        mode=task.mode,
-        solver_definition=SolverDefinitionRegistry.builtin().require(definition_id),
-        registry=registry,
-        tool_names=tool_names,
-        mcp_snapshot=SimpleNamespace(function_tools=lambda: [], routes={}),
-    )
+    del task, definition_id
+    return empty_mcp_catalog()
 
 
 def _context(task_id: str = "tool_governance", *, solver=None) -> ActionContext:
@@ -93,7 +72,7 @@ def _context(task_id: str = "tool_governance", *, solver=None) -> ActionContext:
         orchestration_role=role,
         solver_definition_id=definition_id,
         execution_policy_snapshot_id="execution:" + "a" * 64,
-        solver_tool_policy_snapshot_id="tool:" + "b" * 64,
+        solver_capability_snapshot_id="tool:" + "b" * 64,
         skill_snapshot_id=None,
         attempt=1,
         created_at=NOW,
@@ -101,7 +80,7 @@ def _context(task_id: str = "tool_governance", *, solver=None) -> ActionContext:
 
 
 def _action(
-    *, action_id: str = "governed_one", capability: str = "workspace.write",
+    *, action_id: str = "governed_one", capability: str = "artifact.publish",
     idempotency_key: str | None = None, lock_key: str | None = None,
     context: ActionContext | None = None,
 ) -> GovernedAction:
@@ -109,11 +88,11 @@ def _action(
     return GovernedAction(
         id=action_id,
         context=context,
-        provider_tool_name="tga_workspace_write",
+        provider_tool_name="artifact_publish",
         tool_call_id=f"call_{action_id}",
         tool_class="execution",
         capability=capability,
-        normalized_arguments={"relative_path": "report.txt", "content": "result"},
+        normalized_arguments={"relative_path": "report.txt", "label": "result"},
         resolved_target=f"workspace:{context.solver_id}:report.txt",
         risk="active",
         effect=ActionEffect(
@@ -207,7 +186,7 @@ def test_role_manifests_are_distinct_and_respect_completion_authority() -> None:
     assert "propose_task_completion" in supervisor_names
     assert "confirm_finding" in supervisor_names
     assert "submit_worker_result" not in supervisor_names
-    assert "tga_workspace_python" not in supervisor_names
+    assert "kali_exec" not in supervisor_names
     assert "submit_worker_result" in worker_names
     assert "propose_task_completion" not in worker_names
     assert {"artifact.inspect", "review_evidence", "review_finding"} <= {
@@ -218,7 +197,7 @@ def test_role_manifests_are_distinct_and_respect_completion_authority() -> None:
     }
     assert "propose_task_completion" not in reviewer_names
     assert "propose_task_completion" not in reporter_names
-    assert not {"tga_workspace_python", "tga_workspace_shell", "tga_http_request"} & reporter_names
+    assert not {"kali_exec", "kali_session"} & reporter_names
 
 
 def test_manifest_schema_exposes_only_non_authoritative_model_governance() -> None:
@@ -460,8 +439,8 @@ def test_gateway_executes_allowed_tool_through_adapter_and_persists_terminal_sta
         )
 
         result = gateway.handle(ToolRequest(
-            provider_tool_name="tga_workspace_write",
-            arguments={"relative_path": "report.txt", "content": "result"},
+            provider_tool_name="artifact_publish",
+            arguments={"relative_path": "report.txt", "label": "result"},
             model_intent=ModelToolIntent(
                 rationale="persist the report",
                 expected_outcome="report exists",
@@ -516,9 +495,9 @@ def test_high_impact_action_recovery_replays_without_duplicate_execution(tmp_pat
             repository=bundle.tool_governance,
             execution_adapter=first_adapter,
         )
-        arguments = {"relative_path": "report.txt", "content": "result"}
+        arguments = {"relative_path": "report.txt", "label": "result"}
         first = first_gateway.handle(ToolRequest(
-            provider_tool_name="tga_workspace_write",
+            provider_tool_name="artifact_publish",
             arguments=arguments,
             model_intent=ModelToolIntent(rationale="publish once"),
             action_context=_context(solver=solver),
@@ -534,7 +513,7 @@ def test_high_impact_action_recovery_replays_without_duplicate_execution(tmp_pat
                 execution_adapter=recovered_adapter,
         )
         replay = recovered_gateway.handle(ToolRequest(
-            provider_tool_name="tga_workspace_write",
+            provider_tool_name="artifact_publish",
             arguments=arguments,
             model_intent=ModelToolIntent(rationale="recover the same operation"),
             action_context=_context(solver=solver),
@@ -545,7 +524,7 @@ def test_high_impact_action_recovery_replays_without_duplicate_execution(tmp_pat
         assert recovered_adapter.calls == []
 
         retry = recovered_gateway.handle(ToolRequest(
-            provider_tool_name="tga_workspace_write",
+            provider_tool_name="artifact_publish",
             arguments=arguments,
             model_intent=ModelToolIntent(
                 rationale="explicit retry",
@@ -588,8 +567,8 @@ def test_gateway_discards_result_if_runner_lease_is_lost_during_execution(tmp_pa
         )
 
         result = gateway.handle(ToolRequest(
-            provider_tool_name="tga_workspace_write",
-            arguments={"relative_path": "late.txt", "content": "late"},
+            provider_tool_name="artifact_publish",
+            arguments={"relative_path": "late.txt", "label": "late"},
             model_intent=ModelToolIntent(rationale="test lease fencing"),
             action_context=_context(solver=solver),
             tool_call_id="call_lease_lost",
@@ -644,7 +623,7 @@ def test_retrieval_tool_routes_through_gateway_and_persists_auditable_action(tmp
 
         result = gateway.handle(ToolRequest(
             provider_tool_name="retrieval_search",
-            arguments={"query": "bounded reference", "channels": ["reference"]},
+            arguments={"query": "bounded reference"},
             model_intent=ModelToolIntent(rationale="find relevant reference material"),
             action_context=_context(solver=solver),
             tool_call_id="call_retrieval",
@@ -685,8 +664,8 @@ def test_gateway_maps_adapter_exception_to_failed_raw_result(tmp_path) -> None:
         )
 
         result = gateway.handle(ToolRequest(
-            provider_tool_name="tga_workspace_write",
-            arguments={"relative_path": "report.txt", "content": "result"},
+            provider_tool_name="artifact_publish",
+            arguments={"relative_path": "report.txt", "label": "result"},
             model_intent=ModelToolIntent(rationale="persist the report"),
             action_context=_context(solver=solver),
             tool_call_id="call_explodes",

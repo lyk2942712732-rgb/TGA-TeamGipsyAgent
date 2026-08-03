@@ -20,7 +20,7 @@ class SkillContextAssembler:
         for skill in bundle.skills:
             sections.extend([
                 f"## Skill: {skill.name} (version {skill.version})",
-                f"Required capabilities: {', '.join(skill.required_capabilities) or 'none'}",
+                f"Capability requirements: {', '.join(skill.capability_requirements) or 'none'}",
                 skill.body,
             ])
         sections.append(
@@ -36,7 +36,7 @@ class SkillContextAssembler:
                 "name": skill.name,
                 "version": skill.version,
                 "origin": skill.origin,
-                "capabilities": list(skill.required_capabilities),
+                "capabilities": list(skill.capability_requirements),
                 "tags": list(skill.tags),
                 "content_sha256": skill.content_sha256,
                 "selection_reasons": list(skill.selection_reasons),

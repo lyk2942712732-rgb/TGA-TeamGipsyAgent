@@ -1,24 +1,24 @@
 ---
 name: protocol-and-format-recovery
 modes: [reverse_engineering]
-capabilities: [workspace.read, artifact.inspect]
+capabilities: [input.read, artifact.inspect]
 tags: [protocol, format, reverse]
 version: 2.0.0
 ---
-# 协议与文件格式恢复
+# 鍗忚涓庢枃浠舵牸寮忔仮澶?
 
-## 目标
-恢复消息、文件、序列化和状态机格式。
+## 鐩爣
+鎭㈠娑堟伅銆佹枃浠躲€佸簭鍒楀寲鍜岀姸鎬佹満鏍煎紡銆?
 
-## 执行流程
-1. 识别 Magic、字段、长度、校验和和版本。
-2. 追踪编码解码函数。
-3. 生成解析器或构造器验证。
+## 鎵ц娴佺▼
+1. 璇嗗埆 Magic銆佸瓧娈点€侀暱搴︺€佹牎楠屽拰鍜岀増鏈€?
+2. 杩借釜缂栫爜瑙ｇ爜鍑芥暟銆?
+3. 鐢熸垚瑙ｆ瀽鍣ㄦ垨鏋勯€犲櫒楠岃瘉銆?
 
-## 输出契约
-- 格式规范。
-- 解析脚本。
-- 样本验证。
+## 杈撳嚭濂戠害
+- 鏍煎紡瑙勮寖銆?
+- 瑙ｆ瀽鑴氭湰銆?
+- 鏍锋湰楠岃瘉銆?
 
-## 边界与证据规则
-- 推断字段需标注置信度。
+## 杈圭晫涓庤瘉鎹鍒?
+- 鎺ㄦ柇瀛楁闇€鏍囨敞缃俊搴︺€?

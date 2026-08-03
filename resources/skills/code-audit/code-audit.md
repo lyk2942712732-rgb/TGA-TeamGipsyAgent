@@ -2,7 +2,7 @@
 name: code-audit
 version: "1"
 modes: [vulnerability_research, ctf]
-capabilities: [workspace.read, workspace.python]
+capabilities: [input.read, kali.exec]
 tags: [source, secrets, taint]
 ---
 # When to use

@@ -64,7 +64,7 @@ class SkillIngestionService:
             name=parsed.name,
             version=parsed.version,
             modes=tuple(parsed.modes),
-            required_capabilities=tuple(parsed.capabilities),
+            capability_requirements=tuple(parsed.capabilities),
             tags=tuple(parsed.tags),
             body=parsed.body.strip(),
             origin="retrieval",
@@ -216,7 +216,7 @@ def _frontmatter_keys(text: str) -> set[str]:
 def _searchable_markdown(skill: SkillDocument) -> str:
     metadata = " ".join((
         skill.name, skill.version, *skill.modes, *skill.tags,
-        *skill.required_capabilities,
+        *skill.capability_requirements,
     ))
     return f"# {skill.name}\n\n{metadata}\n\n{skill.body}"
 

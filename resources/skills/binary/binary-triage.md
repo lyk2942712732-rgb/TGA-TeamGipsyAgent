@@ -2,7 +2,7 @@
 name: binary-triage
 version: "1"
 modes: [reverse_engineering, ctf]
-capabilities: [workspace.read, workspace.python]
+capabilities: [input.read, kali.exec]
 tags: [binary, strings, metadata]
 ---
 # When to use

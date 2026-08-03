@@ -510,6 +510,9 @@ type ProcessSpec struct {
 	TimeoutSeconds   uint32                 `protobuf:"varint,4,opt,name=timeout_seconds,json=timeoutSeconds,proto3" json:"timeout_seconds,omitempty"`
 	NetworkGrants    []*NetworkGrant        `protobuf:"bytes,5,rep,name=network_grants,json=networkGrants,proto3" json:"network_grants,omitempty"`
 	ToolId           string                 `protobuf:"bytes,6,opt,name=tool_id,json=toolId,proto3" json:"tool_id,omitempty"`
+	WorkingDirectory string                 `protobuf:"bytes,7,opt,name=working_directory,json=workingDirectory,proto3" json:"working_directory,omitempty"`
+	Stdin            []byte                 `protobuf:"bytes,8,opt,name=stdin,proto3" json:"stdin,omitempty"`
+	Interactive      bool                   `protobuf:"varint,9,opt,name=interactive,proto3" json:"interactive,omitempty"`
 	unknownFields    protoimpl.UnknownFields
 	sizeCache        protoimpl.SizeCache
 }
@@ -584,6 +587,27 @@ func (x *ProcessSpec) GetToolId() string {
 		return x.ToolId
 	}
 	return ""
+}
+
+func (x *ProcessSpec) GetWorkingDirectory() string {
+	if x != nil {
+		return x.WorkingDirectory
+	}
+	return ""
+}
+
+func (x *ProcessSpec) GetStdin() []byte {
+	if x != nil {
+		return x.Stdin
+	}
+	return nil
+}
+
+func (x *ProcessSpec) GetInteractive() bool {
+	if x != nil {
+		return x.Interactive
+	}
+	return false
 }
 
 type ExecRequest struct {
@@ -1008,6 +1032,58 @@ func (x *ProcessInput) GetCloseStdin() bool {
 	return false
 }
 
+type ProcessResize struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Cols          uint32                 `protobuf:"varint,1,opt,name=cols,proto3" json:"cols,omitempty"`
+	Rows          uint32                 `protobuf:"varint,2,opt,name=rows,proto3" json:"rows,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ProcessResize) Reset() {
+	*x = ProcessResize{}
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ProcessResize) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ProcessResize) ProtoMessage() {}
+
+func (x *ProcessResize) ProtoReflect() protoreflect.Message {
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ProcessResize.ProtoReflect.Descriptor instead.
+func (*ProcessResize) Descriptor() ([]byte, []int) {
+	return file_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *ProcessResize) GetCols() uint32 {
+	if x != nil {
+		return x.Cols
+	}
+	return 0
+}
+
+func (x *ProcessResize) GetRows() uint32 {
+	if x != nil {
+		return x.Rows
+	}
+	return 0
+}
+
 type ProcessOpened struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	ProcessId     string                 `protobuf:"bytes,1,opt,name=process_id,json=processId,proto3" json:"process_id,omitempty"`
@@ -1017,7 +1093,7 @@ type ProcessOpened struct {
 
 func (x *ProcessOpened) Reset() {
 	*x = ProcessOpened{}
-	mi := &file_sandbox_v1_sandbox_proto_msgTypes[13]
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1029,7 +1105,7 @@ func (x *ProcessOpened) String() string {
 func (*ProcessOpened) ProtoMessage() {}
 
 func (x *ProcessOpened) ProtoReflect() protoreflect.Message {
-	mi := &file_sandbox_v1_sandbox_proto_msgTypes[13]
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1042,7 +1118,7 @@ func (x *ProcessOpened) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ProcessOpened.ProtoReflect.Descriptor instead.
 func (*ProcessOpened) Descriptor() ([]byte, []int) {
-	return file_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{13}
+	return file_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *ProcessOpened) GetProcessId() string {
@@ -1061,6 +1137,7 @@ type ProcessMessage struct {
 	//	*ProcessMessage_Opened
 	//	*ProcessMessage_Frame
 	//	*ProcessMessage_Result
+	//	*ProcessMessage_Resize
 	Message       isProcessMessage_Message `protobuf_oneof:"message"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -1068,7 +1145,7 @@ type ProcessMessage struct {
 
 func (x *ProcessMessage) Reset() {
 	*x = ProcessMessage{}
-	mi := &file_sandbox_v1_sandbox_proto_msgTypes[14]
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1080,7 +1157,7 @@ func (x *ProcessMessage) String() string {
 func (*ProcessMessage) ProtoMessage() {}
 
 func (x *ProcessMessage) ProtoReflect() protoreflect.Message {
-	mi := &file_sandbox_v1_sandbox_proto_msgTypes[14]
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1093,7 +1170,7 @@ func (x *ProcessMessage) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ProcessMessage.ProtoReflect.Descriptor instead.
 func (*ProcessMessage) Descriptor() ([]byte, []int) {
-	return file_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{14}
+	return file_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *ProcessMessage) GetMessage() isProcessMessage_Message {
@@ -1148,6 +1225,15 @@ func (x *ProcessMessage) GetResult() *ExecResult {
 	return nil
 }
 
+func (x *ProcessMessage) GetResize() *ProcessResize {
+	if x != nil {
+		if x, ok := x.Message.(*ProcessMessage_Resize); ok {
+			return x.Resize
+		}
+	}
+	return nil
+}
+
 type isProcessMessage_Message interface {
 	isProcessMessage_Message()
 }
@@ -1172,6 +1258,10 @@ type ProcessMessage_Result struct {
 	Result *ExecResult `protobuf:"bytes,5,opt,name=result,proto3,oneof"`
 }
 
+type ProcessMessage_Resize struct {
+	Resize *ProcessResize `protobuf:"bytes,6,opt,name=resize,proto3,oneof"`
+}
+
 func (*ProcessMessage_Start) isProcessMessage_Message() {}
 
 func (*ProcessMessage_Input) isProcessMessage_Message() {}
@@ -1181,6 +1271,8 @@ func (*ProcessMessage_Opened) isProcessMessage_Message() {}
 func (*ProcessMessage_Frame) isProcessMessage_Message() {}
 
 func (*ProcessMessage_Result) isProcessMessage_Message() {}
+
+func (*ProcessMessage_Resize) isProcessMessage_Message() {}
 
 type StopProcessRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -1192,7 +1284,7 @@ type StopProcessRequest struct {
 
 func (x *StopProcessRequest) Reset() {
 	*x = StopProcessRequest{}
-	mi := &file_sandbox_v1_sandbox_proto_msgTypes[15]
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1204,7 +1296,7 @@ func (x *StopProcessRequest) String() string {
 func (*StopProcessRequest) ProtoMessage() {}
 
 func (x *StopProcessRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_sandbox_v1_sandbox_proto_msgTypes[15]
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1217,7 +1309,7 @@ func (x *StopProcessRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StopProcessRequest.ProtoReflect.Descriptor instead.
 func (*StopProcessRequest) Descriptor() ([]byte, []int) {
-	return file_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{15}
+	return file_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *StopProcessRequest) GetProcessId() string {
@@ -1244,7 +1336,7 @@ type InspectRequest struct {
 
 func (x *InspectRequest) Reset() {
 	*x = InspectRequest{}
-	mi := &file_sandbox_v1_sandbox_proto_msgTypes[16]
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1256,7 +1348,7 @@ func (x *InspectRequest) String() string {
 func (*InspectRequest) ProtoMessage() {}
 
 func (x *InspectRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_sandbox_v1_sandbox_proto_msgTypes[16]
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1269,7 +1361,7 @@ func (x *InspectRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use InspectRequest.ProtoReflect.Descriptor instead.
 func (*InspectRequest) Descriptor() ([]byte, []int) {
-	return file_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{16}
+	return file_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *InspectRequest) GetInstanceId() string {
@@ -1298,7 +1390,7 @@ type InspectResponse struct {
 
 func (x *InspectResponse) Reset() {
 	*x = InspectResponse{}
-	mi := &file_sandbox_v1_sandbox_proto_msgTypes[17]
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1310,7 +1402,7 @@ func (x *InspectResponse) String() string {
 func (*InspectResponse) ProtoMessage() {}
 
 func (x *InspectResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_sandbox_v1_sandbox_proto_msgTypes[17]
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1323,7 +1415,7 @@ func (x *InspectResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use InspectResponse.ProtoReflect.Descriptor instead.
 func (*InspectResponse) Descriptor() ([]byte, []int) {
-	return file_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{17}
+	return file_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *InspectResponse) GetState() string {
@@ -1364,7 +1456,7 @@ type DestroyRequest struct {
 
 func (x *DestroyRequest) Reset() {
 	*x = DestroyRequest{}
-	mi := &file_sandbox_v1_sandbox_proto_msgTypes[18]
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1376,7 +1468,7 @@ func (x *DestroyRequest) String() string {
 func (*DestroyRequest) ProtoMessage() {}
 
 func (x *DestroyRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_sandbox_v1_sandbox_proto_msgTypes[18]
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1389,7 +1481,7 @@ func (x *DestroyRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DestroyRequest.ProtoReflect.Descriptor instead.
 func (*DestroyRequest) Descriptor() ([]byte, []int) {
-	return file_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{18}
+	return file_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *DestroyRequest) GetInstanceId() string {
@@ -1416,7 +1508,7 @@ type ReconcileRequest struct {
 
 func (x *ReconcileRequest) Reset() {
 	*x = ReconcileRequest{}
-	mi := &file_sandbox_v1_sandbox_proto_msgTypes[19]
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1428,7 +1520,7 @@ func (x *ReconcileRequest) String() string {
 func (*ReconcileRequest) ProtoMessage() {}
 
 func (x *ReconcileRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_sandbox_v1_sandbox_proto_msgTypes[19]
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1441,7 +1533,7 @@ func (x *ReconcileRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReconcileRequest.ProtoReflect.Descriptor instead.
 func (*ReconcileRequest) Descriptor() ([]byte, []int) {
-	return file_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{19}
+	return file_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *ReconcileRequest) GetValidInstanceIds() []string {
@@ -1468,7 +1560,7 @@ type ReconcileResponse struct {
 
 func (x *ReconcileResponse) Reset() {
 	*x = ReconcileResponse{}
-	mi := &file_sandbox_v1_sandbox_proto_msgTypes[20]
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1480,7 +1572,7 @@ func (x *ReconcileResponse) String() string {
 func (*ReconcileResponse) ProtoMessage() {}
 
 func (x *ReconcileResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_sandbox_v1_sandbox_proto_msgTypes[20]
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1493,7 +1585,7 @@ func (x *ReconcileResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReconcileResponse.ProtoReflect.Descriptor instead.
 func (*ReconcileResponse) Descriptor() ([]byte, []int) {
-	return file_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{20}
+	return file_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *ReconcileResponse) GetDestroyedInstanceIds() []string {
@@ -1550,14 +1642,17 @@ const file_sandbox_v1_sandbox_proto_rawDesc = "" +
 	"\rfencing_token\x18\x03 \x01(\x04R\ffencingToken\x12\x16\n" +
 	"\x06reused\x18\x04 \x01(\bR\x06reused\x12!\n" +
 	"\fimage_digest\x18\x05 \x01(\tR\vimageDigest\x12%\n" +
-	"\x0etoolset_digest\x18\x06 \x01(\tR\rtoolsetDigest\"\xe5\x02\n" +
+	"\x0etoolset_digest\x18\x06 \x01(\tR\rtoolsetDigest\"\xca\x03\n" +
 	"\vProcessSpec\x12\x12\n" +
 	"\x04argv\x18\x01 \x03(\tR\x04argv\x12N\n" +
 	"\venvironment\x18\x02 \x03(\v2,.tga.sandbox.v1.ProcessSpec.EnvironmentEntryR\venvironment\x12+\n" +
 	"\x11logical_workspace\x18\x03 \x01(\tR\x10logicalWorkspace\x12'\n" +
 	"\x0ftimeout_seconds\x18\x04 \x01(\rR\x0etimeoutSeconds\x12C\n" +
 	"\x0enetwork_grants\x18\x05 \x03(\v2\x1c.tga.sandbox.v1.NetworkGrantR\rnetworkGrants\x12\x17\n" +
-	"\atool_id\x18\x06 \x01(\tR\x06toolId\x1a>\n" +
+	"\atool_id\x18\x06 \x01(\tR\x06toolId\x12+\n" +
+	"\x11working_directory\x18\a \x01(\tR\x10workingDirectory\x12\x14\n" +
+	"\x05stdin\x18\b \x01(\fR\x05stdin\x12 \n" +
+	"\vinteractive\x18\t \x01(\bR\vinteractive\x1a>\n" +
 	"\x10EnvironmentEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xd0\x01\n" +
@@ -1601,16 +1696,20 @@ const file_sandbox_v1_sandbox_proto_rawDesc = "" +
 	"\fProcessInput\x12\x12\n" +
 	"\x04data\x18\x01 \x01(\fR\x04data\x12\x1f\n" +
 	"\vclose_stdin\x18\x02 \x01(\bR\n" +
-	"closeStdin\".\n" +
+	"closeStdin\"7\n" +
+	"\rProcessResize\x12\x12\n" +
+	"\x04cols\x18\x01 \x01(\rR\x04cols\x12\x12\n" +
+	"\x04rows\x18\x02 \x01(\rR\x04rows\".\n" +
 	"\rProcessOpened\x12\x1d\n" +
 	"\n" +
-	"process_id\x18\x01 \x01(\tR\tprocessId\"\xa9\x02\n" +
+	"process_id\x18\x01 \x01(\tR\tprocessId\"\xe2\x02\n" +
 	"\x0eProcessMessage\x124\n" +
 	"\x05start\x18\x01 \x01(\v2\x1c.tga.sandbox.v1.ProcessStartH\x00R\x05start\x124\n" +
 	"\x05input\x18\x02 \x01(\v2\x1c.tga.sandbox.v1.ProcessInputH\x00R\x05input\x127\n" +
 	"\x06opened\x18\x03 \x01(\v2\x1d.tga.sandbox.v1.ProcessOpenedH\x00R\x06opened\x121\n" +
 	"\x05frame\x18\x04 \x01(\v2\x19.tga.sandbox.v1.ExecFrameH\x00R\x05frame\x124\n" +
-	"\x06result\x18\x05 \x01(\v2\x1a.tga.sandbox.v1.ExecResultH\x00R\x06resultB\t\n" +
+	"\x06result\x18\x05 \x01(\v2\x1a.tga.sandbox.v1.ExecResultH\x00R\x06result\x127\n" +
+	"\x06resize\x18\x06 \x01(\v2\x1d.tga.sandbox.v1.ProcessResizeH\x00R\x06resizeB\t\n" +
 	"\amessage\"X\n" +
 	"\x12StopProcessRequest\x12\x1d\n" +
 	"\n" +
@@ -1659,7 +1758,7 @@ func file_sandbox_v1_sandbox_proto_rawDescGZIP() []byte {
 }
 
 var file_sandbox_v1_sandbox_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_sandbox_v1_sandbox_proto_msgTypes = make([]protoimpl.MessageInfo, 22)
+var file_sandbox_v1_sandbox_proto_msgTypes = make([]protoimpl.MessageInfo, 23)
 var file_sandbox_v1_sandbox_proto_goTypes = []any{
 	(ExecFrame_Stream)(0),      // 0: tga.sandbox.v1.ExecFrame.Stream
 	(*Empty)(nil),              // 1: tga.sandbox.v1.Empty
@@ -1675,18 +1774,19 @@ var file_sandbox_v1_sandbox_proto_goTypes = []any{
 	(*ExecEvent)(nil),          // 11: tga.sandbox.v1.ExecEvent
 	(*ProcessStart)(nil),       // 12: tga.sandbox.v1.ProcessStart
 	(*ProcessInput)(nil),       // 13: tga.sandbox.v1.ProcessInput
-	(*ProcessOpened)(nil),      // 14: tga.sandbox.v1.ProcessOpened
-	(*ProcessMessage)(nil),     // 15: tga.sandbox.v1.ProcessMessage
-	(*StopProcessRequest)(nil), // 16: tga.sandbox.v1.StopProcessRequest
-	(*InspectRequest)(nil),     // 17: tga.sandbox.v1.InspectRequest
-	(*InspectResponse)(nil),    // 18: tga.sandbox.v1.InspectResponse
-	(*DestroyRequest)(nil),     // 19: tga.sandbox.v1.DestroyRequest
-	(*ReconcileRequest)(nil),   // 20: tga.sandbox.v1.ReconcileRequest
-	(*ReconcileResponse)(nil),  // 21: tga.sandbox.v1.ReconcileResponse
-	nil,                        // 22: tga.sandbox.v1.ProcessSpec.EnvironmentEntry
+	(*ProcessResize)(nil),      // 14: tga.sandbox.v1.ProcessResize
+	(*ProcessOpened)(nil),      // 15: tga.sandbox.v1.ProcessOpened
+	(*ProcessMessage)(nil),     // 16: tga.sandbox.v1.ProcessMessage
+	(*StopProcessRequest)(nil), // 17: tga.sandbox.v1.StopProcessRequest
+	(*InspectRequest)(nil),     // 18: tga.sandbox.v1.InspectRequest
+	(*InspectResponse)(nil),    // 19: tga.sandbox.v1.InspectResponse
+	(*DestroyRequest)(nil),     // 20: tga.sandbox.v1.DestroyRequest
+	(*ReconcileRequest)(nil),   // 21: tga.sandbox.v1.ReconcileRequest
+	(*ReconcileResponse)(nil),  // 22: tga.sandbox.v1.ReconcileResponse
+	nil,                        // 23: tga.sandbox.v1.ProcessSpec.EnvironmentEntry
 }
 var file_sandbox_v1_sandbox_proto_depIdxs = []int32{
-	22, // 0: tga.sandbox.v1.ProcessSpec.environment:type_name -> tga.sandbox.v1.ProcessSpec.EnvironmentEntry
+	23, // 0: tga.sandbox.v1.ProcessSpec.environment:type_name -> tga.sandbox.v1.ProcessSpec.EnvironmentEntry
 	4,  // 1: tga.sandbox.v1.ProcessSpec.network_grants:type_name -> tga.sandbox.v1.NetworkGrant
 	7,  // 2: tga.sandbox.v1.ExecRequest.process:type_name -> tga.sandbox.v1.ProcessSpec
 	0,  // 3: tga.sandbox.v1.ExecFrame.stream:type_name -> tga.sandbox.v1.ExecFrame.Stream
@@ -1695,30 +1795,31 @@ var file_sandbox_v1_sandbox_proto_depIdxs = []int32{
 	7,  // 6: tga.sandbox.v1.ProcessStart.process:type_name -> tga.sandbox.v1.ProcessSpec
 	12, // 7: tga.sandbox.v1.ProcessMessage.start:type_name -> tga.sandbox.v1.ProcessStart
 	13, // 8: tga.sandbox.v1.ProcessMessage.input:type_name -> tga.sandbox.v1.ProcessInput
-	14, // 9: tga.sandbox.v1.ProcessMessage.opened:type_name -> tga.sandbox.v1.ProcessOpened
+	15, // 9: tga.sandbox.v1.ProcessMessage.opened:type_name -> tga.sandbox.v1.ProcessOpened
 	9,  // 10: tga.sandbox.v1.ProcessMessage.frame:type_name -> tga.sandbox.v1.ExecFrame
 	10, // 11: tga.sandbox.v1.ProcessMessage.result:type_name -> tga.sandbox.v1.ExecResult
-	2,  // 12: tga.sandbox.v1.SandboxService.Health:input_type -> tga.sandbox.v1.HealthRequest
-	5,  // 13: tga.sandbox.v1.SandboxService.Acquire:input_type -> tga.sandbox.v1.AcquireRequest
-	8,  // 14: tga.sandbox.v1.SandboxService.Exec:input_type -> tga.sandbox.v1.ExecRequest
-	15, // 15: tga.sandbox.v1.SandboxService.OpenProcess:input_type -> tga.sandbox.v1.ProcessMessage
-	16, // 16: tga.sandbox.v1.SandboxService.StopProcess:input_type -> tga.sandbox.v1.StopProcessRequest
-	17, // 17: tga.sandbox.v1.SandboxService.Inspect:input_type -> tga.sandbox.v1.InspectRequest
-	19, // 18: tga.sandbox.v1.SandboxService.Destroy:input_type -> tga.sandbox.v1.DestroyRequest
-	20, // 19: tga.sandbox.v1.SandboxService.Reconcile:input_type -> tga.sandbox.v1.ReconcileRequest
-	3,  // 20: tga.sandbox.v1.SandboxService.Health:output_type -> tga.sandbox.v1.HealthResponse
-	6,  // 21: tga.sandbox.v1.SandboxService.Acquire:output_type -> tga.sandbox.v1.AcquireResponse
-	11, // 22: tga.sandbox.v1.SandboxService.Exec:output_type -> tga.sandbox.v1.ExecEvent
-	15, // 23: tga.sandbox.v1.SandboxService.OpenProcess:output_type -> tga.sandbox.v1.ProcessMessage
-	1,  // 24: tga.sandbox.v1.SandboxService.StopProcess:output_type -> tga.sandbox.v1.Empty
-	18, // 25: tga.sandbox.v1.SandboxService.Inspect:output_type -> tga.sandbox.v1.InspectResponse
-	1,  // 26: tga.sandbox.v1.SandboxService.Destroy:output_type -> tga.sandbox.v1.Empty
-	21, // 27: tga.sandbox.v1.SandboxService.Reconcile:output_type -> tga.sandbox.v1.ReconcileResponse
-	20, // [20:28] is the sub-list for method output_type
-	12, // [12:20] is the sub-list for method input_type
-	12, // [12:12] is the sub-list for extension type_name
-	12, // [12:12] is the sub-list for extension extendee
-	0,  // [0:12] is the sub-list for field type_name
+	14, // 12: tga.sandbox.v1.ProcessMessage.resize:type_name -> tga.sandbox.v1.ProcessResize
+	2,  // 13: tga.sandbox.v1.SandboxService.Health:input_type -> tga.sandbox.v1.HealthRequest
+	5,  // 14: tga.sandbox.v1.SandboxService.Acquire:input_type -> tga.sandbox.v1.AcquireRequest
+	8,  // 15: tga.sandbox.v1.SandboxService.Exec:input_type -> tga.sandbox.v1.ExecRequest
+	16, // 16: tga.sandbox.v1.SandboxService.OpenProcess:input_type -> tga.sandbox.v1.ProcessMessage
+	17, // 17: tga.sandbox.v1.SandboxService.StopProcess:input_type -> tga.sandbox.v1.StopProcessRequest
+	18, // 18: tga.sandbox.v1.SandboxService.Inspect:input_type -> tga.sandbox.v1.InspectRequest
+	20, // 19: tga.sandbox.v1.SandboxService.Destroy:input_type -> tga.sandbox.v1.DestroyRequest
+	21, // 20: tga.sandbox.v1.SandboxService.Reconcile:input_type -> tga.sandbox.v1.ReconcileRequest
+	3,  // 21: tga.sandbox.v1.SandboxService.Health:output_type -> tga.sandbox.v1.HealthResponse
+	6,  // 22: tga.sandbox.v1.SandboxService.Acquire:output_type -> tga.sandbox.v1.AcquireResponse
+	11, // 23: tga.sandbox.v1.SandboxService.Exec:output_type -> tga.sandbox.v1.ExecEvent
+	16, // 24: tga.sandbox.v1.SandboxService.OpenProcess:output_type -> tga.sandbox.v1.ProcessMessage
+	1,  // 25: tga.sandbox.v1.SandboxService.StopProcess:output_type -> tga.sandbox.v1.Empty
+	19, // 26: tga.sandbox.v1.SandboxService.Inspect:output_type -> tga.sandbox.v1.InspectResponse
+	1,  // 27: tga.sandbox.v1.SandboxService.Destroy:output_type -> tga.sandbox.v1.Empty
+	22, // 28: tga.sandbox.v1.SandboxService.Reconcile:output_type -> tga.sandbox.v1.ReconcileResponse
+	21, // [21:29] is the sub-list for method output_type
+	13, // [13:21] is the sub-list for method input_type
+	13, // [13:13] is the sub-list for extension type_name
+	13, // [13:13] is the sub-list for extension extendee
+	0,  // [0:13] is the sub-list for field type_name
 }
 
 func init() { file_sandbox_v1_sandbox_proto_init() }
@@ -1731,12 +1832,13 @@ func file_sandbox_v1_sandbox_proto_init() {
 		(*ExecEvent_Frame)(nil),
 		(*ExecEvent_Result)(nil),
 	}
-	file_sandbox_v1_sandbox_proto_msgTypes[14].OneofWrappers = []any{
+	file_sandbox_v1_sandbox_proto_msgTypes[15].OneofWrappers = []any{
 		(*ProcessMessage_Start)(nil),
 		(*ProcessMessage_Input)(nil),
 		(*ProcessMessage_Opened)(nil),
 		(*ProcessMessage_Frame)(nil),
 		(*ProcessMessage_Result)(nil),
+		(*ProcessMessage_Resize)(nil),
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
@@ -1744,7 +1846,7 @@ func file_sandbox_v1_sandbox_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_sandbox_v1_sandbox_proto_rawDesc), len(file_sandbox_v1_sandbox_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   22,
+			NumMessages:   23,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

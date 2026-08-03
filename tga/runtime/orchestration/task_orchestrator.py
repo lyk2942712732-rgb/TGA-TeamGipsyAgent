@@ -873,11 +873,12 @@ class TaskOrchestrator:
         solver = self.repositories.solvers.get_solver(solver_id)
         if solver is None or solver.task_id != self.task.id:
             raise KeyError(f"solver not found for resource tools: {solver_id}")
-        if solver.orchestration_role == "reviewer":
-            return {
-                "evidence.inspect": lambda args: self._read_evidence(args, confirmed_only=False),
-                "knowledge.inspect": lambda args: self._read_knowledge(args, confirmed_only=False),
-            }
+        common = {
+            "evidence.inspect": lambda args: self._read_evidence(args, confirmed_only=False),
+            "knowledge.inspect": lambda args: self._read_knowledge(args, confirmed_only=False),
+        }
+        if solver.orchestration_role in {"supervisor", "worker", "reviewer"}:
+            return common
         if solver.orchestration_role == "reporter":
             return {
                 "confirmed_evidence.read": lambda args: self._read_evidence(args, confirmed_only=True),

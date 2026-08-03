@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   requestJson: vi.fn(),
+  toolHealth: vi.fn(),
   updateMCPServer: vi.fn(),
   deleteMCPServer: vi.fn(),
   mcpServers: vi.fn(),
@@ -16,6 +17,7 @@ vi.mock("../api/client", async (original) => ({
 }));
 vi.mock("../runtime/api-v2", () => ({
   runtimeApi: {
+    toolHealth: (...args: unknown[]) => mocks.toolHealth(...args),
     mcpServers: (...args: unknown[]) => mocks.mcpServers(...args),
     updateMCPServer: (...args: unknown[]) => mocks.updateMCPServer(...args),
     deleteMCPServer: (...args: unknown[]) => mocks.deleteMCPServer(...args),
@@ -25,18 +27,54 @@ vi.mock("../components/mcp/MCPWizard", () => ({ MCPWizard: () => <div>mcp wizard
 
 import { CapabilitiesPage } from "./ToolsPage";
 
-const capability = {
-  name: "http.request",
-  description: "Scoped HTTP request with redirect verification.",
-  kind: "network",
-  risk: "active",
-  modes: ["penetration_test"],
-  availability: "healthy",
-  budget_key: "http",
-  input_schema: { properties: { method: {}, url: {}, headers: {} } },
+const hostCapability = {
+  id: "artifact.inspect",
+  display_name: "Inspect artifact",
+  category: "artifact",
+  description: "Read an immutable task artifact.",
+  allowed_roles: ["supervisor", "worker", "reviewer", "reporter"],
+  risk: "passive",
+  input_schema: { properties: { artifact_id: {}, query: {} }, required: ["artifact_id"] },
+  output_schema: {},
+  handler_key: "artifact.inspect",
+  handler_status: "ready",
+  assigned_solver_count: 1,
+  assigned_solver_ids: ["ctf-pwn-solver"],
 };
 
-const record = {
+const kaliCapability = {
+  id: "kali.exec",
+  display_name: "Kali command execution",
+  description: "Execute an allowlisted program.",
+  risk: "active",
+  input_schema: { properties: { executable: {}, argv: {}, cwd: {} } },
+  assigned_solver_count: 1,
+  assigned_solver_ids: ["ctf-pwn-solver"],
+  profile_ids: ["ctf-pwn-v1"],
+};
+
+const kaliProfile = {
+  id: "ctf-pwn-v1",
+  display_name: "CTF pwn",
+  image_name: "tga/kali-ctf-pwn",
+  image_tag: "2026.08",
+  image_digest: "sha256:" + "a".repeat(64),
+  image: "tga/kali-ctf-pwn:2026.08",
+  tools: [{ name: "gdb", executable: "gdb", version: "16.3", category: "pwn" }],
+  supported_capabilities: ["kali.exec", "kali.session"],
+  allowed_executables: ["gdb"],
+  session_executables: ["gdb"],
+  network_mode: "disabled",
+  input_mount: "read_only",
+  scratch_mount: "private_read_write",
+  shared_artifact_mount: "read_only",
+  limits: { cpu_cores: 2, memory_mb: 4096, timeout_seconds: 300, max_processes: 256 },
+  enabled: true,
+  assigned_solver_count: 1,
+  assigned_solver_ids: ["ctf-pwn-solver"],
+};
+
+const mcpRecord = {
   server: "binwalk", configured: true, enabled: false, reachable: false,
   discovered: false, tools: 0, transport: "stdio", image: "binwalk-mcp:latest",
   endpoint: null, error: null, protocol_version: "",
@@ -50,72 +88,67 @@ function renderPage() {
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.requestJson.mockImplementation((path: string) => {
-    if (path.includes("/capabilities")) return Promise.resolve({ capabilities: [capability] });
-    if (path.includes("/tools/health")) return Promise.resolve({ configured: true, records: [record] });
+    if (path === "/api/v2/capabilities/host") return Promise.resolve({ items: [hostCapability], total: 1 });
+    if (path === "/api/v2/capabilities/kali") return Promise.resolve({ items: [kaliCapability], total: 1 });
+    if (path === "/api/v2/kali/profiles") return Promise.resolve({ items: [kaliProfile], total: 1 });
     return Promise.reject(new Error(`unexpected path ${path}`));
   });
+  mocks.toolHealth.mockResolvedValue({ configured: true, records: [mcpRecord] });
   mocks.mcpServers.mockResolvedValue({ servers: [{ id: "binwalk", config: {} }] });
 });
 
-/** Names repeat in the detail heading, so table assertions must be scoped. */
-async function findTable(container: HTMLElement): Promise<HTMLElement> {
-  await waitFor(() => expect(container.querySelector(".catalog-table")).toBeTruthy());
-  return container.querySelector(".catalog-table") as HTMLElement;
-}
-
 describe("Tools & MCP", () => {
-  it("renders the real capability registry with risk levels", async () => {
-    const { container } = renderPage();
-    const table = await findTable(container);
-    expect(within(table).getByText("http.request")).toBeInTheDocument();
-    expect(within(table).getByText("network")).toBeInTheDocument();
+  it("renders three authoritative management tabs", async () => {
+    renderPage();
+    expect(screen.getByRole("tab", { name: /Host/ })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /Kali/ })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /MCP Servers/ })).toBeInTheDocument();
+    expect(await screen.findAllByText("artifact.inspect")).not.toHaveLength(0);
   });
 
-  it("defers the approval column to task policy instead of deriving it from risk", async () => {
-    const { container } = renderPage();
-    const table = await findTable(container);
-    // Approval comes from the task's ExecutionPolicy.high_impact mode, so the
-    // column must not restate the capability's risk level.
-    expect(within(table).getAllByText("按任务策略").length).toBeGreaterThan(0);
-    expect(within(table).queryByText("必须审批")).not.toBeInTheDocument();
-    expect(within(table).queryByText("无需审批")).not.toBeInTheDocument();
-    expect(container.textContent).not.toContain("项目没有实现");
+  it("shows Host parameters and assigned Solvers from the Host API", async () => {
+    renderPage();
+    const panel = await screen.findByText("Read an immutable task artifact.");
+    const detail = panel.closest(".ref-detail-panel") as HTMLElement;
+    expect(within(detail).getByText("artifact_id")).toBeInTheDocument();
+    expect(within(detail).getByText("ctf-pwn-solver")).toBeInTheDocument();
   });
 
-  it("shows real parameter names from the capability input schema", async () => {
-    const { container } = renderPage();
-    await findTable(container);
-    const panel = container.querySelector(".ref-detail-panel") as HTMLElement;
-    await waitFor(() => expect(within(panel).getByText("method")).toBeInTheDocument());
-    expect(within(panel).getByText("url")).toBeInTheDocument();
+  it("shows Kali capability assignment and Profile inventory from APIs", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await user.click(screen.getByRole("tab", { name: /Kali/ }));
+    expect((await screen.findAllByText("kali.exec")).length).toBeGreaterThan(0);
+    expect(screen.getAllByText("ctf-pwn-solver").length).toBeGreaterThan(0);
+    expect(screen.getByText("gdb 16.3")).toBeInTheDocument();
+    expect(screen.getAllByText("ctf-pwn-v1").length).toBeGreaterThan(0);
   });
 
-  it("lists MCP servers and toggles enablement through the real endpoint", async () => {
+  it("toggles an MCP server through the management endpoint", async () => {
     const user = userEvent.setup();
     mocks.updateMCPServer.mockResolvedValue({ server: { id: "binwalk" } });
-    const { container } = renderPage();
-
+    renderPage();
     await user.click(screen.getByRole("tab", { name: /MCP Servers/ }));
-    const table = await findTable(container);
-    expect(within(table).getByText("binwalk")).toBeInTheDocument();
-
-    await user.click(await screen.findByRole("button", { name: "启用" }));
+    expect(await screen.findAllByText("binwalk")).not.toHaveLength(0);
+    const enable = screen.getAllByRole("button").find((button) => button.textContent?.includes("启用"));
+    expect(enable).toBeTruthy();
+    await user.click(enable!);
     await waitFor(() => expect(mocks.updateMCPServer).toHaveBeenCalledWith("binwalk", { enabled: true }));
   });
 
   it("deletes an MCP server only after confirmation", async () => {
     const user = userEvent.setup();
     mocks.deleteMCPServer.mockResolvedValue({ deleted: true, server_id: "binwalk" });
-    const { container } = renderPage();
-
+    renderPage();
     await user.click(screen.getByRole("tab", { name: /MCP Servers/ }));
-    await findTable(container);
-
-    await user.click(await screen.findByRole("button", { name: /删除/ }));
+    await screen.findAllByText("binwalk");
+    const remove = screen.getAllByRole("button").find((button) => button.textContent?.includes("删除"));
+    expect(remove).toBeTruthy();
+    await user.click(remove!);
     expect(mocks.deleteMCPServer).not.toHaveBeenCalled();
-
     const dialog = await screen.findByRole("dialog");
-    await user.click(within(dialog).getByRole("button", { name: "删除" }));
+    const confirm = within(dialog).getAllByRole("button").find((button) => button.textContent?.includes("删除"));
+    await user.click(confirm!);
     await waitFor(() => expect(mocks.deleteMCPServer).toHaveBeenCalledWith("binwalk"));
   });
 });

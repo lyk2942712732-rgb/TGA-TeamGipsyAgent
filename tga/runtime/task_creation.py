@@ -12,7 +12,7 @@ from typing import Any, Callable
 from uuid import uuid4
 
 from tga.contracts import ExecutionPolicy, MCPCapabilitySnapshot, MCPCapabilityTool, TGATask
-from tga.capabilities.registry import build_default_registry
+from tga.application.capabilities import CapabilityAssignmentService
 from tga.inputs import SessionWorkspace
 from tga.models.bootstrap import model_config_status
 from tga.modes import mode_profile, normalize_mode, validate_task_profile
@@ -311,15 +311,12 @@ def available_capabilities(
     snapshot: MCPCapabilitySnapshot,
     policy: ExecutionPolicy,
 ) -> tuple[str, ...]:
-    local = {
-        item["name"]
-        for item in build_default_registry().snapshot()["capabilities"]
-        if mode in item["modes"]
-    }
-    if policy.network.access == "disabled":
-        local.discard("http.request")
+    assignments = CapabilityAssignmentService()
+    local = {item.id for item in assignments.host_registry.all()}
     if policy.local_compute.mode == "disabled":
-        local.difference_update({"workspace.python", "workspace.shell"})
+        local.difference_update({"kali.exec", "kali.session"})
+    else:
+        local.update({"kali.exec", "kali.session"})
     mcp = {
         value
         for tool in snapshot.tools

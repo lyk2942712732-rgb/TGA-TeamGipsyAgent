@@ -50,7 +50,7 @@ def legacy_skill_bundle_to_task_common(
             name=skill.name,
             version=skill.version,
             modes=tuple(skill.modes),
-            required_capabilities=tuple(skill.capabilities),
+            capability_requirements=tuple(skill.capabilities),
             tags=tuple(skill.tags),
             body=skill.body,
             content_sha256=skill.content_sha256,

@@ -54,7 +54,7 @@ def _pending_governed_action(
             orchestration_role="supervisor",
             solver_definition_id="ctf-supervisor",
             execution_policy_snapshot_id="execution:" + "a" * 64,
-            solver_tool_policy_snapshot_id="tool:" + "b" * 64,
+            solver_capability_snapshot_id="tool:" + "b" * 64,
             attempt=1,
             created_at=now,
         ),

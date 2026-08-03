@@ -98,7 +98,7 @@ class HandlerState:
     def __init__(
         self, *, task: TGATask, store: EvidenceStore, run_root: Path, client: Any, executor: Any,
         solver_id: str, workspace: Path, mcp_manager: MCPManager, mcp_snapshot: MCPCatalogSnapshot,
-        registry: Any, tool_by_name: dict[str, str], remote_flag_verifier: Any | None = None,
+        tool_by_name: dict[str, str], remote_flag_verifier: Any | None = None,
         allowed_resource_ids: tuple[str, ...] | None = None,
         execution_context: Any | None = None,
     ) -> None:
@@ -111,7 +111,6 @@ class HandlerState:
         self.workspace = workspace
         self.mcp_manager = mcp_manager
         self.mcp_snapshot = mcp_snapshot
-        self.registry = registry
         self.tool_by_name = tool_by_name
         self.remote_flag_verifier = remote_flag_verifier
         self.allowed_resource_ids = allowed_resource_ids
@@ -150,7 +149,7 @@ class HandlerRuntime:
         self.state = state
         for name in (
             "task", "store", "run_root", "client", "executor", "solver_id", "workspace",
-            "mcp_manager", "registry", "tool_by_name", "remote_flag_verifier",
+            "mcp_manager", "tool_by_name", "remote_flag_verifier",
             "observer",
             "plan_knowledge",
         ):
@@ -218,143 +217,6 @@ class HandlerRuntime:
         return "TGA Process"
 
 
-class CapabilityToolHandler(HandlerRuntime):
-    def __init__(
-        self,
-        state: HandlerState,
-        *,
-        artifacts: ArtifactService,
-        observer: ObserverExecutionCoordinator,
-    ) -> None:
-        super().__init__(state)
-        self.artifacts = artifacts
-        self.observer_service = observer
-
-    def execute_governed(self, action: ActionSpec) -> dict[str, Any]:
-        if action.governed_action_id != action.id:
-            raise ValueError("Capability execution requires its governed Action identity")
-        capability = action.capability
-        arguments = action.arguments
-        call_id = str(action.authorization.get("tool_call_id") or "")
-        provider_tool_name = str(
-            action.authorization.get("provider_tool_name") or capability
-        )
-        registered = self.registry.get(capability)
-        if registered is None:
-            raise ValueError(f"governed capability is unavailable: {capability}")
-        self.store.append_agent_event(
-            self.task.id,
-            "MANAGER_DECISION",
-            {
-                "action_id": action.id,
-                "capability": capability,
-                "decision": "approved",
-                "strategy_card_id": action.strategy_card_id,
-                "strategy_step_id": action.strategy_step_id,
-                "expected_outcome": action.expected_outcome,
-                "risk": action.risk,
-                "input_id": action.input_id,
-                "actual_target": action.actual_target,
-                "authorization": action.authorization,
-                "retry_reason": action.retry_reason or None,
-                "alternative_analysis": action.alternative_analysis or None,
-                "effect": action.effect.model_dump(mode="json"),
-            },
-            solver_id=self.solver_id,
-        )
-        self.store.append_agent_event(
-            self.task.id,
-            "TOOL_EXECUTION_START",
-            {"tool_call_id": call_id, "action_id": action.id, "tool_name": provider_tool_name, "arguments": self._safe_arguments(arguments), "strategy_step_id": action.strategy_step_id, "execution_location": self._execution_location(capability)},
-            solver_id=self.solver_id,
-        )
-        try:
-            execution_task = self._execution_task(arguments)
-            result = self.executor.execute(
-                task=execution_task,
-                action=action,
-                workspace=self.workspace,
-            )
-        except Exception as exc:
-            result = ActionResult(
-                action_id=action.id,
-                task_id=self.task.id,
-                solver_id=self.solver_id,
-                status="failed",
-                summary=f"tool raised: {str(exc)[:800]}",
-            )
-        with self.store.transaction():
-            excerpts: list[dict[str, str]] = []
-            for artifact_id in result.artifact_ids:
-                artifact = self.artifacts.register(
-                    artifact_id, capability, action.actual_target or action.target,
-                    input_id=action.input_id, provenance=action.provenance,
-                )
-                if artifact is None:
-                    continue
-                self.last_artifact_id = artifact.id
-                excerpts.append({"artifact_id": artifact.id, "content": self.artifacts.excerpt(artifact)})
-            for candidate in result.candidate_flags:
-                self.store.append_agent_event(
-                    self.task.id,
-                    "FLAG_CANDIDATE",
-                    {"value": candidate, "artifact_ids": result.artifact_ids},
-                    solver_id=self.solver_id,
-                )
-            payload = {
-                "ok": result.status == "succeeded",
-                "status": result.status,
-                "summary": result.summary,
-                "facts": result.facts,
-                "leads": result.leads,
-                "candidate_flags": result.candidate_flags,
-                "artifacts": excerpts,
-                "error": result.error.model_dump(mode="json") if result.error else None,
-            }
-            if result.error and result.error.code in {"RATE_LIMITED", "CONCURRENCY_WAIT"}:
-                self.store.append_agent_event(
-                    self.task.id,
-                    result.error.code,
-                    {
-                        "action_id": action.id,
-                        "capability": capability,
-                        "phase": "http" if capability == "http.request" else "process",
-                        "retryable": result.error.retryable,
-                        "error": result.error.model_dump(mode="json"),
-                    },
-                    solver_id=self.solver_id,
-                )
-            self.store.append_agent_event(
-                self.task.id,
-                "TOOL_EXECUTION_END",
-                {"tool_call_id": call_id, "action_id": action.id, "tool_name": provider_tool_name, "execution_location": self._execution_location(capability), **payload},
-                solver_id=self.solver_id,
-            )
-            if capability == "http.request":
-                http_status = self.artifacts.http_session_metadata(result)
-                if http_status:
-                    self.store.append_agent_event(
-                        self.task.id,
-                        "HTTP_SESSION_STATUS",
-                        http_status,
-                        solver_id=self.solver_id,
-                    )
-            if capability == "artifact.inspect":
-                self.artifact_retrievals += 1
-                self.store.append_agent_event(
-                    self.task.id,
-                    "ARTIFACT_RETRIEVED",
-                    {"action_id": action.id, "artifact_ids": result.artifact_ids, "query": arguments.get("query"), "section": arguments.get("section")},
-                    solver_id=self.solver_id,
-                )
-        self.observer_service.review(action=action, result=result)
-        self.plan_knowledge.record_action_result(result)
-        return payload
-    def _execution_task(self, arguments: dict[str, Any]) -> TGATask:
-        # Capabilities enforce scope, risk, TLS, and rate limits against this task.
-        return self.task
-
-
 class InputToolHandler(HandlerRuntime):
     def __init__(
         self,
@@ -415,15 +277,15 @@ class InputToolHandler(HandlerRuntime):
         started = time.perf_counter()
         artifact: ArtifactRecord | None = None
         artifact_created = False
-        workspace = SessionWorkspace(self.run_root / self.task.id)
+        input_store = SessionWorkspace(self.run_root / self.task.id)
         try:
             if name == "input_list":
                 payload = {"ok": True, **self.task.input_manifest()}
             elif name == "input_get":
-                workspace.verified_bytes(item)
+                input_store.verified_bytes(item)
                 payload = {"ok": True, **item.manifest_item()}
             elif name == "input_read":
-                payload = {"ok": True, **workspace.read(
+                payload = {"ok": True, **input_store.read_segment(
                     item,
                     offset=int(arguments.get("offset") or 0),
                     limit=int(arguments.get("limit") or 16_384),
@@ -432,7 +294,7 @@ class InputToolHandler(HandlerRuntime):
                     item=item, operation=name, payload=payload,
                 )
             elif name == "input_search":
-                payload = {"ok": True, **workspace.search(
+                payload = {"ok": True, **input_store.search(
                     item,
                     query=str(arguments.get("query") or ""),
                     limit=int(arguments.get("limit") or 20),
@@ -441,10 +303,10 @@ class InputToolHandler(HandlerRuntime):
                 if getattr(self.client, "supports_vision", None) is False:
                     payload = {"ok": False, "code": "MODEL_VISION_UNSUPPORTED", "reason": f"image remains available at {item.container_path}; use an image-analysis/OCR capability", "input_id": input_id}
                 else:
-                    block = workspace.image_block(item)
+                    block = input_store.image_block(item)
                     payload = {"ok": True, "input_id": input_id, "container_path": item.container_path, "content_block_type": "image_url", "_model_content": block}
             elif name == "input_materialize":
-                raw = workspace.verified_bytes(item)
+                raw = input_store.verified_bytes(item)
                 payload = {"ok": True, "input_id": input_id, "workspace_path": item.relative_path, "mcp_path": item.container_path, "sha256": item.sha256, "immutable": True}
                 artifact, artifact_created = self.artifacts.save_input_evidence(
                     item=item, operation=name, payload=payload, raw=raw,
@@ -1066,7 +928,6 @@ class MCPToolHandler(HandlerRuntime):
 @dataclass(frozen=True)
 class ToolHandlers:
     state: HandlerState
-    capability: CapabilityToolHandler
     inputs: InputToolHandler
     mcp: MCPToolHandler
     completion: TaskCompletionHandler
@@ -1084,15 +945,11 @@ def build_tool_handlers(**kwargs: Any) -> ToolHandlers:
     state = HandlerState(**kwargs)
     artifacts = ArtifactService(state)
     observer = ObserverExecutionCoordinator(state)
-    capability = CapabilityToolHandler(
-        state, artifacts=artifacts, observer=observer,
-    )
     mcp = MCPToolHandler(
         state, artifacts=artifacts, observer=observer,
     )
     return ToolHandlers(
         state=state,
-        capability=capability,
         inputs=InputToolHandler(state, artifacts=artifacts),
         mcp=mcp,
         completion=TaskCompletionHandler(state, artifacts),

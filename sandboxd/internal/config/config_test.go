@@ -30,14 +30,8 @@ func validConfig(runRoot string) string {
 				"toolset_digest":"` + digest + `",
 				"network_mode":"target_allowlist",
 				"allow_net_raw":true,
+				"allowed_executables":["nmap"],
 				"limits":{}
-			}
-		},
-		"tools":{
-			"nmap-raw":{
-				"profile_id":"raw-network",
-				"image":"example.invalid/nmap@sha256:` + digest + `",
-				"args":["--mode","raw"]
 			}
 		}
 	}`
@@ -59,15 +53,71 @@ func TestLoadRejectsMissingClientUIDPolicy(t *testing.T) {
 	}
 }
 
-func TestLoadRejectsMutableToolImage(t *testing.T) {
+func TestLoadAcceptsConfigWithoutTools(t *testing.T) {
+	config, err := loadFixture(t, validConfig(t.TempDir()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	profile, err := config.Profile("raw-network")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(profile.AllowedExecutables) != 1 || profile.AllowedExecutables[0] != "nmap" {
+		t.Fatalf("expected the profile executable allowlist to survive, got %v", profile.AllowedExecutables)
+	}
+}
+
+func TestLoadRejectsTopLevelToolsField(t *testing.T) {
+	digest := strings.Repeat("a", 64)
 	content := strings.Replace(
 		validConfig(t.TempDir()),
-		`example.invalid/nmap@sha256:`+strings.Repeat("a", 64),
-		`example.invalid/nmap:latest`,
+		`"profiles":{`,
+		`"tools":{"nmap-raw":{"profile_id":"raw-network","image":"example.invalid/nmap@sha256:`+digest+`"}},
+		"profiles":{`,
+		1,
+	)
+	_, err := loadFixture(t, content)
+	if err == nil {
+		t.Fatal("expected a top-level tools field to be rejected")
+	}
+	if !strings.Contains(err.Error(), "unknown field") {
+		t.Fatalf("expected an unknown field error, got %v", err)
+	}
+}
+
+func TestLoadRejectsMutableProfileImage(t *testing.T) {
+	content := strings.Replace(
+		validConfig(t.TempDir()),
+		`example.invalid/network@sha256:`+strings.Repeat("a", 64),
+		`example.invalid/network:latest`,
 		1,
 	)
 	if _, err := loadFixture(t, content); err == nil {
 		t.Fatal("expected mutable image to fail")
+	}
+}
+
+func TestLoadRejectsInvalidAllowedExecutable(t *testing.T) {
+	content := strings.Replace(
+		validConfig(t.TempDir()),
+		`"allowed_executables":["nmap"]`,
+		`"allowed_executables":["/usr/bin/nmap"]`,
+		1,
+	)
+	if _, err := loadFixture(t, content); err == nil {
+		t.Fatal("expected an invalid allowed executable to fail")
+	}
+}
+
+func TestLoadRejectsRepeatedAllowedExecutable(t *testing.T) {
+	content := strings.Replace(
+		validConfig(t.TempDir()),
+		`"allowed_executables":["nmap"]`,
+		`"allowed_executables":["nmap","nmap"]`,
+		1,
+	)
+	if _, err := loadFixture(t, content); err == nil {
+		t.Fatal("expected a repeated allowed executable to fail")
 	}
 }
 
@@ -90,5 +140,28 @@ func TestWorkspaceRejectsInvalidTaskIdentity(t *testing.T) {
 	}
 	if _, err := config.Workspace("../escape"); err == nil {
 		t.Fatal("expected path traversal to fail")
+	}
+}
+
+// The committed configuration is intentionally disabled, so Load rejects it.
+// Digest still has to agree with the Python control plane for the same bytes.
+func TestCommittedConfigDigestMatchesControlPlane(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "config", "sandbox.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), `"tools"`) {
+		t.Fatal("committed sandbox config must not declare a top-level tools mapping")
+	}
+	digest, err := Digest(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected := os.Getenv("TGA_EXPECTED_CONFIG_DIGEST")
+	if expected == "" {
+		t.Skip("TGA_EXPECTED_CONFIG_DIGEST is not set; parity is asserted by the Python suite")
+	}
+	if digest != expected {
+		t.Fatalf("config digest %s does not match the control plane digest %s", digest, expected)
 	}
 }

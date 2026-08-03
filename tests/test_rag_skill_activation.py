@@ -7,6 +7,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from apps.api.main import app
+from tests.capability_fixtures import assignment_service, capability_ids
 from tests.runtime_fixtures import task as v6_task
 from tga.application.services.skill_candidate_activation_service import (
     SkillCandidateActivationService,
@@ -15,7 +16,6 @@ from tga.application.services.skill_selection_service import (
     SolverSkillSelectionRequest,
     SolverSkillSelectionService,
 )
-from tga.capabilities.registry import build_default_registry
 from tga.domain.planning import Intent
 from tga.domain.retrieval import (
     CorpusDocument,
@@ -42,7 +42,7 @@ def _markdown(
     name: str,
     *,
     modes: str = "ctf",
-    capabilities: str = "http.request",
+    capabilities: str = "kali.exec",
     tags: str = "web, recon",
     body: str = "Inspect web endpoints and preserve evidence.",
 ) -> bytes:
@@ -154,7 +154,7 @@ def _activate(
     assert pack is not None
     result = SkillCandidateActivationService(
         repository=bundle.retrieval,
-        capability_registry=build_default_registry(),
+        assignment_service=assignment_service(),
     ).activate(
         pack=pack,
         task_id=task_id,
@@ -162,8 +162,8 @@ def _activate(
         mode="ctf",
         definition=definition,
         intent=_intent(task_id),
-        available_capabilities=definition.required_capabilities,
-        tool_policy_allowed_capabilities=definition.required_capabilities,
+        available_capabilities=capability_ids(definition),
+        tool_policy_allowed_capabilities=capability_ids(definition),
         policy=policy,
         workspace_id=workspace_id,
         created_at=NOW,
@@ -264,7 +264,7 @@ def test_activation_rejects_unpublished_unsafe_mode_and_capability_candidates(tm
             ),
             (
                 "rag-wrong-capability",
-                _markdown("rag-wrong-capability", capabilities="workspace.shell"),
+                _markdown("rag-wrong-capability", capabilities="report.write"),
                 "published",
             ),
         )
@@ -312,7 +312,7 @@ def test_required_local_skill_is_preserved_and_rag_snapshot_freezes_full_body(tm
             scopes=("global",),
         )
         assert [item.document.name for item in activated.approved] == ["rag-web-evidence"]
-        policy_capabilities = definition.required_capabilities
+        policy_capabilities = capability_ids(definition)
         snapshot = SolverSkillSelectionService(FileSkillCatalog.builtin()).select_solver_skills(
             SolverSkillSelectionRequest(
                 task_id="task-select",

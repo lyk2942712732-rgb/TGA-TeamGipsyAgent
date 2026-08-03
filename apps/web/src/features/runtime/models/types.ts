@@ -47,7 +47,7 @@ export type RuntimeSolver = {
   currentSummary: string;
   modelSnapshot: Record<string, unknown>;
   skillSnapshot: Record<string, unknown>;
-  toolPolicySummary: Record<string, unknown>;
+  capabilityBinding: Record<string, unknown>;
   budgetUsage: RuntimeBudgetUsage;
   timestamps: RuntimeTimestamps;
 };

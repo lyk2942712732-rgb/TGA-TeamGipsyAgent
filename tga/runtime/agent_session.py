@@ -13,7 +13,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from tga.capabilities.registry import build_default_registry
+from tga.application.capabilities import CapabilityAssignmentService
 from tga.contracts import ContextMetric, TGATask
 from tga.evidence.store import EvidenceStore, utc_now
 from tga.runtime.context import ContextBuilder, SessionContextBuilder
@@ -38,6 +38,7 @@ from tga.runtime.tooling.execution import (
     KaliSandboxBackend,
     RemoteMCPBackend,
 )
+from tga.runtime.kali import KaliSessionManager
 from tga.infrastructure.solver_definitions.registry import SolverDefinitionRegistry
 from tga.runtime.tooling.catalog import RuntimeToolCatalog
 from tga.runtime.tooling.catalog.manifest_builder import ToolManifestBuilder
@@ -84,7 +85,7 @@ class AgentSessionRunner:
         self.executor = executor
         self.max_turns = max_turns
         self.coordinator = SessionCoordinator(store)
-        self.registry = build_default_registry()
+        self.capability_assignments = CapabilityAssignmentService()
         self.solver_id = solver_id
         self.solver_lease = solver_lease
         self.execution_context = execution_context
@@ -129,11 +130,12 @@ class AgentSessionRunner:
             limiter=model_call_limiter,
             execution_context=execution_context,
         )
-        self.tool_by_name = self._build_tool_map()
+        self.tool_by_name: dict[str, str] = {}
         self.handlers = build_tool_handlers(
             task=task, store=store, run_root=run_root, client=client, executor=executor,
             solver_id=self.solver_id, workspace=self.workspace, mcp_manager=self.mcp_manager,
-            mcp_snapshot=self.mcp_snapshot, registry=self.registry, tool_by_name=self.tool_by_name,
+            mcp_snapshot=self.mcp_snapshot,
+            tool_by_name=self.tool_by_name,
             remote_flag_verifier=remote_flag_verifier,
             allowed_resource_ids=(
                 self.assignment.allowed_resources if self.assignment is not None else None
@@ -145,6 +147,10 @@ class AgentSessionRunner:
             handlers=self.handlers,
             execution_context=execution_context,
         )
+        sandbox_manager = getattr(self.executor, "sandbox_manager", None)
+        if sandbox_manager is None:
+            raise RuntimeError("production execution requires a SandboxManager")
+        self.kali_sessions = KaliSessionManager(sandbox_manager)
         self.execution_backend_router = None
         self._refresh_tool_governance()
 
@@ -665,6 +671,12 @@ class AgentSessionRunner:
                 solver is not None and solver.orchestration_role == "supervisor"
             ),
         )
+        if self.execution_context is not None:
+            self.kali_sessions.close_run(
+                self.task.id,
+                self.solver_id,
+                self.execution_context.run_id,
+            )
         return outcome
 
     def _system_prompt(self) -> str:
@@ -707,14 +719,6 @@ class AgentSessionRunner:
 
     def _sync_hints(self) -> None:
         """Compatibility no-op: ContextBuilder injects active TaskHints each turn."""
-
-    def _build_tool_map(self) -> dict[str, str]:
-        values: dict[str, str] = {}
-        for item in self.registry.snapshot()["capabilities"]:
-            if self.task.mode not in item["modes"]:
-                continue
-            values[self._provider_tool_name(item["name"])] = item["name"]
-        return values
 
     def _tool_definitions(self) -> list[dict[str, Any]]:
         return ToolDefinitionBuilder(manifest=self.tool_manifest).build()
@@ -770,7 +774,9 @@ class AgentSessionRunner:
             orchestration_role=solver.orchestration_role,
             solver_definition_id=solver.definition_id,
             execution_policy_snapshot_id=f"execution:{policy_digest}",
-            solver_tool_policy_snapshot_id=f"tool:{solver.tool_policy_snapshot.content_sha256}",
+            solver_capability_snapshot_id=(
+                f"capabilities:{solver.capability_binding_snapshot.content_sha256}"
+            ),
             skill_snapshot_id=skill_id,
             attempt=(
                 self.assignment.attempt
@@ -787,14 +793,8 @@ class AgentSessionRunner:
         intent = self._current_intent()
         definition = SolverDefinitionRegistry.builtin().require(solver.definition_id)
         self.retrieval_policy = self._retrieval_policy_for(solver)
-        catalog = RuntimeToolCatalog.from_runtime(
-            mode=self.task.mode,
-            solver_definition=definition,
-            registry=self.registry,
-            tool_names=self.tool_by_name,
-            mcp_snapshot=self.mcp_snapshot,
-        )
-        self.tool_manifest = ToolManifestBuilder().build(
+        catalog = RuntimeToolCatalog.from_runtime(mcp_snapshot=self.mcp_snapshot)
+        self.tool_manifest = ToolManifestBuilder(self.capability_assignments).build(
             task=self.task,
             solver=solver,
             definition=definition,
@@ -814,6 +814,26 @@ class AgentSessionRunner:
         retrieval_handlers = {
             "retrieval.search": self._gateway_retrieval_search,
         }
+        delegated_host_ids = (
+            set(control_handlers)
+            | set(resource_handlers)
+            | set(retrieval_handlers)
+            | {
+                "input.list", "input.get", "input.read", "input.search",
+                "input.view", "input.materialize", "artifact.list",
+                "artifact.inspect", "artifact.publish",
+            }
+        )
+        missing_host_handlers = sorted(
+            item.id
+            for item in self.tool_manifest.host_capabilities
+            if item.id not in delegated_host_ids
+        )
+        if missing_host_handlers:
+            raise RuntimeError(
+                "Host capabilities missing runtime handlers: "
+                + ", ".join(missing_host_handlers)
+            )
 
         def host_control(request):
             handler = control_handlers.get(request.capability)
@@ -834,6 +854,29 @@ class AgentSessionRunner:
             )
             if handler is not None:
                 return handler(request.arguments)
+            if request.capability == "artifact.list":
+                return {
+                    "ok": True,
+                    "artifacts": [
+                        item.model_dump(mode="json")
+                        for item in self.store.list_artifacts(self.task.id)
+                    ],
+                }
+            if request.capability == "artifact.publish":
+                return self.handlers.artifacts.publish_workspace_file(
+                    relative_path=str(request.arguments["relative_path"]),
+                    media_type=(
+                        str(request.arguments["media_type"])
+                        if request.arguments.get("media_type")
+                        else None
+                    ),
+                    label=(
+                        str(request.arguments["label"])
+                        if request.arguments.get("label")
+                        else None
+                    ),
+                    intent_id=request.intent_id,
+                )
             return self.execution_adapter.execute_authorized(request)
 
         sandbox_manager = getattr(self.executor, "sandbox_manager", None)
@@ -852,6 +895,7 @@ class AgentSessionRunner:
                     manager=sandbox_manager,
                     task=self.task,
                     workspace=self.workspace,
+                    sessions=self.kali_sessions,
                 ),
                 "remote_mcp": RemoteMCPBackend(
                     manager=self.mcp_manager,

@@ -82,7 +82,7 @@ describe("Phase 11 command workbench components", () => {
     expect(inspector).toHaveTextContent("evidence-method");
     expect(inspector).toHaveTextContent("task common guidance");
     fireEvent.click(within(inspector).getByRole("tab", { name: "Tools" }));
-    expect(inspector).toHaveTextContent("http.request");
+    expect(inspector).toHaveTextContent("kali.exec");
     expect(inspector).toHaveTextContent("调用 1 次");
   });
 });

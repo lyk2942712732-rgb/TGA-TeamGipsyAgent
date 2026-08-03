@@ -8,7 +8,8 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
-from tga.capabilities.registry import build_default_registry
+from tga.application.capabilities.registry_service import HostCapabilityRegistry
+from tga.application.kali import KaliProfileService
 from tga.domain.skills.models import SkillDocument
 from tga.domain.solver.definitions import SolverDefinition
 from tga.infrastructure.skills.catalog import FileSkillCatalog
@@ -55,18 +56,27 @@ class SolverDefinitionRegistry:
         root: str | Path,
         *,
         skill_catalog: FileSkillCatalog | None = None,
-        capability_names: set[str] | None = None,
+        host_registry: HostCapabilityRegistry | None = None,
+        kali_profiles: KaliProfileService | None = None,
     ) -> None:
         self.root = Path(root)
         self.skill_catalog = skill_catalog or FileSkillCatalog.builtin()
-        self.capability_names = capability_names or {
-            item["name"] for item in build_default_registry().snapshot()["capabilities"]
-        }
+        self.host_registry = host_registry or HostCapabilityRegistry()
+        self.kali_profiles = kali_profiles or KaliProfileService()
         self._definitions = self._load()
 
     @classmethod
-    def builtin(cls) -> "SolverDefinitionRegistry":
-        registry = cls(Path(__file__).parents[3] / "resources" / "solver_definitions")
+    def builtin(
+        cls,
+        *,
+        host_registry: HostCapabilityRegistry | None = None,
+        kali_profiles: KaliProfileService | None = None,
+    ) -> "SolverDefinitionRegistry":
+        registry = cls(
+            Path(__file__).parents[3] / "resources" / "solver_definitions",
+            host_registry=host_registry,
+            kali_profiles=kali_profiles,
+        )
         actual = set(registry.ids())
         if actual != BUILTIN_DEFINITION_IDS:
             missing = sorted(BUILTIN_DEFINITION_IDS - actual)
@@ -105,18 +115,38 @@ class SolverDefinitionRegistry:
                 raise ValueError(f"invalid SolverDefinition {path}: {exc}") from exc
             if definition.id in definitions:
                 raise ValueError(f"duplicate SolverDefinition id: {definition.id}")
-            self._validate_references(definition)
+            try:
+                self._validate_references(definition)
+            except (KeyError, ValueError) as exc:
+                raise ValueError(
+                    f"invalid SolverDefinition references in {path}: {exc}"
+                ) from exc
             definitions[definition.id] = definition
         if not definitions:
             raise ValueError(f"no SolverDefinition resources found under {self.root}")
         return definitions
 
     def _validate_references(self, definition: SolverDefinition) -> None:
-        unknown_capabilities = set(definition.required_capabilities) - self.capability_names
-        if unknown_capabilities:
+        profile = self.host_registry.require_profile(
+            definition.host_capability_profile_id
+        )
+        selected = set(profile.capability_ids)
+        selected.update(definition.host_capability_overrides.add)
+        selected.difference_update(definition.host_capability_overrides.remove)
+        for capability_id in selected:
+            capability = self.host_registry.require(capability_id)
+            if definition.orchestration_role not in capability.allowed_roles:
+                raise ValueError(
+                    f"SolverDefinition {definition.id} role {definition.orchestration_role} "
+                    f"cannot use Host capability {capability_id}"
+                )
+        if definition.kali is not None:
+            self.kali_profiles.verify_binding(
+                definition.kali.profile_id, definition.kali.capabilities
+            )
+        elif definition.orchestration_role == "worker" and not selected:
             raise ValueError(
-                f"SolverDefinition {definition.id} references unknown capabilities: "
-                f"{sorted(unknown_capabilities)}"
+                f"SolverDefinition {definition.id} has no Host or Kali capabilities"
             )
         for skill_name in definition.required_skill_names:
             skill: SkillDocument | None = self.skill_catalog.get(skill_name)
@@ -127,12 +157,6 @@ class SolverDefinitionRegistry:
                 raise ValueError(
                     f"required Skill {skill_name} does not support Definition modes: "
                     f"{sorted(unsupported_modes)}"
-                )
-            missing = set(skill.required_capabilities) - set(definition.required_capabilities)
-            if missing:
-                raise ValueError(
-                    f"SolverDefinition {definition.id} omits capabilities required by Skill "
-                    f"{skill_name}: {sorted(missing)}"
                 )
 
 

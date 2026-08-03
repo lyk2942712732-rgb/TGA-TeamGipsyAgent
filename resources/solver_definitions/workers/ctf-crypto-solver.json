@@ -1,62 +1,57 @@
 {
-    "id":  "ctf-crypto-solver",
-    "version":  "2.0.0",
-    "orchestration_role":  "worker",
-    "specialties":  [
-                        "ctf",
-                        "crypto",
-                        "encoding"
-                    ],
-    "supported_modes":  [
-                            "ctf"
-                        ],
-    "supported_subtypes":  [
-                               "crypto",
-                               "auto",
-                               "unknown"
-                           ],
-    "system_prompt_template":  "Analyze the assigned cryptographic or encoding route, preserve derivations and scripts, and distinguish proof from conjecture.",
-    "default_skill_tags":  [
-                               "crypto",
-                               "encoding"
-                           ],
-    "required_skill_names":  [
-                                 "crypto-and-encoding"
-                             ],
-    "required_capabilities":  [
-                                  "workspace.read",
-                                  "workspace.write",
-                                  "workspace.python",
-                                  "artifact.inspect",
-                                  "sandbox.exec"
-                              ],
-    "allowed_tool_groups":  [
-                                "control",
-                                "resource_read",
-                                "execution",
-                                "retrieval"
-                            ],
-    "tool_policy_profile":  "ctf-crypto-solver-governed",
-    "accepted_intent_kinds":  [
-                                  "ctf_crypto"
-                              ],
-    "output_contract":  {
-                            "name":  "worker_result",
-                            "required_fields":  [
-                                                    "summary",
-                                                    "coverage",
-                                                    "limitations"
-                                                ]
-                        },
-    "default_budget":  {
-                           "max_turns":  24,
-                           "max_input_tokens":  220000,
-                           "max_output_tokens":  40000,
-                           "max_tool_calls":  48,
-                           "max_artifacts":  96,
-                           "deadline":  null
-                       },
-    "completion_authority":  "worker_only",
-    "sandbox_profile_id":  "ctf-crypto-v1",
-    "sandbox_required":  true
+  "id": "ctf-crypto-solver",
+  "version": "2.0.0",
+  "orchestration_role": "worker",
+  "specialties": [
+    "ctf",
+    "crypto",
+    "encoding"
+  ],
+  "supported_modes": [
+    "ctf"
+  ],
+  "supported_subtypes": [
+    "crypto",
+    "auto",
+    "unknown"
+  ],
+  "system_prompt_template": "Analyze the assigned cryptographic or encoding route, preserve derivations and scripts, and distinguish proof from conjecture.",
+  "default_skill_tags": [
+    "crypto",
+    "encoding"
+  ],
+  "required_skill_names": [
+    "crypto-and-encoding"
+  ],
+  "accepted_intent_kinds": [
+    "ctf_crypto"
+  ],
+  "output_contract": {
+    "name": "worker_result",
+    "required_fields": [
+      "summary",
+      "coverage",
+      "limitations"
+    ]
+  },
+  "default_budget": {
+    "max_turns": 24,
+    "max_input_tokens": 220000,
+    "max_output_tokens": 40000,
+    "max_tool_calls": 48,
+    "max_artifacts": 96,
+    "deadline": null
+  },
+  "completion_authority": "worker_only",
+  "host_capability_profile_id": "worker-default",
+  "host_capability_overrides": {
+    "add": [],
+    "remove": []
+  },
+  "kali": {
+    "profile_id": "ctf-crypto-v1",
+    "capabilities": [
+      "kali.exec"
+    ]
+  }
 }

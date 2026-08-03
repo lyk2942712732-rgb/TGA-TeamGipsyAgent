@@ -1,58 +1,47 @@
 {
-    "id":  "incident-supervisor",
-    "version":  "2.0.0",
-    "orchestration_role":  "supervisor",
-    "specialties":  [
-                        "coordination",
-                        "incident-response",
-                        "evidence-preservation"
-                    ],
-    "supported_modes":  [
-                            "incident_response"
-                        ],
-    "supported_subtypes":  [
-
-                           ],
-    "system_prompt_template":  "Coordinate evidence-preserving incident investigation and keep analysis, containment advice, and authorized actions distinct.",
-    "default_skill_tags":  [
-
-                           ],
-    "required_skill_names":  [
-
-                             ],
-    "required_capabilities":  [
-                                  "artifact.inspect"
-                              ],
-    "allowed_tool_groups":  [
-                                "control",
-                                "resource_read",
-                                "retrieval"
-                            ],
-    "tool_policy_profile":  "incident-supervisor-governed",
-    "accepted_intent_kinds":  [
-                                  "coordination",
-                                  "evidence_triage",
-                                  "timeline_ioc",
-                                  "host_network_forensics",
-                                  "malware_analysis",
-                                  "containment_advice"
-                              ],
-    "output_contract":  {
-                            "name":  "supervisor_result",
-                            "required_fields":  [
-                                                    "global_plan",
-                                                    "completion_decision"
-                                                ]
-                        },
-    "default_budget":  {
-                           "max_turns":  64,
-                           "max_input_tokens":  500000,
-                           "max_output_tokens":  100000,
-                           "max_tool_calls":  64,
-                           "max_artifacts":  128,
-                           "deadline":  null
-                       },
-    "completion_authority":  "task",
-    "sandbox_profile_id":  null,
-    "sandbox_required":  false
+  "id": "incident-supervisor",
+  "version": "2.0.0",
+  "orchestration_role": "supervisor",
+  "specialties": [
+    "coordination",
+    "incident-response",
+    "evidence-preservation"
+  ],
+  "supported_modes": [
+    "incident_response"
+  ],
+  "supported_subtypes": [],
+  "system_prompt_template": "Coordinate evidence-preserving incident investigation and keep analysis, containment advice, and authorized actions distinct.",
+  "default_skill_tags": [],
+  "required_skill_names": [],
+  "accepted_intent_kinds": [
+    "coordination",
+    "evidence_triage",
+    "timeline_ioc",
+    "host_network_forensics",
+    "malware_analysis",
+    "containment_advice"
+  ],
+  "output_contract": {
+    "name": "supervisor_result",
+    "required_fields": [
+      "global_plan",
+      "completion_decision"
+    ]
+  },
+  "default_budget": {
+    "max_turns": 64,
+    "max_input_tokens": 500000,
+    "max_output_tokens": 100000,
+    "max_tool_calls": 64,
+    "max_artifacts": 128,
+    "deadline": null
+  },
+  "completion_authority": "task",
+  "host_capability_profile_id": "supervisor-default",
+  "host_capability_overrides": {
+    "add": [],
+    "remove": []
+  },
+  "kali": null
 }

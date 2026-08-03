@@ -9,7 +9,7 @@ from pydantic import BaseModel, ConfigDict, model_validator
 from tga.domain.planning.intents import Intent
 from tga.domain.skills.models import SolverSkillSnapshot
 from tga.domain.solver.budgets import SolverBudget
-from tga.domain.solver.instances import ToolPolicySnapshot
+from tga.domain.solver.instances import CapabilityBindingSnapshot
 
 
 class SolverAssignment(BaseModel):
@@ -25,7 +25,7 @@ class SolverAssignment(BaseModel):
     relevant_knowledge_ids: tuple[str, ...] = ()
     relevant_evidence_claim_ids: tuple[str, ...] = ()
     skill_snapshot: SolverSkillSnapshot | None = None
-    tool_policy_snapshot: ToolPolicySnapshot
+    capability_binding_snapshot: CapabilityBindingSnapshot
     budget: SolverBudget
     allowed_control_tools: tuple[str, ...] = (
         "update_local_plan", "propose_knowledge", "submit_worker_result",

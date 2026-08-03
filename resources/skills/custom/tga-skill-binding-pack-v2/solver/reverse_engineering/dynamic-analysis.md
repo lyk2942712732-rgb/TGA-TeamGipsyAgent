@@ -1,25 +1,25 @@
 ---
 name: dynamic-analysis
 modes: [reverse_engineering]
-capabilities: [workspace.read, workspace.write, workspace.python, workspace.shell, artifact.inspect]
+capabilities: [input.read, kali.exec, artifact.inspect]
 tags: [dynamic, reverse]
 version: 2.0.0
 ---
-# 动态分析
+# 鍔ㄦ€佸垎鏋?
 
-## 目标
-在授权沙箱中观察执行、输入输出、断点和状态变化。
+## 鐩爣
+鍦ㄦ巿鏉冩矙绠变腑瑙傚療鎵ц銆佽緭鍏ヨ緭鍑恒€佹柇鐐瑰拰鐘舵€佸彉鍖栥€?
 
-## 执行流程
-1. 确认 allow_dynamic_execution。
-2. 设置最小输入、断点和观察点。
-3. 保存轨迹、寄存器、内存和输出。
+## 鎵ц娴佺▼
+1. 纭 allow_dynamic_execution銆?
+2. 璁剧疆鏈€灏忚緭鍏ャ€佹柇鐐瑰拰瑙傚療鐐广€?
+3. 淇濆瓨杞ㄨ抗銆佸瘎瀛樺櫒銆佸唴瀛樺拰杈撳嚭銆?
 
-## 输出契约
-- 执行轨迹。
-- 关键状态。
-- 静态交叉验证。
+## 杈撳嚭濂戠害
+- 鎵ц杞ㄨ抗銆?
+- 鍏抽敭鐘舵€併€?
+- 闈欐€佷氦鍙夐獙璇併€?
 
-## 边界与证据规则
-- 无权限时不得执行。
-- 不得连接未授权网络。
+## 杈圭晫涓庤瘉鎹鍒?
+- 鏃犳潈闄愭椂涓嶅緱鎵ц銆?
+- 涓嶅緱杩炴帴鏈巿鏉冪綉缁溿€?

@@ -16,6 +16,7 @@ from tga.evidence.artifacts import ArtifactStore
 from tga.evidence.indexing import build_artifact_index, retrieve_segments
 from tga.inputs import task_artifact_root
 from tga.infrastructure.persistence import PersistenceBundle
+from tga.infrastructure.workspace.solver_workspace import SolverWorkspaceService
 from tga.runtime.observer import build_observer_context, native_observer_triggers
 
 class ArtifactService:
@@ -59,6 +60,55 @@ class ArtifactService:
 
     def text(self, task_id: str, artifact: ArtifactRecord) -> str:
         return self._artifact_text(task_id, artifact)
+
+    def publish_workspace_file(
+        self,
+        *,
+        relative_path: str,
+        media_type: str | None,
+        label: str | None,
+        intent_id: str | None,
+    ) -> dict[str, Any]:
+        normalized = relative_path.replace("\\", "/").strip("/")
+        source = (Path(self.run_root) / self.task.id / "workspace" / "solver-runs")
+        if self.execution_context is None:
+            raise PermissionError("artifact.publish requires a durable SolverRun")
+        run_root = (source / self.execution_context.run_id).resolve()
+        path = (run_root / normalized).resolve()
+        try:
+            path.relative_to(run_root)
+        except ValueError as exc:
+            raise PermissionError("artifact.publish path escapes the SolverRun workspace") from exc
+        if not normalized or ".." in Path(normalized).parts or not path.is_file():
+            raise FileNotFoundError("artifact.publish source file does not exist")
+        artifact = SolverWorkspaceService(
+            Path(self.run_root) / self.task.id,
+        ).publish_artifact(
+            task_id=self.task.id,
+            solver_id=self.solver_id,
+            intent_id=intent_id,
+            data=path.read_bytes(),
+            suffix=path.suffix or ".bin",
+            media_type=media_type,
+        ).model_copy(update={
+            "target": f"solver-run://{self.execution_context.run_id}/{normalized}",
+            "provenance": {
+                "published_by_solver_id": self.solver_id,
+                "solver_run_id": self.execution_context.run_id,
+                "relative_path": normalized,
+                "label": label,
+                "immutable": True,
+            },
+        })
+        self.store.add_artifact(ArtifactRecord.model_validate(artifact.model_dump(mode="json")))
+        self.index(ArtifactRecord.model_validate(artifact.model_dump(mode="json")))
+        return {
+            "ok": True,
+            "status": "succeeded",
+            "artifact_id": artifact.id,
+            "artifact_ids": [artifact.id],
+            "artifact": artifact.model_dump(mode="json"),
+        }
 
     def _save_input_evidence(
         self,

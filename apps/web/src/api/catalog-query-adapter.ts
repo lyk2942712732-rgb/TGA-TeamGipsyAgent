@@ -18,11 +18,6 @@ export async function fetchProductCatalog(kind: ProductCatalogKind, query = ""):
   return requestJson<ProductCatalogResult>(`/api/v2/catalog/${kind}?${params.toString()}`);
 }
 
-/**
- * Solver Definition registry, served verbatim by `/api/v2/catalog/solvers`.
- * Fields map 1:1 to `tga.domain.solver.definitions.SolverDefinition`; anything
- * the reference design shows but this shape lacks is marked unimplemented.
- */
 export type SolverBudget = {
   max_turns?: number;
   max_input_tokens?: number;
@@ -35,16 +30,17 @@ export type SolverBudget = {
 export type SolverDefinitionRecord = {
   id: string;
   version: string;
-  orchestration_role: "supervisor" | "worker" | "reviewer" | "reporter";
+  role: "supervisor" | "worker" | "reviewer" | "reporter";
   specialties: string[];
   supported_modes: string[];
   supported_subtypes: string[];
   system_prompt_template: string;
   default_skill_tags: string[];
   required_skill_names: string[];
-  required_capabilities: string[];
-  allowed_tool_groups: string[];
-  tool_policy_profile: string;
+  host_capability_profile_id: string;
+  host_capability_overrides: { add: string[]; remove: string[] };
+  host_capabilities: HostCapabilityAssignment[];
+  kali: SolverKaliDetail | null;
   accepted_intent_kinds: string[];
   output_contract: { name: string; required_fields: string[] };
   default_budget: SolverBudget;
@@ -53,9 +49,95 @@ export type SolverDefinitionRecord = {
 };
 
 export async function fetchSolverDefinitions(query = ""): Promise<{ items: SolverDefinitionRecord[]; total: number }> {
-  const result = await fetchProductCatalog("solvers", query);
-  return { items: result.items as unknown as SolverDefinitionRecord[], total: result.total };
+  const params = new URLSearchParams();
+  if (query.trim()) params.set("query", query.trim());
+  const suffix = params.size ? `?${params.toString()}` : "";
+  return requestJson<{ items: SolverDefinitionRecord[]; total: number }>(`/api/v2/solvers${suffix}`);
 }
+
+export type HostCapabilityAssignment = {
+  id: string;
+  display_name: string;
+  category: string;
+  risk: string;
+  source: string;
+};
+
+export type KaliTool = { name: string; executable: string; version: string | null; category: string | null };
+export type KaliLimits = { cpu_cores: number; memory_mb: number; timeout_seconds: number; max_processes: number };
+export type SolverKaliDetail = {
+  profile_id: string;
+  capabilities: Array<"kali.exec" | "kali.session">;
+  image_name: string;
+  image_tag: string;
+  image_digest: string | null;
+  allowed_executables: string[];
+  session_executables: string[];
+  network_mode: string;
+  limits: KaliLimits;
+  tools: KaliTool[];
+};
+
+export type HostCapabilityRecord = {
+  id: string;
+  display_name: string;
+  category: string;
+  description: string;
+  allowed_roles: string[];
+  risk: string;
+  input_schema: { properties?: Record<string, unknown>; required?: string[] };
+  output_schema: Record<string, unknown>;
+  handler_key: string;
+  handler_status: string;
+  assigned_solver_count: number;
+  assigned_solver_ids: string[];
+};
+
+export type KaliCapabilityRecord = {
+  id: "kali.exec" | "kali.session";
+  display_name: string;
+  description: string;
+  risk: string;
+  input_schema: { properties?: Record<string, unknown>; required?: string[] };
+  assigned_solver_count: number;
+  assigned_solver_ids: string[];
+  profile_ids: string[];
+};
+
+export type KaliProfileRecord = {
+  id: string;
+  display_name: string;
+  image_name: string;
+  image_tag: string;
+  image_digest: string | null;
+  image: string;
+  tools: KaliTool[];
+  supported_capabilities: Array<"kali.exec" | "kali.session">;
+  allowed_executables: string[];
+  session_executables: string[];
+  network_mode: string;
+  input_mount: string;
+  scratch_mount: string;
+  shared_artifact_mount: string;
+  limits: KaliLimits;
+  enabled: boolean;
+  assigned_solver_count: number;
+  assigned_solver_ids: string[];
+};
+
+export const fetchHostCapabilities = () => requestJson<{ items: HostCapabilityRecord[]; total: number }>("/api/v2/capabilities/host");
+export const fetchKaliCapabilities = () => requestJson<{ items: KaliCapabilityRecord[]; total: number }>("/api/v2/capabilities/kali");
+export const fetchKaliProfiles = () => requestJson<{ items: KaliProfileRecord[]; total: number }>("/api/v2/kali/profiles");
+export const fetchSolverDefinition = (id: string) => requestJson<SolverDefinitionRecord>(`/api/v2/solvers/${encodeURIComponent(id)}`);
+export const fetchSolverManifest = (id: string, mode?: string) => requestJson<Record<string, unknown>>(`/api/v2/solvers/${encodeURIComponent(id)}/manifest-preview${mode ? `?mode=${encodeURIComponent(mode)}` : ""}`);
+export const updateSolverCapabilities = (
+  id: string,
+  payload: Pick<SolverDefinitionRecord, "host_capability_profile_id" | "host_capability_overrides"> & { kali: { profile_id: string; capabilities: Array<"kali.exec" | "kali.session"> } | null },
+) => requestJson<SolverDefinitionRecord>(`/api/v2/solvers/${encodeURIComponent(id)}/capabilities`, {
+  method: "PUT",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify(payload),
+});
 
 /** Team templates, served verbatim by `/api/v2/catalog/teams`. */
 export type TeamTemplateRecord = {

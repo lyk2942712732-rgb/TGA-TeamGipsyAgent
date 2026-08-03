@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import importlib.util
+import os
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -27,12 +29,6 @@ def _config(**updates) -> SandboxConfig:
         "sandboxd": {
             "run_root": "/var/lib/tga/runs",
             "allowed_client_uids": [1001],
-        },
-        "tools": {
-            "binwalk": {
-                "profile_id": "offline-analysis",
-                "image": "example.invalid/binwalk-mcp@sha256:" + "2" * 64,
-            }
         },
         "profiles": {
             "offline-analysis": {
@@ -238,7 +234,7 @@ def test_docker_provider_rejects_incompatible_sbx_version() -> None:
     assert error.value.code == "PROVIDER_VERSION_INCOMPATIBLE"
 
 
-def test_docker_provider_uses_trusted_tool_image(tmp_path: Path) -> None:
+def test_docker_provider_uses_profile_image_for_every_execution(tmp_path: Path) -> None:
     config = _config(
         docker_sandbox={
             "task_root": str(tmp_path),
@@ -266,8 +262,10 @@ def test_docker_provider_uses_trusted_tool_image(tmp_path: Path) -> None:
         fencing_token=2,
         idempotency_key="key",
     )
-    provider.exec(handle, ProcessSpec(tool_id="binwalk"))
-    assert config.tools["binwalk"].image in commands[-1]
+    provider.exec(handle, ProcessSpec(argv=("binwalk", "sample.bin")))
+    profile_image = config.profile("offline-analysis").image
+    assert profile_image in commands[-1]
+    assert commands[-1][-2:] == ["binwalk", "sample.bin"]
 
 
 def test_docker_provider_applies_and_verifies_scoped_web_policy(tmp_path: Path) -> None:
@@ -397,6 +395,87 @@ def test_enforced_profile_requires_toolset_digest() -> None:
     payload["profiles"]["offline-analysis"].pop("toolset_digest")
     with pytest.raises(ValueError, match="requires a toolset digest"):
         SandboxConfig.model_validate(payload)
+
+
+def test_enforced_profile_requires_digest_pinned_image() -> None:
+    payload = _config().model_dump(mode="json")
+    payload["profiles"]["offline-analysis"]["image"] = "example.invalid/offline:latest"
+    with pytest.raises(ValueError, match="digest-pinned image"):
+        SandboxConfig.model_validate(payload)
+
+
+def test_valid_config_without_tools_loads() -> None:
+    config = _config()
+    assert not hasattr(config, "tools")
+    assert set(config.profiles) == {"offline-analysis", "raw-network"}
+    assert config.profile("offline-analysis").allowed_executables == ("file", "binwalk")
+
+
+def test_profile_rejects_invalid_allowed_executable() -> None:
+    payload = _config().model_dump(mode="json")
+    payload["profiles"]["offline-analysis"]["allowed_executables"] = ["/usr/bin/file"]
+    with pytest.raises(ValueError, match="invalid allowed executable"):
+        SandboxConfig.model_validate(payload)
+
+
+def test_profile_rejects_duplicate_allowed_executable() -> None:
+    payload = _config().model_dump(mode="json")
+    payload["profiles"]["offline-analysis"]["allowed_executables"] = ["file", "file"]
+    with pytest.raises(ValueError, match="unique"):
+        SandboxConfig.model_validate(payload)
+
+
+def test_process_spec_requires_argv_even_with_audit_tool_id() -> None:
+    with pytest.raises(ValueError, match="requires argv"):
+        ProcessSpec(tool_id="binwalk")
+    spec = ProcessSpec(argv=("binwalk", "sample.bin"), tool_id="binwalk")
+    assert spec.tool_id == "binwalk"
+
+
+def test_top_level_tools_key_is_rejected() -> None:
+    payload = _config().model_dump(mode="json")
+    payload["tools"] = {
+        "binwalk": {
+            "profile_id": "offline-analysis",
+            "image": "example.invalid/binwalk@sha256:" + "2" * 64,
+        }
+    }
+    with pytest.raises(ValueError, match="tools"):
+        SandboxConfig.model_validate(payload)
+
+
+def test_committed_config_has_no_top_level_tools() -> None:
+    path = Path(__file__).parents[1] / "config" / "sandbox.json"
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    assert "tools" not in payload
+    assert set(payload) == {
+        "version",
+        "runtime",
+        "terminal_grace_seconds",
+        "reconcile_interval_seconds",
+        "docker_sandbox",
+        "sandboxd",
+        "profiles",
+    }
+
+
+def test_sandboxd_agrees_with_control_plane_config_digest() -> None:
+    root = Path(__file__).parents[1]
+    if shutil.which("go") is None:
+        pytest.skip("the Go toolchain is unavailable on this runner")
+    config, _ = load_sandbox_config(root / "config" / "sandbox.json")
+    completed = subprocess.run(
+        [
+            "go", "test", "./internal/config/",
+            "-run", "TestCommittedConfigDigestMatchesControlPlane",
+            "-count", "1",
+        ],
+        cwd=root / "sandboxd",
+        env={**os.environ, "TGA_EXPECTED_CONFIG_DIGEST": config.digest},
+        capture_output=True,
+        text=True,
+    )
+    assert completed.returncode == 0, completed.stdout + completed.stderr
 
 
 def test_committed_placeholder_config_cannot_be_enforced(monkeypatch) -> None:

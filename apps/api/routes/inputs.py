@@ -125,7 +125,9 @@ def get_task_input(task_id: str, input_id: str) -> dict[str, Any]:
 def read_task_input(task_id: str, input_id: str, offset: int = 0, limit: int = 16_384) -> dict[str, Any]:
     task = _task(task_id)
     try:
-        return SessionWorkspace(_task_root(task_id)).read(_session_file(task, input_id), offset=offset, limit=limit)
+        return SessionWorkspace(_task_root(task_id)).read_segment(
+            _session_file(task, input_id), offset=offset, limit=limit
+        )
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="input not found") from exc
     except (OSError, ValueError) as exc:

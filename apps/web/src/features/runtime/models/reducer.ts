@@ -192,7 +192,7 @@ function updateIntent(state: RuntimeStore, id: string, event: RuntimeEvent, valu
 function updateMap<K extends SequencedMap>(state: RuntimeStore, map: K, id: string, value: RuntimeStore[K][string], event: RuntimeEvent): RuntimeStore {
   return { ...state, [map]: { ...state[map], [id]: value }, entitySequence: { ...state.entitySequence, [map]: { ...state.entitySequence[map], [id]: entitySeq(event) } } };
 }
-function defaultSolver(taskId: string, solverId: string): RuntimeSolver { return { taskId, solverId, definitionId: "runtime", orchestrationRole: "worker", specialties: [], parentSolverId: null, assignedIntentId: null, status: "created", currentSummary: "", modelSnapshot: {}, skillSnapshot: {}, toolPolicySummary: {}, budgetUsage: {}, timestamps: {} }; }
+function defaultSolver(taskId: string, solverId: string): RuntimeSolver { return { taskId, solverId, definitionId: "runtime", orchestrationRole: "worker", specialties: [], parentSolverId: null, assignedIntentId: null, status: "created", currentSummary: "", modelSnapshot: {}, skillSnapshot: {}, capabilityBinding: {}, budgetUsage: {}, timestamps: {} }; }
 function defaultIntent(taskId: string, intentId: string): RuntimeIntent { return { taskId, intentId, kind: "task", title: intentId, objective: "", status: "pending", assignedSolverId: null, dependencies: [], priority: 0, budget: {}, createdAt: "", updatedAt: "" }; }
 function hasEmbeddedProjection(event: RuntimeEvent): boolean { return ["global_plan", "knowledge", "conflict", "evidence_claim", "worker_result", "retrieval_run"].some((key) => event.payload[key] && typeof event.payload[key] === "object"); }
 function text(value: unknown): string | null { return typeof value === "string" && value ? value : null; }

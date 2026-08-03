@@ -15,7 +15,7 @@ class SkillRetrievalQuery:
     mode: TaskMode
     text: str
     tags: tuple[str, ...] = ()
-    required_capabilities: tuple[str, ...] = ()
+    capability_requirements: tuple[str, ...] = ()
     limit: int = 32
 
 

@@ -1,57 +1,51 @@
 {
-    "id":  "challenge-classifier",
-    "version":  "2.0.0",
-    "orchestration_role":  "worker",
-    "specialties":  [
-                        "ctf",
-                        "classification",
-                        "triage"
-                    ],
-    "supported_modes":  [
-                            "ctf"
-                        ],
-    "supported_subtypes":  [
-
-                           ],
-    "system_prompt_template":  "Classify the challenge from supplied inputs, identify likely routes, and return uncertainty and recommended specialist intents.",
-    "default_skill_tags":  [
-                               "recon"
-                           ],
-    "required_skill_names":  [
-
-                             ],
-    "required_capabilities":  [
-                                  "artifact.inspect",
-                                  "sandbox.exec"
-                              ],
-    "allowed_tool_groups":  [
-                                "control",
-                                "resource_read",
-                                "execution",
-                                "retrieval"
-                            ],
-    "tool_policy_profile":  "challenge-classifier-governed",
-    "accepted_intent_kinds":  [
-                                  "challenge_classification",
-                                  "recon"
-                              ],
-    "output_contract":  {
-                            "name":  "worker_result",
-                            "required_fields":  [
-                                                    "summary",
-                                                    "coverage",
-                                                    "limitations"
-                                                ]
-                        },
-    "default_budget":  {
-                           "max_turns":  24,
-                           "max_input_tokens":  220000,
-                           "max_output_tokens":  40000,
-                           "max_tool_calls":  48,
-                           "max_artifacts":  96,
-                           "deadline":  null
-                       },
-    "completion_authority":  "worker_only",
-    "sandbox_profile_id":  "ctf-classifier-v1",
-    "sandbox_required":  true
+  "id": "challenge-classifier",
+  "version": "2.0.0",
+  "orchestration_role": "worker",
+  "specialties": [
+    "ctf",
+    "classification",
+    "triage"
+  ],
+  "supported_modes": [
+    "ctf"
+  ],
+  "supported_subtypes": [],
+  "system_prompt_template": "Classify the challenge from supplied inputs, identify likely routes, and return uncertainty and recommended specialist intents.",
+  "default_skill_tags": [
+    "recon"
+  ],
+  "required_skill_names": [],
+  "accepted_intent_kinds": [
+    "challenge_classification",
+    "recon"
+  ],
+  "output_contract": {
+    "name": "worker_result",
+    "required_fields": [
+      "summary",
+      "coverage",
+      "limitations"
+    ]
+  },
+  "default_budget": {
+    "max_turns": 24,
+    "max_input_tokens": 220000,
+    "max_output_tokens": 40000,
+    "max_tool_calls": 48,
+    "max_artifacts": 96,
+    "deadline": null
+  },
+  "completion_authority": "worker_only",
+  "host_capability_profile_id": "worker-default",
+  "host_capability_overrides": {
+    "add": [],
+    "remove": []
+  },
+  "kali": {
+    "profile_id": "ctf-classifier-v1",
+    "capabilities": [
+      "kali.exec"
+    ]
+  }
 }

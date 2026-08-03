@@ -157,12 +157,13 @@ class SandboxdProvider:
         return iter(frames), result
 
     def open_process(self, handle: SandboxHandle, spec: ProcessSpec) -> SandboxProcess:
-        return _GrpcProcess(
+        process = _GrpcProcess(
             self._client(),
             handle=handle,
             spec=spec,
             idempotency_key=f"process:{handle.instance_id}:{time.time_ns()}",
         )
+        return process
 
     def stop_process(self, process_id: str, *, fencing_token: int) -> None:
         from tga.sandbox.api.sandbox.v1 import sandbox_pb2
@@ -235,6 +236,9 @@ def _process_message(spec: ProcessSpec):
         argv=spec.argv,
         environment=spec.environment,
         logical_workspace=spec.logical_workspace,
+        working_directory=spec.working_directory,
+        stdin=spec.stdin or b"",
+        interactive=spec.interactive,
         timeout_seconds=spec.timeout_seconds or 0,
         network_grants=[
             sandbox_pb2.NetworkGrant(cidr=grant.cidr, ports=grant.ports)
@@ -332,6 +336,17 @@ class _GrpcProcess(SandboxProcess):
                 raise SandboxError(f"sandbox process stream failed: {self._error}", code="PROVIDER_FAILED")
             raise SandboxError("sandbox process stream closed", code="PROCESS_STREAM_CLOSED")
         return value
+
+    def resize(self, cols: int, rows: int) -> None:
+        from tga.sandbox.api.sandbox.v1 import sandbox_pb2
+
+        if self._done.is_set():
+            raise SandboxError("sandbox process is not running", code="PROCESS_NOT_RUNNING")
+        self._requests.put(
+            sandbox_pb2.ProcessMessage(
+                resize=sandbox_pb2.ProcessResize(cols=cols, rows=rows)
+            )
+        )
 
     def close_stdin(self) -> None:
         from tga.sandbox.api.sandbox.v1 import sandbox_pb2

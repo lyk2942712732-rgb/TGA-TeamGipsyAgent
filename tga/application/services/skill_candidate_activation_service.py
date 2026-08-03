@@ -41,9 +41,9 @@ class SkillCandidateActivationResult:
 class SkillCandidateActivationService:
     """Reload and validate candidates; retrieved wrapper text is never parsed."""
 
-    def __init__(self, *, repository, capability_registry, event_repository=None) -> None:
+    def __init__(self, *, repository, assignment_service, event_repository=None) -> None:
         self.repository = repository
-        self.capability_registry = capability_registry
+        self.assignments = assignment_service
         self.events = event_repository
 
     def activate(
@@ -69,8 +69,8 @@ class SkillCandidateActivationService:
         viable: list[ApprovedSkillCandidate] = []
         seen_versions: set[tuple[str, str]] = set()
         registry_names = {
-            item["name"] for item in self.capability_registry.snapshot()["capabilities"]
-        }
+            item.id for item in self.assignments.host_registry.all()
+        } | {"kali.exec", "kali.session"}
         for candidate in candidates:
             rejection = self._validate_candidate(
                 candidate=candidate,
@@ -241,10 +241,14 @@ class SkillCandidateActivationService:
             return self._reject(candidate, "SOLVER_INCOMPATIBLE", "Skill publication excludes this SolverDefinition")
         if intent and publication.compatible_intent_kinds and intent.kind not in publication.compatible_intent_kinds:
             return self._reject(candidate, "INTENT_INCOMPATIBLE", "Skill publication excludes this Intent kind")
-        required = set(document.required_capabilities)
+        required = set(document.capability_requirements)
         if not required.issubset(registry_names):
             return self._reject(candidate, "CAPABILITY_UNKNOWN", "Skill requires a capability absent from the registry")
-        definition_capabilities = set(definition.required_capabilities)
+        definition_capabilities = {
+            item.id for item in self.assignments.resolve_host(definition)
+        }
+        if definition.kali is not None:
+            definition_capabilities.update(definition.kali.capabilities)
         if not required.issubset(definition_capabilities):
             return self._reject(candidate, "CAPABILITY_SOLVER_DENIED", "Skill capability is outside SolverDefinition")
         if not required.issubset(available) or not required.issubset(policy_allowed):
@@ -272,7 +276,7 @@ class SkillCandidateActivationService:
             payload = {
                 "name": str(item.metadata.get("skill_name") or "invalid-candidate"),
                 "version": str(item.metadata.get("skill_version") or "unknown"),
-                "modes": ["ctf"], "tags": [], "required_capabilities": [],
+                "modes": ["ctf"], "tags": [], "capability_requirements": [],
             }
         return SkillCandidate(
             id=f"skillcand_{item.hit_id.removeprefix('hit_')}",
@@ -287,7 +291,7 @@ class SkillCandidateActivationService:
             version=str(payload.get("version") or "unknown"),
             modes=tuple(payload.get("modes") or ("ctf",)),
             tags=tuple(payload.get("tags") or ()),
-            required_capabilities=tuple(payload.get("required_capabilities") or ()),
+            capability_requirements=tuple(payload.get("capability_requirements") or ()),
             content_sha256=str(
                 (revision.metadata.get("skill_body_sha256") if revision else None)
                 or item.metadata.get("skill_body_sha256")

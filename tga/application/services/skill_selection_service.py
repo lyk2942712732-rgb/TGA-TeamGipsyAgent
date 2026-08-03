@@ -192,7 +192,7 @@ class SolverSkillSelectionService:
         available = set(request.available_capabilities)
         policy_allowed = set(request.tool_policy_allowed_capabilities)
         for skill in candidates:
-            prerequisites = set(skill.required_capabilities)
+            prerequisites = set(skill.capability_requirements)
             if not prerequisites.issubset(available) or not prerequisites.issubset(policy_allowed):
                 continue
             if skill.name not in ordered and _match_score(query, skill) > 0:
@@ -220,10 +220,10 @@ class SolverSkillSelectionService:
                 raise ValueError(f"unknown Skill: {name}")
             if mode not in document.modes:
                 raise ValueError(f"Skill {name} does not support mode {mode}")
-            missing = set(document.required_capabilities) - available_set
+            missing = set(document.capability_requirements) - available_set
             if missing:
                 raise ValueError(f"Skill {name} requires unavailable capabilities: {sorted(missing)}")
-            denied = set(document.required_capabilities) - allowed_set
+            denied = set(document.capability_requirements) - allowed_set
             if denied:
                 raise ValueError(
                     f"Skill {name} is incompatible with ToolPolicy capabilities: {sorted(denied)}"
@@ -245,7 +245,7 @@ class SolverSkillSelectionService:
             name=document.name,
             version=document.version,
             modes=document.modes,
-            required_capabilities=document.required_capabilities,
+            capability_requirements=document.capability_requirements,
             tags=document.tags,
             body=body,
             content_sha256=hashlib.sha256(body.encode("utf-8")).hexdigest(),

@@ -18,7 +18,7 @@ class SkillDocument(BaseModel):
     name: str = Field(pattern=r"^[a-z0-9][a-z0-9_-]{0,63}$")
     version: str = Field(min_length=1, max_length=32)
     modes: tuple[TaskMode, ...] = Field(min_length=1, max_length=5)
-    required_capabilities: tuple[str, ...] = Field(default_factory=tuple, max_length=32)
+    capability_requirements: tuple[str, ...] = Field(default_factory=tuple, max_length=32)
     tags: tuple[str, ...] = Field(default_factory=tuple, max_length=32)
     body: str = Field(min_length=1, max_length=500_000)
     origin: Literal["builtin", "custom", "resource", "retrieval"]
@@ -69,7 +69,7 @@ class SkillCandidate(BaseModel):
     version: str = Field(min_length=1, max_length=32)
     modes: tuple[TaskMode, ...] = Field(min_length=1, max_length=5)
     tags: tuple[str, ...] = Field(default_factory=tuple, max_length=32)
-    required_capabilities: tuple[str, ...] = Field(default_factory=tuple, max_length=32)
+    capability_requirements: tuple[str, ...] = Field(default_factory=tuple, max_length=32)
     content_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
     retrieval_score: float = Field(ge=0)
     trust_level: str
@@ -112,7 +112,7 @@ class SkillSnapshot(BaseModel):
     name: str = Field(pattern=r"^[a-z0-9][a-z0-9_-]{0,63}$")
     version: str = Field(min_length=1, max_length=32)
     modes: tuple[TaskMode, ...] = Field(min_length=1, max_length=5)
-    required_capabilities: tuple[str, ...] = Field(default_factory=tuple, max_length=32)
+    capability_requirements: tuple[str, ...] = Field(default_factory=tuple, max_length=32)
     tags: tuple[str, ...] = Field(default_factory=tuple, max_length=32)
     body: str = Field(min_length=1, max_length=12_000)
     content_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")

@@ -1,25 +1,25 @@
 ---
 name: injection-and-ssrf-validation
 modes: [penetration_test]
-capabilities: [http.request, artifact.inspect]
+capabilities: [kali.exec, artifact.inspect]
 tags: [injection, sqli, ssrf, validation]
 version: 2.0.0
 ---
-# 注入与 SSRF 验证
+# 娉ㄥ叆涓?SSRF 楠岃瘉
 
-## 目标
-用最小影响方式验证 SQL/命令/模板注入或服务端请求假设。
+## 鐩爣
+鐢ㄦ渶灏忓奖鍝嶆柟寮忛獙璇?SQL/鍛戒护/妯℃澘娉ㄥ叆鎴栨湇鍔＄璇锋眰鍋囪銆?
 
-## 执行流程
-1. 确认输入到敏感解释器或 URL 请求的路径。
-2. 优先使用无害、可识别的差异或回连机制。
-3. 记录前置条件、响应和影响边界。
+## 鎵ц娴佺▼
+1. 纭杈撳叆鍒版晱鎰熻В閲婂櫒鎴?URL 璇锋眰鐨勮矾寰勩€?
+2. 浼樺厛浣跨敤鏃犲銆佸彲璇嗗埆鐨勫樊寮傛垨鍥炶繛鏈哄埗銆?
+3. 璁板綍鍓嶇疆鏉′欢銆佸搷搴斿拰褰卞搷杈圭晫銆?
 
-## 输出契约
-- 最小 Payload。
-- 请求响应 Artifact。
-- 影响与未证实部分。
+## 杈撳嚭濂戠害
+- 鏈€灏?Payload銆?
+- 璇锋眰鍝嶅簲 Artifact銆?
+- 褰卞搷涓庢湭璇佸疄閮ㄥ垎銆?
 
-## 边界与证据规则
-- 禁止破坏性命令和数据修改。
-- SSRF 目标仍受网络政策。
+## 杈圭晫涓庤瘉鎹鍒?
+- 绂佹鐮村潖鎬у懡浠ゅ拰鏁版嵁淇敼銆?
+- SSRF 鐩爣浠嶅彈缃戠粶鏀跨瓥銆?

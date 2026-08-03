@@ -1,63 +1,54 @@
 {
-    "id":  "binary-triage-solver",
-    "version":  "2.0.0",
-    "orchestration_role":  "worker",
-    "specialties":  [
-                        "binary",
-                        "metadata",
-                        "triage"
-                    ],
-    "supported_modes":  [
-                            "reverse_engineering"
-                        ],
-    "supported_subtypes":  [
-
-                           ],
-    "system_prompt_template":  "Identify format, platform, architecture, protections, and analysis routes while preserving sample provenance.",
-    "default_skill_tags":  [
-                               "binary",
-                               "metadata"
-                           ],
-    "required_skill_names":  [
-                                 "binary-triage"
-                             ],
-    "required_capabilities":  [
-                                  "workspace.read",
-                                  "workspace.python",
-                                  "binwalk.analyze",
-                                  "yara.scan",
-                                  "radare2.analyze",
-                                  "artifact.inspect",
-                                  "sandbox.exec"
-                              ],
-    "allowed_tool_groups":  [
-                                "control",
-                                "resource_read",
-                                "execution",
-                                "retrieval"
-                            ],
-    "tool_policy_profile":  "binary-triage-solver-governed",
-    "accepted_intent_kinds":  [
-                                  "binary_triage",
-                                  "binary_analysis"
-                              ],
-    "output_contract":  {
-                            "name":  "worker_result",
-                            "required_fields":  [
-                                                    "summary",
-                                                    "coverage",
-                                                    "limitations"
-                                                ]
-                        },
-    "default_budget":  {
-                           "max_turns":  24,
-                           "max_input_tokens":  220000,
-                           "max_output_tokens":  40000,
-                           "max_tool_calls":  48,
-                           "max_artifacts":  96,
-                           "deadline":  null
-                       },
-    "completion_authority":  "worker_only",
-    "sandbox_profile_id":  "binary-triage-v1",
-    "sandbox_required":  true
+  "id": "binary-triage-solver",
+  "version": "2.0.0",
+  "orchestration_role": "worker",
+  "specialties": [
+    "binary",
+    "metadata",
+    "triage"
+  ],
+  "supported_modes": [
+    "reverse_engineering"
+  ],
+  "supported_subtypes": [],
+  "system_prompt_template": "Identify format, platform, architecture, protections, and analysis routes while preserving sample provenance.",
+  "default_skill_tags": [
+    "binary",
+    "metadata"
+  ],
+  "required_skill_names": [
+    "binary-triage"
+  ],
+  "accepted_intent_kinds": [
+    "binary_triage",
+    "binary_analysis"
+  ],
+  "output_contract": {
+    "name": "worker_result",
+    "required_fields": [
+      "summary",
+      "coverage",
+      "limitations"
+    ]
+  },
+  "default_budget": {
+    "max_turns": 24,
+    "max_input_tokens": 220000,
+    "max_output_tokens": 40000,
+    "max_tool_calls": 48,
+    "max_artifacts": 96,
+    "deadline": null
+  },
+  "completion_authority": "worker_only",
+  "host_capability_profile_id": "worker-default",
+  "host_capability_overrides": {
+    "add": [],
+    "remove": []
+  },
+  "kali": {
+    "profile_id": "binary-triage-v1",
+    "capabilities": [
+      "kali.exec"
+    ]
+  }
 }

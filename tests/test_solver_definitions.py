@@ -8,11 +8,11 @@ from pydantic import BaseModel, ValidationError
 
 from tga.contracts import ModelSnapshot, TGATask
 from tests.runtime_fixtures import task as v6_task
+from tests.capability_fixtures import capability_binding, capability_ids
 from tga.domain.planning.intents import Intent
 from tga.domain.skills.models import SolverSkillSnapshot
 from tga.migrations.skill_bundles import legacy_skill_bundle_to_task_common
 from tga.domain.solver.definitions import SolverDefinition
-from tga.domain.solver.instances import ToolPolicySnapshot
 from tga.domain.solver.results import WorkerResult
 from tga.infrastructure.skills.catalog import FileSkillCatalog
 from tga.infrastructure.solver_definitions.registry import SolverDefinitionRegistry
@@ -104,7 +104,7 @@ def test_solver_definition_loader_rejects_unknown_fields(tmp_path: Path) -> None
 @pytest.mark.parametrize(
     ("updates", "message"),
     [
-        ({"required_capabilities": ["unknown.capability"]}, "unknown capabilities"),
+        ({"host_capability_overrides": {"add": ["unknown.capability"], "remove": []}}, "unknown Host capability"),
         ({"required_skill_names": ["unknown-skill"]}, "unknown Skill"),
     ],
 )
@@ -167,7 +167,7 @@ def test_solver_skill_selection_rejects_missing_capability_or_policy_permission(
         mode_config={"mode": "ctf", "subtype": "web"},
         definition=definition,
         intent=_intent("task_1", kind="ctf_web"),
-        available_capabilities=("http.request", "artifact.inspect"),
+        available_capabilities=("kali.exec", "artifact.inspect"),
         tool_policy_allowed_capabilities=("artifact.inspect",),
         created_at="2026-01-01T00:00:00Z",
     )
@@ -180,7 +180,7 @@ def test_skill_snapshot_is_frozen_from_later_source_edits(tmp_path: Path) -> Non
     skill_path = tmp_path / "stable.md"
     skill_path.write_text(
         "---\nname: stable-skill\nversion: 1\nmodes: [ctf]\n"
-        "capabilities: [workspace.read]\ntags: [recon]\n---\nOriginal body.\n",
+        "capabilities: [input.read]\ntags: [recon]\n---\nOriginal body.\n",
         encoding="utf-8",
     )
     definition = SolverDefinition.model_validate({
@@ -188,8 +188,9 @@ def test_skill_snapshot_is_frozen_from_later_source_edits(tmp_path: Path) -> Non
         "specialties": ["recon"], "supported_modes": ["ctf"],
         "supported_subtypes": ["web"], "system_prompt_template": "Inspect {objective}",
         "default_skill_tags": ["recon"], "required_skill_names": ["stable-skill"],
-        "required_capabilities": ["workspace.read"], "allowed_tool_groups": ["resource_read"],
-        "tool_policy_profile": "read-only", "accepted_intent_kinds": ["recon"],
+        "host_capability_profile_id": "worker-default",
+        "host_capability_overrides": {"add": [], "remove": []},
+        "kali": None, "accepted_intent_kinds": ["recon"],
         "output_contract": {"name": "worker_result", "required_fields": ["summary"]},
         "default_budget": {"max_turns": 8, "max_input_tokens": 8000,
                            "max_output_tokens": 2000, "max_tool_calls": 8,
@@ -200,8 +201,8 @@ def test_skill_snapshot_is_frozen_from_later_source_edits(tmp_path: Path) -> Non
     request = SolverSkillSelectionRequest(
         task_id="task_1", solver_id="solver_1", mode="ctf",
         mode_config={"mode": "ctf", "subtype": "web"}, definition=definition,
-        intent=_intent("task_1"), available_capabilities=("workspace.read",),
-        tool_policy_allowed_capabilities=("workspace.read",),
+        intent=_intent("task_1"), available_capabilities=("input.read",),
+        tool_policy_allowed_capabilities=("input.read",),
         created_at="2026-01-01T00:00:00Z",
     )
 
@@ -221,7 +222,7 @@ def test_legacy_task_skill_bundle_remains_losslessly_readable() -> None:
         selector="task-skill-selector-v1:manual",
         skills=[LegacySkillSnapshot(
             name=f"legacy-{index}", version="1", origin="builtin", modes=["ctf"],
-            capabilities=["workspace.read"], tags=["legacy"], body=body,
+            capabilities=["input.read"], tags=["legacy"], body=body,
             content_sha256=hashlib.sha256(body.encode()).hexdigest(), score=1,
             selection_reasons=["legacy task selection"],
         ) for index in range(3)],
@@ -235,7 +236,7 @@ def test_legacy_task_skill_bundle_remains_losslessly_readable() -> None:
     assert snapshot.legacy_import is True
     assert len(snapshot.skills) == 3
     assert [item.body for item in snapshot.skills] == [body, body, body]
-    assert snapshot.model_dump(mode="json")["skills"][0]["required_capabilities"] == ["workspace.read"]
+    assert snapshot.model_dump(mode="json")["skills"][0]["capability_requirements"] == ["input.read"]
 
 
 def test_skill_activation_has_no_tool_grant_surface() -> None:
@@ -248,24 +249,19 @@ def test_skill_activation_has_no_tool_grant_surface() -> None:
 
 def test_same_definition_can_create_instances_for_different_tasks() -> None:
     definition = SolverDefinitionRegistry.builtin().require("ctf-supervisor")
-    policy = ToolPolicySnapshot(
-        profile=definition.tool_policy_profile,
-        allowed_tool_groups=definition.allowed_tool_groups,
-        allowed_capabilities=definition.required_capabilities,
-        content_sha256="c" * 64,
-    )
+    policy = capability_binding(definition)
     factory = SolverFactory()
 
     first = factory.create(
         instance_id="solver_task_a", task=_task("task_a"), definition=definition,
         intent=None, model_snapshot=_model(), skill_snapshot=None,
-        tool_policy_snapshot=policy, parent_solver_id=None,
+        capability_binding_snapshot=policy, parent_solver_id=None,
         created_at="2026-01-01T00:00:00Z",
     )
     second = factory.create(
         instance_id="solver_task_b", task=_task("task_b"), definition=definition,
         intent=None, model_snapshot=_model(), skill_snapshot=None,
-        tool_policy_snapshot=policy, parent_solver_id=None,
+        capability_binding_snapshot=policy, parent_solver_id=None,
         created_at="2026-01-01T00:00:00Z",
     )
 
@@ -278,25 +274,21 @@ def test_factory_builds_worker_without_starting_a_runner() -> None:
     definition = SolverDefinitionRegistry.builtin().require("ctf-web-solver")
     task = _task("task_worker")
     intent = _intent(task.id, kind="ctf_web")
-    policy = ToolPolicySnapshot(
-        profile=definition.tool_policy_profile,
-        allowed_tool_groups=definition.allowed_tool_groups,
-        allowed_capabilities=definition.required_capabilities,
-        content_sha256="d" * 64,
-    )
+    policy = capability_binding(definition)
+    available = capability_ids(definition)
     skills = SolverSkillSelectionService(FileSkillCatalog.builtin()).select_solver_skills(
         SolverSkillSelectionRequest(
             task_id=task.id, solver_id="solver_worker", mode="ctf",
             mode_config={"mode": "ctf", "subtype": "web"}, definition=definition,
-            intent=intent, available_capabilities=definition.required_capabilities,
-            tool_policy_allowed_capabilities=definition.required_capabilities,
+            intent=intent, available_capabilities=available,
+            tool_policy_allowed_capabilities=available,
             created_at="2026-01-01T00:00:00Z",
         )
     )
 
     instance = SolverFactory().create(
         instance_id="solver_worker", task=task, definition=definition, intent=intent,
-        model_snapshot=_model(), skill_snapshot=skills, tool_policy_snapshot=policy,
+        model_snapshot=_model(), skill_snapshot=skills, capability_binding_snapshot=policy,
         parent_solver_id="solver_supervisor", created_at="2026-01-01T00:00:00Z",
     )
 

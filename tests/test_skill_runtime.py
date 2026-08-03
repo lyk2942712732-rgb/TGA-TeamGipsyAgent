@@ -75,9 +75,9 @@ def _skill(name: str, *, body: str, capabilities: list[str], tags: list[str]) ->
 def test_selector_is_deterministic_filters_missing_capabilities_and_bounds_context() -> None:
     values = [
         RetrievedSkill(_skill("z-unavailable", body="ignored", capabilities=["missing.tool"], tags=["web"]), "custom"),
-        RetrievedSkill(_skill("b-web", body="B" * 20_000, capabilities=["http.request"], tags=["web"]), "builtin"),
-        RetrievedSkill(_skill("a-web", body="A" * 20_000, capabilities=["http.request"], tags=["web"]), "custom"),
-        RetrievedSkill(_skill("c-web", body="C" * 20_000, capabilities=["http.request"], tags=["web"]), "builtin"),
+        RetrievedSkill(_skill("b-web", body="B" * 20_000, capabilities=["kali.exec"], tags=["web"]), "builtin"),
+        RetrievedSkill(_skill("a-web", body="A" * 20_000, capabilities=["kali.exec"], tags=["web"]), "custom"),
+        RetrievedSkill(_skill("c-web", body="C" * 20_000, capabilities=["kali.exec"], tags=["web"]), "builtin"),
     ]
     selector = SkillSelector(StaticRetriever(values))
     request = SkillSelectionRequest(
@@ -86,7 +86,7 @@ def test_selector_is_deterministic_filters_missing_capabilities_and_bounds_conte
         goal="Inspect this web challenge",
         prompt="https://example.test",
         mode_config={"subtype": "web"},
-        available_capabilities=("http.request",),
+        available_capabilities=("kali.exec",),
     )
 
     first = selector.select(request, created_at="2026-01-01T00:00:00Z")
@@ -125,14 +125,14 @@ def test_registry_retriever_keeps_custom_skill_visible_at_candidate_limit() -> N
 
 def test_manual_selector_preserves_user_order_and_rejects_invalid_choices() -> None:
     values = [
-        RetrievedSkill(_skill("first-web", body="first", capabilities=["http.request"], tags=["web"]), "custom"),
+        RetrievedSkill(_skill("first-web", body="first", capabilities=["kali.exec"], tags=["web"]), "custom"),
         RetrievedSkill(_skill("second-web", body="second", capabilities=[], tags=["web"]), "builtin"),
     ]
     selector = SkillSelector(StaticRetriever(values))
     selected = selector.select(
         SkillSelectionRequest(
             mode="ctf", task_id="task_manual", goal="web",
-            available_capabilities=("http.request",),
+            available_capabilities=("kali.exec",),
             selected_skill_names=("second-web", "first-web"),
         ),
         created_at="2026-01-01T00:00:00Z",
@@ -153,7 +153,7 @@ def test_manual_selector_preserves_user_order_and_rejects_invalid_choices() -> N
         selector.select(
             SkillSelectionRequest(
                 mode="ctf", task_id="task_manual", goal="web",
-                available_capabilities=("http.request",), selected_skill_names=("missing",),
+                available_capabilities=("kali.exec",), selected_skill_names=("missing",),
             ),
             created_at="2026-01-01T00:00:00Z",
         )
@@ -188,7 +188,7 @@ def test_task_creation_freezes_custom_skill_and_injects_body_into_system_prompt(
         "name: custom-runtime-skill\n"
         'version: "1"\n'
         "modes: [ctf]\n"
-        "capabilities: [http.request]\n"
+        "capabilities: [kali.exec]\n"
         "tags: [web, recon]\n"
         "---\n"
         f"{original_body}\n",
@@ -218,7 +218,7 @@ def test_task_creation_freezes_custom_skill_and_injects_body_into_system_prompt(
     )
 
     execution_policy = ExecutionPolicy()
-    execution_policy.network.access = "public_internet"
+    execution_policy.local_compute.mode = "isolated"
     command = CreateTaskCommand(
         task_id="skill_runtime_task",
         name="Skill runtime task",
@@ -252,7 +252,7 @@ def test_task_creation_freezes_custom_skill_and_injects_body_into_system_prompt(
     SkillStore(custom_root).update(
         "custom-runtime-skill",
         modes=["ctf"],
-        capabilities=["http.request"],
+        capabilities=["kali.exec"],
         tags=["web"],
         version="2",
         body="# Changed\nNEW_BODY_MUST_NOT_REPLACE_TASK_SNAPSHOT",
@@ -314,7 +314,7 @@ def test_skill_preview_api_uses_task_policy_and_returns_selection_reasons(monkey
     monkeypatch.setattr(task_routes, "_catalog_runner", lambda: EmptyMCPManager())
     client = TestClient(app)
     policy = ExecutionPolicy()
-    policy.network.access = "public_internet"
+    policy.local_compute.mode = "isolated"
 
     response = client.post("/api/v2/tasks/skill-preview", json={
         "mode": "ctf",
@@ -332,7 +332,7 @@ def test_skill_preview_api_uses_task_policy_and_returns_selection_reasons(monkey
     assert any(item["name"] == "web-recon" for item in payload["skills"])
     assert all(item["selection_reasons"] for item in payload["skills"])
 
-    policy.network.access = "disabled"
+    policy.local_compute.mode = "disabled"
     blocked = client.post("/api/v2/tasks/skill-preview", json={
         "mode": "ctf",
         "goal": "Inspect the web login target",
@@ -345,7 +345,7 @@ def test_skill_preview_api_uses_task_policy_and_returns_selection_reasons(monkey
     assert "web-recon" not in {item["name"] for item in blocked.json()["skills"]}
 
     manual_policy = policy.model_copy(deep=True)
-    manual_policy.network.access = "public_internet"
+    manual_policy.local_compute.mode = "isolated"
     manual = client.post("/api/v2/tasks/skill-preview", json={
         "mode": "ctf",
         "goal": "Inspect the web login target",

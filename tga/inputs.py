@@ -346,7 +346,7 @@ class SessionWorkspace:
             raise ValueError("immutable Session input checksum mismatch")
         return raw
 
-    def read(self, item: SessionFile, *, offset: int = 0, limit: int = 16_384) -> dict[str, Any]:
+    def read_segment(self, item: SessionFile, *, offset: int = 0, limit: int = 16_384) -> dict[str, Any]:
         if offset < 0 or limit < 1 or limit > 262_144:
             raise ValueError("invalid input read range")
         raw = self.verified_bytes(item)
@@ -365,7 +365,7 @@ class SessionWorkspace:
     def search(self, item: SessionFile, *, query: str, limit: int = 20) -> dict[str, Any]:
         if not query or len(query) > 256:
             raise ValueError("invalid input search query")
-        text = self.read(item, offset=0, limit=262_144)["content"]
+        text = self.read_segment(item, offset=0, limit=262_144)["content"]
         matches = [
             {"line": number, "text": line[:1000]}
             for number, line in enumerate(text.splitlines(), start=1)

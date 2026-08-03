@@ -23,9 +23,9 @@ const v6Snapshot = () => ({
   },
   team: { task_id: "task", status: "running", supervisor_solver_id: "supervisor", max_active_workers: 2, max_total_solvers: 8, active_solver_count: 2, solver_ids: ["supervisor", "worker-a", "worker-b"], version: 3, timestamps: {} },
   solvers: [
-    { task_id: "task", solver_id: "supervisor", definition_id: "supervisor-v1", orchestration_role: "supervisor", specialties: ["planning"], parent_solver_id: null, assigned_intent_id: null, status: "running", current_summary: "coordinate", model_snapshot: { model: "m" }, skill_snapshot: { count: 1 }, tool_policy: { count: 2 }, budget_usage: { input_tokens: 10 }, timestamps: {} },
-    { task_id: "task", solver_id: "worker-a", definition_id: "worker-v1", orchestration_role: "worker", specialties: ["web"], parent_solver_id: "supervisor", assigned_intent_id: "intent-a", status: "running", current_summary: "inspect", model_snapshot: {}, skill_snapshot: {}, tool_policy: {}, budget_usage: { input_tokens: 20 }, timestamps: {} },
-    { task_id: "task", solver_id: "worker-b", definition_id: "worker-v1", orchestration_role: "worker", specialties: ["binary"], parent_solver_id: "supervisor", assigned_intent_id: "intent-b", status: "completed", current_summary: "done", model_snapshot: {}, skill_snapshot: {}, tool_policy: {}, budget_usage: {}, timestamps: {} },
+    { task_id: "task", solver_id: "supervisor", definition_id: "supervisor-v1", orchestration_role: "supervisor", specialties: ["planning"], parent_solver_id: null, assigned_intent_id: null, status: "running", current_summary: "coordinate", model_snapshot: { model: "m" }, skill_snapshot: { count: 1 }, capability_binding: { count: 2 }, budget_usage: { input_tokens: 10 }, timestamps: {} },
+    { task_id: "task", solver_id: "worker-a", definition_id: "worker-v1", orchestration_role: "worker", specialties: ["web"], parent_solver_id: "supervisor", assigned_intent_id: "intent-a", status: "running", current_summary: "inspect", model_snapshot: {}, skill_snapshot: {}, capability_binding: {}, budget_usage: { input_tokens: 20 }, timestamps: {} },
+    { task_id: "task", solver_id: "worker-b", definition_id: "worker-v1", orchestration_role: "worker", specialties: ["binary"], parent_solver_id: "supervisor", assigned_intent_id: "intent-b", status: "completed", current_summary: "done", model_snapshot: {}, skill_snapshot: {}, capability_binding: {}, budget_usage: {}, timestamps: {} },
   ],
   intents: [
     { task_id: "task", intent_id: "intent-a", kind: "investigate", title: "Inspect", objective: "inspect", status: "running", assigned_solver_id: "worker-a", dependencies: [], priority: 2, budget: {}, created_at: "", updated_at: "" },
@@ -43,7 +43,7 @@ const v6Snapshot = () => ({
   findings: [{ finding_id: "finding-a", title: "Found", description_preview: "confirmed", target: "target", severity: "high", status: "confirmed", evidence_claim_ids: ["claim-a"], created_by_solver_id: "worker-a", created_at: "", reviewed_at: "" }],
   actions: [],
   approvals: [
-    { approval_id: "approval-a", solver_id: "worker-a", intent_id: "intent-a", action_id: "action-a", action: { capability: "workspace.write" }, risk: "active", effect: {}, reason: "write", alternatives: ["preview"], deadline: "soon", status: "pending", created_at: "", updated_at: "" },
+    { approval_id: "approval-a", solver_id: "worker-a", intent_id: "intent-a", action_id: "action-a", action: { capability: "artifact.publish" }, risk: "active", effect: {}, reason: "write", alternatives: ["preview"], deadline: "soon", status: "pending", created_at: "", updated_at: "" },
     { approval_id: "approval-b", solver_id: "worker-b", intent_id: "intent-b", action_id: "action-b", action: { capability: "http.request" }, risk: "active", effect: {}, reason: "request", alternatives: [], deadline: "later", status: "pending", created_at: "", updated_at: "" },
   ],
   retrieval_runs: [{ retrieval_run_id: "retrieval-a", owner_scope: "task", task_id: "task", solver_id: "worker-a", intent_id: "intent-a", index_snapshot_id: "index-a", method: "keyword", query_preview: "query", hit_count: 2, created_at: "" }],

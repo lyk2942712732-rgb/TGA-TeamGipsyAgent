@@ -24,7 +24,7 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x18sandbox/v1/sandbox.proto\x12\x0etga.sandbox.v1\"\x07\n\x05\x45mpty\">\n\rHealthRequest\x12\x16\n\x0eprotocol_major\x18\x01 \x01(\r\x12\x15\n\rconfig_digest\x18\x02 \x01(\t\"\xa3\x02\n\x0eHealthResponse\x12\x16\n\x0eprotocol_major\x18\x01 \x01(\r\x12\x16\n\x0e\x64\x61\x65mon_version\x18\x02 \x01(\t\x12\x18\n\x10\x64ocker_available\x18\x03 \x01(\x08\x12\x17\n\x0frunsc_available\x18\x04 \x01(\x08\x12\x1a\n\x12nftables_available\x18\x05 \x01(\x08\x12\x1b\n\x13\x63group_v2_available\x18\x06 \x01(\x08\x12\x15\n\rconfig_digest\x18\x07 \x01(\t\x12\x1a\n\x12\x64ocker_api_version\x18\x08 \x01(\t\x12 \n\x18runsc_runtime_registered\x18\t \x01(\x08\x12 \n\x18\x63lient_uid_policy_active\x18\n \x01(\x08\"+\n\x0cNetworkGrant\x12\x0c\n\x04\x63idr\x18\x01 \x01(\t\x12\r\n\x05ports\x18\x02 \x03(\r\"\xa6\x01\n\x0e\x41\x63quireRequest\x12\x0f\n\x07task_id\x18\x01 \x01(\t\x12\x11\n\tsolver_id\x18\x02 \x01(\t\x12\x12\n\nprofile_id\x18\x03 \x01(\t\x12\x15\n\rconfig_digest\x18\x04 \x01(\t\x12\x15\n\rfencing_token\x18\x05 \x01(\x04\x12\x17\n\x0fidempotency_key\x18\x06 \x01(\t\x12\x15\n\rsolver_run_id\x18\x07 \x01(\t\"\x92\x01\n\x0f\x41\x63quireResponse\x12\x13\n\x0binstance_id\x18\x01 \x01(\t\x12\x15\n\rconfig_digest\x18\x02 \x01(\t\x12\x15\n\rfencing_token\x18\x03 \x01(\x04\x12\x0e\n\x06reused\x18\x04 \x01(\x08\x12\x14\n\x0cimage_digest\x18\x05 \x01(\t\x12\x16\n\x0etoolset_digest\x18\x06 \x01(\t\"\x8d\x02\n\x0bProcessSpec\x12\x0c\n\x04\x61rgv\x18\x01 \x03(\t\x12\x41\n\x0b\x65nvironment\x18\x02 \x03(\x0b\x32,.tga.sandbox.v1.ProcessSpec.EnvironmentEntry\x12\x19\n\x11logical_workspace\x18\x03 \x01(\t\x12\x17\n\x0ftimeout_seconds\x18\x04 \x01(\r\x12\x34\n\x0enetwork_grants\x18\x05 \x03(\x0b\x32\x1c.tga.sandbox.v1.NetworkGrant\x12\x0f\n\x07tool_id\x18\x06 \x01(\t\x1a\x32\n\x10\x45nvironmentEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\t:\x02\x38\x01\"\x93\x01\n\x0b\x45xecRequest\x12\x13\n\x0binstance_id\x18\x01 \x01(\t\x12\x15\n\rfencing_token\x18\x02 \x01(\x04\x12,\n\x07process\x18\x03 \x01(\x0b\x32\x1b.tga.sandbox.v1.ProcessSpec\x12\x17\n\x0fidempotency_key\x18\x04 \x01(\t\x12\x11\n\tsolver_id\x18\x05 \x01(\t\"\xb2\x01\n\tExecFrame\x12\x10\n\x08sequence\x18\x01 \x01(\x04\x12\x19\n\x11timestamp_unix_ms\x18\x02 \x01(\x03\x12\x30\n\x06stream\x18\x03 \x01(\x0e\x32 .tga.sandbox.v1.ExecFrame.Stream\x12\x0c\n\x04\x64\x61ta\x18\x04 \x01(\x0c\"8\n\x06Stream\x12\x16\n\x12STREAM_UNSPECIFIED\x10\x00\x12\n\n\x06STDOUT\x10\x01\x12\n\n\x06STDERR\x10\x02\"h\n\nExecResult\x12\x16\n\texit_code\x18\x01 \x01(\x05H\x00\x88\x01\x01\x12\x0e\n\x06signal\x18\x02 \x01(\t\x12\x11\n\ttimed_out\x18\x03 \x01(\x08\x12\x11\n\ttruncated\x18\x04 \x01(\x08\x42\x0c\n\n_exit_code\"n\n\tExecEvent\x12*\n\x05\x66rame\x18\x01 \x01(\x0b\x32\x19.tga.sandbox.v1.ExecFrameH\x00\x12,\n\x06result\x18\x02 \x01(\x0b\x32\x1a.tga.sandbox.v1.ExecResultH\x00\x42\x07\n\x05\x65vent\"\x94\x01\n\x0cProcessStart\x12\x13\n\x0binstance_id\x18\x01 \x01(\t\x12\x15\n\rfencing_token\x18\x02 \x01(\x04\x12,\n\x07process\x18\x03 \x01(\x0b\x32\x1b.tga.sandbox.v1.ProcessSpec\x12\x17\n\x0fidempotency_key\x18\x04 \x01(\t\x12\x11\n\tsolver_id\x18\x05 \x01(\t\"1\n\x0cProcessInput\x12\x0c\n\x04\x64\x61ta\x18\x01 \x01(\x0c\x12\x13\n\x0b\x63lose_stdin\x18\x02 \x01(\x08\"#\n\rProcessOpened\x12\x12\n\nprocess_id\x18\x01 \x01(\t\"\x84\x02\n\x0eProcessMessage\x12-\n\x05start\x18\x01 \x01(\x0b\x32\x1c.tga.sandbox.v1.ProcessStartH\x00\x12-\n\x05input\x18\x02 \x01(\x0b\x32\x1c.tga.sandbox.v1.ProcessInputH\x00\x12/\n\x06opened\x18\x03 \x01(\x0b\x32\x1d.tga.sandbox.v1.ProcessOpenedH\x00\x12*\n\x05\x66rame\x18\x04 \x01(\x0b\x32\x19.tga.sandbox.v1.ExecFrameH\x00\x12,\n\x06result\x18\x05 \x01(\x0b\x32\x1a.tga.sandbox.v1.ExecResultH\x00\x42\t\n\x07message\"?\n\x12StopProcessRequest\x12\x12\n\nprocess_id\x18\x01 \x01(\t\x12\x15\n\rfencing_token\x18\x02 \x01(\x04\"<\n\x0eInspectRequest\x12\x13\n\x0binstance_id\x18\x01 \x01(\t\x12\x15\n\rfencing_token\x18\x02 \x01(\x04\"_\n\x0fInspectResponse\x12\r\n\x05state\x18\x01 \x01(\t\x12\x0f\n\x07runtime\x18\x02 \x01(\t\x12\x18\n\x10\x61\x63tive_processes\x18\x03 \x01(\r\x12\x12\n\ncreated_at\x18\x04 \x01(\t\"<\n\x0e\x44\x65stroyRequest\x12\x13\n\x0binstance_id\x18\x01 \x01(\t\x12\x15\n\rfencing_token\x18\x02 \x01(\x04\"L\n\x10ReconcileRequest\x12\x1a\n\x12valid_instance_ids\x18\x01 \x03(\t\x12\x1c\n\x14grace_before_unix_ms\x18\x02 \x01(\x03\"C\n\x11ReconcileResponse\x12\x1e\n\x16\x64\x65stroyed_instance_ids\x18\x01 \x03(\t\x12\x0e\n\x06\x65rrors\x18\x02 \x03(\t2\xe4\x04\n\x0eSandboxService\x12G\n\x06Health\x12\x1d.tga.sandbox.v1.HealthRequest\x1a\x1e.tga.sandbox.v1.HealthResponse\x12J\n\x07\x41\x63quire\x12\x1e.tga.sandbox.v1.AcquireRequest\x1a\x1f.tga.sandbox.v1.AcquireResponse\x12@\n\x04\x45xec\x12\x1b.tga.sandbox.v1.ExecRequest\x1a\x19.tga.sandbox.v1.ExecEvent0\x01\x12Q\n\x0bOpenProcess\x12\x1e.tga.sandbox.v1.ProcessMessage\x1a\x1e.tga.sandbox.v1.ProcessMessage(\x01\x30\x01\x12H\n\x0bStopProcess\x12\".tga.sandbox.v1.StopProcessRequest\x1a\x15.tga.sandbox.v1.Empty\x12J\n\x07Inspect\x12\x1e.tga.sandbox.v1.InspectRequest\x1a\x1f.tga.sandbox.v1.InspectResponse\x12@\n\x07\x44\x65stroy\x12\x1e.tga.sandbox.v1.DestroyRequest\x1a\x15.tga.sandbox.v1.Empty\x12P\n\tReconcile\x12 .tga.sandbox.v1.ReconcileRequest\x1a!.tga.sandbox.v1.ReconcileResponseB=Z;github.com/team-gipsy/tga-sandboxd/api/sandbox/v1;sandboxv1b\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x18sandbox/v1/sandbox.proto\x12\x0etga.sandbox.v1\"\x07\n\x05\x45mpty\">\n\rHealthRequest\x12\x16\n\x0eprotocol_major\x18\x01 \x01(\r\x12\x15\n\rconfig_digest\x18\x02 \x01(\t\"\xa3\x02\n\x0eHealthResponse\x12\x16\n\x0eprotocol_major\x18\x01 \x01(\r\x12\x16\n\x0e\x64\x61\x65mon_version\x18\x02 \x01(\t\x12\x18\n\x10\x64ocker_available\x18\x03 \x01(\x08\x12\x17\n\x0frunsc_available\x18\x04 \x01(\x08\x12\x1a\n\x12nftables_available\x18\x05 \x01(\x08\x12\x1b\n\x13\x63group_v2_available\x18\x06 \x01(\x08\x12\x15\n\rconfig_digest\x18\x07 \x01(\t\x12\x1a\n\x12\x64ocker_api_version\x18\x08 \x01(\t\x12 \n\x18runsc_runtime_registered\x18\t \x01(\x08\x12 \n\x18\x63lient_uid_policy_active\x18\n \x01(\x08\"+\n\x0cNetworkGrant\x12\x0c\n\x04\x63idr\x18\x01 \x01(\t\x12\r\n\x05ports\x18\x02 \x03(\r\"\xa6\x01\n\x0e\x41\x63quireRequest\x12\x0f\n\x07task_id\x18\x01 \x01(\t\x12\x11\n\tsolver_id\x18\x02 \x01(\t\x12\x12\n\nprofile_id\x18\x03 \x01(\t\x12\x15\n\rconfig_digest\x18\x04 \x01(\t\x12\x15\n\rfencing_token\x18\x05 \x01(\x04\x12\x17\n\x0fidempotency_key\x18\x06 \x01(\t\x12\x15\n\rsolver_run_id\x18\x07 \x01(\t\"\x92\x01\n\x0f\x41\x63quireResponse\x12\x13\n\x0binstance_id\x18\x01 \x01(\t\x12\x15\n\rconfig_digest\x18\x02 \x01(\t\x12\x15\n\rfencing_token\x18\x03 \x01(\x04\x12\x0e\n\x06reused\x18\x04 \x01(\x08\x12\x14\n\x0cimage_digest\x18\x05 \x01(\t\x12\x16\n\x0etoolset_digest\x18\x06 \x01(\t\"\xcc\x02\n\x0bProcessSpec\x12\x0c\n\x04\x61rgv\x18\x01 \x03(\t\x12\x41\n\x0b\x65nvironment\x18\x02 \x03(\x0b\x32,.tga.sandbox.v1.ProcessSpec.EnvironmentEntry\x12\x19\n\x11logical_workspace\x18\x03 \x01(\t\x12\x17\n\x0ftimeout_seconds\x18\x04 \x01(\r\x12\x34\n\x0enetwork_grants\x18\x05 \x03(\x0b\x32\x1c.tga.sandbox.v1.NetworkGrant\x12\x0f\n\x07tool_id\x18\x06 \x01(\t\x12\x19\n\x11working_directory\x18\x07 \x01(\t\x12\r\n\x05stdin\x18\x08 \x01(\x0c\x12\x13\n\x0binteractive\x18\t \x01(\x08\x1a\x32\n\x10\x45nvironmentEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\t:\x02\x38\x01\"\x93\x01\n\x0b\x45xecRequest\x12\x13\n\x0binstance_id\x18\x01 \x01(\t\x12\x15\n\rfencing_token\x18\x02 \x01(\x04\x12,\n\x07process\x18\x03 \x01(\x0b\x32\x1b.tga.sandbox.v1.ProcessSpec\x12\x17\n\x0fidempotency_key\x18\x04 \x01(\t\x12\x11\n\tsolver_id\x18\x05 \x01(\t\"\xb2\x01\n\tExecFrame\x12\x10\n\x08sequence\x18\x01 \x01(\x04\x12\x19\n\x11timestamp_unix_ms\x18\x02 \x01(\x03\x12\x30\n\x06stream\x18\x03 \x01(\x0e\x32 .tga.sandbox.v1.ExecFrame.Stream\x12\x0c\n\x04\x64\x61ta\x18\x04 \x01(\x0c\"8\n\x06Stream\x12\x16\n\x12STREAM_UNSPECIFIED\x10\x00\x12\n\n\x06STDOUT\x10\x01\x12\n\n\x06STDERR\x10\x02\"h\n\nExecResult\x12\x16\n\texit_code\x18\x01 \x01(\x05H\x00\x88\x01\x01\x12\x0e\n\x06signal\x18\x02 \x01(\t\x12\x11\n\ttimed_out\x18\x03 \x01(\x08\x12\x11\n\ttruncated\x18\x04 \x01(\x08\x42\x0c\n\n_exit_code\"n\n\tExecEvent\x12*\n\x05\x66rame\x18\x01 \x01(\x0b\x32\x19.tga.sandbox.v1.ExecFrameH\x00\x12,\n\x06result\x18\x02 \x01(\x0b\x32\x1a.tga.sandbox.v1.ExecResultH\x00\x42\x07\n\x05\x65vent\"\x94\x01\n\x0cProcessStart\x12\x13\n\x0binstance_id\x18\x01 \x01(\t\x12\x15\n\rfencing_token\x18\x02 \x01(\x04\x12,\n\x07process\x18\x03 \x01(\x0b\x32\x1b.tga.sandbox.v1.ProcessSpec\x12\x17\n\x0fidempotency_key\x18\x04 \x01(\t\x12\x11\n\tsolver_id\x18\x05 \x01(\t\"1\n\x0cProcessInput\x12\x0c\n\x04\x64\x61ta\x18\x01 \x01(\x0c\x12\x13\n\x0b\x63lose_stdin\x18\x02 \x01(\x08\"+\n\rProcessResize\x12\x0c\n\x04\x63ols\x18\x01 \x01(\r\x12\x0c\n\x04rows\x18\x02 \x01(\r\"#\n\rProcessOpened\x12\x12\n\nprocess_id\x18\x01 \x01(\t\"\xb5\x02\n\x0eProcessMessage\x12-\n\x05start\x18\x01 \x01(\x0b\x32\x1c.tga.sandbox.v1.ProcessStartH\x00\x12-\n\x05input\x18\x02 \x01(\x0b\x32\x1c.tga.sandbox.v1.ProcessInputH\x00\x12/\n\x06opened\x18\x03 \x01(\x0b\x32\x1d.tga.sandbox.v1.ProcessOpenedH\x00\x12*\n\x05\x66rame\x18\x04 \x01(\x0b\x32\x19.tga.sandbox.v1.ExecFrameH\x00\x12,\n\x06result\x18\x05 \x01(\x0b\x32\x1a.tga.sandbox.v1.ExecResultH\x00\x12/\n\x06resize\x18\x06 \x01(\x0b\x32\x1d.tga.sandbox.v1.ProcessResizeH\x00\x42\t\n\x07message\"?\n\x12StopProcessRequest\x12\x12\n\nprocess_id\x18\x01 \x01(\t\x12\x15\n\rfencing_token\x18\x02 \x01(\x04\"<\n\x0eInspectRequest\x12\x13\n\x0binstance_id\x18\x01 \x01(\t\x12\x15\n\rfencing_token\x18\x02 \x01(\x04\"_\n\x0fInspectResponse\x12\r\n\x05state\x18\x01 \x01(\t\x12\x0f\n\x07runtime\x18\x02 \x01(\t\x12\x18\n\x10\x61\x63tive_processes\x18\x03 \x01(\r\x12\x12\n\ncreated_at\x18\x04 \x01(\t\"<\n\x0e\x44\x65stroyRequest\x12\x13\n\x0binstance_id\x18\x01 \x01(\t\x12\x15\n\rfencing_token\x18\x02 \x01(\x04\"L\n\x10ReconcileRequest\x12\x1a\n\x12valid_instance_ids\x18\x01 \x03(\t\x12\x1c\n\x14grace_before_unix_ms\x18\x02 \x01(\x03\"C\n\x11ReconcileResponse\x12\x1e\n\x16\x64\x65stroyed_instance_ids\x18\x01 \x03(\t\x12\x0e\n\x06\x65rrors\x18\x02 \x03(\t2\xe4\x04\n\x0eSandboxService\x12G\n\x06Health\x12\x1d.tga.sandbox.v1.HealthRequest\x1a\x1e.tga.sandbox.v1.HealthResponse\x12J\n\x07\x41\x63quire\x12\x1e.tga.sandbox.v1.AcquireRequest\x1a\x1f.tga.sandbox.v1.AcquireResponse\x12@\n\x04\x45xec\x12\x1b.tga.sandbox.v1.ExecRequest\x1a\x19.tga.sandbox.v1.ExecEvent0\x01\x12Q\n\x0bOpenProcess\x12\x1e.tga.sandbox.v1.ProcessMessage\x1a\x1e.tga.sandbox.v1.ProcessMessage(\x01\x30\x01\x12H\n\x0bStopProcess\x12\".tga.sandbox.v1.StopProcessRequest\x1a\x15.tga.sandbox.v1.Empty\x12J\n\x07Inspect\x12\x1e.tga.sandbox.v1.InspectRequest\x1a\x1f.tga.sandbox.v1.InspectResponse\x12@\n\x07\x44\x65stroy\x12\x1e.tga.sandbox.v1.DestroyRequest\x1a\x15.tga.sandbox.v1.Empty\x12P\n\tReconcile\x12 .tga.sandbox.v1.ReconcileRequest\x1a!.tga.sandbox.v1.ReconcileResponseB=Z;github.com/team-gipsy/tga-sandboxd/api/sandbox/v1;sandboxv1b\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -47,39 +47,41 @@ if not _descriptor._USE_C_DESCRIPTORS:
   _globals['_ACQUIRERESPONSE']._serialized_start=626
   _globals['_ACQUIRERESPONSE']._serialized_end=772
   _globals['_PROCESSSPEC']._serialized_start=775
-  _globals['_PROCESSSPEC']._serialized_end=1044
-  _globals['_PROCESSSPEC_ENVIRONMENTENTRY']._serialized_start=994
-  _globals['_PROCESSSPEC_ENVIRONMENTENTRY']._serialized_end=1044
-  _globals['_EXECREQUEST']._serialized_start=1047
-  _globals['_EXECREQUEST']._serialized_end=1194
-  _globals['_EXECFRAME']._serialized_start=1197
-  _globals['_EXECFRAME']._serialized_end=1375
-  _globals['_EXECFRAME_STREAM']._serialized_start=1319
-  _globals['_EXECFRAME_STREAM']._serialized_end=1375
-  _globals['_EXECRESULT']._serialized_start=1377
-  _globals['_EXECRESULT']._serialized_end=1481
-  _globals['_EXECEVENT']._serialized_start=1483
-  _globals['_EXECEVENT']._serialized_end=1593
-  _globals['_PROCESSSTART']._serialized_start=1596
-  _globals['_PROCESSSTART']._serialized_end=1744
-  _globals['_PROCESSINPUT']._serialized_start=1746
-  _globals['_PROCESSINPUT']._serialized_end=1795
-  _globals['_PROCESSOPENED']._serialized_start=1797
-  _globals['_PROCESSOPENED']._serialized_end=1832
-  _globals['_PROCESSMESSAGE']._serialized_start=1835
-  _globals['_PROCESSMESSAGE']._serialized_end=2095
-  _globals['_STOPPROCESSREQUEST']._serialized_start=2097
-  _globals['_STOPPROCESSREQUEST']._serialized_end=2160
-  _globals['_INSPECTREQUEST']._serialized_start=2162
-  _globals['_INSPECTREQUEST']._serialized_end=2222
-  _globals['_INSPECTRESPONSE']._serialized_start=2224
-  _globals['_INSPECTRESPONSE']._serialized_end=2319
-  _globals['_DESTROYREQUEST']._serialized_start=2321
-  _globals['_DESTROYREQUEST']._serialized_end=2381
-  _globals['_RECONCILEREQUEST']._serialized_start=2383
-  _globals['_RECONCILEREQUEST']._serialized_end=2459
-  _globals['_RECONCILERESPONSE']._serialized_start=2461
-  _globals['_RECONCILERESPONSE']._serialized_end=2528
-  _globals['_SANDBOXSERVICE']._serialized_start=2531
-  _globals['_SANDBOXSERVICE']._serialized_end=3143
+  _globals['_PROCESSSPEC']._serialized_end=1107
+  _globals['_PROCESSSPEC_ENVIRONMENTENTRY']._serialized_start=1057
+  _globals['_PROCESSSPEC_ENVIRONMENTENTRY']._serialized_end=1107
+  _globals['_EXECREQUEST']._serialized_start=1110
+  _globals['_EXECREQUEST']._serialized_end=1257
+  _globals['_EXECFRAME']._serialized_start=1260
+  _globals['_EXECFRAME']._serialized_end=1438
+  _globals['_EXECFRAME_STREAM']._serialized_start=1382
+  _globals['_EXECFRAME_STREAM']._serialized_end=1438
+  _globals['_EXECRESULT']._serialized_start=1440
+  _globals['_EXECRESULT']._serialized_end=1544
+  _globals['_EXECEVENT']._serialized_start=1546
+  _globals['_EXECEVENT']._serialized_end=1656
+  _globals['_PROCESSSTART']._serialized_start=1659
+  _globals['_PROCESSSTART']._serialized_end=1807
+  _globals['_PROCESSINPUT']._serialized_start=1809
+  _globals['_PROCESSINPUT']._serialized_end=1858
+  _globals['_PROCESSRESIZE']._serialized_start=1860
+  _globals['_PROCESSRESIZE']._serialized_end=1903
+  _globals['_PROCESSOPENED']._serialized_start=1905
+  _globals['_PROCESSOPENED']._serialized_end=1940
+  _globals['_PROCESSMESSAGE']._serialized_start=1943
+  _globals['_PROCESSMESSAGE']._serialized_end=2252
+  _globals['_STOPPROCESSREQUEST']._serialized_start=2254
+  _globals['_STOPPROCESSREQUEST']._serialized_end=2317
+  _globals['_INSPECTREQUEST']._serialized_start=2319
+  _globals['_INSPECTREQUEST']._serialized_end=2379
+  _globals['_INSPECTRESPONSE']._serialized_start=2381
+  _globals['_INSPECTRESPONSE']._serialized_end=2476
+  _globals['_DESTROYREQUEST']._serialized_start=2478
+  _globals['_DESTROYREQUEST']._serialized_end=2538
+  _globals['_RECONCILEREQUEST']._serialized_start=2540
+  _globals['_RECONCILEREQUEST']._serialized_end=2616
+  _globals['_RECONCILERESPONSE']._serialized_start=2618
+  _globals['_RECONCILERESPONSE']._serialized_end=2685
+  _globals['_SANDBOXSERVICE']._serialized_start=2688
+  _globals['_SANDBOXSERVICE']._serialized_end=3300
 # @@protoc_insertion_point(module_scope)

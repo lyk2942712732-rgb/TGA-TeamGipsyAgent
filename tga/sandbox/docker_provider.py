@@ -129,6 +129,13 @@ class _SbxProcess(SandboxProcess):
             raise SandboxError("sandbox process stream closed", code="PROCESS_STREAM_CLOSED")
         return value
 
+    def resize(self, cols: int, rows: int) -> None:
+        del cols, rows
+        raise SandboxError(
+            "Docker Sandboxes provider does not expose PTY resize",
+            code="SESSION_RESIZE_UNSUPPORTED",
+        )
+
     def close_stdin(self) -> None:
         if self._process.stdin and not self._process.stdin.closed:
             self._process.stdin.close()
@@ -254,7 +261,7 @@ class DockerSandboxProvider:
         try:
             completed = self._runner(
                 command,
-                stdin=subprocess.DEVNULL,
+                input=spec.stdin,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 timeout=timeout,
@@ -396,14 +403,6 @@ class DockerSandboxProvider:
     ) -> list[str]:
         profile = self.config.profile(handle.profile_id)
         image = profile.image or ""
-        if spec.tool_id:
-            tool = self.config.tools.get(spec.tool_id)
-            if tool is None or tool.profile_id != handle.profile_id:
-                raise SandboxError("tool is not authorized for profile", code="TOOL_IMAGE_NOT_AUTHORIZED")
-            image = tool.image
-            tool_args = tool.args
-        else:
-            tool_args = ()
         workspace = self._workspace(handle.task_id)
         marker = self._read_marker(handle.task_id, handle.solver_run_id)
         if marker is None:
@@ -417,6 +416,8 @@ class DockerSandboxProvider:
             "task_inputs": "/workspace/inputs",
             "task_shared": "/workspace/shared",
         }[spec.logical_workspace]
+        if spec.working_directory != ".":
+            logical = f"{logical}/{spec.working_directory}"
         docker = [
             "docker",
             "run",
@@ -454,7 +455,6 @@ class DockerSandboxProvider:
         for name, value in sorted(spec.environment.items()):
             docker.extend(["--env", f"{name}={value}"])
         docker.append(image)
-        docker.extend(tool_args)
         docker.extend(spec.argv)
         return [
             self.config.docker_sandbox.executable,

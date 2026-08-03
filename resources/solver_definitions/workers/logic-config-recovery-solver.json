@@ -1,60 +1,53 @@
 {
-    "id":  "logic-config-recovery-solver",
-    "version":  "2.0.0",
-    "orchestration_role":  "worker",
-    "specialties":  [
-                        "binary",
-                        "logic-recovery",
-                        "configuration"
-                    ],
-    "supported_modes":  [
-                            "reverse_engineering"
-                        ],
-    "supported_subtypes":  [
-
-                           ],
-    "system_prompt_template":  "Recover requested logic, algorithms, configuration, or data and preserve scripts and outputs that make the recovery reproducible.",
-    "default_skill_tags":  [
-                               "binary",
-                               "metadata"
-                           ],
-    "required_skill_names":  [
-                                 "binary-triage"
-                             ],
-    "required_capabilities":  [
-                                  "workspace.read",
-                                  "workspace.write",
-                                  "workspace.python",
-                                  "artifact.inspect",
-                                  "sandbox.exec"
-                              ],
-    "allowed_tool_groups":  [
-                                "control",
-                                "resource_read",
-                                "execution",
-                                "retrieval"
-                            ],
-    "tool_policy_profile":  "logic-config-recovery-solver-governed",
-    "accepted_intent_kinds":  [
-                                  "logic_config_recovery"
-                              ],
-    "output_contract":  {
-                            "name":  "worker_result",
-                            "required_fields":  [
-                                                    "summary",
-                                                    "coverage",
-                                                    "limitations"
-                                                ]
-                        },
-    "default_budget":  {
-                           "max_turns":  24,
-                           "max_input_tokens":  220000,
-                           "max_output_tokens":  40000,
-                           "max_tool_calls":  48,
-                           "max_artifacts":  96,
-                           "deadline":  null
-                       },
-    "completion_authority":  "worker_only",
-    "sandbox_profile_id":  "logic-recovery-v1",
-    "sandbox_required":  true
+  "id": "logic-config-recovery-solver",
+  "version": "2.0.0",
+  "orchestration_role": "worker",
+  "specialties": [
+    "binary",
+    "logic-recovery",
+    "configuration"
+  ],
+  "supported_modes": [
+    "reverse_engineering"
+  ],
+  "supported_subtypes": [],
+  "system_prompt_template": "Recover requested logic, algorithms, configuration, or data and preserve scripts and outputs that make the recovery reproducible.",
+  "default_skill_tags": [
+    "binary",
+    "metadata"
+  ],
+  "required_skill_names": [
+    "binary-triage"
+  ],
+  "accepted_intent_kinds": [
+    "logic_config_recovery"
+  ],
+  "output_contract": {
+    "name": "worker_result",
+    "required_fields": [
+      "summary",
+      "coverage",
+      "limitations"
+    ]
+  },
+  "default_budget": {
+    "max_turns": 24,
+    "max_input_tokens": 220000,
+    "max_output_tokens": 40000,
+    "max_tool_calls": 48,
+    "max_artifacts": 96,
+    "deadline": null
+  },
+  "completion_authority": "worker_only",
+  "host_capability_profile_id": "worker-default",
+  "host_capability_overrides": {
+    "add": [],
+    "remove": []
+  },
+  "kali": {
+    "profile_id": "logic-recovery-v1",
+    "capabilities": [
+      "kali.exec"
+    ]
+  }
 }

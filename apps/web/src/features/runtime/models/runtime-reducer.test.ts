@@ -8,7 +8,7 @@ const base = () => normalizeRuntimeSnapshot({
   task: { id: "task", name: "Task", mode: "ctf" },
   session: { status: "running", supervisor_solver_id: "supervisor", active_solver_count: 1, max_active_workers: 2, task_budget_usage: {}, stop_reason: null, timestamps: {}, turn_count: 0, max_turns: 20 },
   team: { task_id: "task", status: "running", supervisor_solver_id: "supervisor", max_active_workers: 2, max_total_solvers: 8, active_solver_count: 1, solver_ids: ["supervisor"], version: 1, timestamps: {} },
-  solvers: [{ task_id: "task", solver_id: "supervisor", definition_id: "supervisor", orchestration_role: "supervisor", specialties: [], parent_solver_id: null, assigned_intent_id: null, status: "running", current_summary: "", model_snapshot: {}, skill_snapshot: {}, tool_policy: {}, budget_usage: {}, timestamps: {} }],
+  solvers: [{ task_id: "task", solver_id: "supervisor", definition_id: "supervisor", orchestration_role: "supervisor", specialties: [], parent_solver_id: null, assigned_intent_id: null, status: "running", current_summary: "", model_snapshot: {}, skill_snapshot: {}, capability_binding: {}, budget_usage: {}, timestamps: {} }],
   intents: [], worker_results: [], global_plan: null, knowledge: [], artifacts: [], evidence_claims: [], findings: [], actions: [], approvals: [], retrieval_runs: [], events: [], events_page: { after_seq: 0, next_after_seq: 0, has_more: false }, latest_seq: 0,
 });
 const event = (seq: number, type: string, payload: Record<string, unknown> = {}, solverId: string | null = null, intentId: string | null = null): RuntimeEvent => ({ schemaVersion: 6, id: `event-${seq}`, taskId: "task", seq, type, solverId, intentId, payload: { schema_version: 1, ...payload }, createdAt: "" });

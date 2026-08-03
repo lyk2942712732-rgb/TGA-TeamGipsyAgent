@@ -49,7 +49,8 @@ export function SolverInspector({ solver, store }: { solver: RuntimeSolver | nul
 
 function Overview({ solver, store }: { solver: RuntimeSolver; store?: RuntimeStore }) {
   const intent = solver.assignedIntentId && store ? store.intentsById[solver.assignedIntentId] : undefined;
-  const tools = list(solver.toolPolicySummary.allowed_capabilities).map(String);
+  const kaliBinding = record(solver.capabilityBinding.kali);
+  const tools = [...list(solver.capabilityBinding.host_capability_ids).map(String), ...list(kaliBinding.capabilities).map(String)];
   const tokens = Number(solver.budgetUsage.input_tokens ?? 0) + Number(solver.budgetUsage.output_tokens ?? 0);
   const turns = Number(solver.budgetUsage.turns ?? 0);
   const maxTurns = Number(store?.session.maxTurns ?? 0);
@@ -135,10 +136,17 @@ function Knowledge({ solver, store }: { solver: RuntimeSolver; store?: RuntimeSt
 
 function Skills({ solver, store }: { solver: RuntimeSolver; store?: RuntimeStore }) { const taskBundle = record(store?.taskCommonSkillSnapshot); const common = list(taskBundle.skills); const names = list(solver.skillSnapshot.names); return <div className="inspector-skills"><section><h4>Task Common Skills</h4>{common.length ? common.map((item, index) => <pre key={index}>{JSON.stringify(item, null, 2)}</pre>) : <small>未投影版本/hash/选择原因</small>}</section><section><h4>Solver Specialized Skills</h4>{names.length ? names.map(String).map((name) => <p key={name}>{name}</p>) : <small>未选择</small>}<dl className="solver-summary-list"><Item label="selector" value={String(solver.skillSnapshot.selector ?? "未投影")} /><Item label="count" value={String(solver.skillSnapshot.count ?? 0)} /></dl></section></div>; }
 
-function Tools({ solver, store }: { solver: RuntimeSolver; store?: RuntimeStore }) { const allowed = list(solver.toolPolicySummary.allowed_capabilities).map(String); const events = store ? selectEventsBySolver(store, solver.solverId) : []; const errors = events.filter((event) => event.type.includes("FAILED") || event.payload.error).length; return <section><h4>Tools</h4><dl className="solver-summary-list"><Item label="允许" value={allowed.join("、") || "未投影"} /><Item label="禁止" value="未授权能力默认不可见/不可用" /><Item label="风险" value={String(solver.toolPolicySummary.profile ?? "由后端策略控制")} /><Item label="调用" value={`调用 ${solver.budgetUsage.tool_calls ?? 0} 次`} /><Item label="限速" value={String(solver.toolPolicySummary.rate_limit ?? "未投影")} /><Item label="错误" value={`${errors} 次`} /></dl></section>; }
+function Tools({ solver, store }: { solver: RuntimeSolver; store?: RuntimeStore }) {
+  const kali = record(solver.capabilityBinding.kali);
+  const host = list(solver.capabilityBinding.host_capability_ids).map(String);
+  const kaliCapabilities = list(kali.capabilities).map(String);
+  const events = store ? selectEventsBySolver(store, solver.solverId) : [];
+  const errors = events.filter((event) => event.type.includes("FAILED") || event.payload.error).length;
+  return <section><h4>Capabilities</h4><dl className="solver-summary-list"><Item label="Host" value={host.join(" / ") || "未投影"} /><Item label="Kali" value={kaliCapabilities.join(" / ") || "未启用"} /><Item label="Kali Profile" value={String(kali.profile_id ?? "未启用")} /><Item label="调用" value={`调用 ${solver.budgetUsage.tool_calls ?? 0} 次`} /><Item label="错误" value={`${errors} 次`} /></dl></section>;
+}
 
 function Artifacts({ solver, store }: { solver: RuntimeSolver; store?: RuntimeStore }) { const values = store ? Object.values(store.artifactsById).filter((item) => item.intentId === solver.assignedIntentId) : []; return <section><h4>已发布 Artifacts</h4>{values.length ? values.map((item) => <article key={item.artifactId}><b>{item.artifactId}</b><small>{item.kind} · {item.sha256}</small></article>) : <p className="runtime-empty">没有已发布产物</p>}</section>; }
-function Config({ solver }: { solver: RuntimeSolver }) { return <section><h4>冻结配置</h4><pre>{JSON.stringify({ definition_id: solver.definitionId, model_snapshot: solver.modelSnapshot, skill_snapshot: solver.skillSnapshot, tool_policy: solver.toolPolicySummary, timestamps: solver.timestamps }, null, 2)}</pre></section>; }
+function Config({ solver }: { solver: RuntimeSolver }) { return <section><h4>冻结配置</h4><pre>{JSON.stringify({ definition_id: solver.definitionId, model_snapshot: solver.modelSnapshot, skill_snapshot: solver.skillSnapshot, capability_binding: solver.capabilityBinding, timestamps: solver.timestamps }, null, 2)}</pre></section>; }
 function Item({ label, value }: { label: string; value: string }) { return <div><dt>{label}</dt><dd>{value}</dd></div>; }
 function eventSummary(event: RuntimeEvent): string { return String(event.payload.summary ?? event.payload.reason ?? event.payload.status ?? event.payload.tool_name ?? "事件已记录"); }
 function safePayload(event: RuntimeEvent): string { return JSON.stringify(sanitizeProtocolValue(event.payload), null, 2).slice(0, 8000); }

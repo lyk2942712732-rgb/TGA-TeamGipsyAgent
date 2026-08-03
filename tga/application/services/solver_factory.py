@@ -6,9 +6,9 @@ from tga.domain.planning.intents import Intent
 from tga.domain.skills.models import SolverSkillSnapshot
 from tga.domain.solver.definitions import SolverDefinition
 from tga.domain.solver.instances import (
+    CapabilityBindingSnapshot,
     SolverInstance,
     SolverTimestamps,
-    ToolPolicySnapshot,
 )
 from tga.domain.task.models import ModelSnapshot, TGATask
 
@@ -23,7 +23,7 @@ class SolverFactory:
         intent: Intent | None,
         model_snapshot: ModelSnapshot,
         skill_snapshot: SolverSkillSnapshot | None,
-        tool_policy_snapshot: ToolPolicySnapshot,
+        capability_binding_snapshot: CapabilityBindingSnapshot,
         parent_solver_id: str | None,
         created_at: str,
     ) -> SolverInstance:
@@ -43,17 +43,6 @@ class SolverFactory:
             raise ValueError("worker SolverDefinition requires assigned Intent")
         if definition.orchestration_role == "supervisor" and intent is not None:
             raise ValueError("supervisor SolverDefinition does not take a worker Intent assignment")
-        if not set(tool_policy_snapshot.allowed_tool_groups).issubset(
-            definition.allowed_tool_groups
-        ):
-            raise ValueError("ToolPolicy enables a group outside SolverDefinition")
-        missing_capabilities = set(definition.required_capabilities) - set(
-            tool_policy_snapshot.allowed_capabilities
-        )
-        if missing_capabilities:
-            raise ValueError(
-                f"ToolPolicy omits required Solver capabilities: {sorted(missing_capabilities)}"
-            )
         if skill_snapshot is not None:
             if (
                 skill_snapshot.task_id != task.id
@@ -65,12 +54,13 @@ class SolverFactory:
             if not set(definition.required_skill_names).issubset(selected_names):
                 raise ValueError("SolverSkillSnapshot omits a required Skill")
             for skill in skill_snapshot.skills:
-                denied = set(skill.required_capabilities) - set(
-                    tool_policy_snapshot.allowed_capabilities
-                )
+                available = set(capability_binding_snapshot.host_capability_ids)
+                if capability_binding_snapshot.kali is not None:
+                    available.update(capability_binding_snapshot.kali.capabilities)
+                denied = set(skill.capability_requirements) - available
                 if denied:
                     raise ValueError(
-                        f"Skill {skill.name} is incompatible with ToolPolicy: {sorted(denied)}"
+                        f"Skill {skill.name} requires unavailable capabilities: {sorted(denied)}"
                     )
         elif definition.required_skill_names:
             raise ValueError("SolverDefinition requires a SolverSkillSnapshot")
@@ -88,7 +78,7 @@ class SolverFactory:
             status="created",
             model_snapshot=model_snapshot.model_copy(deep=True),
             skill_snapshot=skill_snapshot.model_copy(deep=True) if skill_snapshot else None,
-            tool_policy_snapshot=tool_policy_snapshot.model_copy(deep=True),
+            capability_binding_snapshot=capability_binding_snapshot.model_copy(deep=True),
             budget=definition.default_budget.model_copy(deep=True),
             completion_authority=definition.completion_authority,
             transcript_ref=f"solver://{instance_id}/transcript",

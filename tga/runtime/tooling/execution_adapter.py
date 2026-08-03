@@ -67,12 +67,16 @@ class ExecutionPipelineAdapter:
             self.execution_context.assert_active()
         name = action.provider_tool_name
         execution = self._execution_action(action)
-        if name.startswith("input_"):
-            payload = self.handlers.inputs.execute_governed(execution)
+        if action.capability.startswith("input."):
+            payload = self.handlers.inputs.execute_governed(
+                execution.model_copy(update={"capability": name})
+            )
         elif action.capability.startswith("mcp:"):
             payload = self.handlers.mcp.execute_governed(execution)
         else:
-            payload = self.handlers.capability.execute_governed(execution)
+            raise ValueError(
+                f"capability has no explicit execution backend: {action.capability}"
+            )
         if self.execution_context is not None:
             self.execution_context.assert_active()
         return self._raw(action, payload)
@@ -81,11 +85,11 @@ class ExecutionPipelineAdapter:
         if self.execution_context is not None:
             self.execution_context.assert_active()
         execution = self._execution_action(action)
-        payload = (
-            self.handlers.mcp.execute_governed(execution, approved=True)
-            if action.capability.startswith("mcp:")
-            else self.handlers.capability.execute_governed(execution)
-        )
+        if not action.capability.startswith("mcp:"):
+            raise ValueError(
+                f"approved capability has no explicit execution backend: {action.capability}"
+            )
+        payload = self.handlers.mcp.execute_governed(execution, approved=True)
         if self.execution_context is not None:
             self.execution_context.assert_active()
         return self._raw(action, payload)
@@ -93,7 +97,7 @@ class ExecutionPipelineAdapter:
     def execute_authorized(
         self, request: AuthorizedExecutionRequest, *, approved: bool = False
     ) -> dict[str, Any]:
-        """Compatibility bridge for host-owned data access only."""
+        """Adapt a frozen Host or MCP request to its explicit handler."""
         if self.execution_context is not None:
             self.execution_context.assert_active()
         action = ActionSpec(
@@ -103,7 +107,7 @@ class ExecutionPipelineAdapter:
             intent_id=request.intent_id,
             local_plan_step_id=None,
             execution_policy_snapshot_id="authorized-execution-request",
-            solver_tool_policy_snapshot_id="authorized-execution-request",
+            solver_capability_snapshot_id="authorized-execution-request",
             governed_action_id=request.action_id,
             kind=(
                 "http" if request.capability == "http.request"
@@ -135,11 +139,15 @@ class ExecutionPipelineAdapter:
             },
         )
         provider_name = str(request.execution_metadata.get("provider_tool_name") or "")
-        if provider_name.startswith("input_"):
-            return self.handlers.inputs.execute_governed(action)
+        if request.capability.startswith("input."):
+            return self.handlers.inputs.execute_governed(
+                action.model_copy(update={"capability": provider_name})
+            )
         if request.capability.startswith("mcp:"):
             return self.handlers.mcp.execute_governed(action, approved=approved)
-        return self.handlers.capability.execute_governed(action)
+        raise ValueError(
+            f"capability has no explicit handler backend: {request.capability}"
+        )
 
     def _execution_action(self, action: GovernedAction) -> ActionSpec:
         metadata = action.execution_metadata
@@ -155,7 +163,7 @@ class ExecutionPipelineAdapter:
             intent_id=action.context.intent_id,
             local_plan_step_id=action.context.local_plan_step_id,
             execution_policy_snapshot_id=action.context.execution_policy_snapshot_id,
-            solver_tool_policy_snapshot_id=action.context.solver_tool_policy_snapshot_id,
+            solver_capability_snapshot_id=action.context.solver_capability_snapshot_id,
             governed_action_id=action.id,
             kind=kind,
             capability=action.capability,

@@ -47,20 +47,6 @@ class SandboxdSettings(BaseModel):
         return values
 
 
-class SandboxTool(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    profile_id: str
-    image: str
-    args: tuple[str, ...] = ()
-
-    @model_validator(mode="after")
-    def safe_args(self) -> "SandboxTool":
-        if len(self.args) > 32 or any("\x00" in value for value in self.args):
-            raise ValueError("sandbox tool args are invalid")
-        return self
-
-
 class SandboxConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -71,7 +57,6 @@ class SandboxConfig(BaseModel):
     docker_sandbox: DockerSandboxSettings = Field(default_factory=DockerSandboxSettings)
     sandboxd: SandboxdSettings = Field(default_factory=SandboxdSettings)
     profiles: dict[str, SandboxProfile]
-    tools: dict[str, SandboxTool] = Field(default_factory=dict)
     _digest: str = PrivateAttr(default="")
 
     @model_validator(mode="after")
@@ -101,15 +86,6 @@ class SandboxConfig(BaseModel):
                 and profile.toolset_digest is None
             ):
                 raise ValueError(f"enforced profile {key!r} requires a toolset digest")
-        for tool_id, tool in self.tools.items():
-            if not re.fullmatch(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$", tool_id):
-                raise ValueError(f"invalid sandbox tool id {tool_id!r}")
-            if tool.profile_id not in self.profiles:
-                raise ValueError(f"sandbox tool {tool_id!r} references an unknown profile")
-            if self.runtime == "enforced" and not re.search(
-                r"@sha256:[a-f0-9]{64}$", tool.image
-            ):
-                raise ValueError(f"enforced sandbox tool {tool_id!r} requires a pinned image")
         return self
 
     @property
@@ -128,7 +104,11 @@ class SandboxConfig(BaseModel):
             raise ValueError(f"unknown sandbox profile: {profile_id}") from exc
 
 
-def load_sandbox_config(path: str | Path | None = None) -> tuple[SandboxConfig, Path]:
+def load_sandbox_config(
+    path: str | Path | None = None,
+    *,
+    apply_environment: bool = True,
+) -> tuple[SandboxConfig, Path]:
     resolved = Path(
         path or os.environ.get("TGA_SANDBOX_CONFIG_PATH") or DEFAULT_CONFIG_PATH
     ).expanduser().resolve()
@@ -144,7 +124,7 @@ def load_sandbox_config(path: str | Path | None = None) -> tuple[SandboxConfig, 
         resolved.read_text(encoding="utf-8"),
         object_pairs_hook=reject_duplicates,
     )
-    runtime_override = os.environ.get("TGA_SANDBOX_RUNTIME")
+    runtime_override = os.environ.get("TGA_SANDBOX_RUNTIME") if apply_environment else None
     if runtime_override:
         payload["runtime"] = runtime_override
     config = SandboxConfig.model_validate(payload)

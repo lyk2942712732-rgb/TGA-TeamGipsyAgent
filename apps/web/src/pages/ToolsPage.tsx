@@ -1,7 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, RefreshCw, Search, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
-import { requestJson } from "../api/client";
+import { fetchHostCapabilities, fetchKaliCapabilities, fetchKaliProfiles, type HostCapabilityRecord, type KaliProfileRecord } from "../api/catalog-query-adapter";
 import { runtimeApi } from "../runtime/api-v2";
 import type { MCPManagedServer } from "../runtime/event-types";
 import { MCPWizard } from "../components/mcp/MCPWizard";
@@ -14,316 +14,42 @@ import { ErrorState } from "../components/ui/ErrorState";
 import { LoadingSkeleton } from "../components/ui/LoadingSkeleton";
 import { RiskBadge } from "../components/ui/RiskBadge";
 import { StatusBadge } from "../shared/StatusBadge";
-import { MODE_PROFILES } from "../modes";
 
-type Capability = {
-  name: string;
-  description: string;
-  kind: string;
-  risk: string;
-  modes: string[];
-  availability: string;
-  budget_key?: string;
-  input_schema?: { properties?: Record<string, unknown>; required?: string[] };
-};
-
-type McpRecord = {
-  server: string;
-  configured: boolean;
-  enabled: boolean;
-  reachable: boolean;
-  discovered: boolean;
-  tools: number;
-  transport: string;
-  image?: string | null;
-  endpoint?: string | null;
-  error?: string | null;
-  protocol_version?: string;
-};
-
-const TABS: DetailTab[] = [
-  { id: "capabilities", label: "Capabilities（工具能力）" },
-  { id: "servers", label: "MCP Servers（服务器）" },
-];
-
-const fetchCapabilitySnapshot = () => requestJson<{ capabilities: Capability[] }>("/api/v2/capabilities");
-const fetchToolHealth = () => requestJson<{ configured: boolean; records: McpRecord[] }>("/api/v2/tools/health");
-
+const TABS: DetailTab[] = [{ id: "host", label: "Host 能力" }, { id: "kali", label: "Kali 沙箱" }, { id: "mcp", label: "MCP Servers" }];
 export function CapabilitiesPage() {
-  const [tab, setTab] = useState("capabilities");
-
-  return <div className="ref-page">
-    <header className="ref-page-head">
-      <div>
-        <h1>Tools &amp; MCP</h1>
-        <p>管理工具能力和 MCP 服务器</p>
-      </div>
-    </header>
-
-    <DetailTabs tabs={TABS} active={tab} onSelect={setTab} size="lg" />
-
-    {tab === "capabilities" ? <CapabilitiesTab /> : <ServersTab />}
-  </div>;
+  const [tab, setTab] = useState("host");
+  return <div className="ref-page"><header className="ref-page-head"><div><h1>Tools &amp; MCP</h1><p>管理 Host 能力、Kali 沙箱与 MCP 服务</p></div></header><DetailTabs tabs={TABS} active={tab} onSelect={setTab} size="lg" />{tab === "host" ? <HostTab /> : tab === "kali" ? <KaliTab /> : <ServersTab />}</div>;
 }
-
-/** The registry's own `kind`, presented as the reference's 类别 / 执行位置. */
-const KIND_LABELS: Record<string, string> = {
-  workspace: "Workspace", http: "Network", control: "Control", execution: "Execution",
-};
-const SURFACE_LABELS: Record<string, string> = {
-  workspace: "任务工作区", http: "受控网络出口", control: "编排运行时", execution: "隔离容器",
-};
-
-function CapabilitiesTab() {
-  const [search, setSearch] = useState("");
-  const [kind, setKind] = useState("");
-  const [selectedName, setSelectedName] = useState<string | null>(null);
-
-  const query = useQuery({ queryKey: ["capabilities"], queryFn: fetchCapabilitySnapshot });
-  const all = useMemo(() => query.data?.capabilities ?? [], [query.data]);
-
-  const items = useMemo(() => {
-    const needle = search.trim().toLocaleLowerCase();
-    return all.filter((item) => (!needle
-      || item.name.toLocaleLowerCase().includes(needle)
-      || item.description.toLocaleLowerCase().includes(needle))
-      && (!kind || item.kind === kind));
-  }, [all, search, kind]);
-
-  const selected = items.find((item) => item.name === selectedName) ?? items[0] ?? null;
-
-  const columns: Array<Column<Capability>> = [
-    { id: "name", header: "能力名称", render: (row) => <strong className="capability-name">{row.name}</strong> },
-    { id: "kind", header: "类别", render: (row) => <span className="cell-muted">{KIND_LABELS[row.kind] ?? row.kind}</span> },
-    { id: "risk", header: "风险等级", render: (row) => <RiskBadge value={row.risk} /> },
-    // Approval is decided by the task's ExecutionPolicy.high_impact mode, not by
-    // the capability — so this cannot be derived from `risk` here.
-    { id: "approval", header: "审批要求", render: () => <span className="ref-chip tone-muted">按任务策略</span> },
-    { id: "where", header: "执行位置", render: (row) => <span className="cell-muted">{SURFACE_LABELS[row.kind] ?? "—"}</span> },
+function HostTab() {
+  const [search, setSearch] = useState(""); const [category, setCategory] = useState(""); const [role, setRole] = useState(""); const [selectedId, setSelectedId] = useState<string | null>(null);
+  const query = useQuery({ queryKey: ["capabilities", "host"], queryFn: fetchHostCapabilities });
+  const all = useMemo(() => query.data?.items ?? [], [query.data]);
+  const items = useMemo(() => { const needle = search.trim().toLowerCase(); return all.filter((item) => (!needle || `${item.id} ${item.display_name} ${item.description}`.toLowerCase().includes(needle)) && (!category || item.category === category) && (!role || item.allowed_roles.includes(role))); }, [all, search, category, role]);
+  const selected = items.find((item) => item.id === selectedId) ?? items[0] ?? null;
+  const columns: Array<Column<HostCapabilityRecord>> = [
+    { id: "name", header: "能力", render: (row) => <span className="task-name-cell"><strong>{row.id}</strong><small>{row.display_name}</small></span> },
+    { id: "category", header: "分类", render: (row) => row.category }, { id: "risk", header: "风险", render: (row) => <RiskBadge value={row.risk} /> },
+    { id: "roles", header: "适用角色", render: (row) => <ChipList values={row.allowed_roles} tone="neutral" /> }, { id: "handler", header: "Handler", render: (row) => <StatusBadge value={row.handler_status} label="已实现" /> },
+    { id: "solvers", header: "Solver", render: (row) => row.assigned_solver_count, align: "center" },
   ];
-
-  if (query.isLoading) return <LoadingSkeleton label="正在读取能力目录" rows={6} />;
-  if (query.isError) return <ErrorState
-    description={query.error instanceof Error ? query.error.message : "无法读取 Capability Registry"}
-    actionLabel="重试"
-    onAction={() => void query.refetch()}
-  />;
-
-  return <>
-    <section className="ref-filter-row" aria-label="筛选能力">
-      <label className="ref-search">
-        <Search size={16} aria-hidden="true" />
-        <input aria-label="搜索能力名称" placeholder="搜索能力名称..."
-          value={search} onChange={(event) => setSearch(event.target.value)} />
-      </label>
-      <select aria-label="类别筛选" value={kind} onChange={(event) => setKind(event.target.value)}>
-        <option value="">类别: 全部</option>
-        {[...new Set(all.map((item) => item.kind))].sort().map((value) => (
-          <option key={value} value={value}>{value}</option>
-        ))}
-      </select>
-    </section>
-
-    {!items.length ? <EmptyState title="没有匹配的能力" description="调整搜索或筛选条件后重试。" />
-      : <div className="ref-master-detail tools-layout ref-fill">
-        <CatalogTable
-          fill
-          columns={columns}
-          rows={items}
-          rowKey={(row) => row.name}
-          selectedKey={selected?.name}
-          onSelect={(row) => setSelectedName(row.name)}
-        />
-        {selected ? <section className="ref-detail-panel" aria-label={`${selected.name} 详情`}>
-          <header className="ref-detail-head">
-            <div className="ref-detail-title"><h2>{selected.name}</h2></div>
-            <StatusBadge value={selected.availability} />
-          </header>
-
-          <FieldGrid fields={[
-            { label: "类别", value: KIND_LABELS[selected.kind] ?? selected.kind },
-            { label: "风险等级", value: <RiskBadge value={selected.risk} /> },
-            { label: "审批要求", value: <span className="ref-chip tone-muted">按任务策略</span> },
-            { label: "执行位置", value: SURFACE_LABELS[selected.kind], missing: !SURFACE_LABELS[selected.kind] },
-            { label: "预算科目", value: selected.budget_key },
-            { label: "适用模式", value: <ChipList values={selected.modes.map(modeLabel)} tone="neutral" /> },
-          ]} />
-
-          <div>
-            <h3 className="ref-subhead">描述</h3>
-            <p className="skill-summary">{selected.description}</p>
-          </div>
-
-          <div>
-            <h3 className="ref-subhead">参数模式</h3>
-            <ChipList values={Object.keys(selected.input_schema?.properties ?? {})} />
-          </div>
-
-          <div>
-            <h3 className="ref-subhead">使用统计</h3>
-            <FieldGrid fields={[
-              { label: "调用次数", missing: true },
-              { label: "关联任务数", missing: true },
-              { label: "更新时间", missing: true },
-            ]} />
-          </div>
-        </section> : null}
-      </div>}
-  </>;
+  if (query.isLoading) return <LoadingSkeleton label="正在读取 Host 能力" rows={7} />;
+  if (query.isError) return <ErrorState description="无法读取 Host 能力" actionLabel="重试" onAction={() => void query.refetch()} />;
+  return <><section className="ref-filter-row"><label className="ref-search"><Search size={16} /><input aria-label="搜索 Host 能力" placeholder="搜索能力名称或描述" value={search} onChange={(e) => setSearch(e.target.value)} /></label><select aria-label="能力分类" value={category} onChange={(e) => setCategory(e.target.value)}><option value="">全部分类</option>{[...new Set(all.map((item) => item.category))].map((value) => <option key={value}>{value}</option>)}</select><select aria-label="适用角色" value={role} onChange={(e) => setRole(e.target.value)}><option value="">全部角色</option>{["supervisor", "worker", "reviewer", "reporter"].map((value) => <option key={value}>{value}</option>)}</select></section>{!items.length ? <EmptyState title="没有匹配的 Host 能力" /> : <div className="ref-master-detail tools-layout ref-fill"><CatalogTable fill columns={columns} rows={items} rowKey={(row) => row.id} selectedKey={selected?.id} onSelect={(row) => setSelectedId(row.id)} />{selected ? <section className="ref-detail-panel"><header className="ref-detail-head"><h2>{selected.id}</h2><StatusBadge value={selected.handler_status} label="Handler ready" /></header><p className="skill-summary">{selected.description}</p><FieldGrid fields={[{ label: "显示名称", value: selected.display_name }, { label: "分类", value: selected.category }, { label: "风险", value: <RiskBadge value={selected.risk} /> }, { label: "Handler", value: <code>{selected.handler_key}</code> }, { label: "适用角色", value: <ChipList values={selected.allowed_roles} tone="neutral" /> }, { label: "参数", value: <ChipList values={Object.keys(selected.input_schema.properties ?? {})} /> }, { label: "配置该能力的 Solver", value: <ChipList values={selected.assigned_solver_ids} tone="neutral" /> }]} /></section> : null}</div>}</>;
 }
-
+function KaliTab() {
+  const capabilities = useQuery({ queryKey: ["capabilities", "kali"], queryFn: fetchKaliCapabilities }); const profiles = useQuery({ queryKey: ["kali", "profiles"], queryFn: fetchKaliProfiles }); const [selectedProfile, setSelectedProfile] = useState<string | null>(null);
+  if (capabilities.isLoading || profiles.isLoading) return <LoadingSkeleton label="正在读取 Kali 配置" rows={7} />;
+  if (capabilities.isError || profiles.isError) return <ErrorState description="无法读取 Kali 配置" actionLabel="重试" onAction={() => { void capabilities.refetch(); void profiles.refetch(); }} />;
+  const profileItems = profiles.data?.items ?? []; const active = profileItems.find((item) => item.id === selectedProfile) ?? profileItems[0] ?? null;
+  const columns: Array<Column<KaliProfileRecord>> = [{ id: "profile", header: "Profile", render: (row) => <strong>{row.id}</strong> }, { id: "image", header: "镜像", render: (row) => <code>{row.image}</code> }, { id: "tools", header: "工具", render: (row) => row.tools.length, align: "center" }, { id: "caps", header: "能力", render: (row) => <ChipList values={row.supported_capabilities} /> }, { id: "network", header: "网络", render: (row) => row.network_mode }, { id: "solvers", header: "Solver", render: (row) => row.assigned_solver_count, align: "center" }];
+  return <div className="ref-detail-body"><section><h2>Kali 执行能力</h2><div className="capability-grid">{(capabilities.data?.items ?? []).map((item) => <article className="capability-card" key={item.id}><div className="capability-title"><div><h3>{item.id}</h3><p>{item.description}</p></div><RiskBadge value={item.risk} /></div><FieldGrid fields={[{ label: "配置 Solver", value: <ChipList values={item.assigned_solver_ids} /> }, { label: "绑定 Profile", value: <ChipList values={item.profile_ids} tone="neutral" /> }, { label: "参数", value: <ChipList values={Object.keys(item.input_schema.properties ?? {})} tone="neutral" /> }]} /></article>)}</div></section><section><h2>Kali Profiles</h2><div className="ref-master-detail tools-layout"><CatalogTable columns={columns} rows={profileItems} rowKey={(row) => row.id} selectedKey={active?.id} onSelect={(row) => setSelectedProfile(row.id)} />{active ? <section className="ref-detail-panel"><header className="ref-detail-head"><div><h2>{active.id}</h2><code>{active.image}</code></div><StatusBadge value={active.enabled ? "available" : "unavailable"} /></header><FieldGrid fields={[{ label: "镜像摘要", value: active.image_digest ? <code>{active.image_digest}</code> : "未固定" }, { label: "能力", value: <ChipList values={active.supported_capabilities} /> }, { label: "绑定 Solver", value: <ChipList values={active.assigned_solver_ids} tone="neutral" /> }, { label: "已安装工具", value: <ChipList values={active.tools.map((tool) => tool.version ? `${tool.name} ${tool.version}` : tool.name)} tone="neutral" /> }, { label: "网络", value: active.network_mode }, { label: "挂载", value: `Inputs ${active.input_mount} / Scratch ${active.scratch_mount} / Artifacts ${active.shared_artifact_mount}` }, { label: "资源", value: `${active.limits.cpu_cores} CPU / ${active.limits.memory_mb} MB / ${active.limits.timeout_seconds}s` }]} /></section> : null}</div></section></div>;
+}
+type McpRecord = { server: string; configured: boolean; enabled: boolean; reachable: boolean; discovered: boolean; tools: number; transport: string; image?: string | null; endpoint?: string | null; error?: string | null };
 function ServersTab() {
-  const client = useQueryClient();
-  const [selectedServer, setSelectedServer] = useState<string | null>(null);
-  const [wizardFor, setWizardFor] = useState<MCPManagedServer | null | "new">(null);
-  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-
-  const query = useQuery({ queryKey: ["tools", "health"], queryFn: fetchToolHealth });
-  const managed = useQuery({ queryKey: ["mcp", "servers"], queryFn: () => runtimeApi.mcpServers() });
-
-  const records = query.data?.records ?? [];
-  const selected = records.find((item) => item.server === selectedServer) ?? records[0] ?? null;
-  const managedFor = (id: string) => managed.data?.servers.find((item) => item.id === id) ?? null;
-
-  const refreshAll = async () => {
-    await Promise.all([
-      client.invalidateQueries({ queryKey: ["tools", "health"] }),
-      client.invalidateQueries({ queryKey: ["mcp", "servers"] }),
-    ]);
-  };
-
-  const toggleEnabled = async (id: string, enabled: boolean) => {
-    setBusy(true);
-    setError("");
-    try {
-      await runtimeApi.updateMCPServer(id, { enabled });
-      await refreshAll();
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "更新 MCP 服务器失败");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const removeServer = async (id: string) => {
-    setBusy(true);
-    setError("");
-    try {
-      await runtimeApi.deleteMCPServer(id);
-      await refreshAll();
-      setConfirmDelete(null);
-      setSelectedServer(null);
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "删除 MCP 服务器失败");
-      setConfirmDelete(null);
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const columns: Array<Column<McpRecord>> = [
-    { id: "server", header: "服务器", render: (row) => <strong>{row.server}</strong> },
-    { id: "transport", header: "传输", render: (row) => <span className="chip tone-neutral">{row.transport}</span> },
-    {
-      id: "enabled", header: "启用",
-      render: (row) => <StatusBadge value={row.enabled ? "available" : "unavailable"} label={row.enabled ? "已启用" : "未启用"} />,
-    },
-    {
-      id: "reachable", header: "可达",
-      render: (row) => <StatusBadge value={row.reachable ? "healthy" : "unavailable"} label={row.reachable ? "可达" : "不可达"} />,
-    },
-    { id: "tools", header: "工具数", render: (row) => row.tools, align: "center" },
-    { id: "image", header: "镜像 / 端点", render: (row) => <code className="ref-hash">{row.image ?? row.endpoint ?? "—"}</code> },
-  ];
-
-  if (query.isLoading) return <LoadingSkeleton label="正在读取 MCP 健康状态" rows={6} />;
-  if (query.isError) return <ErrorState
-    description={query.error instanceof Error ? query.error.message : "无法读取 MCP 健康快照"}
-    actionLabel="重试"
-    onAction={() => void query.refetch()}
-  />;
-
-  const toolbar = <section className="ref-filter-row" aria-label="MCP 操作">
-    <button className="ref-primary-button" onClick={() => setWizardFor("new")}><Plus size={16} />添加 MCP 服务器</button>
-    <button className="ref-secondary-button" disabled={busy} onClick={() => void refreshAll()}><RefreshCw size={14} />刷新</button>
-  </section>;
-
-  const wizard = wizardFor !== null ? <MCPWizard
-    initial={wizardFor === "new" ? undefined : wizardFor}
-    onClose={() => setWizardFor(null)}
-    onSaved={() => { setWizardFor(null); void refreshAll(); }}
-  /> : null;
-
-  if (!records.length) return <>
-    {toolbar}
-    {error ? <p className="inline-error" role="alert">{error}</p> : null}
-    <EmptyState title="暂无 MCP 服务器" description="通过「添加 MCP 服务器」导入镜像，或在 config/mcp.json 中配置。" />
-    {wizard}
-  </>;
-
-  return <>
-    {toolbar}
-    {error ? <p className="inline-error" role="alert">{error}</p> : null}
-
-    <div className="ref-master-detail tools-layout">
-      <CatalogTable
-        columns={columns}
-        rows={records}
-        rowKey={(row) => row.server}
-        selectedKey={selected?.server}
-        onSelect={(row) => setSelectedServer(row.server)}
-      />
-      {selected ? <section className="ref-detail-panel" aria-label={`${selected.server} 详情`}>
-        <header className="ref-detail-head">
-          <div className="ref-detail-title"><h2>{selected.server}</h2></div>
-          <div className="policy-actions">
-            <button className="ref-secondary-button" disabled={busy}
-              onClick={() => void toggleEnabled(selected.server, !selected.enabled)}>
-              {selected.enabled ? "停用" : "启用"}
-            </button>
-            {managedFor(selected.server)
-              ? <>
-                <button className="ref-secondary-button" disabled={busy}
-                  onClick={() => setWizardFor(managedFor(selected.server))}>编辑</button>
-                <button className="ref-secondary-button" disabled={busy}
-                  onClick={() => setConfirmDelete(selected.server)}><Trash2 size={14} />删除</button>
-              </>
-              : null}
-          </div>
-        </header>
-
-        <FieldGrid columns={2} fields={[
-          { label: "已配置", value: selected.configured ? "是" : "否" },
-          { label: "已启用", value: selected.enabled ? "是" : "否" },
-          { label: "已发现", value: selected.discovered ? "是" : "否" },
-          { label: "传输方式", value: selected.transport },
-          { label: "工具数", value: selected.tools },
-          { label: "协议版本", value: selected.protocol_version || <span className="field-empty">—</span> },
-          { label: "镜像", value: selected.image ?? <span className="field-empty">—</span> },
-          { label: "端点", value: selected.endpoint ?? <span className="field-empty">—</span> },
-        ]} />
-
-        {selected.error ? <p className="inline-error" role="alert">{selected.error}</p> : null}
-      </section> : null}
-    </div>
-
-    <ConfirmDialog
-      open={confirmDelete !== null}
-      title={`删除 MCP 服务器 ${confirmDelete ?? ""}`}
-      description="删除后该服务器不再出现在工具目录中。已导入的镜像不会被删除。"
-      confirmLabel="删除"
-      danger
-      busy={busy}
-      onConfirm={() => confirmDelete && void removeServer(confirmDelete)}
-      onCancel={() => setConfirmDelete(null)}
-    />
-
-    {wizard}
-  </>;
-}
-
-function modeLabel(mode: string): string {
-  return MODE_PROFILES[mode as keyof typeof MODE_PROFILES]?.label ?? mode;
+  const client = useQueryClient(); const [selectedId, setSelectedId] = useState<string | null>(null); const [wizard, setWizard] = useState<MCPManagedServer | "new" | null>(null); const [remove, setRemove] = useState<string | null>(null); const [busy, setBusy] = useState(false);
+  const query = useQuery({ queryKey: ["tools", "health"], queryFn: () => runtimeApi.toolHealth() as Promise<{ records: McpRecord[] }> }); const managed = useQuery({ queryKey: ["mcp", "servers"], queryFn: runtimeApi.mcpServers }); const records = query.data?.records ?? []; const selected = records.find((item) => item.server === selectedId) ?? records[0] ?? null;
+  const refresh = () => Promise.all([client.invalidateQueries({ queryKey: ["tools", "health"] }), client.invalidateQueries({ queryKey: ["mcp", "servers"] })]);
+  if (query.isLoading) return <LoadingSkeleton label="正在读取 MCP 状态" rows={6} />; if (query.isError) return <ErrorState description="无法读取 MCP 状态" actionLabel="重试" onAction={() => void query.refetch()} />;
+  const columns: Array<Column<McpRecord>> = [{ id: "server", header: "服务器", render: (row) => <strong>{row.server}</strong> }, { id: "transport", header: "传输", render: (row) => row.transport }, { id: "enabled", header: "启用", render: (row) => <StatusBadge value={row.enabled ? "available" : "unavailable"} /> }, { id: "reachable", header: "可达", render: (row) => <StatusBadge value={row.reachable ? "healthy" : "unavailable"} /> }, { id: "tools", header: "工具", render: (row) => row.tools, align: "center" }];
+  return <><section className="ref-filter-row"><button className="ref-primary-button" onClick={() => setWizard("new")}><Plus size={16} />添加 MCP 服务</button><button className="ref-secondary-button" onClick={() => void refresh()}><RefreshCw size={14} />刷新</button></section>{!records.length ? <EmptyState title="暂无 MCP 服务" /> : <div className="ref-master-detail tools-layout"><CatalogTable columns={columns} rows={records} rowKey={(row) => row.server} selectedKey={selected?.server} onSelect={(row) => setSelectedId(row.server)} />{selected ? <section className="ref-detail-panel"><header className="ref-detail-head"><h2>{selected.server}</h2><div className="policy-actions"><button className="ref-secondary-button" disabled={busy} onClick={async () => { setBusy(true); try { await runtimeApi.updateMCPServer(selected.server, { enabled: !selected.enabled }); await refresh(); } finally { setBusy(false); } }}>{selected.enabled ? "停用" : "启用"}</button>{managed.data?.servers.find((item) => item.id === selected.server) ? <><button className="ref-secondary-button" onClick={() => setWizard(managed.data!.servers.find((item) => item.id === selected.server)!)}>编辑</button><button className="ref-secondary-button" onClick={() => setRemove(selected.server)}><Trash2 size={14} />删除</button></> : null}</div></header><FieldGrid fields={[{ label: "传输", value: selected.transport }, { label: "工具数", value: selected.tools }, { label: "镜像/端点", value: selected.image ?? selected.endpoint ?? "-" }, { label: "错误", value: selected.error ?? "无" }]} /></section> : null}</div>}<ConfirmDialog open={remove !== null} title={`删除 MCP 服务 ${remove ?? ""}`} description="删除后该服务不再进入工具目录。" confirmLabel="删除" danger busy={busy} onCancel={() => setRemove(null)} onConfirm={async () => { if (!remove) return; setBusy(true); try { await runtimeApi.deleteMCPServer(remove); setRemove(null); setSelectedId(null); await refresh(); } finally { setBusy(false); } }} />{wizard !== null ? <MCPWizard initial={wizard === "new" ? undefined : wizard} onClose={() => setWizard(null)} onSaved={() => { setWizard(null); void refresh(); }} /> : null}</>;
 }

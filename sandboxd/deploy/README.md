@@ -13,6 +13,12 @@ gVisor `runsc`, nftables and cgroup v2. It never opens a TCP listener.
 6. Add only the Python API service account to `tga-sandbox`; do not add Agent
    or tool-container users to that group.
 
+The configuration declares SandboxProfiles only. It has no top-level `tools`
+mapping, so a configuration that still carries one is rejected at load with an
+unknown-field error. Local CLI tools ship inside the Profile's Kali image and
+are gated by that Profile's `allowed_executables` allowlist; operators do not
+register per-tool images or fixed arguments anywhere in `sandbox.json`.
+
 Release image builds must pass a digest-pinned `KALI_BASE`, for example:
 
 ```text

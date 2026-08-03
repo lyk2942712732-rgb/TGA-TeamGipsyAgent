@@ -334,7 +334,7 @@ class TaskRuntimeService:
                             "content_sha256": skill.content_sha256,
                             "origin": skill.origin,
                             "selection_reasons": list(skill.selection_reasons),
-                            "required_capabilities": list(skill.required_capabilities),
+                            "capability_requirements": list(skill.capability_requirements),
                         }
                         for skill in task_common_skills.skills
                     ],
@@ -1102,15 +1102,19 @@ def _solver_projection(repositories: PersistenceBundle, solver) -> dict[str, Any
             "total_chars": skill.total_chars,
             "created_at": skill.created_at,
         } if skill is not None else {}),
-        "tool_policy": {
-            "profile": solver.tool_policy_snapshot.profile,
-            "allowed_tool_groups": list(
-                solver.tool_policy_snapshot.allowed_tool_groups
+        "capability_binding": {
+            "host_capability_profile_id": (
+                solver.capability_binding_snapshot.host_capability_profile_id
             ),
-            "allowed_capabilities": list(
-                solver.tool_policy_snapshot.allowed_capabilities
+            "host_capability_ids": list(
+                solver.capability_binding_snapshot.host_capability_ids
             ),
-            "content_sha256": solver.tool_policy_snapshot.content_sha256,
+            "kali": (
+                solver.capability_binding_snapshot.kali.model_dump(mode="json")
+                if solver.capability_binding_snapshot.kali is not None
+                else None
+            ),
+            "content_sha256": solver.capability_binding_snapshot.content_sha256,
         },
         "budget_usage": {
             key: max(0, int(usage.get(key) or 0))

@@ -27,7 +27,7 @@ from tga.runtime.tooling.requests import (
 def _seed_task(
     run_root: Path, *, task_id: str, status: str,
     approval_status: str | None = None, risk: str = "active",
-    capability: str = "workspace.write", expires_in_hours: int = 24,
+    capability: str = "artifact.publish", expires_in_hours: int = 24,
 ) -> dict[str, str]:
     task = v6_task(
         id=task_id, name=f"Task {task_id}", mode="ctf",
@@ -81,7 +81,7 @@ def _seed_task(
                 orchestration_role="supervisor",
                 solver_definition_id="ctf-supervisor",
                 execution_policy_snapshot_id="execution:" + "a" * 64,
-                solver_tool_policy_snapshot_id="tool:" + "b" * 64,
+                solver_capability_snapshot_id="tool:" + "b" * 64,
                 created_at=now,
             ),
             provider_tool_name=capability.replace(".", "_"),
@@ -180,7 +180,7 @@ def test_global_approvals_support_real_filters_and_pagination(tmp_path, monkeypa
     monkeypatch.setenv("TGA_RUN_ROOT", str(run_root))
     pending = _seed_task(
         run_root, task_id="pending", status="awaiting_approval",
-        approval_status="pending", risk="destructive", capability="workspace.write",
+        approval_status="pending", risk="destructive", capability="artifact.publish",
     )
     _seed_task(
         run_root, task_id="approved", status="running",
@@ -197,7 +197,7 @@ def test_global_approvals_support_real_filters_and_pagination(tmp_path, monkeypa
     response = client.get("/api/v2/approvals", params={
         "status": "pending", "task_id": pending["task_id"],
         "solver_id": pending["solver_id"], "risk": "destructive",
-        "capability": "workspace.write", "offset": 0, "limit": 1,
+        "capability": "artifact.publish", "offset": 0, "limit": 1,
     })
     assert response.status_code == 200
     payload = response.json()

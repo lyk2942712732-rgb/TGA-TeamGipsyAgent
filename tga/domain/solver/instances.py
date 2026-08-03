@@ -6,17 +6,18 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from tga.domain.skills.models import SolverSkillSnapshot
 from tga.domain.solver.budgets import SolverBudget
-from tga.domain.solver.definitions import CompletionAuthority, OrchestrationRole, ToolGroup
+from tga.domain.capabilities.solver_binding import SolverKaliBinding
+from tga.domain.solver.definitions import CompletionAuthority, OrchestrationRole
 from tga.domain.solver.status import SolverInstanceStatus
 from tga.domain.task.models import ModelSnapshot
 
 
-class ToolPolicySnapshot(BaseModel):
+class CapabilityBindingSnapshot(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    profile: str = Field(min_length=1, max_length=128)
-    allowed_tool_groups: tuple[ToolGroup, ...] = Field(default_factory=tuple, max_length=4)
-    allowed_capabilities: tuple[str, ...] = Field(default_factory=tuple, max_length=128)
+    host_capability_profile_id: str = Field(min_length=1, max_length=128)
+    host_capability_ids: tuple[str, ...] = Field(default_factory=tuple, max_length=128)
+    kali: SolverKaliBinding | None = None
     content_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
 
 
@@ -44,7 +45,7 @@ class SolverInstance(BaseModel):
     status: SolverInstanceStatus = SolverInstanceStatus.CREATED
     model_snapshot: ModelSnapshot
     skill_snapshot: SolverSkillSnapshot | None = None
-    tool_policy_snapshot: ToolPolicySnapshot
+    capability_binding_snapshot: CapabilityBindingSnapshot
     budget: SolverBudget
     completion_authority: CompletionAuthority
     transcript_ref: str
@@ -67,4 +68,4 @@ class SolverInstance(BaseModel):
         return self
 
 
-__all__ = ["SolverInstance", "SolverTimestamps", "ToolPolicySnapshot"]
+__all__ = ["CapabilityBindingSnapshot", "SolverInstance", "SolverTimestamps"]

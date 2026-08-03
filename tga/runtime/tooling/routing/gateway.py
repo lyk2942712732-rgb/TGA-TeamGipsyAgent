@@ -5,10 +5,8 @@ from __future__ import annotations
 import hashlib
 import json
 from datetime import UTC, datetime, timedelta
-from pathlib import PurePosixPath, PureWindowsPath
 from typing import Any
 from typing import Callable
-from urllib.parse import urljoin
 
 from tga.domain.governance.models import ActionEffect
 from tga.evidence.database import utc_now
@@ -47,15 +45,10 @@ from tga.tools.mcp_policy import validate_json_schema
 AUTHORITATIVE_ARGUMENTS = {
     "task_id", "solver_id", "intent_id", "policy_snapshot_id",
     "run_id", "run_owner_id", "run_fencing_token", "fencing_token",
-    "execution_policy_snapshot_id", "tool_policy_snapshot_id",
-    "solver_tool_policy_snapshot_id", "parent_solver_id", "global_plan_version",
+    "execution_policy_snapshot_id", "solver_capability_snapshot_id",
+    "parent_solver_id", "global_plan_version",
     "strategy_card_id", "strategy_step_id", "local_plan_step_id",
 }
-
-NETWORK_EXECUTION_CAPABILITIES = {
-    "http.request", "nmap.scan", "ffuf.directory_scan", "nuclei.scan",
-}
-
 
 class ToolGovernanceGateway:
     def __init__(
@@ -141,7 +134,7 @@ class ToolGovernanceGateway:
                         "Approved Action could not reacquire its resource lock.",
                         action_id=action.id,
                     )
-            if action.capability in NETWORK_EXECUTION_CAPABILITIES or action.capability.startswith("mcp:"):
+            if self._uses_network(action.capability, action.normalized_arguments):
                 network_permit = self.network.acquire(
                     idempotency_key=action.id,
                     task_id=action.context.task_id,
@@ -397,7 +390,7 @@ class ToolGovernanceGateway:
                         "Another Action owns the conflicting resource lock.",
                         action_id=action.id,
                     )
-            if action.capability in NETWORK_EXECUTION_CAPABILITIES or action.capability.startswith("mcp:"):
+            if self._uses_network(action.capability, action.normalized_arguments):
                 network_permit = self.network.acquire(
                     idempotency_key=action.id,
                     task_id=action.context.task_id,
@@ -495,7 +488,7 @@ class ToolGovernanceGateway:
         self, capability: str, arguments: dict[str, Any]
     ) -> str | None:
         input_id = str(arguments.get("input_id") or "")
-        if input_id and capability.startswith("input_"):
+        if input_id and capability.startswith("input."):
             # TaskSpec resources are the authoritative authorization source;
             # session_input is unverified task material, not authority.  These
             # ids are already narrowed to the SolverAssignment scope.
@@ -510,15 +503,6 @@ class ToolGovernanceGateway:
                 return "The requested Artifact is outside this SolverAssignment."
             if not self.repository.artifact_owned_by_task(artifact_id, self.task.id):
                 return "The requested Artifact is not owned by this Task."
-        if capability.startswith("workspace."):
-            value = str(
-                arguments.get("relative_path")
-                or arguments.get("script_path")
-                or ""
-            ).replace("\\", "/")
-            path = PurePosixPath(value)
-            if PureWindowsPath(value).is_absolute() or path.is_absolute() or ".." in path.parts:
-                return "Workspace paths must remain relative to the owning Solver workspace."
         return None
 
     def _execute_router(
@@ -530,7 +514,7 @@ class ToolGovernanceGateway:
                     action, backend=action.backend
                 )
                 result = self.execution_backend_router.execute(request)
-                return self._legacy_raw(result)
+                return self._execution_raw(result)
             if approved:
                 return self.execution_adapter.resume_approved(action)
             return self.routers[action.tool_class].execute(action)
@@ -538,7 +522,7 @@ class ToolGovernanceGateway:
             return self._execution_failure(action, exc)
 
     @staticmethod
-    def _legacy_raw(result: ExecutionResult) -> RawExecutionResult:
+    def _execution_raw(result: ExecutionResult) -> RawExecutionResult:
         return RawExecutionResult(
             action_id=result.action_id,
             status=result.status,
@@ -591,7 +575,7 @@ class ToolGovernanceGateway:
     def _authorize(self, *, definition, request, target: str | None, risk: str, effect: ActionEffect) -> AuthorizationDecision:
         snapshots = (
             request.action_context.execution_policy_snapshot_id,
-            request.action_context.solver_tool_policy_snapshot_id,
+            request.action_context.solver_capability_snapshot_id,
         )
         if definition.tool_class != "execution":
             return AuthorizationDecision(
@@ -682,25 +666,16 @@ class ToolGovernanceGateway:
         )
 
     def _resolve_target(self, capability: str, arguments: dict[str, Any], context) -> str | None:
-        if capability == "http.request":
-            requested_url = str(arguments.get("url") or "")
-            if requested_url:
-                return requested_url
-            path = str(arguments.get("path") or "")
-            return urljoin(self.task.task_entry_url or "", path) or None
-        if capability.startswith("workspace.") or capability == "input_materialize":
-            relative = str(arguments.get("relative_path") or arguments.get("script_path") or "workspace")
-            return f"workspace:{context.solver_id}:{relative}"
+        if capability == "kali.exec":
+            return (
+                f"kali:{context.solver_id}:"
+                f"{arguments.get('executable') or ''}:"
+                f"{arguments.get('cwd') or 'scratch'}"
+            )
+        if capability == "kali.session":
+            return str(arguments.get("session_id") or "kali:new-session")
         if capability.startswith("mcp:"):
             return capability
-        if capability == "nmap.scan":
-            return str(arguments.get("target") or "") or None
-        if capability in {"ffuf.directory_scan", "nuclei.scan"}:
-            return str(arguments.get("url") or arguments.get("target") or "") or None
-        if capability in {"binwalk.analyze", "radare2.analyze"}:
-            return f"workspace:{context.solver_id}:{arguments.get('path') or ''}"
-        if capability == "yara.scan":
-            return f"workspace:{context.solver_id}:{arguments.get('target_path') or ''}"
         return str(arguments.get("input_id") or arguments.get("artifact_id") or capability)
 
     @staticmethod
@@ -710,18 +685,10 @@ class ToolGovernanceGateway:
         resolved_target: str | None,
     ) -> dict[str, Any]:
         normalized = dict(arguments)
-        if capability == "http.request":
-            if not resolved_target:
-                raise ValueError("HTTP request has no resolved target")
-            normalized["url"] = resolved_target
-            normalized.pop("path", None)
         return normalized
 
     @staticmethod
     def _risk(definition, arguments: dict[str, Any]) -> str:
-        if definition.capability == "http.request":
-            method = str(arguments.get("method") or "GET").upper()
-            return "destructive" if method == "DELETE" else "active" if method not in {"GET", "HEAD"} else "passive"
         return definition.risk if definition.risk in {"passive", "active", "destructive"} else "active"
 
     @staticmethod
@@ -729,8 +696,7 @@ class ToolGovernanceGateway:
         return (
             risk == "destructive"
             or effect.persistence == "persistent"
-            or capability in {"workspace.write", "input_materialize"}
-            or capability == "http.request" and str(arguments.get("method") or "GET").upper() not in {"GET", "HEAD"}
+            or capability in {"artifact.publish", "input.materialize"}
         )
 
     @staticmethod
@@ -769,6 +735,12 @@ class ToolGovernanceGateway:
         if capability.startswith("mcp:"):
             return target or f"mcp:{capability}"
         return target or f"capability:{capability}"
+
+    @staticmethod
+    def _uses_network(capability: str, arguments: dict[str, Any]) -> bool:
+        return capability.startswith("mcp:") or (
+            capability == "kali.exec" and bool(arguments.get("network_targets"))
+        )
 
     @staticmethod
     def _action_id(request: ToolRequest) -> str:

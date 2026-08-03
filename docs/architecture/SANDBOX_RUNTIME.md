@@ -16,7 +16,7 @@ privileged execution plane.
   profiles, local-process MCP, unavailable providers and mismatched config.
 - Docker Sandboxes compatibility is intentionally limited to `sbx` 0.34.x.
   A task-scoped `shell-docker` template owns the VM, while every command runs
-  in a digest-pinned, non-root inner tool container.
+  in the Profile's digest-pinned, non-root inner container.
 - The sandboxd Unix listener validates both mode `0660` group access and the
   connecting process UID through Linux `SO_PEERCRED`.
 
@@ -34,7 +34,7 @@ passes the current valid instance set to `Reconcile`.
 
 The committed configuration is intentionally `disabled` and contains release
 digest placeholders. Enabling enforcement before replacing every selected
-profile and tool image with a real `@sha256:<64 hex>` reference is rejected.
+Profile image with a real `@sha256:<64 hex>` reference is rejected.
 Remote MCP configuration remains independent from local Kali image pinning.
 # SolverRun Execution Boundary
 
@@ -63,7 +63,7 @@ authorized execution applies request-scoped CIDR and port grants. An empty
 grant set is default-deny, so a prior HTTP or scan action cannot leak network
 access into a later Shell or Python action.
 
-`sandbox.exec` accepts a direct executable and argv vector. The executable must
+`kali.exec` accepts a direct executable and argv vector. The executable must
 be allowlisted by the profile; absolute paths and `..` path components are
 rejected. Typed adapters remain the preferred interface for HTTP and scanner
 operations. sandboxd verifies the manifest digest, Profile ID, allowlisted
@@ -73,3 +73,31 @@ success.
 Local CLI tools such as nmap, ffuf, nuclei, binwalk, yara, and radare2 belong in
 the profile image and Tool Catalog. Do not add them to `mcp.json`; MCP is
 reserved for external systems with an independent remote service lifecycle.
+
+# Sandbox Configuration Owns Profiles Only
+
+`config/sandbox.json` declares exactly seven top-level keys: `version`,
+`runtime`, `terminal_grace_seconds`, `reconcile_interval_seconds`,
+`docker_sandbox`, `sandboxd` and `profiles`. There is no top-level `tools`
+mapping, and no configuration layer assigns a per-tool sandbox image or fixed
+argument vector. Both planes reject an unknown top-level key: the Python model
+uses `extra="forbid"` and sandboxd uses `DisallowUnknownFields`.
+
+The responsibilities are split as follows:
+
+- `SandboxProfile` decides the container image, `toolset_digest`, resource
+  limits, network mode, Linux capabilities and `allowed_executables`.
+- Local CLI tools are installed in the Kali image that the Profile pins. They
+  are not registered individually anywhere in the sandbox configuration.
+- `allowed_executables` is the execution allowlist. sandboxd validates the
+  Profile and checks `argv[0]` against that allowlist; it resolves no tool
+  identity of its own.
+- Tool Catalog, Tool Manifest and `ToolGovernanceGateway` own tool semantics
+  and decide whether a given tool call is authorized.
+- MCP is only for independent external services. It never registers a command
+  that lives inside the Kali container, and in-sandbox MCP server images are
+  not authorized.
+
+Sandbox configuration therefore keeps no second tool registry. `ProcessSpec`
+still carries `tool_id` as an audit, governance and event-record field, which
+is unrelated to image or argument resolution.

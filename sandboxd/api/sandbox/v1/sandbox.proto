@@ -66,6 +66,9 @@ message ProcessSpec {
   uint32 timeout_seconds = 4;
   repeated NetworkGrant network_grants = 5;
   string tool_id = 6;
+  string working_directory = 7;
+  bytes stdin = 8;
+  bool interactive = 9;
 }
 
 message ExecRequest {
@@ -115,6 +118,11 @@ message ProcessInput {
   bool close_stdin = 2;
 }
 
+message ProcessResize {
+  uint32 cols = 1;
+  uint32 rows = 2;
+}
+
 message ProcessOpened {
   string process_id = 1;
 }
@@ -126,6 +134,7 @@ message ProcessMessage {
     ProcessOpened opened = 3;
     ExecFrame frame = 4;
     ExecResult result = 5;
+    ProcessResize resize = 6;
   }
 }
 

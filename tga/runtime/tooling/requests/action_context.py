@@ -18,7 +18,7 @@ class ActionContext(BaseModel):
     orchestration_role: Literal["supervisor", "worker", "reviewer", "reporter"]
     solver_definition_id: str
     execution_policy_snapshot_id: str = Field(min_length=1, max_length=256)
-    solver_tool_policy_snapshot_id: str = Field(min_length=1, max_length=256)
+    solver_capability_snapshot_id: str = Field(min_length=1, max_length=256)
     skill_snapshot_id: str | None = Field(default=None, max_length=256)
     attempt: int = Field(default=1, ge=1, le=1_000_000)
     created_at: str

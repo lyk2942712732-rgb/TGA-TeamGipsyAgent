@@ -62,7 +62,7 @@ class SkillSelector:
             mode=request.mode,
             text=request.search_text,
             tags=tuple(sorted(inferred_tags)),
-            required_capabilities=request.available_capabilities,
+            capability_requirements=request.available_capabilities,
             limit=64,
         ))
         available = set(request.available_capabilities)
@@ -145,7 +145,7 @@ class SkillSelector:
                 version=candidate.skill.version,
                 origin=candidate.origin,
                 modes=tuple(candidate.skill.modes),
-                required_capabilities=tuple(candidate.skill.capabilities),
+                capability_requirements=tuple(candidate.skill.capabilities),
                 tags=tuple(candidate.skill.tags),
                 body=body,
                 content_sha256=hashlib.sha256(body.encode("utf-8")).hexdigest(),

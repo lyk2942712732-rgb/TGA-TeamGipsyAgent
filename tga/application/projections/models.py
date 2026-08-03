@@ -81,7 +81,7 @@ class SolverProjection(ApiDTO):
     current_summary: str = ""
     model_snapshot: dict[str, Any] = Field(default_factory=dict)
     skill_snapshot: dict[str, Any] = Field(default_factory=dict)
-    tool_policy: dict[str, Any] = Field(default_factory=dict)
+    capability_binding: dict[str, Any] = Field(default_factory=dict)
     budget_usage: dict[str, int] = Field(default_factory=dict)
     timestamps: dict[str, str | None] = Field(default_factory=dict)
 

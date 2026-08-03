@@ -50,7 +50,7 @@ def _pending_approval(store: EvidenceStore, task_id: str, action_id: str, deadli
             orchestration_role="supervisor",
             solver_definition_id="ctf-supervisor",
             execution_policy_snapshot_id="execution:" + "a" * 64,
-            solver_tool_policy_snapshot_id="tool:" + "b" * 64,
+            solver_capability_snapshot_id="tool:" + "b" * 64,
             created_at=now,
         ),
         provider_tool_name="fixture_delete",

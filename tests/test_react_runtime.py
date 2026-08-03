@@ -277,7 +277,7 @@ def test_fake_model_drives_real_react_tool_feedback_and_completion(tmp_path: Pat
         assert artifact is not None and artifact.task_id == task.id
         actions = PersistenceBundle(store).tool_governance.list_actions(task.id)
         assert [item["capability"] for item in actions] == [
-            "input_read", "propose_task_completion",
+            "input.read", "propose_task_completion",
         ]
         read_action = actions[0]
         assert read_action["status"] == "succeeded"
@@ -287,7 +287,7 @@ def test_fake_model_drives_real_react_tool_feedback_and_completion(tmp_path: Pat
         assert context["intent_id"] is None
         assert context["local_plan_step_id"] is None
         assert context["execution_policy_snapshot_id"].startswith("execution:")
-        assert context["solver_tool_policy_snapshot_id"].startswith("tool:")
+        assert context["solver_capability_snapshot_id"].startswith("capabilities:")
         assert governed["id"].startswith("governed_")
         event_types = [event.type for event in store.list_agent_events(task.id)]
         assert "ARTIFACT_SAVED" in event_types
@@ -470,7 +470,7 @@ def test_pause_resume_recovers_sqlite_and_transcript_without_duplicate_action(tm
 
     assert completed["session"]["status"] == "completed"
     assert [item["capability"] for item in completed["actions"]] == [
-        "input_read", "propose_task_completion",
+        "input.read", "propose_task_completion",
     ]
     read_action = completed["actions"][0]
     assert completed["flags"][0]["evidence_artifact_id"] == read_action["artifact_ids"][0]

@@ -90,7 +90,7 @@ class ActionSpec(BaseModel):
     intent_id: str | None = None
     local_plan_step_id: str | None = None
     execution_policy_snapshot_id: str | None = None
-    solver_tool_policy_snapshot_id: str | None = None
+    solver_capability_snapshot_id: str | None = None
     governed_action_id: str | None = None
     kind: ActionKind
     capability: str

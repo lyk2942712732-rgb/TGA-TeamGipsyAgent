@@ -1,7 +1,7 @@
 ---
 name: evidence-led-incident-response
 modes: [incident_response]
-capabilities: [workspace.read, artifact.inspect, workspace.python]
+capabilities: [input.read, artifact.inspect, kali.exec]
 tags: [incident-response, timeline, ioc, forensics, evidence]
 version: "1"
 ---

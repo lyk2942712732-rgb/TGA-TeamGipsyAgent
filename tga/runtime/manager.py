@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Protocol
 from uuid import uuid4
 
-from tga.contracts import ActionResult, ActionSpec, TGATask
+from tga.contracts import TGATask
 from tga.evidence.store import EvidenceStore
 from tga.evidence.database import utc_now
 from tga.inputs import task_artifact_root
@@ -52,8 +52,20 @@ class RuntimeLimits:
         return cls(max_turns=bounded("TGA_MAX_SESSION_TURNS", MAX_SESSION_TURNS, 512))
 
 
-class ActionExecutor(Protocol):
-    def execute(self, *, task: TGATask, action: ActionSpec, workspace: Path) -> ActionResult: ...
+class RuntimeExecutionResources(Protocol):
+    sandbox_manager: Any
+
+    def fencing_token(self, solver_id: str) -> int: ...
+
+
+@dataclass(frozen=True)
+class DefaultRuntimeExecutionResources:
+    sandbox_manager: Any
+    fencing_token_provider: Any
+    execution_context: Any | None = None
+
+    def fencing_token(self, solver_id: str) -> int:
+        return int(self.fencing_token_provider(solver_id))
 
 
 class Manager:
@@ -62,7 +74,7 @@ class Manager:
         *,
         store: EvidenceStore | None = None,
         run_root: str | Path | None = None,
-        executor: ActionExecutor | None = None,
+        executor: RuntimeExecutionResources | None = None,
         mcp_manager: MCPManager | None = None,
         model_client: Any | None = None,
         remote_flag_verifier: Any | None = None,
@@ -198,19 +210,6 @@ class Manager:
             ),
         )
         model_call_limiter = ModelCallLimiter(model_call_limit)
-        from tga.capabilities.runtime import ExecutionBudget
-
-        policy = task.execution_policy
-        assert policy is not None
-        shared_execution_budget = ExecutionBudget(
-            http_requests_per_minute=policy.network.rate_limit_per_minute,
-            http_burst=max(1, min(policy.network.concurrency, 10)),
-            http_concurrency=policy.network.concurrency,
-            process_concurrency=policy.local_compute.concurrency,
-            http_timeout_s=policy.network.request_timeout_seconds,
-            process_timeout_s=policy.local_compute.timeout_seconds,
-        )
-
         def repository_factory() -> PersistenceBundle:
             return PersistenceBundle.open(database_path)
 
@@ -223,7 +222,6 @@ class Manager:
                     task,
                     worker_store,
                     execution_context=context,
-                    execution_budget=shared_execution_budget,
                 )
                 runner = SolverRunner(
                     task=task,
@@ -635,15 +633,10 @@ class Manager:
         store: EvidenceStore,
         *,
         execution_context=None,
-        execution_budget=None,
-    ) -> ActionExecutor:
-        from tga.capabilities.runtime import ControlledActionExecutor, ExecutionBudget
-        from tga.evidence.artifacts import ArtifactStore
+    ) -> RuntimeExecutionResources:
         from tga.sandbox import DockerSandboxProvider, SandboxManager, SandboxdProvider, load_sandbox_config
         from tga.sandbox.repository import SandboxInstanceRepository
 
-        policy = task.execution_policy
-        assert policy is not None
         sandbox_config, _ = load_sandbox_config()
         sandbox_manager = SandboxManager(
             config=sandbox_config,
@@ -668,19 +661,7 @@ class Manager:
                 or 1
             )
 
-        return ControlledActionExecutor(
-            artifact_store=ArtifactStore(
-                task_artifact_root(self.run_root / task.id, task),
-                execution_context=execution_context,
-            ),
-            budget=execution_budget or ExecutionBudget(
-                http_requests_per_minute=policy.network.rate_limit_per_minute,
-                http_burst=max(1, min(policy.network.concurrency, 10)),
-                http_concurrency=policy.network.concurrency,
-                process_concurrency=policy.local_compute.concurrency,
-                http_timeout_s=policy.network.request_timeout_seconds,
-                process_timeout_s=policy.local_compute.timeout_seconds,
-            ),
+        return DefaultRuntimeExecutionResources(
             sandbox_manager=sandbox_manager,
             fencing_token_provider=fencing_token,
             execution_context=execution_context,
@@ -716,97 +697,22 @@ class Manager:
             manager.release(handle)
 
     def _open_mcp_sandbox_process(self, task: TGATask, server, workspace: Path | None):
-        from tga.sandbox import DockerSandboxProvider, SandboxManager, SandboxdProvider, load_sandbox_config
-        from tga.sandbox.models import NetworkGrant, ProcessSpec
-        from tga.sandbox.provider import SandboxError
-        from tga.sandbox.repository import SandboxInstanceRepository
+        """Reject in-sandbox MCP server images.
 
-        if workspace is None or server.stdio is None or server.stdio.image is None:
-            raise SandboxError("sandbox MCP requires a task workspace and pinned server image")
-        solver_id = workspace.resolve().name
-        store = EvidenceStore(self.run_root / task.id / "evidence.db")
-        try:
-            execution_context = ActiveRunRegistry.get(task.id, solver_id)
-            if execution_context is not None:
-                execution_context.assert_active()
-                fencing = execution_context.fencing_token
-                solver_run_id = execution_context.run_id
-            else:
-                repositories = PersistenceBundle(store)
-                active = next(
-                    (
-                        run
-                        for run in reversed(repositories.orchestration.list_solver_runs(task.id))
-                        if run.solver_id == solver_id
-                        and run.state in {"leased", "running", "waiting_approval"}
-                    ),
-                    None,
-                )
-                if active is None:
-                    raise SandboxError(
-                        "sandbox MCP requires an active SolverRun",
-                        code="SOLVER_RUN_ID_REQUIRED",
-                    )
-                fencing = active.fencing_token or 1
-                solver_run_id = active.id
-            config, _ = load_sandbox_config()
-            manager = SandboxManager(
-                config=config,
-                providers={
-                    "docker_sandbox": DockerSandboxProvider(config),
-                    "sandboxd": SandboxdProvider(config),
-                },
-                repository=SandboxInstanceRepository(store),
-                event_repository=store,
-            )
-            profile_id = server.execution_profile_id
-            if not profile_id:
-                raise SandboxError("MCP server has no execution profile", code="POLICY_DENIED")
-            handle = manager.acquire(
-                task_id=task.id,
-                solver_id=solver_id,
-                solver_run_id=solver_run_id,
-                profile_id=profile_id,
-                fencing_token=fencing,
-                idempotency_key=f"mcp:{task.id}:{solver_id}:{profile_id}",
-            )
-            tool_id = next(
-                (
-                    key
-                    for key, value in config.tools.items()
-                    if value.profile_id == profile_id
-                    and value.image == server.stdio.image
-                ),
-                None,
-            )
-            if tool_id is None:
-                raise SandboxError(
-                    "MCP image is absent from the trusted sandbox tool catalog",
-                    code="TOOL_IMAGE_NOT_AUTHORIZED",
-                )
-            network_grants: list[NetworkGrant] = []
-            if handle.provider == "sandboxd":
-                cidrs = task.execution_policy.network.custom_cidrs
-                ports = tuple(task.execution_policy.network.custom_ports)
-                if ports:
-                    network_grants.extend(
-                        NetworkGrant(cidr=cidr, ports=ports) for cidr in cidrs
-                    )
-                if config.profile(profile_id).allow_net_raw:
-                    network_grants.extend(
-                        NetworkGrant(cidr=cidr) for cidr in cidrs
-                    )
-            return manager.open_process(
-                handle,
-                ProcessSpec(
-                    tool_id=tool_id,
-                    logical_workspace="solver",
-                    timeout_seconds=server.tool_timeout_seconds,
-                    network_grants=tuple(network_grants),
-                ),
-            )
-        finally:
-            store.close()
+        Sandbox configuration owns SandboxProfiles only; it is not a second tool
+        or image registry. Local CLI commands live in the Profile's Kali image
+        and are authorized by the Tool Catalog plus the Profile's
+        ``allowed_executables`` allowlist, so no per-server MCP image can be
+        granted execution inside a sandbox. MCP stays reserved for independent
+        external services.
+        """
+        from tga.sandbox.provider import SandboxError
+
+        raise SandboxError(
+            "in-sandbox MCP server images are not authorized; MCP is reserved "
+            "for independent external services",
+            code="POLICY_DENIED",
+        )
 
     @staticmethod
     def _next_solver_id(

@@ -2,7 +2,7 @@
 name: crypto-and-encoding
 version: "1"
 modes: [ctf, reverse_engineering]
-capabilities: [workspace.read, workspace.write, workspace.python, artifact.inspect]
+capabilities: [input.read, kali.exec, artifact.inspect]
 tags: [crypto, encoding, decoding]
 ---
 # When to use

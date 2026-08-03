@@ -54,6 +54,9 @@ type ProcessSpec struct {
 	Argv             []string
 	Environment      map[string]string
 	LogicalWorkspace string
+	WorkingDirectory string
+	Stdin            []byte
+	Interactive      bool
 	Timeout          time.Duration
 	MaxOutputBytes   int64
 	SolverID         string
@@ -91,7 +94,6 @@ type Process struct {
 	InstanceID   string
 	FencingToken uint64
 	execID       string
-	containerID  string
 	attached     client.HijackedResponse
 	done         chan struct{}
 	result       Result
@@ -371,8 +373,8 @@ func (r *Runtime) Exec(
 		env = append(env, key+"="+value)
 	}
 	response, err := r.docker.ExecCreate(ctx, instanceID, client.ExecCreateOptions{
-		Cmd: spec.Argv, Env: env, WorkingDir: workspace(spec.LogicalWorkspace, spec.SolverID),
-		AttachStdout: true, AttachStderr: true,
+		Cmd: spec.Argv, Env: env, WorkingDir: workingDirectory(spec),
+		AttachStdin: len(spec.Stdin) > 0, AttachStdout: true, AttachStderr: true,
 	})
 	if err != nil {
 		return Result{}, err
@@ -382,6 +384,14 @@ func (r *Runtime) Exec(
 		return Result{}, err
 	}
 	defer attached.Close()
+	if len(spec.Stdin) > 0 {
+		if _, err := attached.Conn.Write(spec.Stdin); err != nil {
+			return Result{}, err
+		}
+		if err := attached.CloseWrite(); err != nil {
+			return Result{}, err
+		}
+	}
 	runCtx := ctx
 	cancel := func() {}
 	if spec.Timeout > 0 {
@@ -443,16 +453,13 @@ func (r *Runtime) OpenProcess(
 	if err := validateSpec(spec); err != nil {
 		return nil, err
 	}
-	if spec.ToolID != "" {
-		return r.openToolProcess(ctx, instanceID, fencing, spec, emit)
-	}
 	env := make([]string, 0, len(spec.Environment))
 	for key, value := range spec.Environment {
 		env = append(env, key+"="+value)
 	}
 	created, err := r.docker.ExecCreate(ctx, instanceID, client.ExecCreateOptions{
-		Cmd: spec.Argv, Env: env, WorkingDir: workspace(spec.LogicalWorkspace, spec.SolverID),
-		AttachStdin: true, AttachStdout: true, AttachStderr: true,
+		Cmd: spec.Argv, Env: env, WorkingDir: workingDirectory(spec),
+		AttachStdin: true, AttachStdout: true, AttachStderr: true, TTY: spec.Interactive,
 	})
 	if err != nil {
 		return nil, err
@@ -494,7 +501,11 @@ func (r *Runtime) OpenProcess(
 				return emit(Frame{Sequence: sequence.Add(1), Timestamp: time.Now(), Stderr: stderr, Data: append([]byte(nil), data...)})
 			}}
 		}
-		_, process.err = stdcopy.StdCopy(writer(false), writer(true), attached.Reader)
+		if spec.Interactive {
+			_, process.err = io.Copy(writer(false), attached.Reader)
+		} else {
+			_, process.err = stdcopy.StdCopy(writer(false), writer(true), attached.Reader)
+		}
 		inspected, inspectErr := r.docker.ExecInspect(context.Background(), created.ID, client.ExecInspectOptions{})
 		if process.err == nil {
 			process.err = inspectErr
@@ -508,148 +519,28 @@ func (r *Runtime) OpenProcess(
 	return process, nil
 }
 
-func (r *Runtime) openToolProcess(
-	ctx context.Context,
-	instanceID string,
-	fencing uint64,
-	spec ProcessSpec,
-	emit func(Frame) error,
-) (*Process, error) {
-	instance, _, err := r.Inspect(ctx, instanceID, fencing)
-	if err != nil {
-		return nil, err
-	}
-	profile, err := r.config.Profile(instance.ProfileID)
-	if err != nil {
-		return nil, err
-	}
-	tool, err := r.config.Tool(spec.ToolID, instance.ProfileID)
-	if err != nil {
-		return nil, err
-	}
-	root, err := r.config.Workspace(instance.TaskID)
-	if err != nil {
-		return nil, err
-	}
-	env := make([]string, 0, len(spec.Environment))
-	for key, value := range spec.Environment {
-		env = append(env, key+"="+value)
-	}
-	caps := []string{}
-	if profile.AllowNetRaw {
-		caps = append(caps, "NET_RAW")
-	}
-	networkName, _ := runNetwork(instance.TaskID, instance.SolverRunID)
-	toolLabels := labels(instance.TaskID, spec.SolverID, instance.SolverRunID, instance.ProfileID, instance.ConfigDigest, fencing)
-	toolLabels[LabelKind] = "tool"
-	created, err := r.docker.ContainerCreate(ctx, client.ContainerCreateOptions{
-		Config: &container.Config{
-			Image:        tool.Image,
-			Cmd:          append(append([]string{}, tool.Args...), spec.Argv...),
-			Env:          env,
-			WorkingDir:   workspace(spec.LogicalWorkspace, spec.SolverID),
-			User:         "10001:10001",
-			Labels:       toolLabels,
-			OpenStdin:    true,
-			StdinOnce:    false,
-			AttachStdin:  true,
-			AttachStdout: true,
-			AttachStderr: true,
-		},
-		HostConfig: &container.HostConfig{
-			Runtime:        "runsc",
-			ReadonlyRootfs: true,
-			CapDrop:        []string{"ALL"},
-			CapAdd:         caps,
-			SecurityOpt:    []string{"no-new-privileges:true"},
-			Resources: container.Resources{
-				Memory:    profile.Limits.MemoryBytes,
-				NanoCPUs:  int64(profile.Limits.CPUCount * 1_000_000_000),
-				PidsLimit: &profile.Limits.PidsLimit,
-			},
-			Mounts: []mount.Mount{
-				{Type: mount.TypeBind, Source: filepath.Join(root, "solver-runs", instance.SolverRunID), Target: "/workspace/solver"},
-				{Type: mount.TypeBind, Source: filepath.Join(root, "inputs"), Target: "/workspace/inputs", ReadOnly: true},
-				{Type: mount.TypeBind, Source: filepath.Join(root, "shared"), Target: "/workspace/shared", ReadOnly: true},
-			},
-			Tmpfs: map[string]string{"/tmp": "rw,noexec,nosuid,size=67108864,mode=1777"},
-		},
-		NetworkingConfig: &network.NetworkingConfig{EndpointsConfig: map[string]*network.EndpointSettings{
-			networkName: {},
-		}},
-		Name: fmt.Sprintf("tga-tool-%x", sha256.Sum256([]byte(instance.ID+spec.SolverID+spec.ToolID+fmt.Sprint(time.Now().UnixNano()))))[:25],
-	})
-	if err != nil {
-		return nil, err
-	}
-	attached, err := r.docker.ContainerAttach(ctx, created.ID, client.ContainerAttachOptions{
-		Stream: true, Stdin: true, Stdout: true, Stderr: true,
-	})
-	if err != nil {
-		_, _ = r.docker.ContainerRemove(context.Background(), created.ID, client.ContainerRemoveOptions{Force: true})
-		return nil, err
-	}
-	if _, err := r.docker.ContainerStart(ctx, created.ID, client.ContainerStartOptions{}); err != nil {
-		attached.Close()
-		_, _ = r.docker.ContainerRemove(context.Background(), created.ID, client.ContainerRemoveOptions{Force: true})
-		return nil, err
-	}
-	process := &Process{
-		ID: fmt.Sprintf("p-%s", created.ID[:12]), InstanceID: instanceID,
-		FencingToken: fencing, containerID: created.ID,
-		attached: attached.HijackedResponse, done: make(chan struct{}),
-	}
-	r.processes.Store(process.ID, process)
-	if spec.Timeout > 0 {
-		time.AfterFunc(spec.Timeout, func() {
-			_ = r.StopProcess(context.Background(), process.ID, fencing)
-		})
-	}
-	go func() {
-		defer close(process.done)
-		defer r.processes.Delete(process.ID)
-		defer attached.Close()
-		defer func() {
-			_, _ = r.docker.ContainerRemove(context.Background(), created.ID, client.ContainerRemoveOptions{Force: true, RemoveVolumes: true})
-		}()
-		var sequence atomic.Uint64
-		var total atomic.Int64
-		var truncated atomic.Bool
-		writer := func(stderr bool) io.Writer {
-			return &frameWriter{write: func(data []byte) error {
-				remaining := spec.MaxOutputBytes - total.Load()
-				if remaining <= 0 {
-					truncated.Store(true)
-					return nil
-				}
-				if int64(len(data)) > remaining {
-					data = data[:remaining]
-					truncated.Store(true)
-				}
-				total.Add(int64(len(data)))
-				return emit(Frame{Sequence: sequence.Add(1), Timestamp: time.Now(), Stderr: stderr, Data: append([]byte(nil), data...)})
-			}}
-		}
-		_, process.err = stdcopy.StdCopy(writer(false), writer(true), attached.Reader)
-		inspected, inspectErr := r.docker.ContainerInspect(context.Background(), created.ID, client.ContainerInspectOptions{})
-		if process.err == nil {
-			process.err = inspectErr
-		}
-		if inspectErr == nil && inspected.Container.State != nil {
-			code := int32(inspected.Container.State.ExitCode)
-			process.result.ExitCode = &code
-		}
-		process.result.Truncated = truncated.Load()
-	}()
-	return process, nil
-}
-
 func (p *Process) Send(data []byte) error {
 	_, err := p.attached.Conn.Write(data)
 	return err
 }
 
 func (p *Process) CloseStdin() error { return p.attached.CloseWrite() }
+
+func (r *Runtime) ResizeProcess(ctx context.Context, processID string, fencing uint64, cols, rows uint32) error {
+	value, ok := r.processes.Load(processID)
+	if !ok {
+		return errors.New("process not found")
+	}
+	process := value.(*Process)
+	if process.FencingToken != fencing {
+		return errors.New("stale fencing token")
+	}
+	if cols < 20 || rows < 5 || cols > 1000 || rows > 1000 {
+		return errors.New("invalid terminal size")
+	}
+	_, err := r.docker.ExecResize(ctx, process.execID, client.ExecResizeOptions{Width: uint(cols), Height: uint(rows)})
+	return err
+}
 
 func (p *Process) Wait(ctx context.Context) (Result, error) {
 	select {
@@ -675,11 +566,7 @@ func (r *Runtime) StopProcess(ctx context.Context, processID string, fencing uin
 	case <-process.done:
 		return nil
 	case <-time.After(2 * time.Second):
-		target := process.InstanceID
-		if process.containerID != "" {
-			target = process.containerID
-		}
-		_, err := r.docker.ContainerKill(ctx, target, client.ContainerKillOptions{Signal: "KILL"})
+		_, err := r.docker.ContainerKill(ctx, process.InstanceID, client.ContainerKillOptions{Signal: "KILL"})
 		return err
 	}
 }
@@ -710,9 +597,6 @@ func (r *Runtime) Destroy(ctx context.Context, instanceID string, fencing uint64
 	if err != nil {
 		return err
 	}
-	if failures := r.removeRunTools(ctx, instance.TaskID, instance.SolverRunID); len(failures) > 0 {
-		return failures[0]
-	}
 	if _, err := r.docker.ContainerRemove(ctx, instanceID, client.ContainerRemoveOptions{Force: true, RemoveVolumes: true}); err != nil {
 		return err
 	}
@@ -734,14 +618,6 @@ func (r *Runtime) Reconcile(ctx context.Context, valid map[string]struct{}, befo
 	var failures []error
 	for _, value := range listed.Items {
 		kind := value.Labels[LabelKind]
-		if kind == "tool" {
-			if value.Created < before.Unix() {
-				if _, err := r.docker.ContainerRemove(ctx, value.ID, client.ContainerRemoveOptions{Force: true, RemoveVolumes: true}); err != nil {
-					failures = append(failures, err)
-				}
-			}
-			continue
-		}
 		if kind != "sandbox" {
 			continue
 		}
@@ -891,25 +767,6 @@ func (r *Runtime) removeFencingToken(taskID, solverRunID string) error {
 	return nil
 }
 
-func (r *Runtime) removeRunTools(ctx context.Context, taskID, solverRunID string) []error {
-	args := client.Filters{}.
-		Add("label", LabelManaged+"=true").
-		Add("label", LabelTask+"="+taskID).
-		Add("label", LabelRun+"="+solverRunID).
-		Add("label", LabelKind+"=tool")
-	listed, err := r.docker.ContainerList(ctx, client.ContainerListOptions{All: true, Filters: args})
-	if err != nil {
-		return []error{err}
-	}
-	var failures []error
-	for _, value := range listed.Items {
-		if _, err := r.docker.ContainerRemove(ctx, value.ID, client.ContainerRemoveOptions{Force: true, RemoveVolumes: true}); err != nil {
-			failures = append(failures, err)
-		}
-	}
-	return failures
-}
-
 func labels(task, solver, solverRun, profile, digest string, fencing uint64) map[string]string {
 	return map[string]string{
 		LabelManaged: "true", LabelTask: task, LabelSolver: solver,
@@ -927,7 +784,7 @@ func instanceFromLabels(id string, values map[string]string, created string) Ins
 }
 
 func validateSpec(spec ProcessSpec) error {
-	if (len(spec.Argv) == 0 && spec.ToolID == "") || len(spec.Argv) > 256 {
+	if len(spec.Argv) == 0 || len(spec.Argv) > 256 {
 		return errors.New("invalid argv")
 	}
 	for _, value := range spec.Argv {
@@ -938,7 +795,23 @@ func validateSpec(spec ProcessSpec) error {
 	if spec.MaxOutputBytes < 1024 {
 		return errors.New("invalid output limit")
 	}
+	if spec.WorkingDirectory == "" || filepath.IsAbs(spec.WorkingDirectory) {
+		return errors.New("invalid working directory")
+	}
+	for _, part := range strings.Split(filepath.ToSlash(spec.WorkingDirectory), "/") {
+		if part == ".." || part == "" {
+			return errors.New("working directory escapes logical workspace")
+		}
+	}
 	return nil
+}
+
+func workingDirectory(spec ProcessSpec) string {
+	base := workspace(spec.LogicalWorkspace, spec.SolverID)
+	if spec.WorkingDirectory == "." {
+		return base
+	}
+	return base + "/" + filepath.ToSlash(spec.WorkingDirectory)
 }
 
 func workspace(logical, solverID string) string {
