@@ -3,7 +3,10 @@ ARG GO_BUILDER=golang:1.24-bookworm@sha256:1a6d4452c65dea36aac2e2d606b01b4a029ec
 
 FROM ${GO_BUILDER} AS go-tools
 ARG DEBIAN_FRONTEND=noninteractive
-ARG GOSEC_VERSION=v2.22.9
+# gosec v2.22.9 builds against google.golang.org/grpc v1.75.0, which carries
+# CVE-2026-33186 (CRITICAL, fixed in 1.79.3) and fails the release scan. 2.28.0
+# is the first release line to move well past it, at grpc v1.82.0.
+ARG GOSEC_VERSION=v2.28.0
 RUN CGO_ENABLED=0 go install github.com/securego/gosec/v2/cmd/gosec@${GOSEC_VERSION}
 
 FROM ${BASE_IMAGE}
