@@ -1,5 +1,5 @@
 ARG BASE_IMAGE=tga-kali-base:release
-ARG GO_BUILDER=golang:1.24-bookworm@sha256:1a6d4452c65dea36aac2e2d606b01b4a029ec90cc1ae53890540ce6173ea77ac
+ARG GO_BUILDER=golang:1.25-bookworm@sha256:ea341baa9bd5ba6784f6d7161ace70544349a6242d54d34a0fbfd2c4d51c9d58
 
 FROM ${GO_BUILDER} AS projectdiscovery
 ARG DEBIAN_FRONTEND=noninteractive
@@ -8,7 +8,7 @@ ARG NAABU_VERSION=v2.3.4
 ARG HTTPX_VERSION=v1.7.1
 ARG SUBFINDER_VERSION=v2.8.0
 ARG DNSX_VERSION=v1.2.2
-ARG NUCLEI_VERSION=v3.4.10
+ARG NUCLEI_VERSION=v3.8.0
 RUN apt-get update \
     && apt-get install -y --no-install-recommends libpcap-dev \
     && rm -rf /var/lib/apt/lists/* \
