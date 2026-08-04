@@ -99,6 +99,16 @@ html, body { height: 100%; overflow: hidden; }
 .ref-fill.ref-detail-panel .ref-detail-body, .ref-master-detail.ref-fill .ref-detail-body { min-height: min-content; }
 .ref-master-detail.ref-fill > .solver-list { align-content: start; overflow-y: auto; }
 .ref-master-detail.ref-fill > .ref-detail-panel { overflow-y: auto; }
+.solver-management-layout { grid-template-columns: minmax(270px, 330px) minmax(0, 1fr); }
+.solver-detail-panel { grid-auto-rows: max-content; }
+.solver-tab-body { align-content: start; }
+.solver-capabilities { display: grid; gap: var(--sp-4); }
+.solver-capabilities > header { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--sp-3); }
+.solver-capabilities > header h3 { color: var(--c-text); font-size: 15px; font-weight: 700; }
+.solver-capabilities > header p { margin-top: 4px; color: var(--c-text-muted); font-size: 12.5px; }
+.solver-capability-group { display: grid; gap: var(--sp-2); }
+.solver-capability-group > h4 { color: var(--c-text-muted); font-size: 12px; font-weight: 750; text-transform: capitalize; }
+.solver-capabilities .capability-card { display: grid; gap: var(--sp-3); padding: var(--sp-3); border: 1px solid var(--c-border); border-radius: var(--r-md); background: var(--c-surface); }
 /* Policies puts search + table inside one card; only the table scrolls. */
 .policies-layout.ref-fill > .ref-card { grid-template-rows: auto auto minmax(0, 1fr); align-content: stretch; overflow: hidden; }
 .system-layout.ref-fill > div:first-child { display: flex; flex-direction: column; min-height: 0; }
@@ -1243,6 +1253,8 @@ html, body { height: 100%; overflow: hidden; }
   .dashboard-metrics, .system-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .dashboard-columns, .ref-master-detail, .team-detail-grid,
   .skills-layout, .kb-bottom-grid, .system-layout { grid-template-columns: 1fr; }
+  .solver-management-layout { grid-template-columns: 1fr; }
+  .solver-management-layout > .solver-list { max-height: 300px; }
   .field-grid.cols-2, .models-form-grid { grid-template-columns: 1fr; }
 }
 

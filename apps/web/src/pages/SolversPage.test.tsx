@@ -131,6 +131,7 @@ describe("SolversPage capability editor", () => {
     const user = userEvent.setup();
     renderPage();
 
+    await user.click(await screen.findByRole("tab", { name: "能力（Tools）" }));
     await user.click(await screen.findByRole("button", { name: "编辑能力" }));
     await user.click(screen.getByRole("checkbox", { name: /artifact\.inspect/ }));
     await user.click(screen.getByRole("checkbox", { name: /artifact\.publish/ }));
@@ -151,15 +152,18 @@ describe("SolversPage capability editor", () => {
   });
 
   it("shows an unresolved digest as unpublished with the real image reference", async () => {
+    const user = userEvent.setup();
     renderPage();
 
     expect(await screen.findAllByText("未发布")).not.toHaveLength(0);
+    await user.click(screen.getByRole("tab", { name: "Kali 信息" }));
     expect(screen.getByText("ghcr.io/team-gipsy/tga-kali-ctf-pwn@sha256:REPLACE_WITH_RELEASE_DIGEST")).toBeInTheDocument();
     expect(screen.getByText("unresolved_image_digest")).toBeInTheDocument();
     expect(screen.queryByText("健康")).not.toBeInTheDocument();
   });
 
   it("uses overall runtime status instead of a healthy image status", async () => {
+    const user = userEvent.setup();
     mocks.fetchSolverKaliHealthSummary.mockResolvedValue({
       items: [{ solver_id: solver.id, requires_kali: true, profile_id: "ctf-pwn-v1", status: "runtime_unavailable" }], total: 1,
     });
@@ -172,6 +176,7 @@ describe("SolversPage capability editor", () => {
     renderPage();
 
     expect((await screen.findAllByText("Runtime 不可用")).length).toBeGreaterThan(0);
+    await user.click(screen.getByRole("tab", { name: "Kali 信息" }));
     expect(screen.getByText("健康")).toBeInTheDocument();
     expect(screen.getByText("sandboxd 不可用")).toBeInTheDocument();
   });
@@ -180,7 +185,77 @@ describe("SolversPage capability editor", () => {
     const user = userEvent.setup();
     renderPage();
 
+    await user.click(await screen.findByRole("tab", { name: "Kali 信息" }));
     await user.click(await screen.findByRole("button", { name: "重新检查" }));
     expect(await screen.findByText("深度检查暂不可用")).toBeInTheDocument();
+  });
+
+  it("filters Solvers by the raw mode value instead of the translated label", async () => {
+    const user = userEvent.setup();
+    const pentestSolver = {
+      ...solver,
+      id: "web-api-analyst",
+      supported_modes: ["penetration_test"],
+      content_sha256: "c".repeat(64),
+    };
+    mocks.fetchSolverDefinitions.mockResolvedValue({ items: [solver, pentestSolver], total: 2 });
+    renderPage();
+
+    expect(await screen.findAllByText("ctf-pwn-solver")).not.toHaveLength(0);
+    const modeSelect = screen.getByRole("combobox", { name: "支持模式筛选" });
+    expect(screen.getByRole("option", { name: "渗透测试" })).toHaveValue("penetration_test");
+
+    await user.selectOptions(modeSelect, "penetration_test");
+
+    expect(screen.getAllByText("web-api-analyst")).not.toHaveLength(0);
+    expect(screen.queryByText("没有匹配的 Solver")).not.toBeInTheDocument();
+    expect(screen.queryByText("ctf-pwn-solver")).not.toBeInTheDocument();
+  });
+
+  it("keeps Host capabilities inside Tools and places Kali information after Version", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    const tabs = await screen.findAllByRole("tab");
+    expect(tabs.map((tab) => tab.textContent)).toEqual([
+      "基础配置", "Instructions 模板", "能力（Tools）", "默认 Skills", "输出合约", "版本", "Kali 信息",
+    ]);
+    await user.click(screen.getByRole("tab", { name: "能力（Tools）" }));
+    expect(screen.getByText("Host 能力")).toBeInTheDocument();
+    expect(screen.getByText("artifact.inspect")).toBeInTheDocument();
+  });
+
+  it("only shows capability editing actions on capability tabs", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await screen.findByRole("tab", { name: "基础配置" });
+    expect(screen.queryByRole("button", { name: "编辑能力" })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("tab", { name: "Instructions 模板" }));
+    expect(screen.queryByRole("button", { name: "编辑能力" })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("tab", { name: "能力（Tools）" }));
+    expect(screen.getByRole("button", { name: "编辑能力" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("tab", { name: "版本" }));
+    expect(screen.queryByRole("button", { name: "编辑能力" })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("tab", { name: "Kali 信息" }));
+    expect(screen.getByRole("button", { name: "编辑能力" })).toBeInTheDocument();
+  });
+
+  it("leaves capability edit mode when switching to a read-only tab", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByRole("tab", { name: "能力（Tools）" }));
+    await user.click(screen.getByRole("button", { name: "编辑能力" }));
+    expect(screen.getByRole("button", { name: "保存" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("tab", { name: "Instructions 模板" }));
+    expect(screen.queryByRole("button", { name: "保存" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "取消" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "编辑能力" })).not.toBeInTheDocument();
   });
 });
