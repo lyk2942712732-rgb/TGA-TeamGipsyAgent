@@ -116,6 +116,37 @@ radamsa 的 Makefile 对 CFLAGS 做硬赋值，环境变量无效，必须走命
 （exit 0）——即以 `10001:10001` 运行、toolset digest 与 `sandbox.json` 一致、
 `python3` / `afl-fuzz` / `clang` / `honggfuzz` / `radamsa` 五个声明可执行文件
 在 `--network none --read-only --cap-drop ALL` 容器内实测存在、无 `sudo`、apt 列表已清空。
+CI 亦确认该镜像已构建通过。
+
+### 2.9 CI `images` job：Kali 的 zeek 包在当前 kali-rolling 上已无法安装
+
+修复 2.8 后，`images` 的失败点移至 `host-network-forensics-solver`：
+
+```
+zeek : Depends: libc6 (< 2.38) but 2.42-16 is to be installed
+E: Unable to satisfy dependencies.
+```
+
+Kali 源中的 `zeek 5.1.1-0kali3` 要求 `libc6 < 2.38`，而当前 kali-rolling 为 2.42，
+该包已不可安装，并使整个 apt 事务失败。这是 Kali 上游打包问题，仓库内无法通过
+版本固定解决。隔离验证：去掉 zeek 后其余四个包安装正常，单独安装 zeek 则失败。
+
+**修复**：改用 Zeek 项目官方仓库（OBS `security:zeek/Debian_Testing`）安装 `zeek-core`
+8.2.1，并以 `signed-by=` 限定密钥作用域、校验密钥指纹
+`F9FA0223B56B116C363737EF5DA57BDD6DD785CA`。这里固定密钥比固定版本更有意义：
+密钥稳定，而该仓库只保留当前发行版本。`zeek-core` 安装于 `/opt/zeek`，不在 PATH 上，
+而 profile 声明的是 `zeek`、readiness 用 `shutil.which` 解析，故建立软链
+`/usr/local/bin/zeek`。构建期用到的 `curl` / `gnupg` 在同一层内 purge。
+
+### 全量依赖体检
+
+修复过程中改用一次性体检替代逐个构建：解析全部 22 个 Dockerfile 的 apt 包列表，
+在 base 镜像内用 `apt-get install -s` 逐组模拟。结果为 **25 组中仅 1 组不可解析**
+（即上述 `host-network-forensics-solver`），其余全部正常——这确认了 `images`
+不是普遍性损坏，而是两个孤立故障点。
+
+（该体检最初给出「25/25 全部失败」的错误结论，原因是包列表文件以 CRLF 写出，
+容器内 `read` 将 `\r` 留在每组最后一个包名上。修正行尾后结论才成立。）
 
 ---
 
