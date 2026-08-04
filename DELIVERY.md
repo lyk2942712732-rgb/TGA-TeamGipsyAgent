@@ -92,6 +92,31 @@ Runtime，两端命令与输出逐字一致。用户不再需要接触 WSL、sys
 
 **修复**：`pyproject.toml` 增加 `norecursedirs`。特权 runner 的调用方式不受影响。
 
+### 2.8 CI `images` job 长期失败：dynamic-fuzzing-solver 无法构建
+
+`sandbox-runtime / images` 在 main 上连续失败，可追溯至 2026-08-01（最近 8 次运行
+全部失败），唯一卡点是 `containers/kali/solvers/dynamic-fuzzing-solver`。
+逐层排查出五个相互独立的原因：
+
+| # | 原因 | 修复 |
+|---|---|---|
+| 1 | `fuzz-tools` 构建阶段以非 root 运行（base 镜像以 `USER 10001:10001` 结尾），`apt-get` 报 `List directory /var/lib/apt/lists/partial is missing - Permission denied` | 该阶段补 `USER root`（最终阶段本来就有，唯独构建阶段漏了） |
+| 2 | honggfuzz 2.6 早于 GCC 15 的 `-Wunterminated-string-initialization`，撞上其自带 `-Werror` | 经**环境变量**注入 `-Wno-error=unterminated-string-initialization`；其余警告仍为致命 |
+| 3 | `BUILD_LINUX_NO_BFD=true` 在 2.6 中只加 `-D` 宏，链接行仍无条件带 `-lopcodes -lbfd` | 构建阶段加装 `binutils-dev` |
+| 4 | radamsa 的 `get-owl` 用 `curl` 拉取 owl-lisp，但镜像未装 curl | 加装 `curl` |
+| 5 | `aoh/owl-lisp` 仓库已改名为 `owl`，GitHub 归档根目录变成 `owl-$VER`，而 radamsa v0.5 硬编码 `cd owl-lisp-$VER`；且 owl-lisp 与 radamsa 均早于 C23，GCC 15 默认 `-std=gnu23` 拒绝 `word vm();` | 按预期路径 clone owl-lisp 并校验 commit（跳过损坏的下载逻辑），以**命令行变量**传入 `-std=gnu17` |
+
+两处 CFLAGS 机制不可互换，这是本修复中最容易踩错的一点：honggfuzz 的 Makefile 对
+CFLAGS 做 `+=` 追加，命令行变量会整体覆盖它、连 `-I.` 都丢掉，必须走环境变量；
+radamsa 的 Makefile 对 CFLAGS 做硬赋值，环境变量无效，必须走命令行变量
+（命令行变量还会经 MAKEFLAGS 传递给嵌套的 owl 构建）。
+
+**验证**：镜像完整构建成功，并通过 CI 使用的同一个契约校验
+`scripts/validate_kali_image.py --image tga-kali-dynamic-fuzzing:pr --profile dynamic-fuzzing-v1`
+（exit 0）——即以 `10001:10001` 运行、toolset digest 与 `sandbox.json` 一致、
+`python3` / `afl-fuzz` / `clang` / `honggfuzz` / `radamsa` 五个声明可执行文件
+在 `--network none --read-only --cap-drop ALL` 容器内实测存在、无 `sudo`、apt 列表已清空。
+
 ---
 
 ## 3. 交付产物
