@@ -68,7 +68,8 @@ jobs:
             docker push "$remote"
             digest="$(docker buildx imagetools inspect "$remote" --format '{{json .Manifest.Digest}}' | tr -d '"')"
             immutable="${remote%:*}@$digest"
-            trivy image --exit-code 1 --ignore-unfixed --severity CRITICAL "$immutable"
+            trivy image --exit-code 1 --ignore-unfixed --severity CRITICAL \
+              --ignorefile .trivyignore "$immutable"
             name="$(basename "${remote%:*}")"
             syft "$immutable" -o "spdx-json=$name.spdx.json"
             cosign sign --yes "$immutable"

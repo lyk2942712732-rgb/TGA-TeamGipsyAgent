@@ -1,0 +1,28 @@
+# Advisories that are present in a Solver image but not reachable from it.
+#
+# Every entry must state which image carries it, why the vulnerable code cannot
+# be reached, why it is not simply fixed by an upgrade, and what would let the
+# entry be removed. An entry without that is a suppression, not a decision.
+#
+# Anything not listed here still fails the release scan.
+
+# GHSA-r277-6w6q-xmqw / kin-openapi ValidationHandler.Load() fail-open
+#
+# Carried by: nuclei, in tga-kali-ctf-web, tga-kali-surface-mapper,
+#             tga-kali-vulnerability-validator, tga-kali-web-api-analyst
+# Present at: github.com/getkin/kin-openapi v0.132.0
+#
+# Not reachable: the advisory is in kin-openapi's server-side request
+# validation middleware. nuclei imports only openapi2, openapi2conv and
+# openapi3 -- the specification parsers -- and contains no reference to
+# kin-openapi/routers or ValidationHandler. It reads OpenAPI documents to
+# generate requests; it never serves or validates them.
+#
+# Not fixed by upgrading: no released nuclei uses a fixed kin-openapi. v3.8.0
+# through v3.11.0 all pin v0.132.0, and forcing v0.144.0 fails to compile --
+# pkg/input/formats/openapi/examples.go:179 and :191 break on its changed API.
+# Clearing this properly would mean carrying a patched nuclei fork.
+#
+# Remove when: nuclei upstream moves to kin-openapi >= 0.144.0. Re-check on any
+# nuclei bump.
+GHSA-r277-6w6q-xmqw
