@@ -10,10 +10,24 @@ name: launcher-release
 #
 # Image releases use their own `sandbox-v*` tags, so neither trigger fires the
 # other.
+# Pull requests build the same artifacts without publishing them. That matters
+# more than it sounds: building the rootfs runs provision.sh end to end on a
+# clean system, which is the only place that script is ever fully exercised.
+# Finding out at release time that it does not work is finding out too late.
 on:
   push:
     tags:
       - "tga-v*"
+  pull_request:
+    paths:
+      - ".github/workflows/launcher-release.yml"
+      - "deploy/**"
+      - "launcher/**"
+      - "sandboxd/**"
+      - "apps/web/**"
+      - "tga/**"
+      - "config/sandbox.json"
+      - "pyproject.toml"
 
 permissions:
   contents: write
@@ -24,6 +38,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Resolve the version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          # A pull request's ref name is "21/merge", which is not a filename.
+          # Release runs take the tag; everything else gets a placeholder that
+          # makes it obvious the artifact is not a release.
+          if [[ "$GITHUB_REF" == refs/tags/tga-* ]]; then
+            echo "value=${GITHUB_REF_NAME#tga-}" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=0.0.0-pr${{ github.event.number }}" >> "$GITHUB_OUTPUT"
+          fi
       - uses: actions/setup-go@v5
         with:
           go-version: "1.26.5"
@@ -41,14 +68,11 @@ jobs:
         working-directory: launcher
         shell: bash
         env:
-          RELEASE: ${{ github.ref_name }}
+          VERSION: ${{ steps.version.outputs.value }}
         run: |
           set -euo pipefail
           mkdir -p ../dist
-          # The tag carries a `tga-` prefix to keep it clear of `sandbox-v*`;
-          # drop it so artifacts read tga-v0.1.0-linux-amd64 rather than
-          # tga-tga-v0.1.0-linux-amd64.
-          version="${RELEASE#tga-}"
+          version="$VERSION"
           # -trimpath keeps runner-local paths out of the binary, so the same
           # tag built twice produces the same bytes.
           while read -r os arch ext; do
@@ -65,12 +89,12 @@ jobs:
       - name: Verify the stamp took
         shell: bash
         env:
-          RELEASE: ${{ github.ref_name }}
+          VERSION: ${{ steps.version.outputs.value }}
         run: |
           set -euo pipefail
           # A silently unstamped build would ship as "dev" and nobody would
           # notice until a user asked the binary what it was.
-          version="${RELEASE#tga-}"
+          version="$VERSION"
           reported="$(dist/tga-${version}-linux-amd64 version)"
           test "$reported" = "tga launcher ${version}" || {
             echo "expected 'tga launcher ${version}', got '${reported}'" >&2
@@ -86,6 +110,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Resolve the version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          # A pull request's ref name is "21/merge", which is not a filename.
+          # Release runs take the tag; everything else gets a placeholder that
+          # makes it obvious the artifact is not a release.
+          if [[ "$GITHUB_REF" == refs/tags/tga-* ]]; then
+            echo "value=${GITHUB_REF_NAME#tga-}" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=0.0.0-pr${{ github.event.number }}" >> "$GITHUB_OUTPUT"
+          fi
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
@@ -107,7 +144,7 @@ jobs:
       - name: Build the runtime filesystem
         shell: bash
         env:
-          RELEASE: ${{ github.ref_name }}
+          VERSION: ${{ steps.version.outputs.value }}
         run: |
           set -euo pipefail
           # This runs the very same provision.sh a Linux server runs, so the
@@ -115,7 +152,7 @@ jobs:
           # breaks there, in CI, before anyone downloads it.
           docker build \
             --build-arg UBUNTU_BASE="${{ steps.base.outputs.ubuntu }}" \
-            --build-arg TGA_VERSION="${RELEASE#tga-}" \
+            --build-arg TGA_VERSION="$VERSION" \
             --tag tga-runtime:build \
             --file deploy/wsl-rootfs/Dockerfile \
             .
@@ -147,10 +184,10 @@ jobs:
       - name: Export it as a WSL tarball
         shell: bash
         env:
-          RELEASE: ${{ github.ref_name }}
+          VERSION: ${{ steps.version.outputs.value }}
         run: |
           set -euo pipefail
-          version="${RELEASE#tga-}"
+          version="$VERSION"
           mkdir -p dist
           container="$(docker create tga-runtime:build)"
           # `docker export` writes a filesystem tar, which is what `wsl --import`
@@ -170,6 +207,9 @@ jobs:
           retention-days: 1
 
   publish:
+    # Only a tag publishes. A pull request builds the same artifacts and stops,
+    # which is the point: the build is the test, the release is not.
+    if: startsWith(github.ref, 'refs/tags/tga-')
     needs: [launcher, rootfs]
     runs-on: ubuntu-latest
     steps:

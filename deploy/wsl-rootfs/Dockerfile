@@ -10,6 +10,19 @@
 # units and tga-internal already present, so that a first `tga up` has nothing
 # left to install.
 ARG UBUNTU_BASE=ubuntu:24.04
+ARG GO_BUILDER=golang:1.26-bookworm
+
+# sandboxd is built here rather than inside the runtime image. provision.sh
+# takes a prebuilt binary when one is present and otherwise builds from source
+# with Go -- and shipping a Go toolchain inside every user's distribution to
+# compile one 20 MB binary at provision time would be absurd. Without this
+# stage neither path is available and the export check fails on a missing
+# /opt/tga/bin/tga-sandboxd.
+FROM ${GO_BUILDER} AS sandboxd
+COPY sandboxd /src/sandboxd
+RUN cd /src/sandboxd \
+    && CGO_ENABLED=0 go build -trimpath -o /out/tga-sandboxd ./cmd/tga-sandboxd
+
 FROM ${UBUNTU_BASE}
 
 ARG DEBIAN_FRONTEND=noninteractive
@@ -18,6 +31,7 @@ ARG DEBIAN_FRONTEND=noninteractive
 # Keeping one installer means the distribution cannot drift from the server
 # path: anything that breaks here breaks there, in CI, before release.
 COPY . /src
+COPY --from=sandboxd /out/tga-sandboxd /src/dist/tga-sandboxd
 RUN SOURCE_DIR=/src /src/deploy/wsl-rootfs/provision.sh
 
 COPY deploy/wsl-rootfs/wsl.conf /etc/wsl.conf
