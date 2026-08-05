@@ -40,6 +40,11 @@ def _build_parser() -> argparse.ArgumentParser:
     up_parser.add_argument("--port", type=int, default=lifecycle.DEFAULT_PORT)
     up_parser.add_argument("--no-open", action="store_true", help="Do not open a browser")
     up_parser.add_argument("--timeout", type=float, default=90.0)
+    up_parser.add_argument(
+        "--pull-images",
+        action="store_true",
+        help="Fetch any missing Solver images (tens of gigabytes on a first run)",
+    )
 
     subparsers.add_parser("down", parents=[common], help="Stop the deployment, preserving data")
     subparsers.add_parser("status", parents=[common], help="Report deployment state")
@@ -89,6 +94,7 @@ def _dispatch(args) -> dict:
             port=args.port,
             open_browser=not args.no_open,
             timeout_seconds=args.timeout,
+            pull_images=args.pull_images,
         ).to_dict()
     if args.command == "down":
         return lifecycle.down()

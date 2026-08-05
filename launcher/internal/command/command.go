@@ -21,14 +21,15 @@ import (
 
 // Options carries parsed flags shared by the verbs.
 type Options struct {
-	Host      string
-	Port      int
-	NoOpen    bool
-	Public    bool
-	JSON      bool
-	Component string
-	Lines     int
-	Timeout   float64
+	Host       string
+	Port       int
+	NoOpen     bool
+	Public     bool
+	PullImages bool
+	JSON       bool
+	Component  string
+	Lines      int
+	Timeout    float64
 }
 
 // Up brings the deployment to a serving state and opens the UI.
@@ -36,6 +37,9 @@ func Up(out io.Writer, runner tgaruntime.Runner, opts Options) error {
 	args := []string{"up", "--host", opts.Host, "--port", strconv.Itoa(opts.Port)}
 	if opts.Timeout > 0 {
 		args = append(args, "--timeout", strconv.FormatFloat(opts.Timeout, 'f', 0, 64))
+	}
+	if opts.PullImages {
+		args = append(args, "--pull-images")
 	}
 	// The worker never opens a browser; on Windows it could not reach one from
 	// inside WSL2 anyway. The launcher owns that step.

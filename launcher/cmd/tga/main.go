@@ -37,6 +37,7 @@ Flags:
   --host <addr>   Bind address (default 127.0.0.1)
   --no-open       Do not open a browser
   --public        Serve for remote access instead of localhost only
+  --pull-images   Fetch missing Solver images (tens of GB on a first run)
   --json          Emit machine-readable JSON
   --component <c> Log component for 'tga logs' (default api)
   --lines <n>     Log lines for 'tga logs' (default 200)
@@ -90,6 +91,7 @@ func parseFlags(verb string, args []string) (command.Options, error) {
 	set.IntVar(&opts.Port, "port", opts.Port, "interface port")
 	set.BoolVar(&opts.NoOpen, "no-open", false, "do not open a browser")
 	set.BoolVar(&opts.Public, "public", false, "serve for remote access")
+	set.BoolVar(&opts.PullImages, "pull-images", false, "fetch missing Solver images")
 	set.BoolVar(&opts.JSON, "json", false, "machine-readable output")
 	set.StringVar(&opts.Component, "component", opts.Component, "log component")
 	set.IntVar(&opts.Lines, "lines", opts.Lines, "log lines")

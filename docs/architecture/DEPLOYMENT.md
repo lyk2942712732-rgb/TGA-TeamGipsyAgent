@@ -141,8 +141,22 @@ because it is a host fact that provisioning fills in. So validating the
 repository copy on its own fails — deliberately. That is what stops a green
 provision log from being read as proof of isolation.
 
-Nothing pre-pulls the images. Readiness inspection deliberately avoids
-touching a registry, and the actual download happens when `docker create`
-first needs a profile. A host that has provisioned but pulled nothing will
-report its profiles as `image_unverified`, which is accurate rather than a
-fault.
+## Images
+
+`tga.deployment.image_manager` asks, for every profile that names one, whether
+that image is on this host. A pinned reference makes "is it here?" and "is it
+the right one?" the same question, so a successful `docker image inspect` on
+the digest answers both, and nothing re-hashes the image afterwards.
+
+`tga up` checks but does not pull. The twenty-two Solver images run to tens of
+gigabytes; a first run that silently spent an hour downloading — inside a
+ninety-second readiness budget — would be worse than one that says what is
+missing and how to get it. `tga up --pull-images` fetches them. This is a
+deliberate departure from section 12 of the design, which specifies pulling
+automatically on first run: that section was written before anyone measured
+the images.
+
+Absence never fails a startup. Sandbox capability is graded, so a host with no
+images still serves the interface and reports `degraded` along with the count.
+Readiness inspection itself never touches a registry, and anything still
+missing is fetched by `docker create` the first time a profile is used.

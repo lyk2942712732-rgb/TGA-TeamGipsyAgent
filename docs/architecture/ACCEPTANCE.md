@@ -70,8 +70,25 @@ tga up
 | PR 2 | 完整 readiness、统一错误码、`tga-internal doctor`、Sandbox smoke test | 完成 |
 | PR 3 | `up`/`down`/`status`/`logs`、状态机、锁、幂等 | 完成 |
 | PR 4 | Go `tga` CLI、Windows `tga.exe`、Linux `tga`、WSL 命令转发、浏览器打开 | 完成 |
-| PR 5 | TGA 专用 WSL rootfs、Linux 安装包、systemd、Kali 镜像发布、离线镜像包 | 部分完成 —— 发行版、安装包、systemd 已完成并实测；镜像发布已完成（`sandbox-v0.1.1`，23 个镜像已签名并 pin）；离线镜像包仍未实现 |
+| PR 5 | TGA 专用 WSL rootfs、Linux 安装包、systemd、Kali 镜像发布、离线镜像包 | 部分完成，见下表逐项拆解 |
 | PR 6 | 完整 E2E | 部分完成 —— 本机双平台 E2E 已完成；全新机器安装测试与真实沙箱任务测试待实测（阻塞根因已消除，见文末） |
+
+### PR 5 逐项
+
+此前该行记为「发行版、安装包、systemd 已完成并实测」。**这个表述偏乐观**：
+`provision.sh` 建目录、装 Python、装 systemd 单元确实做了并实测过，
+但它不等于第 10 节要求的那个**预装 Docker / runsc / sandboxd 的发行版**。
+按文档逐条拆开：
+
+| 条目 | 状态 | 依据 |
+|---|---|---|
+| Kali 镜像发布（§12） | 完成 | `sandbox-v0.1.1`，23 个镜像已扫描、签名并 pin |
+| 首次启动检查/拉取镜像（§12） | 完成 | `tga/deployment/image_manager.py`；`tga up --pull-images` 拉取，默认只检查并报告缺哪些 |
+| Linux 安装包 + systemd 单元（§14） | 部分 —— 只有 `tga-api.service` | `deploy/systemd/` 下无 `tga-sandboxd.service`；`provision.sh` 不安装 sandboxd 二进制 |
+| 发行版预装 Docker / runsc（§6、§10） | 未实现 | `provision.sh` 只装 python3、nftables、curl、gnupg、sudo 等 |
+| `TGA-Runtime.wsl.tar.zst`（§10） | 未实现 | 仓库内无任何构建它的东西 |
+| 首次运行自动 `wsl --import`（§6） | 未实现 | `launcher/internal/runtime/runtime.go` 在 WSL 缺失时只提示用户自行 `wsl --install` |
+| 离线镜像包（§12） | 未实现 | |
 
 ## 第 17 节 · 不再保留的正式入口
 

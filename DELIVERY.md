@@ -506,15 +506,19 @@ wsl -d TGA-Runtime -u root -- ss -ltn
 （`tga/sandbox/readiness.py::ensure_kali_profile_ready`，由 `sandbox/manager.py` 与
 `runtime/tooling/execution/backends.py` 调用），fail-closed。
 
-### 6.2 没有任何一步会预拉镜像
+### 6.2 镜像预拉：已有入口，但默认不拉
 
-这是目前离「一键部署」最远的一环。运行时代码里没有主动 pull：
-`tga/sandbox/readiness.py` 的状态查询明确不拉镜像，实际下载发生在
-`tga/sandbox/docker_provider.py` 的 `docker create`，即**首次用到某个 profile 时现拉**。
+原先 `up` 的 `ensure_images` 是**名存实亡**的一步：
+`lifecycle.py::_step_web_bundle` 解析完前端目录就把它标记完成，
+于是一台一个镜像都没有的机器，也会被记录成「已完整 provision」。
 
-后果是首次调用会长时间等待下载，且未拉取的 profile 在 readiness 中报
-`image_unverified`。23 个镜像合计数十 GB，默认全量预拉未必合适，
-但至少应提供一个按需批量拉取的入口。尚未实现。
+现已改为真步骤（`tga/deployment/image_manager.py`）：逐个 profile 检查镜像在不在本机，
+`tga up --pull-images` 会把缺的拉下来。默认**只检查、不拉**——23 个镜像合计数十 GB，
+而 readiness 的预算是 90 秒，首次启动闷头下载一小时比直接说清楚缺什么更糟。
+这一点是对文档 §12「缺失则自动拉取」的**有意偏离**，因为那节写在没人量过镜像体积之前。
+
+缺镜像不会导致启动失败：沙箱能力是分级的，没有镜像的机器照常提供界面并报 `degraded`。
+仍然没拉的 profile，会在首次用到时由 `docker create` 现拉。
 
 ### 6.3 没有发布 launcher 的预编译产物
 

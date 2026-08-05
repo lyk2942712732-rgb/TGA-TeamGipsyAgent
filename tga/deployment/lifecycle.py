@@ -17,9 +17,10 @@ from pathlib import Path
 from urllib.error import URLError
 from urllib.request import urlopen
 
-from tga.deployment import readiness, service_manager, state as state_module
+from tga.deployment import image_manager, readiness, service_manager, state as state_module
 from tga.deployment.errors import DeploymentError, ErrorCode
 from tga.deployment.paths import ensure_run_root, log_dir, web_dist
+from tga.sandbox.config import load_sandbox_config
 
 DEFAULT_PORT = 8123
 DEFAULT_HOST = "127.0.0.1"
@@ -85,6 +86,7 @@ def up(
     port: int = DEFAULT_PORT,
     open_browser: bool = True,
     timeout_seconds: float = 90.0,
+    pull_images: bool = False,
 ) -> UpResult:
     """Bring the deployment to a serving state, resuming partial progress."""
     with state_module.locked():
@@ -112,6 +114,7 @@ def up(
             steps.append(_step_configuration(current))
             steps.append(_step_web_bundle(current))
             steps.append(_step_container_engine(current))
+            steps.append(_step_images(current, pull=pull_images))
             steps.append(_step_sandboxd(current))
             steps.append(_step_start_api(current, host=host, port=port))
             ready_step, report = _step_wait_readiness(current, timeout_seconds=timeout_seconds)
@@ -157,8 +160,39 @@ def _step_configuration(current) -> StepResult:
 
 def _step_web_bundle(current) -> StepResult:
     bundle = web_dist()
-    current.mark_completed("ensure_images")
+    current.mark_completed("ensure_web_bundle")
     return StepResult("ensure_web_bundle", True, str(bundle))
+
+
+def _step_images(current, *, pull: bool) -> StepResult:
+    """Say which profile images this host actually has.
+
+    Until now this step existed in name only: resolving the web bundle marked
+    `ensure_images` complete, so a host with no images at all recorded a fully
+    provisioned deployment. Sandbox availability stays graded -- a missing
+    image degrades the deployment rather than failing it -- but it is no longer
+    reported as done when nothing was checked.
+    """
+    try:
+        config, _ = load_sandbox_config()
+    except Exception as exc:  # configuration problems are reported, not fatal
+        return StepResult("ensure_images", False, str(exc)[:200], ErrorCode.SANDBOX_RUNTIME_DISABLED)
+
+    report = image_manager.ensure_images(config, pull=pull)
+    if report.ok:
+        current.mark_completed("ensure_images")
+        return StepResult("ensure_images", True, report.summary())
+
+    if report.unpinned:
+        code = ErrorCode.PROFILE_DIGEST_INVALID
+    elif not report.docker_available:
+        code = ErrorCode.DOCKER_UNAVAILABLE
+    else:
+        code = ErrorCode.PROFILE_IMAGE_MISSING
+    detail = report.summary()
+    if not pull and code is ErrorCode.PROFILE_IMAGE_MISSING:
+        detail += "; run `tga up --pull-images` to fetch them"
+    return StepResult("ensure_images", False, detail, code)
 
 
 def _step_container_engine(current) -> StepResult:
