@@ -138,6 +138,32 @@ Kali 源中的 `zeek 5.1.1-0kali3` 要求 `libc6 < 2.38`，而当前 kali-rollin
 而 profile 声明的是 `zeek`、readiness 用 `shutil.which` 解析，故建立软链
 `/usr/local/bin/zeek`。构建期用到的 `curl` / `gnupg` 在同一层内 purge。
 
+### 2.10 CI `images` job 的其余六类故障
+
+修复 2.8、2.9 后失败点依次前移，逐一排查出：
+
+| # | 镜像 | 原因 | 修复 |
+|---|---|---|---|
+| 3 | malware | `flare-floss` 依赖的 `binary2strings` 只发布 Windows wheel，Linux 上必须现场编译 C++，而镜像无编译器 | 同层内装 `g++`/`python3-dev`，用完即 purge；断言编译产物可 import 且编译器已移除 |
+| 4 | web-api-analyst | `graphql-cop` 钉死 `requests==2.25.1`，会把系统 `urllib3` 从 2.7.0 降级；pip 无法卸载 dpkg 装的包而报 `uninstall-no-record-file` | 独立 venv + PATH wrapper；顺带避免降级同镜像内 `sqlmap`/`wafw00f` 依赖的 urllib3 |
+| 5 | timeline-ioc | Kali 重命名工具：`log2timeline.py`→`plaso-log2timeline`、`psort.py`→`plaso-psort`、`sigma`→`sigma-cli`（且 `plaso` 是无二进制的元包） | 软链保持 profile 声明的名字；加循环断言防止后续改名静默漏装 |
+| 6 | code-audit | `gosec` v2.22.9 依赖 `grpc` v1.75.0，含 CVE-2026-33186 | 升 gosec v2.27.1（grpc v1.81.1）；所有修复版均要求 Go ≥ 1.25，故该镜像构建器同步升级 |
+| 7 | ctf-web / surface-mapper / vulnerability-validator / web-api-analyst | `dalfox` v2.12.0 四个 CVE、`nuclei` v3.4.10 三个 CVE | 升 dalfox v2.13.0、nuclei v3.8.0，构建器升 Go 1.25 |
+| 8 | web-api-analyst | `kiterunner` 发布二进制用 go1.15.11 编译，Trivy 报出此后所有 Go 标准库 CVE（4 个 CRITICAL）；项目 2021 年停更，无新版可升 | 改为用当前工具链从源码编译同一 pinned commit，产物为 go1.25.12，四个 CVE 在源头消除 |
+
+### 无法通过升级消除的两条
+
+`.trivyignore` 中记录两条定向豁免，每条都写明携带镜像、不可达依据、为何升级无效、以及移除条件：
+
+- **GHSA-r277-6w6q-xmqw**（kin-openapi fail-open）—— nuclei 仅导入 `openapi2`/`openapi2conv`/`openapi3`
+  三个规范解析包，对 `kin-openapi/routers` 与 `ValidationHandler` 零引用；nuclei v3.8.0～v3.11.0
+  全部钉 v0.132.0，强升 v0.144.0 会因 API 变更编译失败。
+- **CVE-2025-68121**（Go `crypto/tls` 证书校验）—— 位于 frida 预编译 wheel 内，
+  frida 17.16.4 与最新 17.17.0 均为 go1.24.3 构建；且 `dynamic-analysis-v1` 的
+  `network_mode` 为 `none`、`allow_net_raw` 为 false，无网络容器无法完成 TLS 握手。
+
+其余任何 CRITICAL 仍会阻断扫描。
+
 ### 全量依赖体检
 
 修复过程中改用一次性体检替代逐个构建：解析全部 22 个 Dockerfile 的 apt 包列表，
@@ -147,6 +173,29 @@ Kali 源中的 `zeek 5.1.1-0kali3` 要求 `libc6 < 2.38`，而当前 kali-rollin
 
 （该体检最初给出「25/25 全部失败」的错误结论，原因是包列表文件以 CRLF 写出，
 容器内 `read` 将 `\r` 留在每组最后一个包名上。修正行尾后结论才成立。）
+
+后续又补了两类体检，用于替代「CI 一轮暴露一个漏洞」的低效循环：
+
+- `scripts/audit_go_tools.py` —— 就 8 个钉版 Go 工具逐一查询 OSV。一次性定位出
+  dalfox 与 nuclei，省去数轮 CI。当前全部返回干净。
+- 预编译二进制体检 —— 直接对镜像下载的每个发布产物执行 `go version`，读出其内嵌的
+  Go 工具链。OSV 看不到这一层（它回答的是包的公告，不是厂商用什么编译器构建的），
+  frida 与 kiterunner 都属此类。结果：仅 kiterunner 为 go1.15.11，
+  trivy（go1.26.5）、syft（go1.26.3）正常，chainsaw/hayabusa/evtx_dump/casr 为
+  Rust/C 产物不适用。
+
+### CI 最终状态
+
+`sandbox-runtime` 三个 job 全部通过——这是自 2026-08-01 以来首次：
+
+| job | 结论 |
+|---|---|
+| `python` | success |
+| `go` | success |
+| `images` | success |
+
+`images` 的每个步骤均通过：22 个镜像构建、22 项契约校验、Trivy CRITICAL 扫描、
+SBOM 生成与产物上传。
 
 ---
 
