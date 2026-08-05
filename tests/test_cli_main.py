@@ -1,10 +1,8 @@
 from pathlib import Path
-import os
 import json
 
 import pytest
 
-from tga.cli.desktop import DesktopLaunchError, _prepare_frontend
 from tga.cli.main import main
 
 
@@ -32,76 +30,79 @@ def test_cli_run_fails_clearly_without_a_configured_model(tmp_path: Path, monkey
     assert not run_root.exists()
 
 
-def test_cli_go_delegates_to_desktop_launcher(monkeypatch):
-    calls: list[dict] = []
-
-    def fake_launch(**kwargs):
-        calls.append(kwargs)
-        return 0
-
-    monkeypatch.setattr("tga.cli.desktop.launch_desktop", fake_launch)
-
-    assert main(["go", "--host", "127.0.0.1", "--port", "8123", "--no-build"]) == 0
-    assert calls == [{"host": "127.0.0.1", "port": 8123, "build": False}]
-
-
-def test_console_entrypoint_reads_real_command_line(monkeypatch):
-    calls: list[dict] = []
-
-    def fake_launch(**kwargs):
-        calls.append(kwargs)
-        return 0
-
-    monkeypatch.setattr("tga.cli.desktop.launch_desktop", fake_launch)
-    monkeypatch.setattr("sys.argv", ["tga", "go", "--no-build"])
-
-    assert main() == 0
-    assert calls == [{"host": "127.0.0.1", "port": 8123, "build": False}]
-
-
-def test_cli_web_delegates_to_browser_launcher(monkeypatch):
-    calls: list[dict] = []
-
-    def fake_launch(**kwargs):
-        calls.append(kwargs)
-        return 0
-
-    monkeypatch.setattr("tga.cli.desktop.launch_web", fake_launch)
-
-    assert main(["web", "--no-build"]) == 0
-    assert calls == [{"host": "127.0.0.1", "port": 5173, "build": False}]
-
-
 def test_cli_help_is_not_reinterpreted_as_a_run_command():
     with pytest.raises(SystemExit) as exc:
         main(["--help"])
     assert exc.value.code == 0
 
 
-def test_desktop_uses_existing_bundle_when_npm_is_not_on_path(tmp_path: Path, monkeypatch):
-    root = tmp_path / "project"
-    dist = root / "apps" / "web" / "dist"
-    dist.mkdir(parents=True)
-    (dist / "index.html").write_text("<!doctype html>", encoding="utf-8")
-    monkeypatch.setattr("tga.cli.desktop.subprocess.run", lambda *args, **kwargs: (_ for _ in ()).throw(FileNotFoundError()))
+@pytest.mark.parametrize("removed", ["go", "web", "serve"])
+def test_retired_startup_entrypoints_are_gone(removed, capsys):
+    """`tga up` is the only supported startup path.
 
-    assert _prepare_frontend(root=root, host="127.0.0.1", port=8000, build=True) == dist
+    Keeping `go`/`web` alive would mean two startup code paths to keep
+    correct, which is exactly how the run-root split-brain appeared.
+    """
+    with pytest.raises(SystemExit) as exc:
+        main([removed])
+    assert exc.value.code != 0
 
 
-def test_desktop_prefers_windows_npm_cmd(tmp_path: Path, monkeypatch):
-    root = tmp_path / "project"
-    web_root = root / "apps" / "web"
-    web_root.mkdir(parents=True)
-    calls: list[list[str]] = []
+def test_up_delegates_to_the_shared_lifecycle(monkeypatch, capsys):
+    calls: list[dict] = []
 
-    monkeypatch.setattr("tga.cli.desktop.os.name", "nt", raising=False)
-    monkeypatch.setattr("tga.cli.desktop.shutil.which", lambda value: r"D:\\nodejs\\npm.cmd" if value == "npm.cmd" else None)
-    monkeypatch.setattr("tga.cli.desktop.subprocess.run", lambda args, **kwargs: calls.append(args))
+    class FakeResult:
+        def to_dict(self):
+            return {"ok": True, "status": "degraded", "url": "http://127.0.0.1:8123",
+                    "steps": [{"name": "start_api", "ok": True, "detail": "pid 1"}]}
 
-    # The mocked build does not create dist, so confirm the subprocess target
-    # before the expected post-build validation raises a launch error.
-    try:
-        _prepare_frontend(root=root, host="127.0.0.1", port=8000, build=True)
-    except DesktopLaunchError:
-        pass
-    assert calls == [[r"D:\\nodejs\\npm.cmd", "run", "build"]]
+    def fake_up(**kwargs):
+        calls.append(kwargs)
+        return FakeResult()
+
+    monkeypatch.setattr("tga.deployment.lifecycle.up", fake_up)
+    assert main(["up", "--no-open", "--port", "8123"]) == 0
+    assert calls == [{
+        "host": "127.0.0.1", "port": 8123, "open_browser": False, "timeout_seconds": 90.0,
+    }]
+    assert "degraded" in capsys.readouterr().out
+
+
+def test_up_public_binds_all_interfaces_and_never_opens_a_browser(monkeypatch):
+    """A server deployment has no browser and must not bind localhost only."""
+    calls: list[dict] = []
+
+    class FakeResult:
+        def to_dict(self):
+            return {"ok": True, "status": "ready", "url": "http://0.0.0.0:8123", "steps": []}
+
+    monkeypatch.setattr(
+        "tga.deployment.lifecycle.up",
+        lambda **kwargs: (calls.append(kwargs), FakeResult())[1],
+    )
+    assert main(["up", "--public"]) == 0
+    assert calls[0]["host"] == "0.0.0.0"
+    assert calls[0]["open_browser"] is False
+
+
+def test_status_emits_json_when_asked(monkeypatch, capsys):
+    monkeypatch.setattr(
+        "tga.deployment.lifecycle.status",
+        lambda: {"ok": True, "phase": "stopped", "running": False},
+    )
+    assert main(["status", "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["phase"] == "stopped"
+
+
+def test_lifecycle_failures_print_remediation(monkeypatch, capsys):
+    from tga.deployment.errors import DeploymentError, ErrorCode
+
+    def fail(**_kwargs):
+        raise DeploymentError(ErrorCode.PORT_UNAVAILABLE, "127.0.0.1:8123 is in use")
+
+    monkeypatch.setattr("tga.deployment.lifecycle.up", fail)
+    assert main(["up", "--no-open"]) == 1
+    captured = capsys.readouterr()
+    assert "in use" in captured.err
+    # The user is told what to do, not merely what broke.
+    assert "--port" in captured.err

@@ -1,11 +1,11 @@
-ARG BASE_IMAGE=ghcr.io/team-gipsy/tga-kali-base@sha256:REPLACE_WITH_RELEASE_DIGEST
-ARG GO_BUILDER=golang:1.24-bookworm@sha256:1a6d4452c65dea36aac2e2d606b01b4a029ec90cc1ae53890540ce6173ea77ac
+ARG BASE_IMAGE=tga-kali-base:release
+ARG GO_BUILDER=golang:1.25-bookworm@sha256:ea341baa9bd5ba6784f6d7161ace70544349a6242d54d34a0fbfd2c4d51c9d58
 
 FROM ${GO_BUILDER} AS go-tools
 ARG DEBIAN_FRONTEND=noninteractive
 
-ARG NUCLEI_VERSION=v3.4.10
-ARG DALFOX_VERSION=v2.12.0
+ARG NUCLEI_VERSION=v3.8.0
+ARG DALFOX_VERSION=v2.13.0
 RUN CGO_ENABLED=0 go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@${NUCLEI_VERSION} \
     && CGO_ENABLED=0 go install github.com/hahwul/dalfox/v2@${DALFOX_VERSION}
 

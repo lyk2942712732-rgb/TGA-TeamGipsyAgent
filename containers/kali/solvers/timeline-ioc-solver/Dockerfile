@@ -1,4 +1,4 @@
-ARG BASE_IMAGE=ghcr.io/team-gipsy/tga-kali-base@sha256:REPLACE_WITH_RELEASE_DIGEST
+ARG BASE_IMAGE=tga-kali-base:release
 FROM ${BASE_IMAGE}
 ARG DEBIAN_FRONTEND=noninteractive
 
@@ -11,6 +11,14 @@ ARG EVTX_SHA256=c33c111c9832cff5b91dfca6fece51d603181a42dfb56f0ed0a25669f2600df9
 USER root
 RUN apt-get update \
     && apt-get install -y --no-install-recommends curl plaso sigma-cli unzip \
+    # Kali renamed these upstream: plaso now ships plaso-log2timeline and
+    # plaso-psort rather than the historical .py names, and sigma-cli installs
+    # as sigma-cli. The profile names them log2timeline.py, psort.py and sigma,
+    # and readiness resolves those with shutil.which, so the image keeps the
+    # declared names rather than the profile chasing packaging changes.
+    && ln -s /usr/bin/plaso-log2timeline /usr/local/bin/log2timeline.py \
+    && ln -s /usr/bin/plaso-psort /usr/local/bin/psort.py \
+    && ln -s /usr/bin/sigma-cli /usr/local/bin/sigma \
     && curl --fail --location --show-error --silent \
         "https://github.com/WithSecureLabs/chainsaw/releases/download/v${CHAINSAW_VERSION}/chainsaw_x86_64-unknown-linux-gnu.tar.gz" -o /tmp/chainsaw.tar.gz \
     && echo "${CHAINSAW_SHA256}  /tmp/chainsaw.tar.gz" | sha256sum --check --strict - \
@@ -28,6 +36,9 @@ RUN apt-get update \
         "https://github.com/omerbenamram/evtx/releases/download/v${EVTX_VERSION}/evtx_dump-v${EVTX_VERSION}-x86_64-unknown-linux-gnu" -o /usr/local/bin/evtx_dump \
     && echo "${EVTX_SHA256}  /usr/local/bin/evtx_dump" | sha256sum --check --strict - \
     && chmod 0755 /usr/local/bin/evtx_dump \
+    && for tool in log2timeline.py psort.py sigma chainsaw hayabusa evtx_dump; do \
+           command -v "$tool" >/dev/null || { echo "missing: $tool" >&2; exit 1; }; \
+       done \
     && rm -rf /tmp/* /var/lib/apt/lists/*
 COPY --chown=tga:tga toolset.json /opt/tga/toolset.json
 USER 10001:10001

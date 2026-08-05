@@ -16,6 +16,7 @@ from tga.application.services.skill_selection_service import (
 )
 from tga.application.services.solver_factory import SolverFactory
 from tga.application.capabilities import CapabilityAssignmentService
+from tga.deployment.paths import run_root as resolve_run_root
 from tga.domain.planning import GlobalPlan, Intent, LocalPlan, LocalPlanStep
 from tga.domain.retrieval import RetrievalPolicy
 from tga.domain.skills import SkillActivation
@@ -527,9 +528,11 @@ class TeamRuntime:
 
     def _open_skill_corpus(self):
         configured = os.environ.get("TGA_SKILL_CORPUS_DB")
-        path = Path(configured) if configured else Path(
-            os.environ.get("TGA_RUN_ROOT", "runs")
-        ) / "_skill-corpus" / "evidence.db"
+        path = (
+            Path(configured)
+            if configured
+            else resolve_run_root() / "_skill-corpus" / "evidence.db"
+        )
         if not configured and not path.is_file():
             return None
         return PersistenceBundle.open(path)

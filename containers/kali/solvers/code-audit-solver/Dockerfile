@@ -1,9 +1,17 @@
-ARG BASE_IMAGE=ghcr.io/team-gipsy/tga-kali-base@sha256:REPLACE_WITH_RELEASE_DIGEST
-ARG GO_BUILDER=golang:1.24-bookworm@sha256:1a6d4452c65dea36aac2e2d606b01b4a029ec90cc1ae53890540ce6173ea77ac
+ARG BASE_IMAGE=tga-kali-base:release
+# Go 1.25 is required by the gosec version below; every gosec release that
+# carries the fixed grpc declares `go 1.25`. Only this image needs it, so the
+# other solvers keep the 1.24 builder rather than having their binaries rebuilt
+# on a new toolchain for no reason.
+ARG GO_BUILDER=golang:1.25-bookworm@sha256:ea341baa9bd5ba6784f6d7161ace70544349a6242d54d34a0fbfd2c4d51c9d58
 
 FROM ${GO_BUILDER} AS go-tools
 ARG DEBIAN_FRONTEND=noninteractive
-ARG GOSEC_VERSION=v2.22.9
+# gosec v2.22.9 builds against google.golang.org/grpc v1.75.0, which carries
+# CVE-2026-33186 (CRITICAL, fixed in 1.79.3) and fails the release scan.
+# v2.27.1 is on grpc v1.81.1 and declares `go 1.25.0`; v2.28.0 would also do
+# but demands 1.25.8, needlessly tightening what the builder must ship.
+ARG GOSEC_VERSION=v2.27.1
 RUN CGO_ENABLED=0 go install github.com/securego/gosec/v2/cmd/gosec@${GOSEC_VERSION}
 
 FROM ${BASE_IMAGE}

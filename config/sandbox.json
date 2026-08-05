@@ -6,7 +6,7 @@
   "docker_sandbox": {
     "executable": "sbx",
     "task_root": "runs",
-    "template": "docker.io/docker/sandbox-templates:shell-docker@sha256:REPLACE_WITH_RELEASE_DIGEST",
+    "template": "docker.io/docker/sandbox-templates:shell-docker@sha256:39cf20eca861ec92747487af6197f6d916f774bdb98245d267dbd8dfd3debb05",
     "min_version": "0.34.0",
     "max_version_exclusive": "0.35.0"
   },

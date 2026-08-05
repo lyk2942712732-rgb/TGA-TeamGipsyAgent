@@ -11,6 +11,7 @@ from pathlib import Path
 
 from tga.bootstrap.container import Container
 from tga.cli.config_loader import TaskConfigError, load_task_request
+from tga.deployment import lifecycle
 from tga.runtime.service import TaskRuntimeService
 from tga.runtime.task_creation import (
     CreateTaskCommand,
@@ -79,9 +80,14 @@ def _build_parser() -> argparse.ArgumentParser:
     start_parser.add_argument("task_id")
     start_parser.add_argument("--run-root", default="runs")
 
-    status_parser = subparsers.add_parser("status", help="Print a durable task snapshot summary")
-    status_parser.add_argument("task_id")
+    # One `status` verb serves both scopes: with a task id it prints that
+    # task's snapshot, without one it prints deployment state.
+    status_parser = subparsers.add_parser(
+        "status", help="Show deployment state, or a task snapshot when given a task id"
+    )
+    status_parser.add_argument("task_id", nargs="?", default=None)
     status_parser.add_argument("--run-root", default="runs")
+    status_parser.add_argument("--json", action="store_true")
 
     observe_parser = subparsers.add_parser("observe", help="Read the shared ordered Runtime event stream")
     observe_parser.add_argument("task_id")
@@ -112,15 +118,28 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     migrate_parser.add_argument("--report", type=Path, default=None)
 
-    go_parser = subparsers.add_parser("go", help="Launch the local TGA desktop window")
-    go_parser.add_argument("--host", default="127.0.0.1")
-    go_parser.add_argument("--port", type=int, default=8123)
-    go_parser.add_argument("--no-build", action="store_true", help="Use an existing apps/web/dist bundle")
+    # Deployment lifecycle. `tga up` is the single supported way to start TGA;
+    # the former `go` and `web` entrypoints are gone, so there is exactly one
+    # startup path to keep correct.
+    up_parser = subparsers.add_parser("up", help="Start TGA and open the interface")
+    up_parser.add_argument("--host", default=lifecycle.DEFAULT_HOST)
+    up_parser.add_argument("--port", type=int, default=lifecycle.DEFAULT_PORT)
+    up_parser.add_argument("--no-open", action="store_true", help="Do not open a browser")
+    up_parser.add_argument("--public", action="store_true", help="Serve for remote access")
+    up_parser.add_argument("--timeout", type=float, default=90.0)
+    up_parser.add_argument("--json", action="store_true")
 
-    web_parser = subparsers.add_parser("web", help="Launch the local TGA web interface in a browser")
-    web_parser.add_argument("--host", default="127.0.0.1")
-    web_parser.add_argument("--port", type=int, default=5173)
-    web_parser.add_argument("--no-build", action="store_true", help="Use an existing apps/web/dist bundle")
+    for name, help_text in (
+        ("down", "Stop TGA, preserving all task data"),
+        ("doctor", "Diagnose the deployment and print fixes"),
+    ):
+        lifecycle_parser = subparsers.add_parser(name, help=help_text)
+        lifecycle_parser.add_argument("--json", action="store_true")
+
+    logs_parser = subparsers.add_parser("logs", help="Show component logs")
+    logs_parser.add_argument("--component", default="api")
+    logs_parser.add_argument("--lines", type=int, default=200)
+    logs_parser.add_argument("--json", action="store_true")
     return parser
 
 
@@ -131,20 +150,10 @@ def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     parser = _build_parser()
     args = parser.parse_args(argv)
-    if args.command == "go":
-        from tga.cli.desktop import DesktopLaunchError, launch_desktop
-
-        try:
-            return launch_desktop(host=args.host, port=args.port, build=not args.no_build)
-        except DesktopLaunchError as exc:
-            parser.error(str(exc))
-    if args.command == "web":
-        from tga.cli.desktop import DesktopLaunchError, launch_web
-
-        try:
-            return launch_web(host=args.host, port=args.port, build=not args.no_build)
-        except DesktopLaunchError as exc:
-            parser.error(str(exc))
+    if args.command in {"up", "down", "doctor", "logs"} or (
+        args.command == "status" and args.task_id is None
+    ):
+        return _run_lifecycle(args)
     if args.command == "migrate":
         from tga.migrations.schema_v5_to_v6 import main as migration_main
 
@@ -204,6 +213,48 @@ def main(argv: list[str] | None = None) -> int:
         parser.error(str(exc))
     print(f"Wrote {report_path}")
     return 0
+
+
+def _run_lifecycle(args) -> int:
+    """Run a deployment verb through the shared internal implementation.
+
+    The Go launcher and this CLI both delegate here, so a `tga up` typed on
+    Windows and one typed on a Linux server cannot drift apart.
+    """
+    from tga.cli.internal import _render
+    from tga.deployment.errors import DeploymentError
+
+    try:
+        if args.command == "up":
+            host = "0.0.0.0" if getattr(args, "public", False) else args.host
+            payload = lifecycle.up(
+                host=host,
+                port=args.port,
+                open_browser=not (args.no_open or getattr(args, "public", False)),
+                timeout_seconds=args.timeout,
+            ).to_dict()
+        elif args.command == "down":
+            payload = lifecycle.down()
+        elif args.command == "status":
+            payload = lifecycle.status()
+        elif args.command == "doctor":
+            payload = lifecycle.doctor()
+        else:
+            payload = lifecycle.logs(component=args.component, lines=args.lines)
+    except DeploymentError as exc:
+        if args.json:
+            print(json.dumps({"ok": False, "error": exc.to_dict()}, ensure_ascii=False))
+        else:
+            print(f"error: {exc.detail or exc.code}", file=sys.stderr)
+            if exc.remediation:
+                print(f"  -> {exc.remediation}", file=sys.stderr)
+        return 1
+
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False))
+    else:
+        _render(args.command, payload)
+    return 0 if payload.get("ok", False) else 1
 
 
 def _snapshot_summary(snapshot: dict) -> dict:

@@ -68,15 +68,26 @@ jobs:
             docker push "$remote"
             digest="$(docker buildx imagetools inspect "$remote" --format '{{json .Manifest.Digest}}' | tr -d '"')"
             immutable="${remote%:*}@$digest"
-            trivy image --exit-code 1 --ignore-unfixed --severity CRITICAL "$immutable"
+            trivy image --exit-code 1 --ignore-unfixed --severity CRITICAL \
+              --ignorefile .trivyignore "$immutable"
             name="$(basename "${remote%:*}")"
             syft "$immutable" -o "spdx-json=$name.spdx.json"
             cosign sign --yes "$immutable"
             printf '%s\n' "$immutable" >> published-images.txt
           done
+      - name: Pin the published digests into sandbox.json
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Publishing resolved every digest; without this step sandbox.json
+          # keeps its placeholders and the release cannot actually be enforced.
+          python scripts/resolve_sandbox_digests.py \
+            --from-published published-images.txt
+          python scripts/resolve_sandbox_digests.py --check
       - uses: actions/upload-artifact@v4
         with:
           name: sandbox-published-images
           path: |
             published-images.txt
+            config/sandbox.json
             *.spdx.json

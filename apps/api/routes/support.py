@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field, SecretStr, field_validator
 from urllib.parse import urlsplit
 
 from tga.contracts import ExecutionPolicy
+from tga.deployment.paths import run_root as resolve_run_root
 from tga.application.commands import RuntimeCommands
 from tga.application.queries import RuntimeQueries
 from tga.runtime.scheduler import RuntimeScheduler
@@ -132,7 +133,7 @@ class SkillUpdateRequest(BaseModel):
 
 
 def _run_root() -> Path:
-    return Path(os.environ.get("TGA_RUN_ROOT", "runs"))
+    return resolve_run_root()
 
 
 def _runtime_queries() -> RuntimeQueries:

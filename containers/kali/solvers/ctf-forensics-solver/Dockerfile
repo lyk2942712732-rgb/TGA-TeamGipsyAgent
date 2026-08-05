@@ -1,4 +1,4 @@
-ARG BASE_IMAGE=ghcr.io/team-gipsy/tga-kali-base@sha256:REPLACE_WITH_RELEASE_DIGEST
+ARG BASE_IMAGE=tga-kali-base:release
 FROM ${BASE_IMAGE}
 ARG DEBIAN_FRONTEND=noninteractive
 

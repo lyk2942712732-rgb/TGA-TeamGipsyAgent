@@ -29,3 +29,8 @@ exclude = ["tests*", "docs*", "examples*", "scripts*", "runs*", "开发指导*"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+# tests/integration holds privileged smoke scripts, not pytest tests. They are
+# executed directly by scripts/sandbox_integration_test.sh on the dedicated
+# runner. Collecting them here imports the sandbox providers before the rest of
+# the suite, which changes import order and makes unrelated tests fail.
+norecursedirs = ["tests/integration", "tests/fixtures", "tests/snapshots"]

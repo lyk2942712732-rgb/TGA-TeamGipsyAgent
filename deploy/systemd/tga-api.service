@@ -1,0 +1,39 @@
+[Unit]
+Description=TGA API and interface
+Documentation=https://github.com/team-gipsy/tga
+After=network-online.target docker.service tga-sandboxd.service
+Wants=network-online.target
+# The API may start without sandboxd, but then reports a degraded readiness
+# rather than pretending tool execution is isolated.
+After=tga-sandboxd.service
+
+[Service]
+Type=simple
+User=tga
+Group=tga
+SupplementaryGroups=tga-sandbox
+EnvironmentFile=/etc/tga/tga.env
+WorkingDirectory=/opt/tga/app
+ExecStart=/opt/tga/bin/tga-internal serve --host 127.0.0.1 --port 8123
+Restart=on-failure
+RestartSec=2
+TimeoutStopSec=30
+KillSignal=SIGTERM
+
+# The API orchestrates sandboxes; it never needs privilege of its own.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+ReadWritePaths=/var/lib/tga /var/log/tga
+
+StandardOutput=append:/var/log/tga/api.log
+StandardError=append:/var/log/tga/api.log
+
+[Install]
+WantedBy=multi-user.target

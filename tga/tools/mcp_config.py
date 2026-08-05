@@ -14,12 +14,17 @@ from typing import Any, Literal
 from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_validator, model_validator
+from tga.deployment.paths import run_root as resolve_run_root
 from tga.modes import TASK_MODES, TaskMode, normalize_modes
 
 
 SERVER_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 DEFAULT_CONFIG_PATH = Path(__file__).resolve().parents[2] / "config" / "mcp.json"
-DEFAULT_CACHE_PATH = Path(__file__).resolve().parents[2] / "runs" / "mcp-cache.json"
+
+
+def default_cache_path() -> Path:
+    """MCP capability cache, kept inside the configured run root."""
+    return resolve_run_root() / "mcp-cache.json"
 _CONFIG_WRITE_LOCK = threading.RLock()
 
 

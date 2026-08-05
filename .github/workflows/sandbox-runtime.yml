@@ -103,7 +103,8 @@ jobs:
           done < <(python scripts/kali_build_matrix.py)
           for image in "${images[@]}"; do
             name="${image%%:*}"
-            trivy image --exit-code 1 --ignore-unfixed --severity CRITICAL "$image"
+            trivy image --exit-code 1 --ignore-unfixed --severity CRITICAL \
+              --ignorefile .trivyignore "$image"
             syft "$image" -o "spdx-json=$name.spdx.json"
           done
       - uses: actions/upload-artifact@v4
