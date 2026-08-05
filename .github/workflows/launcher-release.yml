@@ -125,7 +125,11 @@ jobs:
           fi
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          # 24, not 20: the committed lockfile was written by npm 11, and
+          # npm 10 -- which is what Node 20 ships -- rejects it, demanding
+          # optional platform entries that npm 11 no longer records. The
+          # runners are deprecating Node 20 anyway.
+          node-version: "24"
           cache: npm
           cache-dependency-path: apps/web/package-lock.json
       - name: Build the frontend bundle
