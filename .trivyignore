@@ -26,3 +26,24 @@
 # Remove when: nuclei upstream moves to kin-openapi >= 0.144.0. Re-check on any
 # nuclei bump.
 GHSA-r277-6w6q-xmqw
+
+# CVE-2025-68121 / Go stdlib crypto/tls incorrect certificate validation
+#
+# Carried by: frida, in tga-kali-dynamic-analysis
+# Present at: frida/_frida.abi3.so, a prebuilt wheel built with go1.24.3
+#             (fixed in Go 1.24.13 / 1.25.7)
+#
+# Not reachable: the flaw is in TLS certificate validation, and the
+# dynamic-analysis-v1 profile runs with network_mode "none" and allow_net_raw
+# false. A container with no network cannot complete a TLS handshake, so the
+# validation path is never entered. frida is used here to instrument local
+# processes, not to reach anything remote.
+#
+# Not fixed by upgrading: the Go version is baked into frida's published
+# wheel, not chosen by this repository. frida 17.16.4 and 17.17.0 -- the
+# pinned and the newest release -- both report go1.24.3 under `go version`.
+# Clearing it would mean building frida-core from source.
+#
+# Remove when: a frida release ships a wheel built with Go >= 1.24.13. Check
+# with `go version <site-packages>/frida/_frida.abi3.so` on any frida bump.
+CVE-2025-68121
