@@ -5,8 +5,19 @@ FROM ${GO_BUILDER} AS go-tools
 ARG DEBIAN_FRONTEND=noninteractive
 ARG NUCLEI_VERSION=v3.8.0
 ARG FFUF_VERSION=v2.1.0
+# kiterunner is built here rather than taken from its release tarball. That
+# release is from 2021 and was compiled with go1.15.11, so Trivy reports every
+# Go stdlib advisory fixed since -- four CRITICALs -- and no newer release
+# exists to move to. Rebuilding the same pinned commit on the current toolchain
+# removes them at the source instead of suppressing them.
+ARG KITERUNNER_VERSION=1.0.2
+ARG KITERUNNER_COMMIT=e7a7fa635c2271cb5aeea7a885c1dc66774bb5c7
 RUN CGO_ENABLED=0 go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@${NUCLEI_VERSION} \
-    && CGO_ENABLED=0 go install github.com/ffuf/ffuf/v2@${FFUF_VERSION}
+    && CGO_ENABLED=0 go install github.com/ffuf/ffuf/v2@${FFUF_VERSION} \
+    && git clone --depth 1 --branch "v${KITERUNNER_VERSION}" \
+         https://github.com/assetnote/kiterunner.git /src/kiterunner \
+    && test "$(git -C /src/kiterunner rev-parse HEAD)" = "${KITERUNNER_COMMIT}" \
+    && CGO_ENABLED=0 go -C /src/kiterunner build -o /go/bin/kr ./cmd/kiterunner
 
 FROM ${BASE_IMAGE}
 ARG DEBIAN_FRONTEND=noninteractive
@@ -39,15 +50,7 @@ RUN apt-get update \
     && python3 -m pip install --break-system-packages --no-cache-dir -r /opt/jwt_tool/requirements.txt \
     && ln -s /opt/jwt_tool/jwt_tool.py /usr/local/bin/jwt_tool \
     && chmod 0755 /opt/jwt_tool/jwt_tool.py \
-    && curl --fail --location --show-error --silent \
-        "https://github.com/assetnote/kiterunner/releases/download/v${KITERUNNER_VERSION}/kiterunner_${KITERUNNER_VERSION}_linux_amd64.tar.gz" -o /tmp/kiterunner.tar.gz \
-    && curl --fail --location --show-error --silent \
-        "https://github.com/assetnote/kiterunner/releases/download/v${KITERUNNER_VERSION}/kiterunner_${KITERUNNER_VERSION}_checksums.txt" -o /tmp/kiterunner.checksums \
-    && grep " kiterunner_${KITERUNNER_VERSION}_linux_amd64.tar.gz$" /tmp/kiterunner.checksums \
-        | sed "s#kiterunner_${KITERUNNER_VERSION}_linux_amd64.tar.gz#/tmp/kiterunner.tar.gz#" \
-        | sha256sum --check --strict - \
-    && tar -xzf /tmp/kiterunner.tar.gz -C /usr/local/bin kr \
     && rm -rf /tmp/* /opt/graphql-cop/.git /opt/jwt_tool/.git /var/lib/apt/lists/*
-COPY --from=go-tools /go/bin/nuclei /go/bin/ffuf /usr/local/bin/
+COPY --from=go-tools /go/bin/nuclei /go/bin/ffuf /go/bin/kr /usr/local/bin/
 COPY --chown=tga:tga toolset.json /opt/tga/toolset.json
 USER 10001:10001
