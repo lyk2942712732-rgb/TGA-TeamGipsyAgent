@@ -11,9 +11,13 @@ created from that Solver image when the runtime executes work.
 
 The Dockerfiles in this directory mean only that image source is prepared.
 They do not make a Profile **Runtime Ready**. An image is Runtime Ready only
-after CI has built and validated it, scanned it, published it, and replaced
-`REPLACE_WITH_RELEASE_DIGEST` with the verified release digest. The committed
-placeholders must never be replaced by invented digests.
+after CI has built and validated it, scanned it, published it, and pinned the
+verified release digest into `config/sandbox.json`. Digests are never written
+by hand: a `repo@sha256:...` reference is a registry manifest digest that only
+exists once something has been pushed.
+
+All 22 Profiles are pinned as of the `sandbox-v0.1.1` release. A digest is
+replaced only by re-running the release workflow, never by editing the file.
 
 ## Image matrix
 
@@ -61,13 +65,16 @@ python scripts/kali_build_matrix.py --format json
 python -m pytest -q tests/test_kali_images.py
 ```
 
-After the base image has a real release digest, CI can build each Solver image
-from the repository root:
+CI builds each Solver image from the repository root against a base it has just
+built locally, which is why `BASE_IMAGE` defaults to a local tag rather than a
+digest — a digest default would make the tree unbuildable for anyone who has
+not pulled that exact base:
 
 ```sh
+docker build --tag tga-kali-base:release containers/kali/base
 while read -r solver profile image context; do
   docker build \
-    --build-arg BASE_IMAGE="ghcr.io/team-gipsy/tga-kali-base@sha256:<base-digest>" \
+    --build-arg BASE_IMAGE=tga-kali-base:release \
     --tag "${image}:candidate" \
     "containers/kali/${context}"
 done < <(python scripts/kali_build_matrix.py)

@@ -131,8 +131,18 @@ legitimate, it just has to say so.
 
 ## Current state of this installation
 
-`config/sandbox.json` ships with `runtime: disabled` and 22 profiles carrying
-`REPLACE_WITH_RELEASE_DIGEST`. Those images are not published, so enforced
-isolation cannot be switched on yet. `tga up` therefore reports `degraded`,
-which is the honest answer. Publishing real images and re-running provisioning
-is what moves this deployment to `ready`.
+`config/sandbox.json` declares `runtime: enforced` and all 22 profiles are
+pinned to published digests under `ghcr.io/lyk2942712732-rgb`, signed and
+scanned by the `sandbox-v0.1.1` release. `resolve_sandbox_digests.py --check`
+reports `22/22 pinned`.
+
+The file is still a template in one respect: `allowed_client_uids` is empty,
+because it is a host fact that provisioning fills in. So validating the
+repository copy on its own fails — deliberately. That is what stops a green
+provision log from being read as proof of isolation.
+
+Nothing pre-pulls the images. Readiness inspection deliberately avoids
+touching a registry, and the actual download happens when `docker create`
+first needs a profile. A host that has provisioned but pulled nothing will
+report its profiles as `image_unverified`, which is accurate rather than a
+fault.
