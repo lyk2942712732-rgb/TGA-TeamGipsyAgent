@@ -1,0 +1,129 @@
+name: launcher-release
+
+# The `tga` binary is what a user actually installs; without a published build
+# there is no way to get it except cloning the repository and running `go build`.
+# Tagging `tga-v*` cross-compiles it, signs each artifact, and attaches
+# everything to a GitHub Release.
+#
+# Image releases use their own `sandbox-v*` tags, so the two never trigger
+# each other.
+on:
+  push:
+    tags:
+      - "tga-v*"
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.5"
+          # The launcher depends only on the standard library and therefore
+          # has no go.sum; the default cache key would look for one and fail.
+          cache: false
+      - uses: sigstore/cosign-installer@v3
+      - name: Test the launcher
+        working-directory: launcher
+        shell: bash
+        run: |
+          set -euo pipefail
+          go vet ./...
+          go test ./...
+      - name: Cross-compile every target
+        working-directory: launcher
+        shell: bash
+        env:
+          RELEASE: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          mkdir -p ../dist
+          # The tag carries a `tga-` prefix to keep it clear of `sandbox-v*`;
+          # drop it so artifacts read tga-v0.1.0-linux-amd64 rather than
+          # tga-tga-v0.1.0-linux-amd64.
+          version="${RELEASE#tga-}"
+          # -trimpath keeps runner-local paths out of the binary, so the same
+          # tag built twice produces the same bytes.
+          while read -r os arch ext; do
+            CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" go build \
+              -trimpath \
+              -ldflags "-s -w -X main.version=${version}" \
+              -o "../dist/tga-${version}-${os}-${arch}${ext}" \
+              ./cmd/tga
+          done <<'TARGETS'
+          windows amd64 .exe
+          linux amd64
+          linux arm64
+          TARGETS
+      - name: Verify the stamp took
+        shell: bash
+        env:
+          RELEASE: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          # A silently unstamped build would ship as "dev" and nobody would
+          # notice until a user asked the binary what it was.
+          version="${RELEASE#tga-}"
+          reported="$(dist/tga-${version}-linux-amd64 version)"
+          test "$reported" = "tga launcher ${version}" || {
+            echo "expected 'tga launcher ${version}', got '${reported}'" >&2
+            exit 1
+          }
+      - name: Checksum and sign
+        working-directory: dist
+        shell: bash
+        run: |
+          set -euo pipefail
+          sha256sum tga-* > SHA256SUMS.txt
+          for artifact in tga-* SHA256SUMS.txt; do
+            cosign sign-blob --yes \
+              --output-signature "${artifact}.sig" \
+              --output-certificate "${artifact}.pem" \
+              "$artifact"
+          done
+      - name: Publish the release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE: ${{ github.ref_name }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          version="${RELEASE#tga-}"
+          # Written to a file with a quoted heredoc so nothing in the markdown
+          # -- backticks, backslashes, $ -- is interpreted by the shell; the
+          # two values are substituted afterwards.
+          cat > notes.md <<'NOTES'
+          `tga` launcher `@VERSION@`.
+
+          Download the binary for your platform, rename it to `tga`
+          (`tga.exe` on Windows), and put it on your PATH. Windows builds
+          manage the dedicated TGA-Runtime WSL2 distribution themselves; Linux
+          builds call the same runtime directly.
+
+          ### Verifying a download
+
+          ```sh
+          sha256sum --check --ignore-missing SHA256SUMS.txt
+
+          cosign verify-blob \
+            --certificate tga-@VERSION@-linux-amd64.pem \
+            --signature tga-@VERSION@-linux-amd64.sig \
+            --certificate-identity-regexp '^https://github.com/@REPOSITORY@/' \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            tga-@VERSION@-linux-amd64
+          ```
+
+          Kali Solver images ship separately under `sandbox-v*` tags and are
+          pinned by digest in `config/sandbox.json`.
+          NOTES
+          sed -i "s|@VERSION@|${version}|g; s|@REPOSITORY@|${REPOSITORY}|g" notes.md
+          gh release create "$RELEASE" \
+            --title "$version" \
+            --notes-file notes.md \
+            dist/*

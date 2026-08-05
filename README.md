@@ -37,6 +37,15 @@ tga logs        # 查看组件日志
 Windows 上 `tga.exe` 自动管理 TGA 专用的 WSL2 发行版（`TGA-Runtime`），
 并把命令转发给其中统一的 Linux Runtime；Linux 上 `tga` 直接调用同一套 Runtime。
 
+### 安装
+
+从 [Releases](https://github.com/lyk2942712732-rgb/TGA-TeamGipsyAgent/releases) 下载
+对应平台的 `tga`（Windows 为 `tga-<版本>-windows-amd64.exe`），重命名为 `tga`
+（Windows 为 `tga.exe`）后放进 PATH。每个产物都附 SHA256 校验和与 cosign 签名，
+校验方法见对应 Release 的说明。
+
+`tga version` 会打印它由哪个 tag 构建；自行编译的版本报 `dev`。
+
 ### 开发者构建
 
 从源码工作时需要 Python 3.11+、Node.js 和 npm：

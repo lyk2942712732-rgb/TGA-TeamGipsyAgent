@@ -17,6 +17,12 @@ import (
 	tgaruntime "github.com/team-gipsy/tga/launcher/internal/runtime"
 )
 
+// version is stamped by the release workflow with
+// -ldflags "-X main.version=<tag>". An unstamped build reports "dev" rather
+// than a number it cannot honour: a binary that names a release it was not
+// built from is worse than one that admits it is a local build.
+var version = "dev"
+
 const usage = `TGA - authorized security analysis and CTF runtime
 
 Usage:
@@ -47,7 +53,7 @@ func main() {
 		fmt.Print(usage)
 		return
 	case "version", "--version":
-		fmt.Println("tga launcher 0.1.0")
+		fmt.Printf("tga launcher %s\n", version)
 		return
 	}
 
