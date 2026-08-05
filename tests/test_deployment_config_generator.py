@@ -128,15 +128,31 @@ def _shipped_config() -> dict:
     )
 
 
-def test_shipped_configuration_cannot_yet_deliver_the_enforcement_it_declares():
-    """The shipped config declares `enforced` but its images are placeholders.
+def test_the_shipped_configuration_carries_no_placeholder_images():
+    """A release must pin its digests back into the config it ships.
+
+    sandbox-v0.1.0 published its images and left this file holding
+    `REPLACE_WITH_RELEASE_DIGEST`, because the workflow only uploaded the
+    rewritten copy as a build artifact. provision.sh seeds /etc/tga from here,
+    so that shipped a config no host could ever enforce -- silently.
+    """
+    images = [
+        profile.get("image") or ""
+        for profile in _shipped_config()["profiles"].values()
+    ]
+    assert images, "expected the shipped config to declare profiles"
+    assert [image for image in images if "REPLACE_WITH_RELEASE_DIGEST" in image] == []
+
+
+def test_shipped_configuration_is_not_certified_until_bound_to_a_host():
+    """`allowed_client_uids` is host-specific, so this file is still a template.
 
     Provisioning must say so rather than certify it, so nobody reads a green
     provision log as proof that tool execution is isolated.
     """
     report = config_generator.validate(_shipped_config())
     assert not report.ok
-    assert any("placeholder" in error for error in report.errors)
+    assert any("allowed_client_uids" in error for error in report.errors)
 
 
 def test_declared_enforcement_without_real_images_still_blocks_execution():
@@ -150,16 +166,19 @@ def test_declared_enforcement_without_real_images_still_blocks_execution():
     from tga.sandbox.config import SandboxConfig
     from tga.sandbox.readiness import KaliProfileNotReadyError, ensure_kali_profile_ready
 
-    config = SandboxConfig.model_validate(_shipped_config())
-    placeholder_profiles = [
-        profile_id
-        for profile_id, profile in config.profiles.items()
-        if profile.provider != "remote_http"
-        and "REPLACE_WITH_RELEASE_DIGEST" in (profile.image or "")
-    ]
-    assert placeholder_profiles, "expected the shipped config to carry placeholders"
+    # Injected rather than read out of the shipped file. Now that releases pin
+    # their digests, the config carries no placeholder of its own, and a test
+    # that waited for one to reappear would only fire once the bug it guards
+    # against had already shipped.
+    payload = _shipped_config()
+    profile_id, profile = next(
+        (profile_id, profile)
+        for profile_id, profile in payload["profiles"].items()
+        if profile.get("provider") != "remote_http"
+    )
+    profile["image"] = PLACEHOLDER
+    config = SandboxConfig.model_validate(payload)
 
-    for profile_id in placeholder_profiles:
-        with pytest.raises(KaliProfileNotReadyError) as excinfo:
-            ensure_kali_profile_ready(profile_id, config)
-        assert excinfo.value.reason == "unresolved_image_digest"
+    with pytest.raises(KaliProfileNotReadyError) as excinfo:
+        ensure_kali_profile_ready(profile_id, config)
+    assert excinfo.value.reason == "unresolved_image_digest"
