@@ -544,10 +544,26 @@ def test_sandboxd_agrees_with_control_plane_config_digest() -> None:
     assert completed.returncode == 0, completed.stdout + completed.stderr
 
 
-def test_committed_placeholder_is_reported_without_blocking_config_load() -> None:
-    report = inspect_kali_runtime_readiness(
-        config_path=Path(__file__).parents[1] / "config" / "sandbox.json"
+def test_unresolved_digest_is_reported_without_blocking_config_load(tmp_path) -> None:
+    """The placeholder is injected now that releases pin the committed config.
+
+    What matters is unchanged: an image nobody can pull is surfaced against the
+    profile that names it, rather than made fatal at load. A half-provisioned
+    host has to boot far enough to say what is missing.
+    """
+    payload = json.loads(
+        (Path(__file__).parents[1] / "config" / "sandbox.json").read_text(
+            encoding="utf-8"
+        )
     )
+    repository = payload["profiles"]["ctf-pwn-v1"]["image"].split("@", 1)[0]
+    payload["profiles"]["ctf-pwn-v1"]["image"] = (
+        f"{repository}@sha256:REPLACE_WITH_RELEASE_DIGEST"
+    )
+    config_path = tmp_path / "sandbox.json"
+    config_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    report = inspect_kali_runtime_readiness(config_path=config_path)
     assert report.overall == "not_ready"
     assert report.profiles["ctf-pwn-v1"].status == "unresolved_digest"
     assert report.profiles["ctf-pwn-v1"].image.endswith(
@@ -560,9 +576,13 @@ def test_disabled_runtime_is_reported_without_hiding_image_status(monkeypatch) -
     report = inspect_kali_runtime_readiness(
         config_path=Path(__file__).parents[1] / "config" / "sandbox.json"
     )
+    profile = report.profiles["ctf-pwn-v1"]
     assert report.runtime_mode == "disabled"
-    assert report.profiles["ctf-pwn-v1"].status == "unresolved_digest"
-    assert report.profiles["ctf-pwn-v1"].runtime_status == "disabled"
+    assert profile.runtime_status == "disabled"
+    # Turning the runtime off must not blank out what is known about the image;
+    # otherwise a disabled deployment looks identical to a healthy one.
+    assert profile.image_status not in (None, "", "disabled")
+    assert profile.image and "@sha256:" in profile.image
 
 
 def test_mcp_migration_binds_core_tools_but_leaves_them_disabled() -> None:

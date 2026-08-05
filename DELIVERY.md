@@ -79,6 +79,8 @@ Runtime，两端命令与输出逐字一致。用户不再需要接触 WSL、sys
    —— 即使发布成功，占位符依旧存在。
 3. workflow 发布到 `ghcr.io/${{ github.repository_owner }}`，而 sandbox.json 写死
    `ghcr.io/team-gipsy/...`，命名空间不一致。
+4. 补上回写步骤后仍不够：改好的文件**只作为构建产物上传，从不带回仓库**，
+   而 `provision.sh` 正是从仓库那份播种配置的。发布成功却部署不上，且 CI 全绿无提示。
 
 **修复**：见第 4 节。
 
@@ -196,6 +198,33 @@ Kali 源中的 `zeek 5.1.1-0kali3` 要求 `libc6 < 2.38`，而当前 kali-rollin
 
 `images` 的每个步骤均通过：22 个镜像构建、22 项契约校验、Trivy CRITICAL 扫描、
 SBOM 生成与产物上传。
+
+### 2.11 发布 workflow 的 OIDC 令牌在长 step 中过期
+
+`sandbox-v0.1.0` 推送后，23 个镜像里只发布了 6 个就失败：
+
+```
+Error: signing [ghcr.io/.../tga-kali-crash-triage@sha256:f80ab06a...]:
+  getting signer: getting key from Fulcio:
+  fetching ambient OIDC credentials: invalid character 'u' looking for beginning of value
+```
+
+「invalid character 'u'」是因为令牌端点返回的不是 JSON 而是 `unauthorized`。
+根因是这个 workflow 自身的写法——不是上游问题：GitHub 的
+`ACTIONS_ID_TOKEN_REQUEST_TOKEN` **按 step 签发**且有效期很短，而原来把
+「推送 → Trivy → SBOM → 签名」23 轮全塞在同一个 step 里。
+
+时间线可以坐实：该 step 15:31:54 开始，15:33–15:37 连续签名成功 5 次，
+15:38:51 第 6 次取令牌失败，距 step 开始 6 分 57 秒。而该 job 15:08 就已启动，
+首次签名在 25 分钟后仍然成功，可见令牌按 step 而非按 job 计时。
+
+**修复**：把签名拆成独立 step，并在该 step 开头一次性取得 Sigstore identity token。
+23 次签名在该 step 内约 2 分钟完成，稳在有效期内。`sandbox-v0.1.1` 全部通过：
+23 条 `tlog entry created`、23 次签名推送、零 Fulcio 错误。
+
+值得记下的判断方法：失败当时无法读取 CI 日志，是靠 GHCR 上的包状态定位的——
+前 5 个包都带 `sha256-….sig` 标签（cosign 成功的证据），
+`tga-kali-crash-triage` 只有版本标签而无 `.sig`，因此可断定它推送成功、签名前失败。
 
 ---
 
@@ -315,14 +344,33 @@ python scripts/resolve_sandbox_digests.py --from-published published-images.txt
 | 22 个 Dockerfile 的 `BASE_IMAGE` 占位符 | 已修复，改为 CI 实际传入的 `tga-kali-base:release` |
 | `docker_sandbox.template` | 已 pin 真实 digest `sha256:39cf20eca861...`（已二次确认可独立寻址） |
 | 发布后不回写 sandbox.json | 已修复，`sandbox-images-release.yml` 增加回写与 `--check` 步骤 |
-| 22 个 profile 的 image digest | 机制就绪，未全量构建（见第 6 节） |
+| 回写结果不带回仓库 | 已修复，见下方「回写只到构建产物为止」 |
+| 22 个 profile 的 image digest | **已全部 pin**，由 `sandbox-v0.1.1` 发布，`--check` 报 `runtime enforced / 22/22 pinned` |
 
-**机制已端到端验证**：用 `tga-kali-base` + `evidence-triage` + `logic-recovery` 实际构建、
+**机制先在本地验证**：用 `tga-kali-base` + `evidence-triage` + `logic-recovery` 实际构建、
 推送到本地 registry、读回真实 digest 并回写，且 toolset digest 逐一校验通过
 （不匹配会拒绝写入）。证据是这两个 profile 的执行门控拒绝原因由
 `unresolved_image_digest` 变为 `sandboxd_client_policy_missing` —— 镜像这一关确实已通过。
+验证后回退为占位符：`localhost:5000` 是本机地址，不应进入共享配置。
 
-验证后已将这两条回退为占位符：`localhost:5000` 是本机地址，不应进入共享配置。
+**随后由 CI 全量发布**：`sandbox-v0.1.1` 构建、契约校验、扫描、签名并推送 23 个镜像，
+真实 digest 已回写进 `config/sandbox.json`。命名空间无需手工修正——`apply_published`
+按镜像引用的最后一段路径匹配 profile，因此会把 `team-gipsy` 改写为镜像实际落地的位置。
+
+### 回写只到构建产物为止
+
+发布过程暴露了一个比占位符本身更隐蔽的缺陷：workflow 确实会回写 `sandbox.json`，
+但最后一步是 `actions/upload-artifact`，**改好的文件只作为构建产物上传，从不带回仓库**。
+而 `deploy/wsl-rootfs/provision.sh` 恰恰是从仓库这份播种 `/etc/tga/sandbox.json` 的。
+
+后果是：发布成功了，但任何人 clone 下来部署，装进去的仍然是占位符，沙箱照样起不来——
+而且 CI 全绿，不会有任何提示。`sandbox-v0.1.0` 就处在这个状态。
+
+现由本次提交把 pin 好的配置带回仓库，并增加 `test_the_shipped_configuration_carries_no_placeholder_images`
+守住：仓库里的 `sandbox.json` 一旦带占位符，测试即失败。
+
+> 更彻底的做法是让发布 workflow 自己把结果提交回来，否则每次发布都要重复这一步人工操作。
+> 该改动尚未实施。
 
 ---
 
@@ -411,11 +459,20 @@ for profile_id, profile in sorted(config.profiles.items()):
     except KaliProfileNotReadyError as exc:
         refused.append((profile_id, exc.reason))
 
-print("放行:", allowed)      # 镜像未发布时必须为 []
-print("拒绝:", len(refused))  # 必须为 22
+print("放行:", allowed)
+print("拒绝:", [(pid, reason) for pid, reason in refused])
 ```
 
-镜像未发布时**必须** 22 个 profile 全部被拒、放行 0 个。
+这个检查看的是**拒绝原因**，不是放行数量：
+
+- digest 未 pin 时，拒绝原因应为 `unresolved_image_digest`，放行必须为 0。
+  这是 2026-08-04 验收时的实测结论（22 个 profile 全部被拒）。
+- digest 已 pin（当前状态）后，该原因必须消失。此时是否放行取决于主机本身——
+  sandboxd 是否在跑、镜像是否已拉取、`allowed_client_uids` 是否已绑定，
+  因此在未 provision 的机器上仍会被拒，但原因不同。
+
+**任何时候都不允许出现的情况**：某个 profile 因 `unresolved_image_digest` 被拒，
+却仍然放行了别的 profile 去执行——门控是 fail-closed 的，没有部分放行这一说。
 
 ### 5.8 端口暴露面
 
@@ -435,36 +492,55 @@ wsl -d TGA-Runtime -u root -- ss -ltn
 
 ## 6. 已知限制
 
-### 6.1 启动状态为 `degraded` 而非 `ready`
+### 6.1 `degraded` → `ready` 尚未在本机复测
 
-**这是正确且安全的结论，不是缺陷。**
+镜像已发布、digest 已 pin，转 `ready` 的前提条件都已具备，但本机没有复测过。
+2026-08-04 验收时记录的 `degraded` 是当时的正确结论（22 个 profile 全部被
+`ensure_kali_profile_ready` 以 `unresolved_image_digest` 拒绝，放行 0 个），
+现在这个原因已经不成立，但新的取值需要实测才能写。
 
-`config/sandbox.json` 中 22 个 profile 的 image 仍为 `REPLACE_WITH_RELEASE_DIGEST`，
-因为镜像尚未发布：仓库无 `sandbox-v*` tag（发布 workflow 仅由该 tag 触发），
-GHCR 匿名探测 `team-gipsy/tga-kali-*` 与 `lyk2942712732-rgb/tga-kali-*` 均返回 403。
+复测路径：重跑 `deploy/wsl-rootfs/provision.sh` 同步配置 → 拉取要用的 profile 镜像
+→ `tga up`。
 
-上游已将加载期强制校验移除，改为在执行边界按 profile 门控
+执行边界的设计不变：加载期不做强制校验，改为在执行边界按 profile 门控
 （`tga/sandbox/readiness.py::ensure_kali_profile_ready`，由 `sandbox/manager.py` 与
-`runtime/tooling/execution/backends.py` 调用）。该门控 fail-closed，
-实测 22 个 profile 全部被拒、放行 0 个。
+`runtime/tooling/execution/backends.py` 调用），fail-closed。
 
-**转为 `ready` 的路径**：推送 `sandbox-v*` tag 触发发布 → workflow 现已包含回写步骤
-→ 重跑 `deploy/wsl-rootfs/provision.sh`。
+### 6.2 没有任何一步会预拉镜像
 
-### 6.2 未做全量 22 镜像构建
+这是目前离「一键部署」最远的一环。运行时代码里没有主动 pull：
+`tga/sandbox/readiness.py` 的状态查询明确不拉镜像，实际下载发生在
+`tga/sandbox/docker_provider.py` 的 `docker create`，即**首次用到某个 profile 时现拉**。
 
-重型镜像（ghidra / sage / jadx / volatility）单个 2–5 GB，
-验证时 E: 仅剩 51 GB 而 Docker 构建缓存已占 32 GB，存在写满磁盘的风险。
-机制已验证，全量构建属于 CI 任务而非本机任务。
+后果是首次调用会长时间等待下载，且未拉取的 profile 在 readiness 中报
+`image_unverified`。23 个镜像合计数十 GB，默认全量预拉未必合适，
+但至少应提供一个按需批量拉取的入口。尚未实现。
 
-### 6.3 Docker daemon 未运行时报 `DOCKER_UNAVAILABLE`
+### 6.3 没有发布 launcher 的预编译产物
+
+仓库内三个 workflow（`sandbox-images-release` / `sandbox-integration` /
+`sandbox-runtime`）都不构建 `tga` 二进制，GitHub 上也没有任何 Release。
+因此其他人拿不到现成的 `tga.exe`，需要自行 `go build`。尚未实现。
+
+### 6.4 Docker daemon 未运行时报 `DOCKER_UNAVAILABLE`
 
 按设计降级继续，不阻断启动。
 
-### 6.4 §20 验收中的两个「阻塞」项
+### 6.5 §20 验收中的两个待实测项
 
-「Kali 容器能执行真实命令」（Windows 第 5 项、Linux 第 4 项）无法在本机证实，
-根因同 6.1。其余各项均已实测并在 `docs/architecture/ACCEPTANCE.md` 附证据。
+「Kali 容器能执行真实命令」（Windows 第 5 项、Linux 第 4 项）此前记为「阻塞」，
+根因是镜像未发布；该根因已消除，现改记为「待实测」。
+其余各项均已实测并在 `docs/architecture/ACCEPTANCE.md` 附证据。
+
+### 6.6 基础镜像的解析在 CI 与发布之间不共享
+
+`sandbox-runtime` 与 `sandbox-images-release` 各自在运行时执行
+`docker pull kalilinux/kali-rolling` 并解析 digest。这是个**可变 tag**，
+两次运行之间上游可能已经变了——也就是说 CI 验证过的基础镜像，
+不保证就是发布实际构建所用的那个。
+
+本次发布未因此出问题，但「不可变 digest」这一承诺目前只在单次 run 内成立。
+把基础镜像 digest 固化进仓库可以消除该缺口，尚未实施。
 
 ---
 

@@ -21,7 +21,7 @@
     "architecture-analysis-v1": {
       "id": "architecture-analysis-v1",
       "provider": "sandboxd",
-      "image": "ghcr.io/team-gipsy/tga-kali-architecture-analyst@sha256:REPLACE_WITH_RELEASE_DIGEST",
+      "image": "ghcr.io/lyk2942712732-rgb/tga-kali-architecture-analyst@sha256:6288e3f4ac9e9e160423a307cade987812175fef4b46f3dff9bf3581f59c8516",
       "network_mode": "none",
       "allow_net_raw": false,
       "allow_ptrace": false,
@@ -50,7 +50,7 @@
     "binary-triage-v1": {
       "id": "binary-triage-v1",
       "provider": "sandboxd",
-      "image": "ghcr.io/team-gipsy/tga-kali-binary-triage-solver@sha256:REPLACE_WITH_RELEASE_DIGEST",
+      "image": "ghcr.io/lyk2942712732-rgb/tga-kali-binary-triage-solver@sha256:d2270eb7b4975b925dee08a045b6b48553c3d6bbb74adcb33faa0d8ed020481e",
       "network_mode": "none",
       "allow_net_raw": false,
       "allow_ptrace": false,
@@ -84,7 +84,7 @@
     "ctf-classifier-v1": {
       "id": "ctf-classifier-v1",
       "provider": "sandboxd",
-      "image": "ghcr.io/team-gipsy/tga-kali-ctf-classifier@sha256:REPLACE_WITH_RELEASE_DIGEST",
+      "image": "ghcr.io/lyk2942712732-rgb/tga-kali-ctf-classifier@sha256:cd982e2de840095d3630a73364d7a5a159b0450a109a02c7d7a844c30f7bfbe0",
       "network_mode": "none",
       "allow_net_raw": false,
       "allow_ptrace": false,
@@ -116,7 +116,7 @@
     "code-audit-v1": {
       "id": "code-audit-v1",
       "provider": "sandboxd",
-      "image": "ghcr.io/team-gipsy/tga-kali-code-audit@sha256:REPLACE_WITH_RELEASE_DIGEST",
+      "image": "ghcr.io/lyk2942712732-rgb/tga-kali-code-audit@sha256:3dc4dd376a71babc5d419aa427d438488330330092df79e01b2d11fb9a08136c",
       "network_mode": "none",
       "allow_net_raw": false,
       "allow_ptrace": false,
@@ -146,7 +146,7 @@
     "crash-triage-v1": {
       "id": "crash-triage-v1",
       "provider": "sandboxd",
-      "image": "ghcr.io/team-gipsy/tga-kali-crash-triage@sha256:REPLACE_WITH_RELEASE_DIGEST",
+      "image": "ghcr.io/lyk2942712732-rgb/tga-kali-crash-triage@sha256:a014286785c8783d360d2bb6507d4c095e9c3dd0eae6b1ab649a4ab33945a989",
       "network_mode": "none",
       "allow_net_raw": false,
       "allow_ptrace": true,
@@ -178,7 +178,7 @@
     "ctf-crypto-v1": {
       "id": "ctf-crypto-v1",
       "provider": "sandboxd",
-      "image": "ghcr.io/team-gipsy/tga-kali-ctf-crypto@sha256:REPLACE_WITH_RELEASE_DIGEST",
+      "image": "ghcr.io/lyk2942712732-rgb/tga-kali-ctf-crypto@sha256:2b08757fa34af4b2225e2b85073bf810b9e74c2a724d969aac8a05f6ac29410f",
       "network_mode": "none",
       "allow_net_raw": false,
       "allow_ptrace": false,
@@ -204,7 +204,7 @@
     "ctf-forensics-v1": {
       "id": "ctf-forensics-v1",
       "provider": "sandboxd",
-      "image": "ghcr.io/team-gipsy/tga-kali-ctf-forensics@sha256:REPLACE_WITH_RELEASE_DIGEST",
+      "image": "ghcr.io/lyk2942712732-rgb/tga-kali-ctf-forensics@sha256:d5bf026153342a0e02bbe252f6bd79a0ed2dc49ff5d61a253f3708b7df1a4bd5",
       "network_mode": "none",
       "allow_net_raw": false,
       "allow_ptrace": false,
@@ -240,7 +240,7 @@
     "ctf-pwn-v1": {
       "id": "ctf-pwn-v1",
       "provider": "sandboxd",
-      "image": "ghcr.io/team-gipsy/tga-kali-ctf-pwn@sha256:REPLACE_WITH_RELEASE_DIGEST",
+      "image": "ghcr.io/lyk2942712732-rgb/tga-kali-ctf-pwn@sha256:7dce18faef9cd71a5187ee48058e0ea0d42f586d1443ff19ec5e1d087da3cd45",
       "network_mode": "target_allowlist",
       "allow_net_raw": false,
       "allow_ptrace": true,
@@ -279,7 +279,7 @@
     "ctf-reverse-v1": {
       "id": "ctf-reverse-v1",
       "provider": "sandboxd",
-      "image": "ghcr.io/team-gipsy/tga-kali-ctf-reverse@sha256:REPLACE_WITH_RELEASE_DIGEST",
+      "image": "ghcr.io/lyk2942712732-rgb/tga-kali-ctf-reverse@sha256:177113fbfd7084f793aba2bdf0b2b61d5faddebcdeea11793094fd85b7196e74",
       "network_mode": "none",
       "allow_net_raw": false,
       "allow_ptrace": false,
@@ -316,7 +316,7 @@
     "ctf-web-v1": {
       "id": "ctf-web-v1",
       "provider": "sandboxd",
-      "image": "ghcr.io/team-gipsy/tga-kali-ctf-web@sha256:REPLACE_WITH_RELEASE_DIGEST",
+      "image": "ghcr.io/lyk2942712732-rgb/tga-kali-ctf-web@sha256:bf9123d7d55b750f7b340ffee1d78b5b7195cfebcb69859f8ec6ba922ff7c5ff",
       "network_mode": "target_allowlist",
       "allow_net_raw": false,
       "allow_ptrace": false,
@@ -349,7 +349,7 @@
     "dynamic-analysis-v1": {
       "id": "dynamic-analysis-v1",
       "provider": "sandboxd",
-      "image": "ghcr.io/team-gipsy/tga-kali-dynamic-analysis@sha256:REPLACE_WITH_RELEASE_DIGEST",
+      "image": "ghcr.io/lyk2942712732-rgb/tga-kali-dynamic-analysis@sha256:c15e3f580bed0ff2198c16eee798af4188012ef1862a3c7f13cb210144aa4adc",
       "network_mode": "none",
       "allow_net_raw": false,
       "allow_ptrace": true,
@@ -383,7 +383,7 @@
     "dynamic-fuzzing-v1": {
       "id": "dynamic-fuzzing-v1",
       "provider": "sandboxd",
-      "image": "ghcr.io/team-gipsy/tga-kali-dynamic-fuzzing@sha256:REPLACE_WITH_RELEASE_DIGEST",
+      "image": "ghcr.io/lyk2942712732-rgb/tga-kali-dynamic-fuzzing@sha256:c2447bb1bf929b3ee11eb18f24d4dba3ce979bb410fb874d3644b342073e9b94",
       "network_mode": "none",
       "allow_net_raw": false,
       "allow_ptrace": false,
@@ -410,7 +410,7 @@
     "evidence-triage-v1": {
       "id": "evidence-triage-v1",
       "provider": "sandboxd",
-      "image": "ghcr.io/team-gipsy/tga-kali-evidence-triage@sha256:REPLACE_WITH_RELEASE_DIGEST",
+      "image": "ghcr.io/lyk2942712732-rgb/tga-kali-evidence-triage@sha256:babc5a9573e1f66bcdae74caff0763bb756b494a52f1c9890e8403ef3940fa66",
       "network_mode": "none",
       "allow_net_raw": false,
       "allow_ptrace": false,
@@ -441,7 +441,7 @@
     "network-forensics-v1": {
       "id": "network-forensics-v1",
       "provider": "sandboxd",
-      "image": "ghcr.io/team-gipsy/tga-kali-network-forensics@sha256:REPLACE_WITH_RELEASE_DIGEST",
+      "image": "ghcr.io/lyk2942712732-rgb/tga-kali-network-forensics@sha256:28a4f42a6f60d60626294a314c7d3006a95a9099c08f411b11f2da48de1cfb55",
       "network_mode": "none",
       "allow_net_raw": false,
       "allow_ptrace": false,
@@ -472,7 +472,7 @@
     "logic-recovery-v1": {
       "id": "logic-recovery-v1",
       "provider": "sandboxd",
-      "image": "ghcr.io/team-gipsy/tga-kali-logic-recovery@sha256:REPLACE_WITH_RELEASE_DIGEST",
+      "image": "ghcr.io/lyk2942712732-rgb/tga-kali-logic-recovery@sha256:b9ba5b98e59adae7d4395bb7feed4e37574094323a6332ffddca27a630b46ea6",
       "network_mode": "none",
       "allow_net_raw": false,
       "allow_ptrace": false,
@@ -498,7 +498,7 @@
     "malware-analysis-v1": {
       "id": "malware-analysis-v1",
       "provider": "sandboxd",
-      "image": "ghcr.io/team-gipsy/tga-kali-malware-analysis@sha256:REPLACE_WITH_RELEASE_DIGEST",
+      "image": "ghcr.io/lyk2942712732-rgb/tga-kali-malware-analysis@sha256:46aae3bd858c4fa4646a22af6628e71d7623b0eacb2db578aea2f68e190072f8",
       "network_mode": "none",
       "allow_net_raw": false,
       "allow_ptrace": false,
@@ -532,7 +532,7 @@
     "poc-reproduction-v1": {
       "id": "poc-reproduction-v1",
       "provider": "sandboxd",
-      "image": "ghcr.io/team-gipsy/tga-kali-poc-reproduction@sha256:REPLACE_WITH_RELEASE_DIGEST",
+      "image": "ghcr.io/lyk2942712732-rgb/tga-kali-poc-reproduction@sha256:1661e2b35ac28004c0839b658901ac72e07ede8187852f1ea6f7649e0d80ce81",
       "network_mode": "target_allowlist",
       "allow_net_raw": false,
       "allow_ptrace": true,
@@ -567,7 +567,7 @@
     "static-analysis-v1": {
       "id": "static-analysis-v1",
       "provider": "sandboxd",
-      "image": "ghcr.io/team-gipsy/tga-kali-static-analysis@sha256:REPLACE_WITH_RELEASE_DIGEST",
+      "image": "ghcr.io/lyk2942712732-rgb/tga-kali-static-analysis@sha256:ccbb8dee5654537fcbbc980a69e7fdec25c9084ea8ad1c1b39924d065357cddd",
       "network_mode": "none",
       "allow_net_raw": false,
       "allow_ptrace": false,
@@ -604,7 +604,7 @@
     "pentest-surface-v1": {
       "id": "pentest-surface-v1",
       "provider": "sandboxd",
-      "image": "ghcr.io/team-gipsy/tga-kali-surface-mapper@sha256:REPLACE_WITH_RELEASE_DIGEST",
+      "image": "ghcr.io/lyk2942712732-rgb/tga-kali-surface-mapper@sha256:ee8b46cec766d01c8d52bd0daba77324fa4017e94c088234ad485f9d41a260ad",
       "network_mode": "target_allowlist",
       "allow_net_raw": false,
       "allow_ptrace": false,
@@ -639,7 +639,7 @@
     "timeline-ioc-v1": {
       "id": "timeline-ioc-v1",
       "provider": "sandboxd",
-      "image": "ghcr.io/team-gipsy/tga-kali-timeline-ioc@sha256:REPLACE_WITH_RELEASE_DIGEST",
+      "image": "ghcr.io/lyk2942712732-rgb/tga-kali-timeline-ioc@sha256:235ada90265ec44f9f926451d6b8fd04018ae5414ee2fe8051a0b38f59d98f7b",
       "network_mode": "none",
       "allow_net_raw": false,
       "allow_ptrace": false,
@@ -670,7 +670,7 @@
     "pentest-validation-v1": {
       "id": "pentest-validation-v1",
       "provider": "sandboxd",
-      "image": "ghcr.io/team-gipsy/tga-kali-vulnerability-validator@sha256:REPLACE_WITH_RELEASE_DIGEST",
+      "image": "ghcr.io/lyk2942712732-rgb/tga-kali-vulnerability-validator@sha256:6c71d7d31080bcc9d6575f7a2e3299e4ef474e550a09f5da178f2924868e86b7",
       "network_mode": "target_allowlist",
       "allow_net_raw": false,
       "allow_ptrace": false,
@@ -701,7 +701,7 @@
     "pentest-web-api-v1": {
       "id": "pentest-web-api-v1",
       "provider": "sandboxd",
-      "image": "ghcr.io/team-gipsy/tga-kali-web-api-analyst@sha256:REPLACE_WITH_RELEASE_DIGEST",
+      "image": "ghcr.io/lyk2942712732-rgb/tga-kali-web-api-analyst@sha256:67ce49d6c2afee86cfd634e11ff2fffb6ce743423d94401842f42747daeff443",
       "network_mode": "target_allowlist",
       "allow_net_raw": false,
       "allow_ptrace": false,

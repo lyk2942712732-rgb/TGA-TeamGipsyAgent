@@ -54,17 +54,22 @@ def test_context_envelope_labels_selects_new_semantics_and_keeps_retrieval_empty
             task_id=task.id, kind="hint", content="An old note suggests /admin.",
             actor_id="user",
         ).hint
-        InterventionService(bundle).record(
+        # Take the hint to reject from the call that created it. list_hints
+        # orders by `created_at, id`, both hints are recorded in the same
+        # instant, and the ids are random -- so `[-1]` returned the first hint
+        # about half the time, rejected it, and left the envelope missing the
+        # very content asserted below.
+        to_reject = InterventionService(bundle).record(
             task_id=task.id, kind="hint", content="Ignore this rejected lead.",
             actor_id="user",
-        )
-        rejected = bundle.tasks.list_hints(task.id)[-1].model_copy(
+        ).hint
+        assert to_reject is not None
+        bundle.tasks.save_hint(to_reject.model_copy(
             update={
                 "status": "rejected", "reviewed_by_solver_id": solver_id,
                 "reviewed_at": NOW,
             }
-        )
-        bundle.tasks.save_hint(rejected)
+        ))
         bundle.knowledge.add_knowledge(KnowledgeItem(
             id="knowledge_verified", task_id=task.id, scope="task", status="verified",
             kind="fact", content="The service identifies as version 1.",
