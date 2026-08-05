@@ -38,6 +38,7 @@ Flags:
   --no-open       Do not open a browser
   --public        Serve for remote access instead of localhost only
   --pull-images   Fetch missing Solver images (tens of GB on a first run)
+  --no-install    Do not import the TGA-Runtime distribution if it is missing
   --json          Emit machine-readable JSON
   --component <c> Log component for 'tga logs' (default api)
   --lines <n>     Log lines for 'tga logs' (default 200)
@@ -62,6 +63,19 @@ func main() {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(2)
+	}
+
+	// `up` is the command that may have nothing to talk to yet, so it is the
+	// one that installs. Doing this inside Resolve would make `tga status` on
+	// a fresh machine start a several-hundred-megabyte download.
+	if verb == "up" && !opts.NoInstall {
+		if err := tgaruntime.EnsureRuntimeInstalled(tgaruntime.InstallOptions{
+			Version: version,
+			Out:     os.Stdout,
+		}); err != nil {
+			reportError(err)
+			os.Exit(1)
+		}
 	}
 
 	runner, err := tgaruntime.Resolve()
@@ -92,6 +106,7 @@ func parseFlags(verb string, args []string) (command.Options, error) {
 	set.BoolVar(&opts.NoOpen, "no-open", false, "do not open a browser")
 	set.BoolVar(&opts.Public, "public", false, "serve for remote access")
 	set.BoolVar(&opts.PullImages, "pull-images", false, "fetch missing Solver images")
+	set.BoolVar(&opts.NoInstall, "no-install", false, "do not import the runtime distribution")
 	set.BoolVar(&opts.JSON, "json", false, "machine-readable output")
 	set.StringVar(&opts.Component, "component", opts.Component, "log component")
 	set.IntVar(&opts.Lines, "lines", opts.Lines, "log lines")

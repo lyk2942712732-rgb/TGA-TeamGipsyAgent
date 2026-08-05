@@ -162,7 +162,11 @@ if [ -d /run/systemd/system ] && command -v docker >/dev/null 2>&1; then
 fi
 
 if command -v docker >/dev/null 2>&1; then
-  if docker info --format '{{json .Runtimes}}' 2>/dev/null | grep -q '"runsc"'; then
+  # Three distinct outcomes, and conflating them produces a scary warning
+  # during the rootfs image build -- where there is no daemon by definition.
+  if ! docker info >/dev/null 2>&1; then
+    log "docker daemon is not reachable here; runsc registration is verified at startup"
+  elif docker info --format '{{json .Runtimes}}' 2>/dev/null | grep -q '"runsc"'; then
     log "docker reports the runsc runtime"
   else
     log "WARNING: docker does not report a runsc runtime; enforcement will not engage"

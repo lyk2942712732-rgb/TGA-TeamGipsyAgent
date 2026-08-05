@@ -1,12 +1,15 @@
 name: launcher-release
 
-# The `tga` binary is what a user actually installs; without a published build
-# there is no way to get it except cloning the repository and running `go build`.
-# Tagging `tga-v*` cross-compiles it, signs each artifact, and attaches
-# everything to a GitHub Release.
+# Tagging `tga-v*` publishes everything a user needs to install TGA: the `tga`
+# binaries, and the TGA-Runtime filesystem that `tga.exe` imports as its
+# dedicated WSL2 distribution.
 #
-# Image releases use their own `sandbox-v*` tags, so the two never trigger
-# each other.
+# The two ship in one release on purpose. The launcher has to fetch a runtime
+# it can talk to, and pairing them by release tag means there is no version
+# matrix to get wrong -- `tga` vX asks for the rootfs in its own release.
+#
+# Image releases use their own `sandbox-v*` tags, so neither trigger fires the
+# other.
 on:
   push:
     tags:
@@ -17,7 +20,7 @@ permissions:
   id-token: write
 
 jobs:
-  release:
+  launcher:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -27,7 +30,6 @@ jobs:
           # The launcher depends only on the standard library and therefore
           # has no go.sum; the default cache key would look for one and fail.
           cache: false
-      - uses: sigstore/cosign-installer@v3
       - name: Test the launcher
         working-directory: launcher
         shell: bash
@@ -74,13 +76,122 @@ jobs:
             echo "expected 'tga launcher ${version}', got '${reported}'" >&2
             exit 1
           }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: launcher-binaries
+          path: dist/
+          retention-days: 1
+
+  rootfs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+      - name: Build the frontend bundle
+        working-directory: apps/web
+        run: |
+          npm ci
+          npm run build
+      - name: Resolve an immutable Ubuntu base
+        id: base
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker pull ubuntu:24.04
+          echo "ubuntu=$(docker image inspect ubuntu:24.04 --format '{{index .RepoDigests 0}}')" \
+            >> "$GITHUB_OUTPUT"
+      - name: Build the runtime filesystem
+        shell: bash
+        env:
+          RELEASE: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          # This runs the very same provision.sh a Linux server runs, so the
+          # distribution cannot drift from the server path: what breaks here
+          # breaks there, in CI, before anyone downloads it.
+          docker build \
+            --build-arg UBUNTU_BASE="${{ steps.base.outputs.ubuntu }}" \
+            --build-arg TGA_VERSION="${RELEASE#tga-}" \
+            --tag tga-runtime:build \
+            --file deploy/wsl-rootfs/Dockerfile \
+            .
+      - name: Check the filesystem before exporting it
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Exporting a rootfs that is missing a piece produces a distribution
+          # that imports cleanly and then fails on first use, which is a far
+          # worse failure than a red build.
+          while read -r path; do
+            docker run --rm --entrypoint /bin/sh tga-runtime:build \
+              -c "test -e '$path'" \
+              || { echo "missing from the runtime filesystem: $path" >&2; exit 1; }
+            echo "  ok  $path"
+          done <<'PATHS'
+          /opt/tga/bin/tga-internal
+          /opt/tga/bin/tga-sandboxd
+          /opt/tga/venv/bin/python
+          /opt/tga/web/index.html
+          /etc/tga/tga.env
+          /etc/tga/sandbox.json
+          /etc/systemd/system/tga-api.service
+          /etc/systemd/system/tga-sandboxd.service
+          /usr/local/bin/runsc
+          /usr/bin/docker
+          /etc/wsl.conf
+          PATHS
+      - name: Export it as a WSL tarball
+        shell: bash
+        env:
+          RELEASE: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          version="${RELEASE#tga-}"
+          mkdir -p dist
+          container="$(docker create tga-runtime:build)"
+          # `docker export` writes a filesystem tar, which is what `wsl --import`
+          # consumes -- unlike `docker save`, which writes layers. Both sides of
+          # the pipe are checked: a pipeline reports the exit status of its last
+          # command, so an export that died mid-stream would otherwise look like
+          # a successful compression of a truncated tarball.
+          set -o pipefail
+          docker export "$container" \
+            | zstd -19 -T0 -q -o "dist/TGA-Runtime-${version}.tar.zst"
+          docker rm "$container" >/dev/null
+          ls -lh "dist/TGA-Runtime-${version}.tar.zst"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: runtime-rootfs
+          path: dist/
+          retention-days: 1
+
+  publish:
+    needs: [launcher, rootfs]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: sigstore/cosign-installer@v3
+      - uses: actions/download-artifact@v4
+        with:
+          path: staging
+      - name: Collect the artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          mv staging/*/* dist/
+          ls -lh dist/
       - name: Checksum and sign
         working-directory: dist
         shell: bash
         run: |
           set -euo pipefail
-          sha256sum tga-* > SHA256SUMS.txt
-          for artifact in tga-* SHA256SUMS.txt; do
+          sha256sum tga-* TGA-Runtime-* > SHA256SUMS.txt
+          for artifact in tga-* TGA-Runtime-* SHA256SUMS.txt; do
             cosign sign-blob --yes \
               --output-signature "${artifact}.sig" \
               --output-certificate "${artifact}.pem" \
@@ -99,12 +210,16 @@ jobs:
           # -- backticks, backslashes, $ -- is interpreted by the shell; the
           # two values are substituted afterwards.
           cat > notes.md <<'NOTES'
-          `tga` launcher `@VERSION@`.
+          `tga` launcher `@VERSION@`, with the TGA-Runtime distribution.
 
           Download the binary for your platform, rename it to `tga`
-          (`tga.exe` on Windows), and put it on your PATH. Windows builds
-          manage the dedicated TGA-Runtime WSL2 distribution themselves; Linux
-          builds call the same runtime directly.
+          (`tga.exe` on Windows), and put it on your PATH. On first run,
+          `tga up` imports `TGA-Runtime-@VERSION@.tar.zst` as its own WSL2
+          distribution; Linux builds call the same runtime directly.
+
+          The runtime already contains Python, the TGA package, the frontend
+          bundle, Docker Engine, gVisor `runsc`, nftables, `tga-sandboxd` and
+          the systemd units. Nothing is installed on first start.
 
           ### Verifying a download
 
@@ -120,7 +235,8 @@ jobs:
           ```
 
           Kali Solver images ship separately under `sandbox-v*` tags and are
-          pinned by digest in `config/sandbox.json`.
+          pinned by digest in `config/sandbox.json`. `tga up --pull-images`
+          fetches them; they are tens of gigabytes, so a first start does not.
           NOTES
           sed -i "s|@VERSION@|${version}|g; s|@REPOSITORY@|${REPOSITORY}|g" notes.md
           gh release create "$RELEASE" \

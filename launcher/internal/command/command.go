@@ -26,6 +26,7 @@ type Options struct {
 	NoOpen     bool
 	Public     bool
 	PullImages bool
+	NoInstall  bool
 	JSON       bool
 	Component  string
 	Lines      int
