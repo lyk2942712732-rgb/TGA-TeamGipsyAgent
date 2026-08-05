@@ -141,6 +141,36 @@ because it is a host fact that provisioning fills in. So validating the
 repository copy on its own fails — deliberately. That is what stops a green
 provision log from being read as proof of isolation.
 
+## Container engine and gVisor
+
+Provisioning installs Docker Engine and `runsc`, because without them sandboxd
+fails its `Requires=docker.service`, and with Docker but no `runsc` a Solver
+container would run straight on the host kernel — the one thing this design
+exists to prevent.
+
+Both are pinned, and both refusals abort rather than warn:
+
+- Docker comes from `download.docker.com` with its signing key compared against
+  a pinned fingerprint. Pinning the key rather than package versions is
+  deliberate: the key is stable, the repository only carries current releases.
+- `runsc` is a dated gVisor release with a pinned sha512, never `latest`. A
+  checksum pinned against a moving pointer would be decorative.
+
+Each step is checked explicitly rather than left to `set -e`. Both installers
+are called as `install_x || log …`, and inside a `||` list bash suppresses
+`set -e` for everything the function calls — so an unchecked failure would fall
+through and, in the first version of this, added an apt repository whose key
+had failed to install and then ran `apt-get install` against it.
+
+`runsc install` merges the runtime into `/etc/docker/daemon.json` rather than
+replacing it, and provisioning then asks `docker info` whether the runtime is
+really registered. Installing the binary is not the same as Docker knowing
+about it.
+
+`TGA_INSTALL_DOCKER=0` and `TGA_INSTALL_RUNSC=0` decline both. An operator who
+already manages Docker should not get a second opinion installed underneath
+them; the installers also no-op when the commands are already present.
+
 ## sandboxd
 
 `tga-sandboxd` refuses to run as anyone but root: it creates the socket, hands
