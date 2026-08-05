@@ -1,0 +1,36 @@
+[Unit]
+Description=TGA privileged gVisor sandbox runtime
+Documentation=https://github.com/team-gipsy/tga
+After=docker.service network-online.target
+# Without Docker there is nothing to run a sandbox in, so this is a hard
+# requirement -- unlike the API, which is allowed to come up degraded.
+Requires=docker.service
+
+[Service]
+Type=simple
+# sandboxd refuses to start as anyone but root: it creates the socket, chowns
+# it to tga-sandbox, and drives Docker and nftables.
+User=root
+Group=tga-sandbox
+RuntimeDirectory=tga-sandboxd
+RuntimeDirectoryMode=0750
+ExecStart=/opt/tga/bin/tga-sandboxd --config /etc/tga/sandbox.json
+Restart=on-failure
+RestartSec=2
+TimeoutStopSec=15
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
+ReadWritePaths=/run/tga-sandboxd /var/lib/tga/runs /var/log/tga
+RestrictAddressFamilies=AF_UNIX AF_NETLINK AF_INET AF_INET6
+LockPersonality=yes
+RestrictRealtime=yes
+
+# `tga logs --component sandboxd` reads this path.
+StandardOutput=append:/var/log/tga/sandboxd.log
+StandardError=append:/var/log/tga/sandboxd.log
+
+[Install]
+WantedBy=multi-user.target

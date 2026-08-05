@@ -82,6 +82,37 @@ if [ -n "$SOURCE_DIR" ] && [ -d "$SOURCE_DIR" ]; then
   "$TGA_PREFIX/venv/bin/pip" install --quiet -e "$TGA_PREFIX/app"
 fi
 
+# --- 3b. sandboxd ------------------------------------------------------------
+# Without this binary the sandbox can never be enforced: the API has nothing to
+# talk to, every profile is refused at the execution boundary, and `tga up`
+# reports degraded forever. A packaged install ships it prebuilt; a source
+# checkout with Go builds it here.
+install_sandboxd() {
+  local prebuilt="$SOURCE_DIR/dist/tga-sandboxd"
+  if [ -f "$prebuilt" ]; then
+    log "installing prebuilt tga-sandboxd"
+    install -m 0755 "$prebuilt" "$TGA_PREFIX/bin/tga-sandboxd"
+    return 0
+  fi
+  if [ -d "$SOURCE_DIR/sandboxd" ] && command -v go >/dev/null 2>&1; then
+    log "building tga-sandboxd from source"
+    ( cd "$SOURCE_DIR/sandboxd" \
+      && CGO_ENABLED=0 go build -trimpath -o "$TGA_PREFIX/bin/tga-sandboxd" ./cmd/tga-sandboxd )
+    chmod 0755 "$TGA_PREFIX/bin/tga-sandboxd"
+    return 0
+  fi
+  return 1
+}
+
+if [ -n "$SOURCE_DIR" ] && [ -d "$SOURCE_DIR" ]; then
+  if install_sandboxd; then
+    log "  sandboxd $TGA_PREFIX/bin/tga-sandboxd"
+  else
+    log "WARNING: no tga-sandboxd binary and no Go toolchain to build one;"
+    log "         the sandbox stays unenforced and 'tga up' will report degraded"
+  fi
+fi
+
 # --- 4. internal worker shim -----------------------------------------------
 log "installing the tga-internal worker"
 cat > "$TGA_PREFIX/bin/tga-internal" <<EOF
@@ -130,6 +161,13 @@ if [ -d /run/systemd/system ] && [ -d "$(dirname "$0")/../systemd" ]; then
   install -m 0644 "$(dirname "$0")/../systemd/"*.service /etc/systemd/system/
   systemctl daemon-reload
   systemctl enable tga-api.service >/dev/null 2>&1 || true
+  # Enabled only when the binary is actually there: an enabled unit whose
+  # ExecStart does not exist fails at every boot and buries the real reason.
+  if [ -x "$TGA_PREFIX/bin/tga-sandboxd" ]; then
+    systemctl enable tga-sandboxd.service >/dev/null 2>&1 || true
+  else
+    log "not enabling tga-sandboxd.service: $TGA_PREFIX/bin/tga-sandboxd is missing"
+  fi
 else
   log "systemd is not active; 'tga up' will supervise the API directly"
 fi

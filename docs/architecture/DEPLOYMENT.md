@@ -141,6 +141,25 @@ because it is a host fact that provisioning fills in. So validating the
 repository copy on its own fails — deliberately. That is what stops a green
 provision log from being read as proof of isolation.
 
+## sandboxd
+
+`tga-sandboxd` refuses to run as anyone but root: it creates the socket, hands
+it to the `tga-sandbox` group, and drives Docker and nftables. So it is a
+systemd unit, never a launcher-supervised child.
+
+Provisioning installs the binary at `/opt/tga/bin/tga-sandboxd` — from a
+prebuilt one in the payload if there is one, otherwise built from source when a
+Go toolchain is present — and enables the unit only if that binary is really
+there. An enabled unit whose `ExecStart` does not exist fails at every boot and
+buries the actual reason under a restart loop.
+
+`tga up` starts the unit and then waits for the socket to answer, because an
+active unit is not the same as a listening one. `tga down` stops it: `up`
+started it, so leaving a privileged runtime behind would be a surprise.
+
+Where no unit is installed, the step only checks the socket. That is the
+development case, and it must not fail for the absence of systemd.
+
 ## Images
 
 `tga.deployment.image_manager` asks, for every profile that names one, whether

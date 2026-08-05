@@ -84,7 +84,7 @@ tga up
 |---|---|---|
 | Kali 镜像发布（§12） | 完成 | `sandbox-v0.1.1`，23 个镜像已扫描、签名并 pin |
 | 首次启动检查/拉取镜像（§12） | 完成 | `tga/deployment/image_manager.py`；`tga up --pull-images` 拉取，默认只检查并报告缺哪些 |
-| Linux 安装包 + systemd 单元（§14） | 部分 —— 只有 `tga-api.service` | `deploy/systemd/` 下无 `tga-sandboxd.service`；`provision.sh` 不安装 sandboxd 二进制 |
+| Linux 安装包 + systemd 单元（§14） | 完成 | `deploy/systemd/` 下 `tga-api.service` 与 `tga-sandboxd.service` 齐备；`provision.sh` 安装 sandboxd 二进制（有预编译产物则用之，否则用 Go 现场构建），并只在二进制确实存在时才 enable 该 unit |
 | 发行版预装 Docker / runsc（§6、§10） | 未实现 | `provision.sh` 只装 python3、nftables、curl、gnupg、sudo 等 |
 | `TGA-Runtime.wsl.tar.zst`（§10） | 未实现 | 仓库内无任何构建它的东西 |
 | 首次运行自动 `wsl --import`（§6） | 未实现 | `launcher/internal/runtime/runtime.go` 在 WSL 缺失时只提示用户自行 `wsl --install` |
