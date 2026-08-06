@@ -237,7 +237,7 @@ def _check_profiles() -> list[Check]:
         return [Check("sandbox.json", "unknown", str(exc), ErrorCode.PROFILE_DIGEST_INVALID)]
 
     enforced = config.runtime == "enforced"
-    local_images = _local_image_digests() if enforced else set()
+    local_images = _local_image_digests() if enforced else None
     checks: list[Check] = []
     for profile_id, profile in sorted(config.profiles.items()):
         if profile.provider == "remote_http":
@@ -258,7 +258,19 @@ def _check_profiles() -> list[Check]:
             checks.append(Check(profile_id, "disabled", "sandbox runtime disabled"))
             continue
         digest = image.rsplit("@", 1)[-1]
-        if local_images and digest not in local_images:
+        if local_images is None:
+            # The store said nothing, so neither do we: claiming the profile is
+            # ready would be asserting a fact we never established.
+            checks.append(
+                Check(
+                    profile_id,
+                    "unknown",
+                    "cannot list the local image store",
+                    ErrorCode.PROFILE_IMAGE_MISSING,
+                )
+            )
+            continue
+        if digest not in local_images:
             checks.append(
                 Check(profile_id, "unavailable", "image not present locally", ErrorCode.PROFILE_IMAGE_MISSING)
             )
@@ -267,11 +279,22 @@ def _check_profiles() -> list[Check]:
     return checks
 
 
-def _local_image_digests() -> set[str]:
-    """Digests of images already present in the local container store."""
+def _local_image_digests() -> set[str] | None:
+    """Digests of images already present in the local container store.
+
+    ``None`` and the empty set mean opposite things, and conflating them is
+    what let a host holding no images at all grade every profile ready:
+
+    ``None``
+        The store could not be listed -- no docker binary, a daemon that
+        refused, a timeout.  That is evidence about nothing, so no profile
+        may be graded on it.
+    ``set()``
+        The store answered, and it holds nothing.  Every profile is missing.
+    """
     docker = shutil.which("docker")
     if not docker:
-        return set()
+        return None
     try:
         completed = subprocess.run(
             [docker, "images", "--digests", "--format", "{{.Digest}}"],
@@ -281,9 +304,9 @@ def _local_image_digests() -> set[str]:
             check=False,
         )
     except (OSError, subprocess.SubprocessError):
-        return set()
+        return None
     if completed.returncode != 0:
-        return set()
+        return None
     return {line.strip() for line in completed.stdout.splitlines() if line.strip().startswith("sha256:")}
 
 

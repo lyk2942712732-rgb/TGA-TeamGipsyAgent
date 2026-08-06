@@ -92,8 +92,20 @@ def up(
     with state_module.locked():
         current = state_module.load()
 
-        # Idempotency: an already-serving deployment is reported, not restarted.
-        if current.phase in {"ready", "degraded"} and _already_serving(current):
+        # Idempotency: an already-serving deployment is reported, not
+        # restarted.  Two things are deliberately *not* covered by that.
+        #
+        # A degraded deployment is unfinished by definition, and `tga up` is
+        # the documented way to finish it.  Short-circuiting it made the
+        # deployment permanently unrepairable: a host that came up without
+        # images stayed without images, because every later `tga up` returned
+        # "already running" instead of running the step that was still owed.
+        #
+        # `--pull-images` is a request to do work, not a query.  Honouring it
+        # only on a stopped deployment meant the remediation text -- "run
+        # `tga up --pull-images` to fetch them" -- named a command that could
+        # not do what it said.
+        if current.phase == "ready" and not pull_images and _already_serving(current):
             report = _fetch_readiness(current.api_url)
             return UpResult(
                 ok=True,
@@ -256,6 +268,24 @@ def _step_sandboxd(current) -> StepResult:
         _await_socket(config)
 
     if readiness._sandboxd_health(config) is None:
+        if _caller_may_not_ask(config):
+            # sandboxd gates its socket on the peer's UID and only the API's
+            # account is allowed, so a refusal here says nothing about whether
+            # sandboxd is healthy -- only that `tga up` is not its client.
+            # Reporting a failure on that basis told operators the daemon was
+            # down while readiness, asked through the API, called it ready.
+            # Socket presence is the most this side can honestly assert.
+            if not Path(config.sandboxd.socket_path).exists():
+                return StepResult(
+                    "start_sandboxd", False,
+                    f"no socket at {config.sandboxd.socket_path}",
+                    ErrorCode.SANDBOXD_SOCKET_MISSING,
+                )
+            current.mark_completed("start_sandboxd")
+            return StepResult(
+                "start_sandboxd", True,
+                f"{started} (health graded by readiness; this caller is not an allowed client)".strip(),
+            )
         return StepResult(
             "start_sandboxd", False,
             f"no response on {config.sandboxd.socket_path}",
@@ -265,11 +295,36 @@ def _step_sandboxd(current) -> StepResult:
     return StepResult("start_sandboxd", True, started)
 
 
+def _caller_may_not_ask(config) -> bool:
+    """Whether sandboxd's UID policy excludes whoever is running `tga up`.
+
+    Provisioning binds ``allowed_client_uids`` to the API service account, and
+    `tga up` runs as root, so on a correctly provisioned host this is true.
+    """
+    allowed = set(config.sandboxd.allowed_client_uids or ())
+    if not allowed:
+        return False
+    getuid = getattr(os, "getuid", None)
+    if getuid is None:  # Windows: the launcher never reaches this path itself.
+        return False
+    return getuid() not in allowed
+
+
 def _await_socket(config, *, timeout_seconds: float = 10.0) -> None:
-    """Give a just-started sandboxd time to bind before declaring it absent."""
+    """Give a just-started sandboxd time to bind before declaring it absent.
+
+    A caller the UID policy excludes can never get an answer, so waiting on the
+    Health RPC would burn the whole timeout every single start.  Such a caller
+    waits for the socket to appear instead.
+    """
+    watch_socket = _caller_may_not_ask(config)
+    socket_path = Path(config.sandboxd.socket_path)
     deadline = time.monotonic() + timeout_seconds
     while time.monotonic() < deadline:
-        if readiness._sandboxd_health(config) is not None:
+        if watch_socket:
+            if socket_path.exists():
+                return
+        elif readiness._sandboxd_health(config) is not None:
             return
         time.sleep(0.2)
 
