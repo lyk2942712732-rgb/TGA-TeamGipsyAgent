@@ -18,9 +18,16 @@ PROVISION = project_root() / "deploy" / "wsl-rootfs" / "provision.sh"
 class _Config:
     """Only the parts of SandboxConfig this step looks at."""
 
-    def __init__(self, runtime: str = "enforced", socket: str = "/run/x/s.sock"):
+    def __init__(
+        self,
+        runtime: str = "enforced",
+        socket: str = "/run/x/s.sock",
+        allowed_client_uids: tuple[int, ...] = (),
+    ):
         self.runtime = runtime
-        self.sandboxd = type("S", (), {"socket_path": socket})()
+        self.sandboxd = type(
+            "S", (), {"socket_path": socket, "allowed_client_uids": allowed_client_uids}
+        )()
 
 
 class _Units:
@@ -216,3 +223,65 @@ def test_enabling_falls_back_to_the_link_systemctl_would_write():
     assert "multi-user.target.wants" in body.group(1), (
         "without systemd the unit must still be linked for first boot"
     )
+
+
+# sandboxd answers only the UIDs in allowed_client_uids -- provisioning binds
+# that to the API's service account -- while `tga up` runs as root.  The step
+# used to read its own refusal as "sandboxd is down", so a first install
+# printed `[!!] start_sandboxd  no response on ...` and then, moments later,
+# `wait_for_readiness  ready`: the API, asking as an allowed client, found the
+# same daemon perfectly healthy.
+
+
+def _as_uid(monkeypatch, uid: int) -> None:
+    monkeypatch.setattr(lifecycle.os, "getuid", lambda: uid, raising=False)
+
+
+def test_a_refusal_the_uid_policy_guarantees_is_not_evidence_of_a_failure(
+    monkeypatch, tmp_path
+):
+    socket = tmp_path / "sandboxd.sock"
+    socket.write_bytes(b"")
+    _Units(installed=True).install(monkeypatch)
+    _use_config(monkeypatch, _Config(socket=str(socket), allowed_client_uids=(1500,)))
+    _as_uid(monkeypatch, 0)
+    monkeypatch.setattr(lifecycle.readiness, "_sandboxd_health", lambda config: None)
+    state = DeploymentState()
+
+    result = lifecycle._step_sandboxd(state)
+
+    assert result.ok, "a peer-credential refusal was reported as a dead daemon"
+    assert "start_sandboxd" in state.completed_steps
+
+
+def test_a_disallowed_caller_still_fails_when_no_socket_was_created(
+    monkeypatch, tmp_path
+):
+    """Socket presence is the one thing this caller can honestly check."""
+    _Units(installed=True).install(monkeypatch)
+    _use_config(
+        monkeypatch,
+        _Config(socket=str(tmp_path / "absent.sock"), allowed_client_uids=(1500,)),
+    )
+    _as_uid(monkeypatch, 0)
+    monkeypatch.setattr(lifecycle.readiness, "_sandboxd_health", lambda config: None)
+
+    result = lifecycle._step_sandboxd(DeploymentState())
+
+    assert not result.ok
+    assert result.code is ErrorCode.SANDBOXD_SOCKET_MISSING
+
+
+def test_an_allowed_caller_that_gets_no_answer_still_fails(monkeypatch, tmp_path):
+    """The fix must not blanket-suppress the failure it was narrowing."""
+    socket = tmp_path / "sandboxd.sock"
+    socket.write_bytes(b"")
+    _Units(installed=True).install(monkeypatch)
+    _use_config(monkeypatch, _Config(socket=str(socket), allowed_client_uids=(0,)))
+    _as_uid(monkeypatch, 0)
+    monkeypatch.setattr(lifecycle.readiness, "_sandboxd_health", lambda config: None)
+
+    result = lifecycle._step_sandboxd(DeploymentState())
+
+    assert not result.ok
+    assert result.code is ErrorCode.SANDBOXD_SOCKET_MISSING

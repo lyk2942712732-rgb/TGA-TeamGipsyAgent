@@ -109,3 +109,62 @@ def test_port_probe_detects_a_bound_listener():
         port = listener.getsockname()[1]
         assert not readiness.port_is_free("127.0.0.1", port)
     assert readiness.port_is_free("127.0.0.1", port)
+
+
+_PINNED = "ghcr.io/org/tga-kali-ctf-web@sha256:" + "a" * 64
+
+
+class _Profile:
+    def __init__(self, image: str, provider: str = "docker_sandbox"):
+        self.image = image
+        self.provider = provider
+
+
+class _SandboxConfig:
+    def __init__(self, runtime: str = "enforced"):
+        self.runtime = runtime
+        self.profiles = {"ctf-web-v1": _Profile(_PINNED)}
+
+
+def _store(monkeypatch, digests):
+    """Pin what the local container store answers, and nothing else."""
+    monkeypatch.setattr(
+        "tga.sandbox.config.load_sandbox_config", lambda *a, **k: (_SandboxConfig(), None)
+    )
+    monkeypatch.setattr(readiness, "_local_image_digests", lambda: digests)
+
+
+def test_an_empty_image_store_makes_every_profile_unavailable(monkeypatch):
+    """The regression: a host with no images at all graded them all ready.
+
+    `_local_image_digests` returned an empty set both when the store held
+    nothing and when it could not be read, and the guard `if local_images and
+    ...` then skipped the comparison entirely.  A first install reported
+    `0/22 images present` and `status: ready` in the same run.
+    """
+    _store(monkeypatch, set())
+
+    checks = readiness._check_profiles()
+
+    assert [check.status for check in checks] == ["unavailable"]
+    assert checks[0].code is ErrorCode.PROFILE_IMAGE_MISSING
+    assert _report(profiles=checks).status == "degraded"
+
+
+def test_an_unlistable_image_store_is_not_read_as_ready(monkeypatch):
+    """No answer is not a good answer; it may not be graded as one."""
+    _store(monkeypatch, None)
+
+    checks = readiness._check_profiles()
+
+    assert [check.status for check in checks] == ["unknown"]
+    assert _report(profiles=checks).status == "degraded"
+
+
+def test_a_present_image_is_ready(monkeypatch):
+    _store(monkeypatch, {"sha256:" + "a" * 64})
+
+    checks = readiness._check_profiles()
+
+    assert [check.status for check in checks] == ["ready"]
+    assert _report(profiles=checks).status == "ready"
