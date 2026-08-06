@@ -204,8 +204,10 @@ func resolveWindows() (Runner, error) {
 		return nil, &protocol.Error{
 			Code:   "WSL_DISTRO_MISSING",
 			Detail: DistroName + " is not registered",
-			Remediation: "Provision it with `tga install`, which imports the " +
-				"TGA-Runtime distribution.",
+			// `tga up` imports it; there is no separate install command, and
+			// this used to point at one that never existed.
+			Remediation: "Run `tga up`, which imports the TGA-Runtime " +
+				"distribution on first use.",
 		}
 	}
 	return wslRunner{distro: DistroName}, nil

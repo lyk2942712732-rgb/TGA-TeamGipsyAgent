@@ -162,7 +162,11 @@ if [ -d /run/systemd/system ] && command -v docker >/dev/null 2>&1; then
 fi
 
 if command -v docker >/dev/null 2>&1; then
-  if docker info --format '{{json .Runtimes}}' 2>/dev/null | grep -q '"runsc"'; then
+  # Three distinct outcomes, and conflating them produces a scary warning
+  # during the rootfs image build -- where there is no daemon by definition.
+  if ! docker info >/dev/null 2>&1; then
+    log "docker daemon is not reachable here; runsc registration is verified at startup"
+  elif docker info --format '{{json .Runtimes}}' 2>/dev/null | grep -q '"runsc"'; then
     log "docker reports the runsc runtime"
   else
     log "WARNING: docker does not report a runsc runtime; enforcement will not engage"
@@ -284,20 +288,48 @@ if [ -x "$TGA_PREFIX/venv/bin/python" ]; then
 fi
 
 # --- 7. systemd units -------------------------------------------------------
-if [ -d /run/systemd/system ] && [ -d "$(dirname "$0")/../systemd" ]; then
+# "systemd is running here" and "this system uses systemd" are different
+# questions, and conflating them is why the units used to be skipped entirely
+# when building the WSL image: /run/systemd/system does not exist inside a
+# build container, but the distribution it produces boots with systemd as PID 1.
+#
+# So: install the units whenever they exist -- an unused unit file harms
+# nothing -- and only ask systemd to act when it is actually there.
+enable_unit() {
+  local unit="$1"
+  if [ -d /run/systemd/system ]; then
+    systemctl enable "$unit" >/dev/null 2>&1 || true
+    return 0
+  fi
+  # Building an image for a systemd host. `systemctl enable` needs a running
+  # systemd, so create exactly the link it would: both units declare
+  # WantedBy=multi-user.target.
+  install -d -m 0755 /etc/systemd/system/multi-user.target.wants
+  ln -sf "/etc/systemd/system/$unit" "/etc/systemd/system/multi-user.target.wants/$unit"
+}
+
+UNIT_SOURCE="$(dirname "$0")/../systemd"
+if [ -d "$UNIT_SOURCE" ]; then
   log "installing systemd units"
-  install -m 0644 "$(dirname "$0")/../systemd/"*.service /etc/systemd/system/
-  systemctl daemon-reload
-  systemctl enable tga-api.service >/dev/null 2>&1 || true
+  install -m 0644 "$UNIT_SOURCE/"*.service /etc/systemd/system/
+  # An `&&` one-liner here would abort the script under `set -e` on any host
+  # without systemd running, which is every image build.
+  if [ -d /run/systemd/system ]; then
+    systemctl daemon-reload
+  fi
+  enable_unit tga-api.service
   # Enabled only when the binary is actually there: an enabled unit whose
   # ExecStart does not exist fails at every boot and buries the real reason.
   if [ -x "$TGA_PREFIX/bin/tga-sandboxd" ]; then
-    systemctl enable tga-sandboxd.service >/dev/null 2>&1 || true
+    enable_unit tga-sandboxd.service
   else
     log "not enabling tga-sandboxd.service: $TGA_PREFIX/bin/tga-sandboxd is missing"
   fi
+  if [ ! -d /run/systemd/system ]; then
+    log "systemd is not running here; units installed and linked for first boot"
+  fi
 else
-  log "systemd is not active; 'tga up' will supervise the API directly"
+  log "no systemd units to install; 'tga up' will supervise the API directly"
 fi
 
 log "provisioning complete"

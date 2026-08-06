@@ -47,6 +47,10 @@ def _build_parser() -> argparse.ArgumentParser:
     )
 
     subparsers.add_parser("down", parents=[common], help="Stop the deployment, preserving data")
+    subparsers.add_parser(
+        "reset", parents=[common],
+        help="Stop and forget what was provisioned, preserving task data",
+    )
     subparsers.add_parser("status", parents=[common], help="Report deployment state")
     subparsers.add_parser("doctor", parents=[common], help="Diagnose every deployment capability")
 
@@ -98,6 +102,8 @@ def _dispatch(args) -> dict:
         ).to_dict()
     if args.command == "down":
         return lifecycle.down()
+    if args.command == "reset":
+        return lifecycle.reset()
     if args.command == "status":
         return lifecycle.status()
     if args.command == "doctor":

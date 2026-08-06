@@ -456,6 +456,31 @@ def _terminate(pid: int) -> bool:
     return True
 
 
+def reset() -> dict:
+    """Stop everything and forget what was provisioned, keeping task data.
+
+    `up` resumes from the steps it recorded, which is what makes an interrupted
+    provision safe to retry -- but it also means a deployment wedged by a
+    half-finished step stays wedged, and the only advice anyone can give is to
+    start over. This clears the record.
+
+    It never touches the run root. Losing a competition's evidence to a
+    troubleshooting command would be unforgivable, so removing task data is not
+    something this offers at all.
+    """
+    # down() takes the same lock, so it has to finish before this one starts.
+    stopped = down()
+    with state_module.locked():
+        state_module.save(state_module.DeploymentState())
+    return {
+        "ok": True,
+        "status": "uninstalled",
+        "stopped_process": stopped.get("stopped_process", False),
+        "stopped_sandboxd": stopped.get("stopped_sandboxd", False),
+        "preserved_run_root": str(ensure_run_root()),
+    }
+
+
 def status() -> dict:
     """Report the deployment state without changing it."""
     current = state_module.load()
