@@ -1,0 +1,30 @@
+name: python-tests
+
+# The Python suite had no gate on most pull requests.
+#
+# sandbox-runtime runs it, but only for changes under a fixed list of paths --
+# tga/sandbox, sandboxd, containers/kali and a handful of named test files.
+# Everything in tga/deployment, tga/cli and tests/ could change without a
+# single test running before merge, which is the entire one-command install
+# layer. The three defects fixed alongside this workflow all reached a release
+# that way.
+#
+# It lives apart from sandbox-runtime because that workflow also builds every
+# Solver image, which takes the better part of an hour and has no business
+# running because someone edited a deployment step.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python -m pip install -e ".[dev]"
+      - run: pytest -q
