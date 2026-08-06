@@ -6,6 +6,7 @@
 package command
 
 import (
+	"bufio"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -26,6 +27,9 @@ type Options struct {
 	NoOpen     bool
 	Public     bool
 	PullImages bool
+	NoInstall  bool
+	Runtime    bool
+	Yes        bool
 	JSON       bool
 	Component  string
 	Lines      int
@@ -83,6 +87,67 @@ func Down(out io.Writer, runner tgaruntime.Runner, opts Options) error {
 	}
 	fmt.Fprintln(out, "TGA stopped. Task data was preserved.")
 	return nil
+}
+
+// Reset forgets what was provisioned so the next `tga up` starts over.
+//
+// Task data is not touched. An interrupted provision is meant to be resumable,
+// which is exactly what leaves a deployment wedged when one step keeps failing
+// -- this is the way out of that, not a way to clear a machine.
+func Reset(out io.Writer, runner tgaruntime.Runner, opts Options) error {
+	result, err := tgaruntime.Invoke(runner, "reset")
+	if err != nil {
+		return err
+	}
+	if opts.JSON {
+		return writeJSON(out, result)
+	}
+	if result.Error != nil {
+		return result.Error
+	}
+	fmt.Fprintln(out, "Provisioning state cleared. Task data was preserved.")
+	fmt.Fprintln(out, "Run `tga up` to provision again.")
+	return nil
+}
+
+// ResetRuntime unregisters the WSL distribution so it can be imported again.
+//
+// This is the remedy for an import that failed halfway, and it is destructive
+// in a way nothing else here is: unregistering a distribution deletes its disk,
+// and the run root lives inside it. So it asks first, and it does not go
+// through the worker -- the worker is inside the thing being removed, and the
+// usual reason to reach for this is that it no longer answers.
+func ResetRuntime(out io.Writer, in io.Reader, opts Options) error {
+	distro := tgaruntime.DistroName
+	if !tgaruntime.DistroRegistered(distro) {
+		fmt.Fprintf(out, "%s is not registered; nothing to remove.\n", distro)
+		return nil
+	}
+	if !opts.Yes && !confirmed(out, in, distro) {
+		fmt.Fprintln(out, "Cancelled. Nothing was removed.")
+		return nil
+	}
+	// Terminate first: unregistering a running distribution can fail while its
+	// virtual disk is still attached.
+	_ = exec.Command("wsl.exe", "--terminate", distro).Run()
+	if output, err := exec.Command("wsl.exe", "--unregister", distro).CombinedOutput(); err != nil {
+		return fmt.Errorf("wsl --unregister %s: %w: %s", distro, err, strings.TrimSpace(string(output)))
+	}
+	fmt.Fprintf(out, "%s was removed. Run `tga up` to import it again.\n", distro)
+	return nil
+}
+
+// confirmed requires the word `yes`, not a bare `y`.
+//
+// The prompt says what is lost before asking, and anything else -- including
+// an empty line from a closed stdin -- is a refusal. A destructive default is
+// how people lose work to a command they were only reading about.
+func confirmed(out io.Writer, in io.Reader, distro string) bool {
+	fmt.Fprintf(out, "This deletes the %s distribution and everything in it,\n", distro)
+	fmt.Fprintln(out, "including task data under /var/lib/tga/runs.")
+	fmt.Fprint(out, "Type 'yes' to continue: ")
+	answer, _ := bufio.NewReader(in).ReadString('\n')
+	return strings.TrimSpace(strings.ToLower(answer)) == "yes"
 }
 
 // Status reports current deployment state without changing it.

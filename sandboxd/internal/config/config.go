@@ -34,8 +34,17 @@ type Profile struct {
 	AllowNetRaw        bool     `json:"allow_net_raw"`
 	AllowPtrace        bool     `json:"allow_ptrace"`
 	AllowedExecutables []string `json:"allowed_executables"`
-	ToolsetDigest      string   `json:"toolset_digest"`
-	Limits             Limits   `json:"limits"`
+	// SupportedCapabilities and SessionExecutables are control-plane concepts
+	// that this side does not act on: sandboxd enforces AllowedExecutables and
+	// has no session support at all. They are declared because the decoder
+	// rejects unknown fields and the committed configuration carries them --
+	// without these two, Load fails on the first profile and enforcement can
+	// never start anywhere. Anything added here that sandboxd should honour
+	// has to be wired into the runtime as well, not merely parsed.
+	SupportedCapabilities []string `json:"supported_capabilities"`
+	SessionExecutables    []string `json:"session_executables"`
+	ToolsetDigest         string   `json:"toolset_digest"`
+	Limits                Limits   `json:"limits"`
 }
 
 type Sandboxd struct {
@@ -73,8 +82,8 @@ func Digest(raw []byte) (string, error) {
 	return hex.EncodeToString(sum[:]), nil
 }
 
-func Load(path string) (*Config, error) {
-	raw, err := os.ReadFile(path)
+func Load(configPath string) (*Config, error) {
+	raw, err := os.ReadFile(configPath)
 	if err != nil {
 		return nil, err
 	}
@@ -138,6 +147,19 @@ func Load(path string) (*Config, error) {
 				return nil, fmt.Errorf("profile %q repeats an allowed executable", key)
 			}
 			seenExecutables[executable] = struct{}{}
+		}
+		// Held to the same shape even though nothing here consumes it yet:
+		// a malformed entry should be rejected at load, not discovered on the
+		// day session support arrives.
+		seenSessionExecutables := map[string]struct{}{}
+		for _, executable := range profile.SessionExecutables {
+			if !identifier.MatchString(executable) {
+				return nil, fmt.Errorf("profile %q has invalid session executable", key)
+			}
+			if _, exists := seenSessionExecutables[executable]; exists {
+				return nil, fmt.Errorf("profile %q repeats a session executable", key)
+			}
+			seenSessionExecutables[executable] = struct{}{}
 		}
 		if profile.Limits.TimeoutSeconds == 0 {
 			profile.Limits.TimeoutSeconds = 300
