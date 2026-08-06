@@ -141,6 +141,70 @@ because it is a host fact that provisioning fills in. So validating the
 repository copy on its own fails — deliberately. That is what stops a green
 provision log from being read as proof of isolation.
 
+## Reset
+
+`up` resumes from the steps it recorded, which is what makes an interrupted
+provision safe to retry — and also what leaves a deployment wedged when one
+step keeps failing. `tga reset` clears that record so the next `up` starts
+over. It never touches the run root: losing a competition's evidence to a
+troubleshooting command is not a trade this offers, at any flag.
+
+`tga reset --runtime` is the exception, and the only destructive command here.
+Unregistering a WSL distribution deletes its disk, and the run root lives
+inside it, so it states that before asking and accepts nothing but the word
+`yes`. It runs on the Windows side without resolving a worker — the worker is
+inside the thing being removed, and the usual reason to reach for this is that
+it stopped answering. `--yes` skips the prompt for scripted use.
+
+## Container engine and gVisor
+
+Provisioning installs Docker Engine and `runsc`, because without them sandboxd
+fails its `Requires=docker.service`, and with Docker but no `runsc` a Solver
+container would run straight on the host kernel — the one thing this design
+exists to prevent.
+
+Both are pinned, and both refusals abort rather than warn:
+
+- Docker comes from `download.docker.com` with its signing key compared against
+  a pinned fingerprint. Pinning the key rather than package versions is
+  deliberate: the key is stable, the repository only carries current releases.
+- `runsc` is a dated gVisor release with a pinned sha512, never `latest`. A
+  checksum pinned against a moving pointer would be decorative.
+
+Each step is checked explicitly rather than left to `set -e`. Both installers
+are called as `install_x || log …`, and inside a `||` list bash suppresses
+`set -e` for everything the function calls — so an unchecked failure would fall
+through and, in the first version of this, added an apt repository whose key
+had failed to install and then ran `apt-get install` against it.
+
+`runsc install` merges the runtime into `/etc/docker/daemon.json` rather than
+replacing it, and provisioning then asks `docker info` whether the runtime is
+really registered. Installing the binary is not the same as Docker knowing
+about it.
+
+`TGA_INSTALL_DOCKER=0` and `TGA_INSTALL_RUNSC=0` decline both. An operator who
+already manages Docker should not get a second opinion installed underneath
+them; the installers also no-op when the commands are already present.
+
+## sandboxd
+
+`tga-sandboxd` refuses to run as anyone but root: it creates the socket, hands
+it to the `tga-sandbox` group, and drives Docker and nftables. So it is a
+systemd unit, never a launcher-supervised child.
+
+Provisioning installs the binary at `/opt/tga/bin/tga-sandboxd` — from a
+prebuilt one in the payload if there is one, otherwise built from source when a
+Go toolchain is present — and enables the unit only if that binary is really
+there. An enabled unit whose `ExecStart` does not exist fails at every boot and
+buries the actual reason under a restart loop.
+
+`tga up` starts the unit and then waits for the socket to answer, because an
+active unit is not the same as a listening one. `tga down` stops it: `up`
+started it, so leaving a privileged runtime behind would be a surprise.
+
+Where no unit is installed, the step only checks the socket. That is the
+development case, and it must not fail for the absence of systemd.
+
 ## Images
 
 `tga.deployment.image_manager` asks, for every profile that names one, whether

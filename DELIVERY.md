@@ -520,11 +520,16 @@ wsl -d TGA-Runtime -u root -- ss -ltn
 缺镜像不会导致启动失败：沙箱能力是分级的，没有镜像的机器照常提供界面并报 `degraded`。
 仍然没拉的 profile，会在首次用到时由 `docker create` 现拉。
 
-### 6.3 没有发布 launcher 的预编译产物
+### 6.3 launcher 预编译产物：机制已就位，尚未打过标签
 
-仓库内三个 workflow（`sandbox-images-release` / `sandbox-integration` /
-`sandbox-runtime`）都不构建 `tga` 二进制，GitHub 上也没有任何 Release。
-因此其他人拿不到现成的 `tga.exe`，需要自行 `go build`。尚未实现。
+原先没有任何 workflow 构建 `tga` 二进制，别人拿不到现成的 `tga.exe`，只能自行 `go build`。
+
+现已补上 `.github/workflows/launcher-release.yml`：打 `tga-v*` 标签即交叉编译
+windows/amd64、linux/amd64、linux/arm64，生成 `SHA256SUMS.txt`、逐个 cosign 签名，
+并建 GitHub Release 附上校验方法。镜像走 `sandbox-v*`，两者互不触发。
+`tga version` 也不再打印写死的 `0.1.0`，改由标签经 `-ldflags` 注入，未注入的报 `dev`。
+
+**剩下的一步是人工的**：还没推过 `tga-v*` 标签，因此 Releases 页面目前仍为空。
 
 ### 6.4 Docker daemon 未运行时报 `DOCKER_UNAVAILABLE`
 
