@@ -181,6 +181,8 @@ jobs:
           /etc/tga/sandbox.json
           /etc/systemd/system/tga-api.service
           /etc/systemd/system/tga-sandboxd.service
+          /etc/systemd/system/multi-user.target.wants/tga-api.service
+          /etc/systemd/system/multi-user.target.wants/tga-sandboxd.service
           /usr/local/bin/runsc
           /usr/bin/docker
           /etc/wsl.conf
