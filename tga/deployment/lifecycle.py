@@ -176,6 +176,16 @@ def _step_web_bundle(current) -> StepResult:
     return StepResult("ensure_web_bundle", True, str(bundle))
 
 
+def _narrate(line: str) -> None:
+    """Report progress on stderr, because stdout carries the JSON result.
+
+    Splitting the two is what lets the launcher forward this to the operator's
+    terminal as it happens while still parsing a single machine-readable
+    object at the end.
+    """
+    print(line, file=sys.stderr, flush=True)
+
+
 def _step_images(current, *, pull: bool) -> StepResult:
     """Say which profile images this host actually has.
 
@@ -190,7 +200,11 @@ def _step_images(current, *, pull: bool) -> StepResult:
     except Exception as exc:  # configuration problems are reported, not fatal
         return StepResult("ensure_images", False, str(exc)[:200], ErrorCode.SANDBOX_RUNTIME_DISABLED)
 
-    report = image_manager.ensure_images(config, pull=pull)
+    # Only a pull narrates. A plain availability check is a few seconds of
+    # `docker image inspect` and has nothing worth watching.
+    report = image_manager.ensure_images(
+        config, pull=pull, progress=_narrate if pull else None
+    )
     if report.ok:
         current.mark_completed("ensure_images")
         return StepResult("ensure_images", True, report.summary())

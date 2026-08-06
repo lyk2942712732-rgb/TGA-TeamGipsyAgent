@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -61,11 +62,23 @@ func (r nativeRunner) argv(args []string) []string {
 	return append(append([]string{}, r.prefix...), args...)
 }
 
+// progressWriter keeps the worker's stderr for the error path and shows it to
+// the operator as it arrives.
+//
+// The worker splits its two audiences: the result goes to stdout as one JSON
+// object, human progress to stderr. Buffering both meant `tga up
+// --pull-images` printed nothing at all while it fetched tens of gigabytes --
+// no image name, no rate, and no failure reason until the whole command had
+// finished, which is indistinguishable from a hang.
+func progressWriter(keep *bytes.Buffer) io.Writer {
+	return io.MultiWriter(keep, os.Stderr)
+}
+
 func (r nativeRunner) Run(args ...string) ([]byte, error) {
 	cmd := exec.Command(r.command, r.argv(args)...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
+	cmd.Stderr = progressWriter(&stderr)
 	err := cmd.Run()
 	if err != nil && stdout.Len() == 0 {
 		return nil, fmt.Errorf("%s: %w: %s", r.command, err, strings.TrimSpace(stderr.String()))
@@ -149,7 +162,7 @@ func (r wslRunner) Run(args ...string) ([]byte, error) {
 	cmd := exec.Command("wsl.exe", r.argv(args)...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
+	cmd.Stderr = progressWriter(&stderr)
 	err := cmd.Run()
 	if err != nil && stdout.Len() == 0 {
 		return nil, fmt.Errorf("wsl -d %s: %w: %s", r.distro, err, strings.TrimSpace(stderr.String()))

@@ -1,7 +1,10 @@
 package runtime
 
 import (
+	"bytes"
 	"errors"
+	"io"
+	"os"
 	"strings"
 	"testing"
 
@@ -137,5 +140,38 @@ func TestProtocolErrorSurvivesErrorsAs(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "WSL_NOT_AVAILABLE") {
 		t.Fatalf("message lost its code: %q", err.Error())
+	}
+}
+
+// The worker splits its audiences: the result is one JSON object on stdout,
+// human progress goes to stderr. Buffering both is what made `tga up
+// --pull-images` print nothing while it fetched tens of gigabytes.
+func TestProgressWriterShowsTheWorkerWhileItRuns(t *testing.T) {
+	read, write, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	original := os.Stderr
+	os.Stderr = write
+	defer func() { os.Stderr = original }()
+
+	var kept bytes.Buffer
+	if _, err := io.WriteString(progressWriter(&kept), "  [3/22] ctf-web-v1: pulling\n"); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if err := write.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	shown, err := io.ReadAll(read)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if !strings.Contains(string(shown), "ctf-web-v1") {
+		t.Fatalf("progress never reached the terminal, got %q", shown)
+	}
+	// The error path still needs the text, so keeping it is not optional.
+	if !strings.Contains(kept.String(), "ctf-web-v1") {
+		t.Fatalf("progress was not kept for the error path, got %q", kept.String())
 	}
 }
