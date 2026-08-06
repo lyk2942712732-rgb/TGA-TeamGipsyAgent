@@ -1,5 +1,12 @@
 # tga-sandboxd deployment
 
+> These are the steps for running `tga-sandboxd` by hand on a dedicated host,
+> and the unit here installs the binary at `/usr/local/libexec`. A TGA
+> deployment does none of this: `deploy/wsl-rootfs/provision.sh` installs the
+> binary at `/opt/tga/bin/tga-sandboxd` with `deploy/systemd/tga-sandboxd.service`,
+> and `tga up` starts it. Do not install both units — they name different
+> paths for the same service.
+
 `tga-sandboxd` is Linux-only and must run on a dedicated host with Docker,
 gVisor `runsc`, nftables and cgroup v2. It never opens a TCP listener.
 

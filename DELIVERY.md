@@ -506,21 +506,30 @@ wsl -d TGA-Runtime -u root -- ss -ltn
 （`tga/sandbox/readiness.py::ensure_kali_profile_ready`，由 `sandbox/manager.py` 与
 `runtime/tooling/execution/backends.py` 调用），fail-closed。
 
-### 6.2 没有任何一步会预拉镜像
+### 6.2 镜像预拉：已有入口，但默认不拉
 
-这是目前离「一键部署」最远的一环。运行时代码里没有主动 pull：
-`tga/sandbox/readiness.py` 的状态查询明确不拉镜像，实际下载发生在
-`tga/sandbox/docker_provider.py` 的 `docker create`，即**首次用到某个 profile 时现拉**。
+原先 `up` 的 `ensure_images` 是**名存实亡**的一步：
+`lifecycle.py::_step_web_bundle` 解析完前端目录就把它标记完成，
+于是一台一个镜像都没有的机器，也会被记录成「已完整 provision」。
 
-后果是首次调用会长时间等待下载，且未拉取的 profile 在 readiness 中报
-`image_unverified`。23 个镜像合计数十 GB，默认全量预拉未必合适，
-但至少应提供一个按需批量拉取的入口。尚未实现。
+现已改为真步骤（`tga/deployment/image_manager.py`）：逐个 profile 检查镜像在不在本机，
+`tga up --pull-images` 会把缺的拉下来。默认**只检查、不拉**——23 个镜像合计数十 GB，
+而 readiness 的预算是 90 秒，首次启动闷头下载一小时比直接说清楚缺什么更糟。
+这一点是对文档 §12「缺失则自动拉取」的**有意偏离**，因为那节写在没人量过镜像体积之前。
 
-### 6.3 没有发布 launcher 的预编译产物
+缺镜像不会导致启动失败：沙箱能力是分级的，没有镜像的机器照常提供界面并报 `degraded`。
+仍然没拉的 profile，会在首次用到时由 `docker create` 现拉。
 
-仓库内三个 workflow（`sandbox-images-release` / `sandbox-integration` /
-`sandbox-runtime`）都不构建 `tga` 二进制，GitHub 上也没有任何 Release。
-因此其他人拿不到现成的 `tga.exe`，需要自行 `go build`。尚未实现。
+### 6.3 launcher 预编译产物：机制已就位，尚未打过标签
+
+原先没有任何 workflow 构建 `tga` 二进制，别人拿不到现成的 `tga.exe`，只能自行 `go build`。
+
+现已补上 `.github/workflows/launcher-release.yml`：打 `tga-v*` 标签即交叉编译
+windows/amd64、linux/amd64、linux/arm64，生成 `SHA256SUMS.txt`、逐个 cosign 签名，
+并建 GitHub Release 附上校验方法。镜像走 `sandbox-v*`，两者互不触发。
+`tga version` 也不再打印写死的 `0.1.0`，改由标签经 `-ldflags` 注入，未注入的报 `dev`。
+
+**剩下的一步是人工的**：还没推过 `tga-v*` 标签，因此 Releases 页面目前仍为空。
 
 ### 6.4 Docker daemon 未运行时报 `DOCKER_UNAVAILABLE`
 

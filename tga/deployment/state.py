@@ -38,6 +38,7 @@ PROVISION_STEPS = (
     "detect_platform",
     "ensure_runtime_installed",
     "ensure_configuration",
+    "ensure_web_bundle",
     "ensure_images",
     "start_container_engine",
     "start_sandboxd",

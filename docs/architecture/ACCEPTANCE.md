@@ -70,8 +70,25 @@ tga up
 | PR 2 | 完整 readiness、统一错误码、`tga-internal doctor`、Sandbox smoke test | 完成 |
 | PR 3 | `up`/`down`/`status`/`logs`、状态机、锁、幂等 | 完成 |
 | PR 4 | Go `tga` CLI、Windows `tga.exe`、Linux `tga`、WSL 命令转发、浏览器打开 | 完成 |
-| PR 5 | TGA 专用 WSL rootfs、Linux 安装包、systemd、Kali 镜像发布、离线镜像包 | 部分完成 —— 发行版、安装包、systemd 已完成并实测；镜像发布已完成（`sandbox-v0.1.1`，23 个镜像已签名并 pin）；离线镜像包仍未实现 |
+| PR 5 | TGA 专用 WSL rootfs、Linux 安装包、systemd、Kali 镜像发布、离线镜像包 | 部分完成，见下表逐项拆解 |
 | PR 6 | 完整 E2E | 部分完成 —— 本机双平台 E2E 已完成；全新机器安装测试与真实沙箱任务测试待实测（阻塞根因已消除，见文末） |
+
+### PR 5 逐项
+
+此前该行记为「发行版、安装包、systemd 已完成并实测」。**这个表述偏乐观**：
+`provision.sh` 建目录、装 Python、装 systemd 单元确实做了并实测过，
+但它不等于第 10 节要求的那个**预装 Docker / runsc / sandboxd 的发行版**。
+按文档逐条拆开：
+
+| 条目 | 状态 | 依据 |
+|---|---|---|
+| Kali 镜像发布（§12） | 完成 | `sandbox-v0.1.1`，23 个镜像已扫描、签名并 pin |
+| 首次启动检查/拉取镜像（§12） | 完成 | `tga/deployment/image_manager.py`；`tga up --pull-images` 拉取，默认只检查并报告缺哪些 |
+| Linux 安装包 + systemd 单元（§14） | 完成 | `deploy/systemd/` 下 `tga-api.service` 与 `tga-sandboxd.service` 齐备；`provision.sh` 安装 sandboxd 二进制（有预编译产物则用之，否则用 Go 现场构建），并只在二进制确实存在时才 enable 该 unit |
+| 发行版预装 Docker / runsc（§6、§10） | 完成 | `provision.sh` 从 download.docker.com 装 Docker Engine（校验签名密钥指纹 `9DC85822…`），并装 gVisor `runsc`（钉住 `20260727` 版本 + sha512，非 `latest`），随后 `runsc install` 注册进 `/etc/docker/daemon.json` 并核对 `docker info` 是否报告该 runtime。两者均可用 `TGA_INSTALL_DOCKER=0` / `TGA_INSTALL_RUNSC=0` 跳过 |
+| `TGA-Runtime.wsl.tar.zst`（§10） | 已实现，待首次构建 | `deploy/wsl-rootfs/Dockerfile` 在 digest 钉死的 Ubuntu 中跑同一份 `provision.sh`，导出前校验 11 个路径；由 `tga-v*` 标签触发构建。**尚未真正构建过** |
+| 首次运行自动 `wsl --import`（§6） | 已实现，待实测 | `launcher/internal/runtime/install.go`：读同一 release 的 `SHA256SUMS.txt`，边写边算 sha256，不符即拒绝导入。仅 `up` 触发，开发树优先，`--no-install` 可关闭 |
+| 离线镜像包（§12） | 未实现 | |
 
 ## 第 17 节 · 不再保留的正式入口
 

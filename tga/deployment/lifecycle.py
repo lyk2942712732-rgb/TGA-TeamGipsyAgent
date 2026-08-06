@@ -17,9 +17,10 @@ from pathlib import Path
 from urllib.error import URLError
 from urllib.request import urlopen
 
-from tga.deployment import readiness, service_manager, state as state_module
+from tga.deployment import image_manager, readiness, service_manager, state as state_module
 from tga.deployment.errors import DeploymentError, ErrorCode
 from tga.deployment.paths import ensure_run_root, log_dir, web_dist
+from tga.sandbox.config import load_sandbox_config
 
 DEFAULT_PORT = 8123
 DEFAULT_HOST = "127.0.0.1"
@@ -85,6 +86,7 @@ def up(
     port: int = DEFAULT_PORT,
     open_browser: bool = True,
     timeout_seconds: float = 90.0,
+    pull_images: bool = False,
 ) -> UpResult:
     """Bring the deployment to a serving state, resuming partial progress."""
     with state_module.locked():
@@ -112,6 +114,7 @@ def up(
             steps.append(_step_configuration(current))
             steps.append(_step_web_bundle(current))
             steps.append(_step_container_engine(current))
+            steps.append(_step_images(current, pull=pull_images))
             steps.append(_step_sandboxd(current))
             steps.append(_step_start_api(current, host=host, port=port))
             ready_step, report = _step_wait_readiness(current, timeout_seconds=timeout_seconds)
@@ -157,8 +160,39 @@ def _step_configuration(current) -> StepResult:
 
 def _step_web_bundle(current) -> StepResult:
     bundle = web_dist()
-    current.mark_completed("ensure_images")
+    current.mark_completed("ensure_web_bundle")
     return StepResult("ensure_web_bundle", True, str(bundle))
+
+
+def _step_images(current, *, pull: bool) -> StepResult:
+    """Say which profile images this host actually has.
+
+    Until now this step existed in name only: resolving the web bundle marked
+    `ensure_images` complete, so a host with no images at all recorded a fully
+    provisioned deployment. Sandbox availability stays graded -- a missing
+    image degrades the deployment rather than failing it -- but it is no longer
+    reported as done when nothing was checked.
+    """
+    try:
+        config, _ = load_sandbox_config()
+    except Exception as exc:  # configuration problems are reported, not fatal
+        return StepResult("ensure_images", False, str(exc)[:200], ErrorCode.SANDBOX_RUNTIME_DISABLED)
+
+    report = image_manager.ensure_images(config, pull=pull)
+    if report.ok:
+        current.mark_completed("ensure_images")
+        return StepResult("ensure_images", True, report.summary())
+
+    if report.unpinned:
+        code = ErrorCode.PROFILE_DIGEST_INVALID
+    elif not report.docker_available:
+        code = ErrorCode.DOCKER_UNAVAILABLE
+    else:
+        code = ErrorCode.PROFILE_IMAGE_MISSING
+    detail = report.summary()
+    if not pull and code is ErrorCode.PROFILE_IMAGE_MISSING:
+        detail += "; run `tga up --pull-images` to fetch them"
+    return StepResult("ensure_images", False, detail, code)
 
 
 def _step_container_engine(current) -> StepResult:
@@ -188,10 +222,14 @@ def _step_container_engine(current) -> StepResult:
 
 
 def _step_sandboxd(current) -> StepResult:
-    """Report sandboxd availability without blocking a degraded startup."""
-    try:
-        from tga.sandbox.config import load_sandbox_config
+    """Start sandboxd where systemd owns it, then confirm it answers.
 
+    This step used to only look at the socket, so on a host where the unit was
+    installed but not running, `tga up` reported "no response" and left it
+    stopped -- the one command meant to bring the deployment up would not start
+    the service it was complaining about.
+    """
+    try:
         config, _ = load_sandbox_config()
     except Exception as exc:
         return StepResult("start_sandboxd", False, str(exc)[:200], ErrorCode.SANDBOX_RUNTIME_DISABLED)
@@ -200,6 +238,23 @@ def _step_sandboxd(current) -> StepResult:
             "start_sandboxd", False, "sandbox runtime is disabled",
             ErrorCode.SANDBOX_RUNTIME_DISABLED, skipped=True,
         )
+
+    started = ""
+    if service_manager.unit_installed(service_manager.SANDBOXD_UNIT):
+        unit_state = service_manager.state(service_manager.SANDBOXD_UNIT)
+        if not unit_state.active:
+            unit_state = service_manager.start(service_manager.SANDBOXD_UNIT)
+        if not unit_state.active:
+            return StepResult(
+                "start_sandboxd", False,
+                f"{service_manager.SANDBOXD_UNIT} did not become active"
+                + (f": {unit_state.detail}" if unit_state.detail else ""),
+                ErrorCode.SANDBOXD_SOCKET_MISSING,
+            )
+        started = f"systemd {service_manager.SANDBOXD_UNIT}"
+        # The socket appears a moment after the unit reports active.
+        _await_socket(config)
+
     if readiness._sandboxd_health(config) is None:
         return StepResult(
             "start_sandboxd", False,
@@ -207,7 +262,16 @@ def _step_sandboxd(current) -> StepResult:
             ErrorCode.SANDBOXD_SOCKET_MISSING,
         )
     current.mark_completed("start_sandboxd")
-    return StepResult("start_sandboxd", True)
+    return StepResult("start_sandboxd", True, started)
+
+
+def _await_socket(config, *, timeout_seconds: float = 10.0) -> None:
+    """Give a just-started sandboxd time to bind before declaring it absent."""
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        if readiness._sandboxd_health(config) is not None:
+            return
+        time.sleep(0.2)
 
 
 def _step_start_api(current, *, host: str, port: int) -> StepResult:
@@ -343,6 +407,16 @@ def down() -> dict:
         else:
             stopped = False
 
+        # `tga up` starts sandboxd, so `tga down` has to stop it. Leaving a
+        # privileged runtime running after the user asked for everything to
+        # stop is the kind of surprise that only shows up as a puzzling
+        # container on the next boot.
+        sandboxd_stopped = False
+        if service_manager.unit_installed(service_manager.SANDBOXD_UNIT):
+            sandboxd_stopped = not service_manager.stop(
+                service_manager.SANDBOXD_UNIT
+            ).active
+
         current.phase = "stopped"
         current.api_pid = None
         current.api_url = ""
@@ -353,6 +427,7 @@ def down() -> dict:
             "ok": True,
             "status": "stopped",
             "stopped_process": stopped,
+            "stopped_sandboxd": sandboxd_stopped,
             "supervisor": supervisor,
         }
 
@@ -379,6 +454,31 @@ def _terminate(pid: int) -> bool:
     except OSError:
         pass
     return True
+
+
+def reset() -> dict:
+    """Stop everything and forget what was provisioned, keeping task data.
+
+    `up` resumes from the steps it recorded, which is what makes an interrupted
+    provision safe to retry -- but it also means a deployment wedged by a
+    half-finished step stays wedged, and the only advice anyone can give is to
+    start over. This clears the record.
+
+    It never touches the run root. Losing a competition's evidence to a
+    troubleshooting command would be unforgivable, so removing task data is not
+    something this offers at all.
+    """
+    # down() takes the same lock, so it has to finish before this one starts.
+    stopped = down()
+    with state_module.locked():
+        state_module.save(state_module.DeploymentState())
+    return {
+        "ok": True,
+        "status": "uninstalled",
+        "stopped_process": stopped.get("stopped_process", False),
+        "stopped_sandboxd": stopped.get("stopped_sandboxd", False),
+        "preserved_run_root": str(ensure_run_root()),
+    }
 
 
 def status() -> dict:
