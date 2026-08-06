@@ -141,6 +141,21 @@ because it is a host fact that provisioning fills in. So validating the
 repository copy on its own fails — deliberately. That is what stops a green
 provision log from being read as proof of isolation.
 
+## Reset
+
+`up` resumes from the steps it recorded, which is what makes an interrupted
+provision safe to retry — and also what leaves a deployment wedged when one
+step keeps failing. `tga reset` clears that record so the next `up` starts
+over. It never touches the run root: losing a competition's evidence to a
+troubleshooting command is not a trade this offers, at any flag.
+
+`tga reset --runtime` is the exception, and the only destructive command here.
+Unregistering a WSL distribution deletes its disk, and the run root lives
+inside it, so it states that before asking and accepts nothing but the word
+`yes`. It runs on the Windows side without resolving a worker — the worker is
+inside the thing being removed, and the usual reason to reach for this is that
+it stopped answering. `--yes` skips the prompt for scripted use.
+
 ## Container engine and gVisor
 
 Provisioning installs Docker Engine and `runsc`, because without them sandboxd

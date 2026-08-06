@@ -28,6 +28,7 @@ const usage = `TGA - authorized security analysis and CTF runtime
 Usage:
   tga up          Start TGA and open the interface
   tga down        Stop TGA, preserving all task data
+  tga reset       Forget provisioning state so 'tga up' starts over
   tga status      Show what is currently running
   tga doctor      Diagnose the deployment and print fixes
   tga logs        Show component logs
@@ -39,6 +40,8 @@ Flags:
   --public        Serve for remote access instead of localhost only
   --pull-images   Fetch missing Solver images (tens of GB on a first run)
   --no-install    Do not import the TGA-Runtime distribution if it is missing
+  --runtime       With 'reset': also remove the WSL distribution (destructive)
+  --yes           Skip the confirmation for 'tga reset --runtime'
   --json          Emit machine-readable JSON
   --component <c> Log component for 'tga logs' (default api)
   --lines <n>     Log lines for 'tga logs' (default 200)
@@ -63,6 +66,17 @@ func main() {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(2)
+	}
+
+	// `reset --runtime` removes the distribution the worker lives in, and the
+	// usual reason to reach for it is that the worker no longer answers. So it
+	// runs before anything tries to resolve one.
+	if verb == "reset" && opts.Runtime {
+		if err := command.ResetRuntime(os.Stdout, os.Stdin, opts); err != nil {
+			reportError(err)
+			os.Exit(1)
+		}
+		return
 	}
 
 	// `up` is the command that may have nothing to talk to yet, so it is the
@@ -107,6 +121,8 @@ func parseFlags(verb string, args []string) (command.Options, error) {
 	set.BoolVar(&opts.Public, "public", false, "serve for remote access")
 	set.BoolVar(&opts.PullImages, "pull-images", false, "fetch missing Solver images")
 	set.BoolVar(&opts.NoInstall, "no-install", false, "do not import the runtime distribution")
+	set.BoolVar(&opts.Runtime, "runtime", false, "with reset: remove the WSL distribution")
+	set.BoolVar(&opts.Yes, "yes", false, "skip the confirmation prompt")
 	set.BoolVar(&opts.JSON, "json", false, "machine-readable output")
 	set.StringVar(&opts.Component, "component", opts.Component, "log component")
 	set.IntVar(&opts.Lines, "lines", opts.Lines, "log lines")
@@ -129,6 +145,8 @@ func dispatch(verb string, runner tgaruntime.Runner, opts command.Options) error
 		return command.Up(os.Stdout, runner, opts)
 	case "down":
 		return command.Down(os.Stdout, runner, opts)
+	case "reset":
+		return command.Reset(os.Stdout, runner, opts)
 	case "status":
 		return command.Status(os.Stdout, runner, opts)
 	case "doctor":

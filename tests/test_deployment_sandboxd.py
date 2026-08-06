@@ -177,7 +177,42 @@ def test_provisioning_only_enables_a_unit_whose_binary_exists():
     """An enabled unit with a missing ExecStart fails at boot and hides why."""
     provision = PROVISION.read_text(encoding="utf-8")
     guard = re.search(
-        r"if \[ -x \"\$TGA_PREFIX/bin/tga-sandboxd\" \];\s*then\s*\n\s*systemctl enable tga-sandboxd",
+        r"if \[ -x \"\$TGA_PREFIX/bin/tga-sandboxd\" \];\s*then\s*\n"
+        r"\s*enable_unit tga-sandboxd\.service",
         provision,
     )
     assert guard, "enabling tga-sandboxd must be guarded by the binary existing"
+
+
+def test_units_are_installed_even_where_systemd_is_not_running():
+    """The image build has no systemd; the distribution it produces does.
+
+    Gating installation on /run/systemd/system meant the WSL rootfs shipped
+    with no units at all, and `tga up` inside it would have supervised the API
+    itself while a perfectly good systemd sat unused.
+    """
+    provision = PROVISION.read_text(encoding="utf-8")
+
+    install_line = re.search(
+        r'^\s*install -m 0644 "\$UNIT_SOURCE/"\*\.service /etc/systemd/system/$',
+        provision,
+        re.M,
+    )
+    assert install_line, "unit installation must not depend on systemd running"
+
+    # It has to be reachable without systemd, so the enclosing condition may
+    # test for the unit files but not for /run/systemd/system.
+    enclosing = re.search(r'^if \[ -d "\$UNIT_SOURCE" \]; then$', provision, re.M)
+    assert enclosing, "installation should be gated on the units existing, nothing else"
+
+
+def test_enabling_falls_back_to_the_link_systemctl_would_write():
+    """`systemctl enable` needs a running systemd; an image build has none."""
+    provision = PROVISION.read_text(encoding="utf-8")
+    body = re.search(r"^enable_unit\(\) \{\n(.*?)^\}$", provision, re.M | re.S)
+    assert body, "enable_unit is missing"
+
+    assert "systemctl enable" in body.group(1)
+    assert "multi-user.target.wants" in body.group(1), (
+        "without systemd the unit must still be linked for first boot"
+    )
