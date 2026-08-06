@@ -27,6 +27,18 @@ FROM ${UBUNTU_BASE}
 
 ARG DEBIAN_FRONTEND=noninteractive
 
+# The Ubuntu image carries no init system, and provision.sh does not install
+# one -- on a real server systemd is simply there, and a provisioner that
+# replaced a host's PID 1 would be doing something nobody asked for. But this
+# base has to become a bootable distribution, and wsl.conf's `systemd = true`
+# does nothing without systemd to boot: the first build that got this far
+# imported cleanly and came up under WSL's own init with `systemctl: not
+# installed`, so both units sat there unused.
+RUN apt-get update -qq \
+    && apt-get install -y -qq --no-install-recommends \
+         systemd systemd-sysv dbus >/dev/null \
+    && rm -rf /var/lib/apt/lists/*
+
 # provision.sh does the work, and it is the same script a Linux server runs.
 # Keeping one installer means the distribution cannot drift from the server
 # path: anything that breaks here breaks there, in CI, before release.

@@ -185,6 +185,8 @@ jobs:
           /etc/systemd/system/multi-user.target.wants/tga-sandboxd.service
           /usr/local/bin/runsc
           /usr/bin/docker
+          /usr/bin/systemctl
+          /usr/lib/systemd/systemd
           /etc/wsl.conf
           PATHS
       - name: Export it as a WSL tarball
