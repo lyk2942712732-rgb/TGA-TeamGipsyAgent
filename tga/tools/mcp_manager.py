@@ -17,6 +17,12 @@ from pydantic import BaseModel, Field
 from tga.tools.mcp_authorization import MCPAuthorizationContext
 from tga.tools.mcp_config import MCPConfig, MCPServerConfig, configured_mcp_path, default_cache_path, load_mcp_config
 from tga.tools.mcp_policy import MCPPolicy
+from tga.tools.mcp_sdk import (
+    MCPClientConfigurationError,
+    call_tool as sdk_call_tool,
+    discover_server as sdk_discover_server,
+    read_resource as sdk_read_resource,
+)
 from tga.tools.mcp_registry import (
     MCPCatalogSnapshot,
     MCPDiscoveredTool,
@@ -24,7 +30,6 @@ from tga.tools.mcp_registry import (
     MCPToolRoute,
     build_catalog_snapshot,
 )
-from tga.tools.mcp_transport import MCPTransport, MCPTransportError, StreamableHTTPTransport, build_transport
 from tga.tools.rate_limit import TokenBucket
 
 
@@ -34,8 +39,6 @@ ERROR_CODES = {
     "TOOL_NOT_VISIBLE",
     "INVALID_ARGUMENTS",
     "POLICY_DENIED",
-    "TRANSPORT_START_FAILED",
-    "MCP_INITIALIZE_FAILED",
     "MCP_TOOL_ERROR",
     "MCP_PROTOCOL_ERROR",
     "TIMEOUT",
@@ -45,9 +48,6 @@ ERROR_CODES = {
     "HTTP_CONNECT_FAILED",
     "HTTP_REQUEST_FAILED",
     "HTTP_SERVER_ERROR",
-    "HTTP_SESSION_EXPIRED",
-    "HTTP_REDIRECT_BLOCKED",
-    "TLS_ERROR",
     "AUTH_ERROR",
 }
 
@@ -97,12 +97,10 @@ class MCPManager:
         config_path: str | Path | None = None,
         cache_path: str | Path | None = None,
         policy: MCPPolicy | None = None,
-        sandbox_process_factory: Any | None = None,
     ) -> None:
         self.config_path = Path(config_path).expanduser().resolve() if config_path else configured_mcp_path()
         self.cache_path = Path(cache_path or default_cache_path()).expanduser().resolve()
         self.policy = policy or MCPPolicy()
-        self.sandbox_process_factory = sandbox_process_factory
         self.config: MCPConfig | None = None
         self.snapshot = MCPCatalogSnapshot(version="mcp_empty")
         self.config_error: str | None = None
@@ -321,48 +319,20 @@ class MCPManager:
         if not acquired:
             global_semaphore.release()
             return self._failure(route, trace_id, request_id, catalog_version, "TIMEOUT", "server concurrency slot timed out", "queue", retryable=True)
-        transport: MCPTransport | None = None
         started = time.perf_counter()
         timings: dict[str, int] = {}
         timings["discovery_ms"] = 0  # The immutable catalog was discovered before this call.
-        phase = "transport_start"
+        phase = "tools/call"
         try:
-            transport = self._build_transport(server, workspace=workspace, context=context)
             phase_start = time.perf_counter()
-            transport.connect()
-            timings["container_start_ms"] = _elapsed_ms(phase_start)
-            initialize_id = f"init_{uuid4().hex[:12]}"
-            phase = "initialize"
-            phase_start = time.perf_counter()
-            initialize = self._initialize(transport, initialize_id, server.timeout_seconds)
-            timings["initialize_ms"] = _elapsed_ms(phase_start)
-            transport.send({"jsonrpc": "2.0", "method": "notifications/initialized"})
-            phase = "tools/call"
-            phase_start = time.perf_counter()
-            try:
-                result = self._rpc(
-                    transport,
-                    request_id=request_id,
-                    method="tools/call",
-                    params={"name": route.method, "arguments": arguments},
-                    timeout=server.tool_timeout_seconds,
-                )
-            except MCPTransportError as exc:
-                if exc.code != "HTTP_SESSION_EXPIRED" or not isinstance(transport, StreamableHTTPTransport):
-                    raise
-                # One bounded reinitialization is allowed after the server expires a session.
-                transport.reset_session()
-                initialize = self._initialize(transport, f"reinit_{uuid4().hex[:12]}", server.timeout_seconds)
-                transport.send({"jsonrpc": "2.0", "method": "notifications/initialized"})
-                result = self._rpc(
-                    transport,
-                    request_id=request_id,
-                    method="tools/call",
-                    params={"name": route.method, "arguments": arguments},
-                    timeout=server.tool_timeout_seconds,
-                )
+            sdk_result = sdk_call_tool(
+                server,
+                name=route.method,
+                arguments=arguments,
+                workspace=workspace,
+            )
+            result = sdk_result.result or {}
             timings["tool_call_ms"] = _elapsed_ms(phase_start)
-            transport.finish()
             phase_start = time.perf_counter()
             raw_json = json.dumps(result, ensure_ascii=False, separators=(",", ":"), default=str)
             bounded, truncated, original_bytes, saved_bytes = _bounded_utf8(raw_json, server.max_artifact_bytes)
@@ -381,14 +351,10 @@ class MCPManager:
                     method=route.method,
                     trace_id=trace_id,
                 )
-            elif truncated or transport.output_truncated:
+            elif truncated:
                 error = MCPExecutionError(
                     code="OUTPUT_TRUNCATED",
-                    message=(
-                        f"MCP output exceeded a configured persistence limit; saved {saved_bytes} of {original_bytes} result bytes"
-                        if truncated
-                        else "MCP stdout or stderr exceeded maxArtifactBytes"
-                    ),
+                    message=f"MCP output exceeded a configured persistence limit; saved {saved_bytes} of {original_bytes} result bytes",
                     phase="result_serialization",
                     retryable=False,
                     server=route.server_id,
@@ -407,15 +373,12 @@ class MCPManager:
                 is_error=is_error,
                 raw_result=result if not truncated else None,
                 raw_result_json=bounded,
-                stdout=transport.stdout_text,
-                stderr=transport.stderr_text,
-                returncode=transport.returncode,
-                output_truncated=transport.output_truncated,
+                stderr=sdk_result.stderr,
                 artifact_truncated=truncated,
                 original_bytes=original_bytes,
                 saved_bytes=saved_bytes,
-                server_info=initialize.get("serverInfo") or {},
-                protocol_version=str(initialize.get("protocolVersion") or ""),
+                server_info=sdk_result.server_info,
+                protocol_version=sdk_result.protocol_version,
                 timings=timings,
                 error=error,
             )
@@ -423,36 +386,15 @@ class MCPManager:
             return outcome
         except TimeoutError as exc:
             timings["total_ms"] = _elapsed_ms(started)
-            if transport is not None:
-                try:
-                    transport.send(
-                        {
-                            "jsonrpc": "2.0",
-                            "method": "notifications/cancelled",
-                            "params": {"requestId": request_id, "reason": "TGA hard timeout"},
-                        }
-                    )
-                except MCPTransportError:
-                    pass
-            return self._failure(route, trace_id, request_id, catalog_version, "TIMEOUT", str(exc), phase, retryable=True, timings=timings, transport=transport)
-        except MCPTransportError as exc:
+            return self._failure(route, trace_id, request_id, catalog_version, "TIMEOUT", str(exc) or "MCP SDK operation timed out", phase, retryable=True, timings=timings)
+        except MCPClientConfigurationError as exc:
             timings["total_ms"] = _elapsed_ms(started)
-            if exc.code in ERROR_CODES:
-                code = exc.code
-            elif "exited" in str(exc) or "stdout closed" in str(exc):
-                code = "PROCESS_EXITED"
-            elif phase == "transport_start":
-                code = "TRANSPORT_START_FAILED"
-            else:
-                code = "MCP_PROTOCOL_ERROR"
-            return self._failure(route, trace_id, request_id, catalog_version, code, str(exc), phase, retryable=True, timings=timings, transport=transport)
+            return self._failure(route, trace_id, request_id, catalog_version, exc.code, str(exc), exc.phase, retryable=exc.retryable, timings=timings)
         except Exception as exc:
             timings["total_ms"] = _elapsed_ms(started)
-            code = "MCP_INITIALIZE_FAILED" if phase == "initialize" else "MCP_PROTOCOL_ERROR"
-            return self._failure(route, trace_id, request_id, catalog_version, code, str(exc), phase, timings=timings, transport=transport)
+            code = _sdk_error_code(exc)
+            return self._failure(route, trace_id, request_id, catalog_version, code, _exception_message(exc), phase, retryable=code in {"TIMEOUT", "PROCESS_EXITED", "HTTP_CONNECT_FAILED", "HTTP_SERVER_ERROR"}, timings=timings)
         finally:
-            if transport is not None:
-                transport.close()
             semaphore.release()
             global_semaphore.release()
 
@@ -468,30 +410,15 @@ class MCPManager:
         server = self.config.servers.get(server_id) if self.config else None
         if server is None or not server.enabled:
             raise PermissionError("MCP_SERVER_NOT_AVAILABLE")
-        transport: MCPTransport | None = None
-        try:
-            transport = self._build_transport(server, workspace=workspace, context=context)
-            transport.connect()
-            initialize = self._initialize(transport, f"init_{uuid4().hex[:12]}", server.timeout_seconds)
-            transport.send({"jsonrpc": "2.0", "method": "notifications/initialized"})
-            result = self._rpc(
-                transport,
-                request_id=f"resource_{uuid4().hex[:16]}",
-                method="resources/read",
-                params={"uri": uri},
-                timeout=server.tool_timeout_seconds,
-            )
-            transport.finish()
-            return {
-                "server_id": server_id,
-                "resource_uri": uri,
-                "contents": result.get("contents") if isinstance(result.get("contents"), list) else [],
-                "server_info": initialize.get("serverInfo") or {},
-                "protocol_version": str(initialize.get("protocolVersion") or ""),
-            }
-        finally:
-            if transport is not None:
-                transport.close()
+        sdk_result = sdk_read_resource(server, uri=uri, workspace=workspace)
+        result = sdk_result.result or {}
+        return {
+            "server_id": server_id,
+            "resource_uri": uri,
+            "contents": result.get("contents") if isinstance(result.get("contents"), list) else [],
+            "server_info": sdk_result.server_info,
+            "protocol_version": sdk_result.protocol_version,
+        }
 
     def status_snapshot(self, context: MCPAuthorizationContext | None = None) -> dict[str, Any]:
         self.ensure_catalog()
@@ -556,21 +483,16 @@ class MCPManager:
         return self._discover(server_id, candidate, config_hash=config.config_hash(), workspace=None)
 
     def close(self) -> None:
-        # First release uses one-shot transports. This method is the stable
-        # lifecycle hook for future session-reused connections.
+        # Official SDK clients are one-shot async context managers and close at
+        # the end of discovery, call, or resource-read operations.
         return None
 
     def _discover(
         self, server_id: str, server: MCPServerConfig, *, config_hash: str,
         workspace: Path | None, context: MCPAuthorizationContext | None = None,
     ) -> MCPServerDiscovery:
-        transport: MCPTransport | None = None
         try:
-            transport = self._build_transport(server, workspace=workspace, context=context)
-            transport.connect()
-            initialize = self._initialize(transport, f"init_{uuid4().hex[:12]}", server.timeout_seconds)
-            transport.send({"jsonrpc": "2.0", "method": "notifications/initialized"})
-            raw_tools = self._list_tools(transport, timeout=server.timeout_seconds)
+            sdk_result = sdk_discover_server(server, workspace=workspace)
             enabled_tools = set(server.enabled_tools)
             tools = tuple(
                 MCPDiscoveredTool(
@@ -578,7 +500,7 @@ class MCPManager:
                     description=str(item.get("description") or ""),
                     input_schema=item.get("inputSchema") or item.get("input_schema") or {},
                 )
-                for item in raw_tools
+                for item in sdk_result.tools
                 if isinstance(item, dict)
                 and item.get("name")
                 and (not enabled_tools or str(item["name"]) in enabled_tools)
@@ -586,8 +508,8 @@ class MCPManager:
             return MCPServerDiscovery(
                 server_id=server_id,
                 config_hash=config_hash,
-                server_info=initialize.get("serverInfo") or {},
-                protocol_version=str(initialize.get("protocolVersion") or ""),
+                server_info=sdk_result.server_info,
+                protocol_version=sdk_result.protocol_version,
                 tools=tools,
                 discovered_at=_utc_now(),
             )
@@ -596,78 +518,9 @@ class MCPManager:
                 server_id=server_id,
                 config_hash=config_hash,
                 discovered_at=_utc_now(),
-                status="reachable" if transport is not None and transport.connected else "configured",
-                error={"code": "DISCOVERY_ERROR", "message": str(exc)[:1000], "phase": "discovery", "retryable": True},
+                status="configured",
+                error={"code": "DISCOVERY_ERROR", "message": _exception_message(exc)[:1000], "phase": "discovery", "retryable": True},
             )
-        finally:
-            if transport is not None:
-                transport.close()
-
-    def _build_transport(
-        self,
-        server: MCPServerConfig,
-        *,
-        workspace: Path | None,
-        context: MCPAuthorizationContext | None,
-    ) -> MCPTransport:
-        factory = None
-        if self.sandbox_process_factory is not None and context is not None:
-            factory = lambda: self.sandbox_process_factory(context, server, workspace)
-        return build_transport(
-            server,
-            workspace=workspace,
-            sandbox_process_factory=factory,
-        )
-
-    def _initialize(self, transport: MCPTransport, request_id: str, timeout: int) -> dict[str, Any]:
-        return self._rpc(
-            transport,
-            request_id=request_id,
-            method="initialize",
-            params={
-                "protocolVersion": "2024-11-05",
-                "capabilities": {},
-                "clientInfo": {"name": "tga", "version": "0.1.0"},
-            },
-            timeout=timeout,
-        )
-
-    def _list_tools(self, transport: MCPTransport, *, timeout: int) -> list[Any]:
-        tools: list[Any] = []
-        cursor: str | None = None
-        for _ in range(100):
-            params = {"cursor": cursor} if cursor else {}
-            listed = self._rpc(
-                transport,
-                request_id=f"list_{uuid4().hex[:12]}",
-                method="tools/list",
-                params=params,
-                timeout=timeout,
-            )
-            tools.extend(listed.get("tools") or [])
-            next_cursor = listed.get("nextCursor") or listed.get("next_cursor")
-            if not next_cursor:
-                return tools
-            cursor = str(next_cursor)
-        raise RuntimeError("MCP tools/list exceeded 100 pages")
-
-    @staticmethod
-    def _rpc(
-        transport: MCPTransport, *, request_id: str, method: str, params: dict[str, Any], timeout: int
-    ) -> dict[str, Any]:
-        transport.send({"jsonrpc": "2.0", "id": request_id, "method": method, "params": params})
-        deadline = time.monotonic() + timeout
-        while True:
-            message = transport.receive(max(0.001, deadline - time.monotonic()))
-            if message.get("id") != request_id:
-                continue
-            if "error" in message:
-                error = message.get("error") or {}
-                raise RuntimeError(f"MCP {method} error {error.get('code')}: {error.get('message')}")
-            result = message.get("result")
-            if not isinstance(result, dict):
-                raise RuntimeError(f"MCP {method} response did not contain an object result")
-            return result
 
     def _load_cache(self, config: MCPConfig) -> list[MCPServerDiscovery]:
         payload: dict[str, Any] = {}
@@ -750,7 +603,6 @@ class MCPManager:
         *,
         retryable: bool = False,
         timings: dict[str, int] | None = None,
-        transport: MCPTransport | None = None,
     ) -> MCPCallOutcome:
         outcome = MCPCallOutcome(
             ok=False,
@@ -759,11 +611,7 @@ class MCPManager:
             trace_id=trace_id,
             request_id=request_id,
             catalog_version=catalog_version,
-            stdout=transport.stdout_text if transport else "",
-            stderr=transport.stderr_text if transport else "",
-            returncode=transport.returncode if transport else None,
             timed_out=code == "TIMEOUT",
-            output_truncated=transport.output_truncated if transport else False,
             timings=timings or {},
             error=MCPExecutionError(
                 code=code if code in ERROR_CODES else "MCP_PROTOCOL_ERROR",
@@ -792,6 +640,30 @@ def _bounded_utf8(value: str, limit: int) -> tuple[str, bool, int, int]:
 
 def _content_message(content: list[Any]) -> str:
     return "\n".join(str(item.get("text")) for item in content if isinstance(item, dict) and item.get("type") == "text")[:2000]
+
+
+def _exception_message(exc: BaseException) -> str:
+    """Flatten SDK/AnyIO exception groups into one bounded diagnostic."""
+    nested = getattr(exc, "exceptions", None)
+    if isinstance(nested, tuple) and nested:
+        values = [_exception_message(item) for item in nested]
+        return "; ".join(value for value in values if value)[:2000]
+    return str(exc) or type(exc).__name__
+
+
+def _sdk_error_code(exc: BaseException) -> str:
+    message = _exception_message(exc).casefold()
+    if isinstance(exc, TimeoutError) or "timed out" in message or "timeout" in message:
+        return "TIMEOUT"
+    if "401" in message or "403" in message or "unauthorized" in message or "forbidden" in message:
+        return "AUTH_ERROR"
+    if "500" in message or "502" in message or "503" in message or "server error" in message:
+        return "HTTP_SERVER_ERROR"
+    if "exited" in message or "closed" in message or "broken resource" in message:
+        return "PROCESS_EXITED"
+    if "connect" in message or "connection" in message:
+        return "HTTP_CONNECT_FAILED"
+    return "MCP_PROTOCOL_ERROR"
 
 
 def _utc_now() -> str:

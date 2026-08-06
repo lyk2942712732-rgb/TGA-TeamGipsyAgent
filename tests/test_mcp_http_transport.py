@@ -9,7 +9,6 @@ import pytest
 
 from tga.tools.mcp_config import MCPServerConfig
 from tga.tools.mcp_manager import MCPManager
-from tga.tools.mcp_transport import MCPTransportError, StreamableHTTPTransport
 from tga.contracts import TGATask
 from tests.runtime_fixtures import execution_policy, mcp_snapshot, task as v6_task
 
@@ -25,7 +24,13 @@ class _MCPHandler(BaseHTTPRequestHandler):
         message = json.loads(self.rfile.read(length))
         type(self).requests.append({"message": message, "headers": dict(self.headers)})
         method = message.get("method")
-        if method == "notifications/initialized":
+        if method == "discover":
+            payload = {
+                "jsonrpc": "2.0",
+                "id": message["id"],
+                "error": {"code": -32601, "message": "Method not found"},
+            }
+        elif method == "notifications/initialized":
             self.send_response(202)
             self.send_header("Content-Length", "0")
             self.end_headers()
@@ -92,39 +97,7 @@ def endpoint() -> str:
         thread.join(timeout=2)
 
 
-def _server(endpoint: str) -> MCPServerConfig:
-    return MCPServerConfig.model_validate(
-        {"transport": "streamable_http", "http": {"url": endpoint}}
-    )
-
-
-def test_streamable_http_negotiates_session_protocol_and_delete(endpoint: str) -> None:
-    transport = StreamableHTTPTransport(_server(endpoint))
-    transport.connect()
-    transport.send({"jsonrpc": "2.0", "id": "init", "method": "initialize", "params": {}})
-    response = transport.receive(2)
-    assert response["result"]["protocolVersion"] == "2024-11-05"
-    transport.send({"jsonrpc": "2.0", "method": "notifications/initialized"})
-    transport.send({"jsonrpc": "2.0", "id": "list", "method": "tools/list", "params": {}})
-    assert transport.receive(2)["id"] == "list"
-    headers = _MCPHandler.requests[-1]["headers"]
-    assert headers["Mcp-Session-Id"] == "session-123"
-    assert headers["Mcp-Protocol-Version"] == "2024-11-05"
-    transport.close()
-    assert _MCPHandler.deleted is True
-
-
-def test_streamable_http_accepts_multiple_sse_messages(endpoint: str) -> None:
-    _MCPHandler.use_sse = True
-    transport = StreamableHTTPTransport(_server(endpoint))
-    transport.connect()
-    transport.send({"jsonrpc": "2.0", "id": "init", "method": "initialize", "params": {}})
-    assert transport.receive(2)["method"] == "notifications/progress"
-    assert transport.receive(2)["id"] == "init"
-    transport.close()
-
-
-def test_transport_config_is_discriminated_and_sensitive_headers_use_refs(monkeypatch: pytest.MonkeyPatch, endpoint: str) -> None:
+def test_transport_config_is_discriminated_and_sensitive_headers_use_refs(monkeypatch: pytest.MonkeyPatch, endpoint: str, tmp_path) -> None:
     with pytest.raises(ValueError):
         MCPServerConfig.model_validate(
             {
@@ -138,18 +111,17 @@ def test_transport_config_is_discriminated_and_sensitive_headers_use_refs(monkey
             {"transport": "streamable_http", "http": {"url": endpoint, "headers": {"Authorization": "secret"}}}
         )
     monkeypatch.delenv("MISSING_MCP_TOKEN", raising=False)
-    transport = StreamableHTTPTransport(
-        MCPServerConfig.model_validate(
-            {
-                "transport": "streamable_http",
-                "http": {"url": endpoint, "secretRefs": {"Authorization": "env:MISSING_MCP_TOKEN"}},
-            }
-        )
+    config = tmp_path / "missing-secret.json"
+    config.write_text(
+        json.dumps({"version": 1, "servers": {"remote": {
+            "transport": "streamable_http",
+            "http": {"url": endpoint, "secretRefs": {"Authorization": "env:MISSING_MCP_TOKEN"}},
+        }}}),
+        encoding="utf-8",
     )
-    transport.connect()
-    with pytest.raises(MCPTransportError) as error:
-        transport.send({"jsonrpc": "2.0", "id": "init", "method": "initialize", "params": {}})
-    assert error.value.code == "AUTH_ERROR"
+    manager = MCPManager(config_path=config, cache_path=tmp_path / "cache.json")
+    discovery = manager.refresh().servers[0]
+    assert discovery.error and "MISSING_MCP_TOKEN" in discovery.error["message"]
 
 
 def test_http_server_discovery_allowlist_and_agent_tool_call(endpoint: str, tmp_path) -> None:
@@ -184,3 +156,4 @@ def test_http_server_discovery_allowlist_and_agent_tool_call(endpoint: str, tmp_
     assert outcome.ok is True
     assert outcome.content == [{"type": "text", "text": "hello over HTTP"}]
     assert outcome.protocol_version == "2024-11-05"
+    assert _MCPHandler.deleted is True

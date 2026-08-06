@@ -199,7 +199,6 @@ class MCPHTTPConfig(BaseModel):
     secret_refs: dict[str, str] = Field(default_factory=dict)
     proxy_url: str | None = None
     allow_same_origin_redirects: bool = False
-    max_retries: int = Field(default=1, ge=0, le=2)
 
     @field_validator("url")
     @classmethod

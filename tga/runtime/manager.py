@@ -84,7 +84,6 @@ class Manager:
         self.executor = executor
         self.mcp_manager = mcp_manager or MCPManager(
             cache_path=self.run_root / "mcp-cache.json",
-            sandbox_process_factory=self._open_mcp_sandbox_process,
         )
         self.model_client = model_client
         self.remote_flag_verifier = remote_flag_verifier
@@ -695,24 +694,6 @@ class Manager:
         )
         for handle in handles:
             manager.release(handle)
-
-    def _open_mcp_sandbox_process(self, task: TGATask, server, workspace: Path | None):
-        """Reject in-sandbox MCP server images.
-
-        Sandbox configuration owns SandboxProfiles only; it is not a second tool
-        or image registry. Local CLI commands live in the Profile's Kali image
-        and are authorized by the Tool Catalog plus the Profile's
-        ``allowed_executables`` allowlist, so no per-server MCP image can be
-        granted execution inside a sandbox. MCP stays reserved for independent
-        external services.
-        """
-        from tga.sandbox.provider import SandboxError
-
-        raise SandboxError(
-            "in-sandbox MCP server images are not authorized; MCP is reserved "
-            "for independent external services",
-            code="POLICY_DENIED",
-        )
 
     @staticmethod
     def _next_solver_id(

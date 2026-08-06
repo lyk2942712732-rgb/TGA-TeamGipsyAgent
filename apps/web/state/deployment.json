@@ -1,0 +1,19 @@
+{
+  "api_pid": 36868,
+  "api_url": "http://127.0.0.1:8123",
+  "completed_steps": [
+    "detect_platform",
+    "ensure_configuration",
+    "ensure_images",
+    "start_container_engine",
+    "start_api",
+    "wait_for_readiness"
+  ],
+  "host": "127.0.0.1",
+  "last_error_code": "",
+  "last_error_detail": "",
+  "phase": "degraded",
+  "port": 8123,
+  "supervisor": "launcher",
+  "updated_at": "2026-08-05T12:05:04.616913+00:00"
+}

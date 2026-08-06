@@ -23,7 +23,7 @@ from tga.sandbox.manager import SandboxManager
 from tga.sandbox.models import ProcessSpec, SandboxHandle, SandboxState
 from tga.sandbox.provider import SandboxError
 from tga.tools.mcp_config import MCPServerConfig, load_mcp_config
-from tga.tools.mcp_transport import MCPTransportError, build_transport
+from tga.tools.mcp_sdk import MCPClientConfigurationError, discover_server
 
 
 def _config(**updates) -> SandboxConfig:
@@ -425,8 +425,8 @@ def test_enforced_mcp_rejects_local_process(monkeypatch) -> None:
             "stdio": {"source": "local_process", "command": "fixture"},
         }
     )
-    with pytest.raises(MCPTransportError) as error:
-        build_transport(server)
+    with pytest.raises(MCPClientConfigurationError) as error:
+        discover_server(server)
     assert error.value.code == "POLICY_DENIED"
 
 
@@ -439,8 +439,8 @@ def test_enforced_mcp_rejects_mutable_image_tag(monkeypatch) -> None:
             "stdio": {"source": "docker_image", "image": "example.invalid/tool:latest"},
         }
     )
-    with pytest.raises(MCPTransportError) as error:
-        build_transport(server, sandbox_process_factory=lambda: None)
+    with pytest.raises(MCPClientConfigurationError) as error:
+        discover_server(server)
     assert error.value.code == "POLICY_DENIED"
 
 

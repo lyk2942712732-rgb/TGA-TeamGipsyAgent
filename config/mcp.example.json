@@ -15,8 +15,7 @@
           "Authorization": "env:MCP_SCANNER_TOKEN"
         },
         "proxyUrl": null,
-        "allowSameOriginRedirects": false,
-        "maxRetries": 1
+        "allowSameOriginRedirects": false
       },
       "enabledTools": []
     }

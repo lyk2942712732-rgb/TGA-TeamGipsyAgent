@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import json
 import sys
-import threading
-import time
 from pathlib import Path
 
 import pytest
@@ -15,7 +13,7 @@ from tga.tools.mcp_policy import validate_json_schema
 from tga.tools.mcp_registry import provider_tool_name
 from tga.tools.mcp_registry import MCPToolRoute
 from tga.tools.mcp_registry import MCPDiscoveredTool, MCPServerDiscovery, build_catalog_snapshot
-from tga.tools.mcp_transport import StdioTransport, build_stdio_command, build_transport
+from tga.tools.mcp_sdk import build_stdio_command
 from tests.runtime_fixtures import mcp_policy, mcp_snapshot, task as v6_task
 
 
@@ -352,7 +350,7 @@ def test_workspace_status_distinguishes_local_docker_and_remote_http(tmp_path: P
 
 @pytest.mark.parametrize(
     ("mode", "expected"),
-    [("timeout", "TIMEOUT"), ("invalid-json", "MCP_PROTOCOL_ERROR"), ("rpc-error", "MCP_INITIALIZE_FAILED"), ("exit", "PROCESS_EXITED")],
+    [("timeout", "TIMEOUT"), ("invalid-json", "TIMEOUT"), ("rpc-error", "MCP_PROTOCOL_ERROR"), ("exit", "PROCESS_EXITED")],
 )
 def test_protocol_and_process_failures_are_classified(tmp_path: Path, mode: str, expected: str) -> None:
     fixture = Path(__file__).parent / "fixtures" / "failing_mcp_server.py"
@@ -373,52 +371,6 @@ def test_protocol_and_process_failures_are_classified(tmp_path: Path, mode: str,
     outcome = manager.call_tool(context=_task(snapshot, "fail"), route=route, arguments={}, catalog_version=snapshot.version)
     assert not outcome.ok
     assert outcome.error and outcome.error.code == expected
-    assert outcome.error.phase in {"initialize", "transport_start"}
+    assert outcome.error.phase == "tools/call"
 
 
-def test_transport_close_leaves_no_child_process(tmp_path: Path) -> None:
-    path = tmp_path / "cleanup.json"
-    path.write_text(
-        json.dumps({"version": 1, "servers": {"sleep": {"transport": "stdio", "stdio": {"source": "local_process", "command": sys.executable, "args": ["-c", "import time; time.sleep(30)"]}, "visibility": {"risk": "passive"}}}}),
-        encoding="utf-8",
-    )
-    config, _ = load_mcp_config(path)
-    transport = build_transport(config.servers["sleep"])
-    transport.connect()
-    process = transport.process
-    assert process is not None and process.poll() is None
-    transport.close()
-    assert process.poll() is not None
-
-
-def test_transport_close_tolerates_concurrent_reader_capture() -> None:
-    transport = StdioTransport([sys.executable], environment={}, max_capture_bytes=4096)
-    ready = threading.Barrier(3)
-    stop = threading.Event()
-    failures: list[BaseException] = []
-
-    def capture(name: str) -> None:
-        ready.wait()
-        while not stop.is_set():
-            try:
-                transport._capture(name, "reader output\n")
-            except BaseException as exc:  # pragma: no cover - assertion captures the race
-                failures.append(exc)
-                return
-
-    threads = [
-        threading.Thread(target=capture, args=("stdout",)),
-        threading.Thread(target=capture, args=("stderr",)),
-    ]
-    for thread in threads:
-        thread.start()
-    ready.wait()
-
-    transport.close()
-    time.sleep(0.01)
-    stop.set()
-    for thread in threads:
-        thread.join(timeout=1)
-
-    assert not failures
-    assert all(not thread.is_alive() for thread in threads)

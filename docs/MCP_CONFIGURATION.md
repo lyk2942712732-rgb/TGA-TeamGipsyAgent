@@ -15,15 +15,16 @@ this snapshot is not a user ACL.
 ```text
 mcp.json
   -> validated transport config
-  -> initialize / notifications/initialized / tools/list
+  -> official MCP SDK Client discovery and tools/list
   -> immutable per-turn native tool catalog
   -> tools/call in the same AgentSession
   -> bounded result + task Artifact + ordered events
 ```
 
-The configuration, transport, lifecycle/catalog, policy, AgentSession adapter,
-and Artifact persistence are separate layers under `tga/tools/` and
-`tga/runtime/`. An MCP service cannot select its own Docker arguments, mounts,
+The official MCP Python SDK owns protocol negotiation, STDIO, Streamable HTTP,
+pagination, typed content, and session shutdown. TGA owns only configuration,
+catalog, policy, AgentSession adaptation, and Artifact persistence. An MCP
+service cannot select its own Docker arguments, mounts,
 credentials, tool name, risk level, or task scope.
 
 MCP is reserved for independent external services. It is not a registration
@@ -92,8 +93,7 @@ Streamable HTTP example:
         "headers": {"X-Client": "tga"},
         "secretRefs": {"Authorization": "env:MCP_SCANNER_TOKEN"},
         "proxyUrl": null,
-        "allowSameOriginRedirects": false,
-        "maxRetries": 1
+        "allowSameOriginRedirects": false
       },
       "enabledTools": ["scan", "status"]
     }
@@ -137,11 +137,9 @@ protocol explicitly transfers content.
 
 ## Streamable HTTP behavior
 
-Requests advertise `application/json` and `text/event-stream`. TGA accepts a
-single JSON-RPC object, a JSON batch, and multiple SSE `data:` messages. It
-captures `MCP-Session-Id`, sends the negotiated `MCP-Protocol-Version` on later
-requests, sends DELETE when closing a session, and permits one bounded
-reinitialization after a 404/410 expired-session response.
+Protocol negotiation, JSON-RPC framing, SSE parsing, session identifiers,
+protocol-version headers, cancellation, and session shutdown are provided by
+the official MCP Python SDK. TGA does not implement or patch those wire rules.
 
 TLS verification defaults to true. Redirects default to blocked; the optional
 relaxation permits same-origin redirects only. Ambient host proxy variables are
@@ -186,9 +184,9 @@ secrets.
 Health distinguishes configured, reachable, discovered, and runnable. Records
 include transport, protocol version, server info, discovery time, redacted
 endpoint or image, tool count, and typed error details. Important error codes
-include `CONFIG_ERROR`, `TRANSPORT_START_FAILED`, `HTTP_CONNECT_FAILED`,
-`TLS_ERROR`, `AUTH_ERROR`, `HTTP_REDIRECT_BLOCKED`, `MCP_INITIALIZE_FAILED`,
-`DISCOVERY_ERROR`, `TIMEOUT`, `MCP_TOOL_ERROR`, and `OUTPUT_TRUNCATED`.
+include `CONFIG_ERROR`, `HTTP_CONNECT_FAILED`, `HTTP_SERVER_ERROR`,
+`AUTH_ERROR`, `PROCESS_EXITED`, `MCP_PROTOCOL_ERROR`, `DISCOVERY_ERROR`,
+`TIMEOUT`, `MCP_TOOL_ERROR`, and `OUTPUT_TRUNCATED`.
 
 Each Agent turn retains an immutable catalog snapshot. Policy validates the
 discovered input schema, task mode/risk, rate limits, and concurrency again
@@ -225,9 +223,9 @@ npm run build
 ```
 
 Tests cover explicit configuration, schema-v6 creation snapshots and live
-disable/new-service isolation, STDIO discovery/call/timeout/cleanup,
-Docker archive import and multiple RepoTags, HTTP JSON/SSE/session headers and
-cleanup, credential rules, allowlist filtering, full management CRUD, native
+disable/new-service isolation, official-SDK STDIO and Streamable HTTP
+discovery/call/timeout/session cleanup, Docker archive import and multiple
+RepoTags, credential rules, allowlist filtering, full management CRUD, native
 Agent tool execution, Artifact handling, and frontend service controls.
 
 ## Known operational risks
