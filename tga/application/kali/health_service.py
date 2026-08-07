@@ -49,6 +49,7 @@ class SolverKaliHealthService:
                 "checked_at": None,
                 "reasons": [],
                 "missing_executables": [],
+                "image_store": {"status": "not_applicable", "error": None},
                 "toolset": {
                     "expected_digest": None,
                     "actual_digest": None,
@@ -79,6 +80,7 @@ class SolverKaliHealthService:
                     "message": f"Kali Profile {profile_id} does not exist.",
                 }],
                 "missing_executables": [],
+                "image_store": {"status": "unknown", "error": None},
                 "toolset": {
                     "expected_digest": None,
                     "actual_digest": None,
@@ -105,12 +107,18 @@ class SolverKaliHealthService:
                 for reason in profile_health.reasons
             ],
             "missing_executables": list(profile_health.missing_executables),
+            "image_store": {
+                "status": profile_health.image_store_status,
+                "error": profile_health.image_store_error,
+            },
             "toolset": {
                 "expected_digest": profile_health.expected_toolset_digest,
                 "actual_digest": profile_health.actual_toolset_digest,
                 "status": (
                     "mismatch"
                     if profile_health.status == "toolset_mismatch"
+                    else "verified_at_acquire"
+                    if profile_health.status == "healthy"
                     else "not_checked"
                 ),
             },

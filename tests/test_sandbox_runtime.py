@@ -16,6 +16,7 @@ from tga.sandbox.config import (
 )
 from tga.sandbox.readiness import (
     ensure_kali_profile_ready,
+    inspect_kali_profile,
     inspect_kali_runtime_readiness,
 )
 from tga.sandbox.docker_provider import DockerSandboxProvider
@@ -736,6 +737,74 @@ def test_disabled_runtime_is_reported_without_hiding_image_status(monkeypatch) -
     # otherwise a disabled deployment looks identical to a healthy one.
     assert profile.image_status not in (None, "", "disabled")
     assert profile.image and "@sha256:" in profile.image
+
+
+def _sandboxd_image_health(*, readable: bool, digests=(), error: str = ""):
+    return type("Health", (), {
+        "image_store_readable": readable,
+        "local_image_digests": digests,
+        "image_store_error": error,
+    })()
+
+
+def test_sandboxd_profile_is_healthy_when_pinned_image_is_present() -> None:
+    config, _ = load_sandbox_config(Path(__file__).parents[1] / "config" / "sandbox.json")
+    profile = config.profile("ctf-crypto-v1")
+    digest = profile.image.rsplit("@", 1)[-1]
+
+    readiness = inspect_kali_profile(
+        config, profile,
+        sandboxd_health=_sandboxd_image_health(readable=True, digests=(digest,)),
+    )
+
+    assert readiness.status == readiness.image_status == "healthy"
+    assert readiness.runtime_status == "sandboxd_available"
+    assert readiness.image_store_status == "readable"
+
+
+def test_sandboxd_profile_reports_a_readable_but_missing_image_store() -> None:
+    config, _ = load_sandbox_config(Path(__file__).parents[1] / "config" / "sandbox.json")
+    profile = config.profile("ctf-crypto-v1")
+
+    readiness = inspect_kali_profile(
+        config, profile, sandboxd_health=_sandboxd_image_health(readable=True),
+    )
+
+    assert readiness.status == "image_not_found"
+    assert readiness.image_store_status == "readable"
+    assert "not present" in readiness.reasons[0]
+
+
+def test_sandboxd_profile_preserves_image_store_read_error() -> None:
+    config, _ = load_sandbox_config(Path(__file__).parents[1] / "config" / "sandbox.json")
+    profile = config.profile("ctf-crypto-v1")
+
+    readiness = inspect_kali_profile(
+        config, profile,
+        sandboxd_health=_sandboxd_image_health(
+            readable=False, error="permission denied by Docker",
+        ),
+    )
+
+    assert readiness.status == "image_unreachable"
+    assert readiness.image_store_status == "unreadable"
+    assert readiness.image_store_error == "permission denied by Docker"
+
+
+def test_sandboxd_profile_keeps_image_and_runtime_health_independent() -> None:
+    config, _ = load_sandbox_config(Path(__file__).parents[1] / "config" / "sandbox.json")
+    profile = config.profile("ctf-crypto-v1")
+    health = _sandboxd_image_health(
+        readable=True, digests=(profile.image.rsplit("@", 1)[-1],),
+    )
+    health.runsc_available = False
+
+    readiness = inspect_kali_profile(config, profile, sandboxd_health=health)
+
+    assert readiness.status == "runtime_unavailable"
+    assert readiness.image_status == "healthy"
+    assert readiness.runtime_status == "sandboxd_unavailable"
+    assert readiness.reasons == ("runsc is unavailable",)
 
 
 def test_mcp_migration_binds_core_tools_but_leaves_them_disabled() -> None:

@@ -7,7 +7,7 @@ import re
 import shutil
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -42,6 +42,8 @@ class KaliProfileReadiness(BaseModel):
     missing_executables: tuple[str, ...] = ()
     expected_toolset_digest: str | None = None
     actual_toolset_digest: str | None = None
+    image_store_status: Literal["not_applicable", "unknown", "unreadable", "readable"] = "unknown"
+    image_store_error: str | None = None
 
 
 class KaliReadinessReport(BaseModel):
@@ -71,7 +73,7 @@ def inspect_kali_runtime_readiness(
     *,
     config_path: str | Path | None = None,
 ) -> KaliReadinessReport:
-    """Return lightweight status without pulling images or contacting providers."""
+    """Return status from configuration plus sandboxd's non-mutating Health RPC."""
     checked_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
     if config is None:
         try:
@@ -84,13 +86,17 @@ def inspect_kali_runtime_readiness(
                 reasons=(f"sandbox configuration could not be loaded: {exc}",),
             )
 
+    sandboxd_health = _sandboxd_health(config) if config.runtime == "enforced" else None
     profiles = {
-        profile_id: inspect_kali_profile(config, profile)
+        profile_id: inspect_kali_profile(config, profile, sandboxd_health=sandboxd_health)
         for profile_id, profile in sorted(config.profiles.items())
         if profile.provider != "remote_http"
     }
     statuses = {item.status for item in profiles.values()}
-    if any(status in {"unresolved_digest", "unknown", "toolset_mismatch", "tools_missing"} for status in statuses):
+    if any(status in {
+        "unresolved_digest", "unknown", "image_unreachable", "image_not_found",
+        "toolset_mismatch", "tools_missing",
+    } for status in statuses):
         overall = "not_ready"
     elif config.runtime == "disabled":
         overall = "disabled"
@@ -109,11 +115,11 @@ def inspect_kali_runtime_readiness(
 
 
 def inspect_kali_profile(
-    config: SandboxConfig, profile: SandboxProfile
+    config: SandboxConfig, profile: SandboxProfile, *, sandboxd_health: Any | None = None,
 ) -> KaliProfileReadiness:
     image = profile.image
     image_reason = _image_readiness_reason(image)
-    runtime_status = _runtime_status(config, profile)
+    runtime_status = _runtime_status(config, profile, sandboxd_health=sandboxd_health)
     if image_reason is not None:
         return KaliProfileReadiness(
             status="unresolved_digest",
@@ -149,7 +155,7 @@ def inspect_kali_profile(
             reasons=("Kali runtime is disabled",),
             expected_toolset_digest=profile.toolset_digest,
         )
-    if runtime_status.endswith("_unavailable"):
+    if runtime_status.endswith("_unavailable") and profile.provider != "sandboxd":
         return KaliProfileReadiness(
             status="runtime_unavailable",
             image=image,
@@ -158,6 +164,72 @@ def inspect_kali_profile(
             reasons=(f"runtime provider is unavailable: {runtime_status}",),
             expected_toolset_digest=profile.toolset_digest,
         )
+    if profile.provider == "sandboxd":
+        if sandboxd_health is None:
+            return KaliProfileReadiness(
+                status="runtime_unavailable",
+                image=image,
+                image_status="image_unverified",
+                runtime_status="sandboxd_unavailable",
+                reasons=("sandboxd Health RPC did not answer",),
+                expected_toolset_digest=profile.toolset_digest,
+                image_store_status="unknown",
+            )
+        runtime_reason = _sandboxd_runtime_reason(sandboxd_health)
+        runtime_status = "sandboxd_unavailable" if runtime_reason else "sandboxd_available"
+        if not getattr(sandboxd_health, "image_store_readable", False):
+            error = str(
+                getattr(sandboxd_health, "image_store_error", "")
+                or "Docker image store is not readable"
+            )
+            reasons = (error,) if not runtime_reason else (error, runtime_reason)
+            return KaliProfileReadiness(
+                status="image_unreachable",
+                image=image,
+                image_status="image_unreachable",
+                runtime_status=runtime_status,
+                reasons=reasons,
+                expected_toolset_digest=profile.toolset_digest,
+                image_store_status="unreadable",
+                image_store_error=error,
+            )
+        digest = image.rsplit("@", 1)[-1]
+        local_digests = {
+            str(value).strip()
+            for value in getattr(sandboxd_health, "local_image_digests", ())
+            if str(value).strip()
+        }
+        if digest not in local_digests:
+            reasons = ("digest-pinned image is not present in the local Docker image store",)
+            if runtime_reason:
+                reasons += (runtime_reason,)
+            return KaliProfileReadiness(
+                status="image_not_found",
+                image=image,
+                image_status="image_not_found",
+                runtime_status=runtime_status,
+                reasons=reasons,
+                expected_toolset_digest=profile.toolset_digest,
+                image_store_status="readable",
+            )
+        if runtime_reason:
+            return KaliProfileReadiness(
+                status="runtime_unavailable",
+                image=image,
+                image_status="healthy",
+                runtime_status="sandboxd_unavailable",
+                reasons=(runtime_reason,),
+                expected_toolset_digest=profile.toolset_digest,
+                image_store_status="readable",
+            )
+        return KaliProfileReadiness(
+            status="healthy",
+            image=image,
+            image_status="healthy",
+            runtime_status="sandboxd_available",
+            expected_toolset_digest=profile.toolset_digest,
+            image_store_status="readable",
+        )
     return KaliProfileReadiness(
         status="image_unverified",
         image=image,
@@ -165,6 +237,7 @@ def inspect_kali_profile(
         runtime_status=runtime_status,
         reasons=("image has not completed the project verification workflow",),
         expected_toolset_digest=profile.toolset_digest,
+        image_store_status="not_applicable",
     )
 
 
@@ -231,10 +304,14 @@ def _image_readiness_reason(image: str | None) -> tuple[str, str] | None:
     return None
 
 
-def _runtime_status(config: SandboxConfig, profile: SandboxProfile) -> str:
+def _runtime_status(
+    config: SandboxConfig, profile: SandboxProfile, *, sandboxd_health: Any | None = None,
+) -> str:
     if config.runtime == "disabled":
         return "disabled"
     if profile.provider == "sandboxd":
+        if sandboxd_health is not None:
+            return "sandboxd_available"
         if platform.system() != "Linux":
             return "sandboxd_unavailable"
         if not Path(config.sandboxd.socket_path).exists():
@@ -247,6 +324,39 @@ def _runtime_status(config: SandboxConfig, profile: SandboxProfile) -> str:
             else "docker_sandbox_unavailable"
         )
     return "provider_unavailable"
+
+
+def _sandboxd_health(config: SandboxConfig):
+    """Return privileged runtime and image-store facts from sandboxd."""
+    try:
+        from tga.sandbox.api.sandbox.v1 import sandbox_pb2
+        from tga.sandbox.sandboxd_provider import SandboxdProvider
+
+        provider = SandboxdProvider(config)
+        return provider._client().Health(
+            sandbox_pb2.HealthRequest(
+                protocol_major=config.sandboxd.protocol_major,
+                config_digest=config.digest,
+            ),
+            timeout=config.sandboxd.rpc_timeout_seconds,
+        )
+    except Exception:
+        return None
+
+
+def _sandboxd_runtime_reason(health: Any) -> str | None:
+    checks = (
+        ("docker_available", "Docker is unavailable to sandboxd"),
+        ("runsc_available", "runsc is unavailable"),
+        ("runsc_runtime_registered", "Docker has not registered the runsc runtime"),
+        ("nftables_available", "nftables is unavailable"),
+        ("cgroup_v2_available", "cgroup v2 is unavailable"),
+        ("client_uid_policy_active", "sandboxd client UID policy is inactive"),
+    )
+    for field, reason in checks:
+        if not getattr(health, field, True):
+            return reason
+    return None
 
 
 __all__ = [

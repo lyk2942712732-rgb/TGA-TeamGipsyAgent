@@ -84,9 +84,10 @@ describe("SolversPage capability editor", () => {
       checked_at: "2026-08-03T14:30:00Z",
       reasons: [{ code: "unresolved_image_digest", message: "image digest has not been resolved" }],
       missing_executables: [],
+      image_store: { status: "unknown", error: null },
       toolset: { expected_digest: "5f12", actual_digest: null, status: "not_checked" },
     });
-    mocks.checkSolverKaliHealth.mockRejectedValue({ status: 501 });
+    mocks.checkSolverKaliHealth.mockResolvedValue({});
     mocks.fetchSolverManifest.mockResolvedValue({ host_capabilities: [], kali: null });
     mocks.fetchHostCapabilityProfiles.mockResolvedValue({
       items: [{ id: "worker-default", capability_ids: ["artifact.inspect"] }],
@@ -172,6 +173,7 @@ describe("SolversPage capability editor", () => {
       solver_id: solver.id, requires_kali: true, profile_id: "ctf-pwn-v1", image: "example/image@sha256:" + "a".repeat(64),
       status: "runtime_unavailable", image_status: "healthy", runtime_status: "sandboxd_unavailable", checked_at: null,
       reasons: [{ code: "runtime_unavailable", message: "sandboxd is unavailable" }], missing_executables: [],
+      image_store: { status: "unknown", error: null },
       toolset: { expected_digest: "5f12", actual_digest: "5f12", status: "match" },
     });
     renderPage();
@@ -182,13 +184,32 @@ describe("SolversPage capability editor", () => {
     expect(screen.getByText("sandboxd 不可用")).toBeInTheDocument();
   });
 
-  it("reports deep checks as unavailable when the API returns 501", async () => {
+  it("shows sandboxd image-store and deferred toolset verification facts", async () => {
+    const user = userEvent.setup();
+    mocks.fetchSolverKaliHealth.mockResolvedValue({
+      solver_id: solver.id, requires_kali: true, profile_id: "ctf-pwn-v1",
+      image: "example/image@sha256:" + "a".repeat(64), status: "healthy",
+      image_status: "healthy", runtime_status: "sandboxd_available", checked_at: "2026-08-08T00:00:00Z",
+      reasons: [], missing_executables: [], image_store: { status: "readable", error: null },
+      toolset: { expected_digest: "5f12", actual_digest: null, status: "verified_at_acquire" },
+    });
+    renderPage();
+
+    await user.click(await screen.findByRole("tab", { name: "Kali 信息" }));
+    expect(screen.getByText("可读")).toBeInTheDocument();
+    expect(screen.getByText("容器启动时强校验")).toBeInTheDocument();
+    expect(screen.getByText("5f12")).toBeInTheDocument();
+    expect(screen.getByText("容器启动时读取")).toBeInTheDocument();
+  });
+
+  it("refreshes Kali health through the sandboxd-backed API", async () => {
     const user = userEvent.setup();
     renderPage();
 
     await user.click(await screen.findByRole("tab", { name: "Kali 信息" }));
     await user.click(await screen.findByRole("button", { name: "重新检查" }));
-    expect(await screen.findByText("深度检查暂不可用")).toBeInTheDocument();
+    await waitFor(() => expect(mocks.checkSolverKaliHealth).toHaveBeenCalledWith(solver.id));
+    expect(screen.queryByText("深度检查暂不可用")).not.toBeInTheDocument();
   });
 
   it("filters Solvers by the raw mode value instead of the translated label", async () => {

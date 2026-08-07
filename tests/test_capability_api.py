@@ -71,13 +71,14 @@ def test_solver_kali_health_reports_selected_profile_only() -> None:
     assert pwn.json()["reasons"], "a profile that is not ready must say why"
 
 
-def test_solver_kali_deep_check_returns_501() -> None:
+def test_solver_kali_check_refreshes_health() -> None:
     response = TestClient(app).post(
         "/api/v2/solvers/ctf-pwn-solver/kali-health/check"
     )
 
-    assert response.status_code == 501
-    assert response.json()["detail"]["code"] == "kali_deep_check_not_implemented"
+    assert response.status_code == 200
+    assert response.json()["solver_id"] == "ctf-pwn-solver"
+    assert "image_store" in response.json()
 
 
 def test_host_profile_catalog_exposes_editable_solver_profiles() -> None:
