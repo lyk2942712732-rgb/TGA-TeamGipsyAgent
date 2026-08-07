@@ -39,6 +39,7 @@ def _build_parser() -> argparse.ArgumentParser:
     up_parser.add_argument("--host", default=lifecycle.DEFAULT_HOST)
     up_parser.add_argument("--port", type=int, default=lifecycle.DEFAULT_PORT)
     up_parser.add_argument("--no-open", action="store_true", help="Do not open a browser")
+    up_parser.add_argument("--public", action="store_true", help="Serve for remote access")
     up_parser.add_argument("--timeout", type=float, default=90.0)
     up_parser.add_argument(
         "--pull-images",
@@ -94,9 +95,9 @@ def main(argv: list[str] | None = None) -> int:
 def _dispatch(args) -> dict:
     if args.command == "up":
         return lifecycle.up(
-            host=args.host,
+            host="0.0.0.0" if args.public else args.host,
             port=args.port,
-            open_browser=not args.no_open,
+            open_browser=not args.no_open and not args.public,
             timeout_seconds=args.timeout,
             pull_images=args.pull_images,
         ).to_dict()

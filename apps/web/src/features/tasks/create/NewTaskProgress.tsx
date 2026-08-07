@@ -31,18 +31,20 @@ export function NewTaskHeader() {
   </header>;
 }
 
-export function NewTaskProgress({ step, onStep }: { step: number; onStep: (step: number) => void }) {
+export function NewTaskProgress({ step, completedSteps, onStep }: { step: number; completedSteps: ReadonlySet<number>; onStep: (step: number) => void }) {
   return <nav className="wizard-steps" aria-label="创建步骤">{STEPS.map((item, index) => {
     const number = index + 1;
+    const complete = completedSteps.has(number);
     return <button
       key={item.title}
       type="button"
       aria-label={item.accessible}
       aria-current={step === number ? "step" : undefined}
-      className={`${step === number ? "active" : ""} ${step > number ? "complete" : ""}`}
+      className={`${step === number ? "active" : ""} ${complete ? "complete" : ""}`}
+      data-complete={complete ? "true" : "false"}
       onClick={() => onStep(number)}
     >
-      <b>{step > number ? "✓" : number}</b>
+      <b>{complete ? "✓" : number}</b>
       <span>{item.title}</span>
     </button>;
   })}</nav>;

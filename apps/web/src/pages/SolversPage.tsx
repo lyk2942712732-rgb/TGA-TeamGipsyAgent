@@ -472,8 +472,7 @@ function KaliHealthPanel({ record, health, loading, failed, onRetry }: {
       await checkSolverKaliHealth(record.id);
       onRetry();
     } catch (reason) {
-      const status = typeof reason === "object" && reason && "status" in reason ? Number(reason.status) : 0;
-      setCheckMessage(status === 501 ? "深度检查暂不可用" : "状态刷新失败");
+      setCheckMessage("状态刷新失败");
     } finally {
       setChecking(false);
     }
@@ -496,6 +495,10 @@ function KaliHealthPanel({ record, health, loading, failed, onRetry }: {
       <div className="kali-health-wide"><span>Image</span><code>{health.image ?? "未配置"}</code></div>
       <div><span>Image status</span><KaliStatusBadge status={normalizeHealthStatus(health.image_status)} label={healthLabel(health.image_status)} /></div>
       <div><span>Runtime status</span><strong>{runtimeLabel(health.runtime_status)}</strong></div>
+      <div><span>Image store</span><strong>{imageStoreLabel(health.image_store.status)}</strong></div>
+      <div><span>Toolset</span><strong>{toolsetLabel(health.toolset.status)}</strong></div>
+      <div><span>Expected toolset digest</span><code>{health.toolset.expected_digest ?? "未配置"}</code></div>
+      <div><span>Actual toolset digest</span><code>{health.toolset.actual_digest ?? "容器启动时读取"}</code></div>
     </div>
     {health.reasons.length ? <div className="kali-health-reasons">
       <span>Details</span>
@@ -580,6 +583,24 @@ function runtimeLabel(status: string): string {
     docker_sandbox_unavailable: "Docker Sandbox 不可用",
     docker_sandbox_available: "Docker Sandbox 可用",
     not_applicable: "不适用",
+  } as Record<string, string>)[status] ?? status;
+}
+
+function imageStoreLabel(status: SolverKaliHealth["image_store"]["status"]): string {
+  return ({
+    not_applicable: "不适用",
+    unknown: "未知",
+    unreadable: "不可读",
+    readable: "可读",
+  } as const)[status];
+}
+
+function toolsetLabel(status: string): string {
+  return ({
+    not_applicable: "不适用",
+    not_checked: "尚未检查",
+    mismatch: "不匹配",
+    verified_at_acquire: "容器启动时强校验",
   } as Record<string, string>)[status] ?? status;
 }
 

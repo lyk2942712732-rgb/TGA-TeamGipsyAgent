@@ -28,6 +28,14 @@ def systemd_host(monkeypatch):
     """Present a host where systemd owns tga-api.service."""
     monkeypatch.setattr(service_manager, "systemd_available", lambda: True)
     monkeypatch.setattr(service_manager.os, "geteuid", lambda: 0, raising=False)
+    # Keep recorded commands independent of the host running the test. Linux
+    # resolves this to /usr/bin/systemctl while Windows falls back to the bare
+    # executable name; path resolution itself is covered by the sudo test.
+    monkeypatch.setattr(
+        service_manager.shutil,
+        "which",
+        lambda name: "systemctl" if name == "systemctl" else None,
+    )
     fake = FakeSystemctl({
         "cat tga-api.service": (0, "[Unit]"),
         "is-active tga-api.service": (0, "active"),

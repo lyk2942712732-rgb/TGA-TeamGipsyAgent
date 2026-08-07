@@ -105,6 +105,10 @@ export type SolverKaliHealth = SolverKaliHealthSummary & {
   checked_at: string | null;
   reasons: Array<{ code: string; message: string }>;
   missing_executables: string[];
+  image_store: {
+    status: "not_applicable" | "unknown" | "unreadable" | "readable";
+    error: string | null;
+  };
   toolset: {
     expected_digest: string | null;
     actual_digest: string | null;

@@ -81,17 +81,9 @@ def solver_kali_health(solver_id: str) -> dict[str, Any]:
 @router.post("/{solver_id}/kali-health/check")
 def check_solver_kali_health(solver_id: str) -> dict[str, Any]:
     try:
-        _assignments().definitions.require(solver_id)
+        return SolverKaliHealthService(_assignments()).require(solver_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="SolverDefinition not found") from exc
-    raise HTTPException(
-        status_code=501,
-        detail={
-            "code": "kali_deep_check_not_implemented",
-            "message": "Kali deep health check is not available yet.",
-            "solver_id": solver_id,
-        },
-    )
 
 
 @router.put("/{solver_id}/capabilities")
