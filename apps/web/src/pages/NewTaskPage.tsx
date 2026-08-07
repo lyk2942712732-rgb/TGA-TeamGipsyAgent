@@ -132,6 +132,15 @@ export function NewTaskPage({ onCreated }: { onCreated: (id: string) => void }) 
     return new Set([1, 2, 3, 4].filter((number) => !blocked.has(number)));
   }, [preflightBlockers]);
 
+  useEffect(() => {
+    setError((current) => {
+      if (!current?.startsWith("启动前还需完成：")) return current;
+      return preflightBlockers.some((blocker) => current.includes(blocker.message))
+        ? current
+        : null;
+    });
+  }, [preflightBlockers]);
+
   filesRef.current = inputFiles;
 
   useEffect(() => {

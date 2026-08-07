@@ -191,6 +191,9 @@ describe("NewTaskPage multimodal input flow", () => {
     await user.click(submit);
     expect(await screen.findByLabelText("任务名称")).toBeInTheDocument();
     expect(screen.getByRole("alert")).toHaveTextContent("启动前还需完成：填写任务名称");
+
+    await user.type(screen.getByLabelText("任务名称"), "管道符绕过过滤");
+    await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
   });
 
   it("blocks creation when authoritative preflight fails", async () => {
