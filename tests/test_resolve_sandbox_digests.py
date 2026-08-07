@@ -81,6 +81,27 @@ def test_apply_published_pins_every_matching_profile(tmp_path):
     assert "image" not in config["profiles"]["remote-http"]
 
 
+def test_apply_published_replaces_an_older_release_digest(tmp_path):
+    """A later tag must update a source config that is already pinned."""
+    target = resolver.load_matrix()[0]
+    reference = f"ghcr.io/owner/{target.image}@sha256:{2:064x}"
+    listing = tmp_path / "published-images.txt"
+    listing.write_text(reference + "\n", encoding="utf-8")
+    config = {"profiles": {
+        "ctf-web-v1": {
+            "id": "ctf-web-v1",
+            "provider": "sandboxd",
+            "image": f"ghcr.io/owner/{target.image}@sha256:{1:064x}",
+        },
+    }}
+
+    changed, problems = resolver.apply_published(config, listing)
+
+    assert problems == []
+    assert changed == 1
+    assert config["profiles"]["ctf-web-v1"]["image"] == reference
+
+
 def test_apply_published_ignores_the_base_image(tmp_path):
     """tga-kali-base backs the others; it is not itself a profile."""
     listing = tmp_path / "published-images.txt"

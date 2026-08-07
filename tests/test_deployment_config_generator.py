@@ -128,13 +128,8 @@ def _shipped_config() -> dict:
     )
 
 
-def test_source_configuration_waits_for_one_universal_release_digest():
-    """The source tree is the input template for the image release workflow.
-
-    All local profiles intentionally wait on the same placeholder.  The tag
-    workflow replaces it with the digest of the one universal image and then
-    runs ``resolve_sandbox_digests.py --check`` before publishing the config.
-    """
+def test_source_configuration_pins_one_universal_release_digest():
+    """Every shipped local profile uses the published universal image."""
     images = [
         profile.get("image") or ""
         for profile in _shipped_config()["profiles"].values()
@@ -142,7 +137,8 @@ def test_source_configuration_waits_for_one_universal_release_digest():
     ]
     assert images, "expected the shipped config to declare profiles"
     assert set(images) == {
-        "ghcr.io/lyk2942712732-rgb/tga-kali-universal@sha256:REPLACE_WITH_RELEASE_DIGEST"
+        "ghcr.io/lyk2942712732-rgb/tga-kali-universal@sha256:"
+        "300fca8aaf785e6f8a589e595e08b0174657609e0ca1935960b5bbfa28e7970f"
     }
 
 
