@@ -105,8 +105,14 @@ def up(
         # only on a stopped deployment meant the remediation text -- "run
         # `tga up --pull-images` to fetch them" -- named a command that could
         # not do what it said.
-        if current.phase == "ready" and not pull_images and _already_serving(current):
-            report = _fetch_readiness(current.api_url)
+        if (
+            current.phase == "ready"
+            and current.host == host
+            and current.port == port
+            and not pull_images
+            and _already_serving(current)
+        ):
+            report = _fetch_readiness(_probe_origin(current.host, current.port))
             return UpResult(
                 ok=True,
                 status=current.phase,
@@ -348,19 +354,28 @@ def _step_start_api(current, *, host: str, port: int) -> StepResult:
     # systemd is authoritative where it is installed: starting a competing
     # child here would leave `tga down` unable to stop what systemd restarts.
     if service_manager.manages_api():
+        try:
+            changed = service_manager.configure_api(host, port)
+        except (OSError, ValueError) as exc:
+            raise DeploymentError(ErrorCode.API_START_FAILED, str(exc)) from exc
+
         unit_state = service_manager.state()
-        if not unit_state.active:
+        if changed and unit_state.active:
+            unit_state = service_manager.restart()
+        elif not unit_state.active:
             unit_state = service_manager.start()
         if not unit_state.active:
             raise DeploymentError(
                 ErrorCode.API_START_FAILED,
-                f"systemd could not start {service_manager.API_UNIT}",
+                f"systemd could not start {service_manager.API_UNIT}"
+                + (f": {unit_state.detail}" if unit_state.detail else ""),
             )
         current.api_pid = unit_state.main_pid
         current.supervisor = "systemd"
         current.mark_completed("start_api")
         return StepResult(
-            "start_api", True, f"systemd {service_manager.API_UNIT} pid {unit_state.main_pid}"
+            "start_api", True,
+            f"systemd {service_manager.API_UNIT} pid {unit_state.main_pid} ({host}:{port})",
         )
 
     current.supervisor = "launcher"
@@ -397,7 +412,7 @@ def _step_start_api(current, *, host: str, port: int) -> StepResult:
 
 
 def _step_wait_readiness(current, *, timeout_seconds: float) -> tuple[StepResult, dict | None]:
-    origin = f"http://{current.host}:{current.port}"
+    origin = _probe_origin(current.host, current.port)
     deadline = time.monotonic() + timeout_seconds
     report: dict | None = None
     while time.monotonic() < deadline:
@@ -439,7 +454,7 @@ def _health_ok(origin: str) -> bool:
 
 
 def _already_serving(current) -> bool:
-    url = current.api_url or (f"http://{current.host}:{current.port}" if current.port else "")
+    url = _probe_origin(current.host, current.port) if current.port else current.api_url
     if not url:
         return False
     if service_manager.manages_api() and not service_manager.state().active:
@@ -558,14 +573,14 @@ def status() -> dict:
     # Serving is decided by the service actually answering, not by what the
     # state file last recorded, so an out-of-band systemctl stays visible.
     if unit is not None:
-        running = unit.active and _health_ok(current.api_url or f"http://{current.host}:{current.port}")
+        running = unit.active and _health_ok(_probe_origin(current.host, current.port))
         api_pid = unit.main_pid
     else:
         running = state_module.process_alive(current.api_pid) and _health_ok(current.api_url)
         api_pid = current.api_pid
 
     url = current.api_url or (f"http://{current.host}:{current.port}" if current.port else "")
-    report = _fetch_readiness(url) if running else None
+    report = _fetch_readiness(_probe_origin(current.host, current.port)) if running else None
     return {
         "ok": True,
         "platform": detect_platform(),
@@ -580,11 +595,25 @@ def status() -> dict:
     }
 
 
+def _probe_origin(host: str, port: int) -> str:
+    """Address the local listener even when it is bound to a wildcard.
+
+    ``0.0.0.0`` is a bind address, not the public URL to probe. It may also be
+    sent through an HTTP proxy because it is rarely present in ``NO_PROXY``.
+    """
+    if host == "0.0.0.0":
+        host = "127.0.0.1"
+    elif host == "::":
+        host = "[::1]"
+    return f"http://{host}:{port}"
+
+
 def doctor() -> dict:
     """Diagnose every capability, whether or not the server is running."""
     current = state_module.load()
-    running = state_module.process_alive(current.api_pid) and _health_ok(current.api_url)
-    report = _fetch_readiness(current.api_url) if running else readiness.evaluate().to_dict()
+    origin = _probe_origin(current.host, current.port) if current.port else current.api_url
+    running = state_module.process_alive(current.api_pid) and _health_ok(origin)
+    report = _fetch_readiness(origin) if running else readiness.evaluate().to_dict()
 
     checks: list[dict] = [
         {"name": "platform", "status": "ready", "detail": detect_platform()},

@@ -20,6 +20,8 @@ TGA_LOG_DIR="${TGA_LOG_DIR:-/var/log/tga}"
 TGA_USER="${TGA_USER:-tga}"
 TGA_GROUP="${TGA_GROUP:-tga}"
 TGA_SANDBOX_GROUP="${TGA_SANDBOX_GROUP:-tga-sandbox}"
+TGA_ADMIN_GROUP="${TGA_ADMIN_GROUP:-tga-admin}"
+TGA_ADMIN_USER="${TGA_ADMIN_USER:-${SUDO_USER:-}}"
 SOURCE_DIR="${SOURCE_DIR:-}"
 
 log()  { printf '[provision] %s\n' "$*"; }
@@ -34,7 +36,7 @@ apt-get update -qq
 apt-get install -y -qq --no-install-recommends \
   python3 python3-venv python3-pip \
   ca-certificates curl gnupg lsb-release \
-  nftables iproute2 procps sudo >/dev/null
+  nftables iproute2 procps sudo acl >/dev/null
 
 python3 - <<'PY' || fail "Python 3.11+ is required"
 import sys
@@ -177,16 +179,74 @@ fi
 log "creating service account and directories"
 getent group "$TGA_GROUP"         >/dev/null || groupadd --system "$TGA_GROUP"
 getent group "$TGA_SANDBOX_GROUP" >/dev/null || groupadd --system "$TGA_SANDBOX_GROUP"
+getent group "$TGA_ADMIN_GROUP"   >/dev/null || groupadd --system "$TGA_ADMIN_GROUP"
 getent passwd "$TGA_USER" >/dev/null || useradd --system \
   --gid "$TGA_GROUP" --groups "$TGA_SANDBOX_GROUP" \
   --home-dir "$TGA_STATE_DIR" --shell /usr/sbin/nologin "$TGA_USER"
 
+if [ -n "$TGA_ADMIN_USER" ]; then
+  if id "$TGA_ADMIN_USER" >/dev/null 2>&1 && [ "$TGA_ADMIN_USER" != root ]; then
+    usermod -a -G "$TGA_ADMIN_GROUP" "$TGA_ADMIN_USER" \
+      || { log "could not add $TGA_ADMIN_USER to $TGA_ADMIN_GROUP"; exit 1; }
+    log "granting deployment management to $TGA_ADMIN_USER"
+  else
+    log "WARNING: TGA_ADMIN_USER '$TGA_ADMIN_USER' is not a non-root local user"
+    TGA_ADMIN_USER=""
+  fi
+fi
+
 install -d -m 0755 "$TGA_PREFIX"/{app,web,bin}
 install -d -m 0755 "$TGA_CONFIG_DIR"
-install -d -m 0750 -o "$TGA_USER" -g "$TGA_GROUP" "$TGA_STATE_DIR"
-install -d -m 0750 -o "$TGA_USER" -g "$TGA_GROUP" "$TGA_STATE_DIR/runs"
-install -d -m 0750 -o "$TGA_USER" -g "$TGA_GROUP" "$TGA_STATE_DIR/state"
-install -d -m 0750 -o "$TGA_USER" -g "$TGA_GROUP" "$TGA_LOG_DIR"
+install -d -m 2750 -o "$TGA_USER" -g "$TGA_ADMIN_GROUP" "$TGA_STATE_DIR"
+install -d -m 2770 -o "$TGA_USER" -g "$TGA_ADMIN_GROUP" "$TGA_STATE_DIR/runs"
+install -d -m 2770 -o "$TGA_USER" -g "$TGA_ADMIN_GROUP" "$TGA_STATE_DIR/state"
+install -d -m 2770 -o "$TGA_USER" -g "$TGA_ADMIN_GROUP" "$TGA_LOG_DIR"
+
+# Group membership only reaches an already-open login session after the next
+# login.  An access ACL lets the user who ran `sudo install.sh` invoke `tga up`
+# immediately, while the setgid group remains the durable multi-admin model.
+if [ -n "$TGA_ADMIN_USER" ]; then
+  setfacl -m "u:$TGA_ADMIN_USER:rx" "$TGA_STATE_DIR" \
+    || { log "could not grant access to $TGA_STATE_DIR"; exit 1; }
+  for directory in "$TGA_STATE_DIR/runs" "$TGA_STATE_DIR/state" "$TGA_LOG_DIR"; do
+    setfacl -m "u:$TGA_ADMIN_USER:rwx" -m "d:u:$TGA_ADMIN_USER:rwx" "$directory" \
+      || { log "could not grant access to $directory"; exit 1; }
+  done
+fi
+
+# Members can manage only TGA's units.  They do not gain Docker access and the
+# API service account is deliberately not a member of this group.
+SYSTEMCTL_PATH="$(command -v systemctl || true)"
+if [ -n "$SYSTEMCTL_PATH" ]; then
+  sudoers_tmp="$(mktemp)" || { log "could not create a sudoers staging file"; exit 1; }
+  cat > "$sudoers_tmp" <<EOF
+%$TGA_ADMIN_GROUP ALL=(root) NOPASSWD: $SYSTEMCTL_PATH start tga-api.service
+%$TGA_ADMIN_GROUP ALL=(root) NOPASSWD: $SYSTEMCTL_PATH stop tga-api.service
+%$TGA_ADMIN_GROUP ALL=(root) NOPASSWD: $SYSTEMCTL_PATH restart tga-api.service
+%$TGA_ADMIN_GROUP ALL=(root) NOPASSWD: $SYSTEMCTL_PATH start tga-sandboxd.service
+%$TGA_ADMIN_GROUP ALL=(root) NOPASSWD: $SYSTEMCTL_PATH stop tga-sandboxd.service
+EOF
+  if [ -n "$TGA_ADMIN_USER" ]; then
+    for command in \
+      "start tga-api.service" \
+      "stop tga-api.service" \
+      "restart tga-api.service" \
+      "start tga-sandboxd.service" \
+      "stop tga-sandboxd.service"; do
+      printf '%s ALL=(root) NOPASSWD: %s %s\n' \
+        "$TGA_ADMIN_USER" "$SYSTEMCTL_PATH" "$command" >> "$sudoers_tmp"
+    done
+  fi
+  if visudo -cf "$sudoers_tmp" >/dev/null 2>&1; then
+    install -m 0440 "$sudoers_tmp" /etc/sudoers.d/tga-admin \
+      || { rm -f "$sudoers_tmp"; log "could not install the TGA sudoers policy"; exit 1; }
+  else
+    rm -f "$sudoers_tmp"
+    log "generated TGA sudoers policy is invalid"
+    exit 1
+  fi
+  rm -f "$sudoers_tmp"
+fi
 
 # --- 3. application ---------------------------------------------------------
 if [ -n "$SOURCE_DIR" ] && [ -d "$SOURCE_DIR" ]; then
@@ -221,26 +281,77 @@ fi
 # checkout with Go builds it here.
 install_sandboxd() {
   local prebuilt="$SOURCE_DIR/dist/tga-sandboxd"
+  local source="$SOURCE_DIR/sandboxd"
+  local target="$TGA_PREFIX/bin/tga-sandboxd"
+  local work candidate required_go installed_go staged
+
+  work="$(mktemp -d)" \
+    || { log "could not create a temporary sandboxd build directory"; return 1; }
+  candidate="$work/tga-sandboxd"
+
   if [ -f "$prebuilt" ]; then
     log "installing prebuilt tga-sandboxd"
-    install -m 0755 "$prebuilt" "$TGA_PREFIX/bin/tga-sandboxd"
-    return 0
-  fi
-  if [ -d "$SOURCE_DIR/sandboxd" ] && command -v go >/dev/null 2>&1; then
+    if ! install -m 0755 "$prebuilt" "$candidate"; then
+      rm -rf "$work"
+      log "installing the prebuilt tga-sandboxd failed"
+      return 1
+    fi
+  elif [ -d "$source" ]; then
+    if ! command -v go >/dev/null 2>&1; then
+      rm -rf "$work"
+      log "no prebuilt dist/tga-sandboxd was provided and Go is not installed"
+      return 1
+    fi
+    required_go="$(awk '$1 == "go" { print $2; exit }' "$source/go.mod")"
+    installed_go="$(GOTOOLCHAIN=local go env GOVERSION 2>/dev/null)"
+    installed_go="${installed_go#go}"
+    if [ -z "$required_go" ] || [ -z "$installed_go" ]; then
+      rm -rf "$work"
+      log "could not determine the Go version required to build tga-sandboxd"
+      return 1
+    fi
+    if [ "$(printf '%s\n%s\n' "$required_go" "$installed_go" | sort -V | head -n1)" != "$required_go" ]; then
+      rm -rf "$work"
+      log "tga-sandboxd requires Go $required_go or newer; installed Go is $installed_go"
+      log "release packages must include a prebuilt dist/tga-sandboxd"
+      return 1
+    fi
     log "building tga-sandboxd from source"
-    ( cd "$SOURCE_DIR/sandboxd" \
-      && CGO_ENABLED=0 go build -trimpath -o "$TGA_PREFIX/bin/tga-sandboxd" ./cmd/tga-sandboxd )
-    chmod 0755 "$TGA_PREFIX/bin/tga-sandboxd"
-    return 0
+    if ! ( cd "$source" \
+      && GOTOOLCHAIN=local CGO_ENABLED=0 go build -trimpath -o "$candidate" ./cmd/tga-sandboxd ); then
+      rm -rf "$work"
+      log "building tga-sandboxd failed with Go $installed_go (requires $required_go+)"
+      return 1
+    fi
+  else
+    rm -rf "$work"
+    log "no prebuilt dist/tga-sandboxd or sandboxd source tree was found"
+    return 1
   fi
-  return 1
+
+  staged="$(mktemp "$TGA_PREFIX/bin/.tga-sandboxd.XXXXXX")" \
+    || { rm -rf "$work"; log "could not stage tga-sandboxd in $TGA_PREFIX/bin"; return 1; }
+  if ! install -m 0755 "$candidate" "$staged"; then
+    rm -f "$staged"
+    rm -rf "$work"
+    log "staging tga-sandboxd failed"
+    return 1
+  fi
+  if ! mv -f "$staged" "$target"; then
+    rm -f "$staged"
+    rm -rf "$work"
+    log "atomically installing tga-sandboxd at $target failed"
+    return 1
+  fi
+  rm -rf "$work"
+  return 0
 }
 
 if [ -n "$SOURCE_DIR" ] && [ -d "$SOURCE_DIR" ]; then
   if install_sandboxd; then
     log "  sandboxd $TGA_PREFIX/bin/tga-sandboxd"
   else
-    log "WARNING: no tga-sandboxd binary and no Go toolchain to build one;"
+    log "WARNING: tga-sandboxd was not installed; see the error above;"
     log "         the sandbox stays unenforced and 'tga up' will report degraded"
   fi
 fi

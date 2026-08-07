@@ -15,11 +15,12 @@ fail() { printf '[install] ERROR: %s\n' "$*" >&2; exit 1; }
 [ "$(id -u)" -eq 0 ] || fail "must run as root (try: sudo $0)"
 
 log "provisioning the runtime from $SOURCE_DIR"
-SOURCE_DIR="$SOURCE_DIR" bash "$SOURCE_DIR/deploy/wsl-rootfs/provision.sh"
+TGA_ADMIN_USER="${TGA_ADMIN_USER:-${SUDO_USER:-}}" \
+  SOURCE_DIR="$SOURCE_DIR" bash "$SOURCE_DIR/deploy/wsl-rootfs/provision.sh"
 
 # The launcher is the only thing on the user's PATH. Prefer a compiled Go
 # binary; fall back to a shim so a source install still yields `tga up`.
-if [ -x "$SOURCE_DIR/tga" ]; then
+if [ -f "$SOURCE_DIR/tga" ] && [ -x "$SOURCE_DIR/tga" ]; then
   log "installing the compiled launcher"
   install -m 0755 "$SOURCE_DIR/tga" "$BIN_DIR/tga"
 else

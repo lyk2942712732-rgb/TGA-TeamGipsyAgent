@@ -102,6 +102,26 @@ Without systemd (development checkouts, Windows, containers), the launcher
 supervises a detached child process itself. Both paths are exercised by
 `tests/test_deployment_service_manager.py`.
 
+On an installed Linux development host, the account that ran
+`sudo deploy/linux-package/install.sh` is added to the dedicated `tga-admin`
+group. That group may start, stop, or restart only TGA's two systemd units via
+a generated sudoers policy. It is not added to the `docker` group, and the API
+service account remains outside both groups. The installer grants the invoking
+account an immediate ACL on `/var/lib/tga/{state,runs}`; the setgid
+`tga-admin` ownership is the durable model for later login sessions.
+
+The API unit defaults to `127.0.0.1:8123` and reads an optional
+`/var/lib/tga/state/tga-api.env`. `tga up` writes only validated host and port
+values there. A changed value restarts the active unit, so for example
+`tga up --public --port 8173` reliably binds `0.0.0.0:8173` without changing
+the safe default.
+
+Release/rootfs builds always supply `dist/tga-sandboxd`. A source checkout may
+build it during provisioning, but only with the Go version declared by
+`sandboxd/go.mod` (currently Go 1.26) or newer. The build uses
+`GOTOOLCHAIN=local`, stages outside the final path, and atomically installs the
+binary only after a successful build.
+
 ## Idempotency and interruption
 
 `tga up` takes an exclusive file lock and records completed steps in

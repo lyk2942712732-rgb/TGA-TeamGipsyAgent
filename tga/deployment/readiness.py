@@ -21,9 +21,7 @@ Grading contract:
 from __future__ import annotations
 
 import re
-import shutil
 import socket
-import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
@@ -280,34 +278,32 @@ def _check_profiles() -> list[Check]:
 
 
 def _local_image_digests() -> set[str] | None:
-    """Digests of images already present in the local container store.
+    """Digests reported by sandboxd's privileged Docker client.
 
     ``None`` and the empty set mean opposite things, and conflating them is
     what let a host holding no images at all grade every profile ready:
 
     ``None``
-        The store could not be listed -- no docker binary, a daemon that
-        refused, a timeout.  That is evidence about nothing, so no profile
-        may be graded on it.
+        sandboxd could not be reached or its Docker image store could not be
+        listed. That is evidence about nothing, so no profile may be graded on
+        it.
     ``set()``
         The store answered, and it holds nothing.  Every profile is missing.
     """
-    docker = shutil.which("docker")
-    if not docker:
-        return None
     try:
-        completed = subprocess.run(
-            [docker, "images", "--digests", "--format", "{{.Digest}}"],
-            capture_output=True,
-            text=True,
-            timeout=15,
-            check=False,
-        )
-    except (OSError, subprocess.SubprocessError):
+        from tga.sandbox.config import load_sandbox_config
+
+        config, _ = load_sandbox_config()
+    except Exception:
         return None
-    if completed.returncode != 0:
+    health = _sandboxd_health(config)
+    if health is None or not getattr(health, "image_store_readable", False):
         return None
-    return {line.strip() for line in completed.stdout.splitlines() if line.strip().startswith("sha256:")}
+    return {
+        digest.strip()
+        for digest in getattr(health, "local_image_digests", ())
+        if digest.strip().startswith("sha256:")
+    }
 
 
 def port_is_free(host: str, port: int) -> bool:
