@@ -99,12 +99,6 @@ class Manager:
             expire_pending_approvals(store, task_id)
             require_current_task_schema(task)
             self._require_model_snapshot(task)
-            client = self.model_client or build_model_client()
-            if client is None:
-                raise RuntimeConfigurationError(
-                    code="CREDENTIAL_UNAVAILABLE",
-                    message="runtime model is not configured; credentials or provider configuration are unavailable",
-                )
             persistence = PersistenceBundle(store)
             orchestrator = TaskOrchestrator(task=task, repositories=persistence)
             state = orchestrator.bootstrap()
@@ -136,7 +130,7 @@ class Manager:
                     self._run_worker_batch(
                         task=task,
                         database_path=store.db_path,
-                        client=client,
+                        client=self.model_client,
                         runs=queued_runs,
                         max_active_workers=state.max_active_workers,
                     )
@@ -152,6 +146,12 @@ class Manager:
                 solver = persistence.solvers.get_solver(solver_id)
                 if solver is None:
                     raise RuntimeError(f"scheduled Solver disappeared: {solver_id}")
+                client = self.model_client or build_model_client(snapshot=solver.model_snapshot)
+                if client is None:
+                    raise RuntimeConfigurationError(
+                        code="CREDENTIAL_UNAVAILABLE",
+                        message=f"runtime model for solver {solver_id} is unavailable",
+                    )
                 runner = SolverRunner(
                     task=task, store=store, run_root=self.run_root, client=client,
                     executor=executor, solver_id=solver_id,
@@ -197,7 +197,7 @@ class Manager:
         *,
         task: TGATask,
         database_path: Path,
-        client: Any,
+        client: Any | None,
         runs: tuple,
         max_active_workers: int,
     ) -> tuple[SolverRunCompletion, ...]:
@@ -222,11 +222,22 @@ class Manager:
                     worker_store,
                     execution_context=context,
                 )
+                selected_client = client
+                if selected_client is None:
+                    solver = PersistenceBundle(worker_store).solvers.get_solver(run.solver_id)
+                    if solver is None:
+                        raise RuntimeError(f"scheduled Solver disappeared: {run.solver_id}")
+                    selected_client = build_model_client(snapshot=solver.model_snapshot)
+                if selected_client is None:
+                    raise RuntimeConfigurationError(
+                        code="CREDENTIAL_UNAVAILABLE",
+                        message=f"runtime model for solver {run.solver_id} is unavailable",
+                    )
                 runner = SolverRunner(
                     task=task,
                     store=worker_store,
                     run_root=self.run_root,
-                    client=client,
+                    client=selected_client,
                     executor=executor,
                     solver_id=run.solver_id,
                     max_turns=self.limits.max_turns,
@@ -717,23 +728,29 @@ class Manager:
 
     @staticmethod
     def _require_model_snapshot(task: TGATask) -> None:
-        status = model_config_status()
-        verification = status.get("verification") or {}
-        if not status.get("configured"):
-            raise RuntimeConfigurationError(
-                code="CREDENTIAL_UNAVAILABLE",
-                message="runtime model is not configured; credentials or provider configuration are unavailable",
+        snapshots = task.agent_model_snapshots or {"default": task.model_snapshot}
+        for agent_id, snapshot in snapshots.items():
+            status = (
+                model_config_status(snapshot=snapshot)
+                if snapshot.provider_id and snapshot.model_id
+                else model_config_status()
             )
-        if status.get("verification_status") != "verified":
-            raise RuntimeConfigurationError(
-                code="MODEL_CONFIGURATION_STALE",
-                message="runtime model verification is not current",
-            )
-        if verification.get("capability_fingerprint") != task.model_snapshot.capability_fingerprint:
-            raise RuntimeConfigurationError(
-                code="MODEL_CONFIGURATION_STALE",
-                message="runtime model configuration differs from the task model snapshot",
-            )
+            verification = status.get("verification") or {}
+            if not status.get("configured"):
+                raise RuntimeConfigurationError(
+                    code="CREDENTIAL_UNAVAILABLE",
+                    message=f"runtime model for {agent_id} is not configured",
+                )
+            if status.get("verification_status") != "verified":
+                raise RuntimeConfigurationError(
+                    code="MODEL_CONFIGURATION_STALE",
+                    message=f"runtime model verification for {agent_id} is not current",
+                )
+            if verification.get("capability_fingerprint") != snapshot.capability_fingerprint:
+                raise RuntimeConfigurationError(
+                    code="MODEL_CONFIGURATION_STALE",
+                    message=f"runtime model configuration for {agent_id} differs from the task snapshot",
+                )
 
 
 _manager: Manager | None = None

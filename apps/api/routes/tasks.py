@@ -46,6 +46,7 @@ def create_task(payload: CreateTaskRequest) -> dict[str, Any]:
             file_ids=payload.input.file_ids,
             execution_policy=payload.execution_policy,
             selected_skill_names=tuple(payload.selected_skills) if payload.selected_skills is not None else None,
+            agent_models={key: value.model_dump() for key, value in payload.agent_models.items()},
             preflight_fingerprint=payload.preflight_fingerprint,
         ), mcp_manager=_catalog_runner(), schedule=_schedule_runtime_runner)
     except TaskCreationError as exc:
@@ -74,6 +75,7 @@ def preflight_task(payload: CreateTaskRequest) -> dict[str, Any]:
             file_ids=payload.input.file_ids,
             execution_policy=payload.execution_policy,
             selected_skill_names=tuple(payload.selected_skills) if payload.selected_skills is not None else None,
+            agent_models={key: value.model_dump() for key, value in payload.agent_models.items()},
         ), mcp_manager=_catalog_runner())
     except TaskCreationError as exc:
         status = 409 if exc.code in {

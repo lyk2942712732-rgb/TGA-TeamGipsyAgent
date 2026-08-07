@@ -66,6 +66,9 @@ class CreateTaskRequest(BaseModel):
     input: CreateSessionInputRequest
     execution_policy: ExecutionPolicy = Field(alias="executionPolicy")
     selected_skills: list[str] | None = Field(default=None, alias="selectedSkills", max_length=2)
+    agent_models: dict[str, "AgentModelSelection"] = Field(
+        default_factory=dict, alias="agentModels", max_length=64,
+    )
     preflight_fingerprint: str | None = Field(
         default=None, alias="preflightFingerprint", pattern=r"^[a-f0-9]{64}$"
     )
@@ -83,6 +86,13 @@ class SkillPreviewRequest(BaseModel):
     file_names: list[str] = Field(default_factory=list, alias="fileNames", max_length=64)
     execution_policy: ExecutionPolicy = Field(alias="executionPolicy")
     selected_skills: list[str] | None = Field(default=None, alias="selectedSkills", max_length=2)
+
+
+class AgentModelSelection(BaseModel):
+    model_config = {"extra": "forbid", "populate_by_name": True}
+
+    provider_id: str = Field(alias="providerId", pattern=r"^[A-Za-z0-9_-]{1,128}$")
+    model_id: str = Field(alias="modelId", pattern=r"^[A-Za-z0-9_-]{1,128}$")
 
 
 class LLMSettingsRequest(BaseModel):

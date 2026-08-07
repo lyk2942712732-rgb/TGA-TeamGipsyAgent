@@ -22,6 +22,15 @@ const mocks = vi.hoisted(() => ({
     { name: "web-recon", modes: ["ctf", "penetration_test"], capabilities: ["http.request"], tags: ["web"], version: "1", source: "builtin", summary: "Map web endpoints", editable: true },
     { name: "binary-triage", modes: ["reverse_engineering"], capabilities: ["input.read"], tags: ["binary"], version: "1", source: "builtin", summary: "Inspect binary metadata", editable: true },
   ] })),
+  fetchAgentModelOptions: vi.fn(async (mode: string) => ({
+    mode,
+    agents: [{ id: "pentest-supervisor", role: "supervisor", specialties: ["planning"], required: true }],
+    models: [{
+      provider_id: "provider_test", provider_name: "Test Provider",
+      model_id: "model_test", model_name: "test-model", api_key_id: "key_test",
+      verification_status: "verified", ready: true,
+    }],
+  })),
 }));
 
 const backendPolicy = {
@@ -116,6 +125,7 @@ describe("NewTaskPage multimodal input flow", () => {
     await user.click(screen.getByRole("button", { name: "创建任务并开始" }));
     await waitFor(() => expect(mocks.createTask).toHaveBeenCalledWith(expect.objectContaining({
       input: { text: "Analyze carefully", fileIds: [`asset_${"a".repeat(32)}`] },
+      agentModels: { "pentest-supervisor": { providerId: "provider_test", modelId: "model_test" } },
       preflightFingerprint: "f".repeat(64),
     })));
     const submitted = mocks.createTask.mock.calls[0][0] as Record<string, unknown>;

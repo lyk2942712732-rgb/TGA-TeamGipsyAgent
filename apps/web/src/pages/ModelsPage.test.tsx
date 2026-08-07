@@ -2,80 +2,80 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
-  getLLMSettings: vi.fn(),
-  updateLLMSettings: vi.fn(),
-  verifyLLMSettings: vi.fn(),
+  fetchProviderCatalog: vi.fn(),
+  createModelProvider: vi.fn(),
+  addProviderModel: vi.fn(),
+  addProviderAPIKey: vi.fn(),
+  selectProviderAPIKey: vi.fn(),
+  verifyProviderModel: vi.fn(),
 }));
 
 vi.mock("../api/tasks", async (original) => ({ ...await original<typeof import("../api/tasks")>(), ...mocks }));
-vi.mock("../api/capabilities", () => ({ fetchCapabilities: vi.fn(), fetchMCPHealth: vi.fn() }));
-vi.mock("../runtime/api-v2", () => ({ runtimeApi: {} }));
 
 import { ModelsPage } from "./ModelsPage";
 
-describe("ModelsPage browser configuration", () => {
+const emptyCatalog = {
+  schema_version: 1 as const,
+  presets: [
+    { id: "openai", name: "OpenAI", base_url: "https://api.openai.com/v1" },
+    { id: "deepseek", name: "DeepSeek", base_url: "https://api.deepseek.com" },
+  ],
+  providers: [],
+};
+
+const configuredCatalog = {
+  ...emptyCatalog,
+  providers: [{
+    id: "provider_deepseek", name: "DeepSeek", preset_id: "deepseek",
+    base_url: "https://api.deepseek.com", selected_api_key_id: "key_1",
+    models: [{
+      id: "model_1", name: "deepseek-chat", max_output_tokens: 1024,
+      timeout_seconds: 60, temperature: 0.2, reasoning_mode: "auto" as const,
+      verification_status: "verified" as const,
+      verification: { status: "verified" as const, capabilities: { tool_calling: true } },
+    }],
+    api_keys: [
+      { id: "key_1", label: "Production", masked: "••••••••1234", selected: true },
+      { id: "key_2", label: "Backup", masked: "••••••••5678", selected: false },
+    ],
+  }],
+};
+
+describe("ModelsPage provider catalog", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.getLLMSettings.mockResolvedValue({
-      configured: false,
-      base_url: "",
-      model: "",
-      api_key_set: false,
-      supports_vision: null,
-      max_output_tokens: 1024, timeout_seconds: 60, temperature: 0.2, reasoning_mode: "auto",
-    });
-    mocks.updateLLMSettings.mockResolvedValue({
-      configured: true,
-      base_url: "https://provider.example/v1",
-      model: "tool-model",
-      api_key_set: true,
-      browser_configured: true,
-      supports_vision: true,
-      max_output_tokens: 1024, timeout_seconds: 60, temperature: 0.2, reasoning_mode: "auto",
-    });
+    mocks.fetchProviderCatalog.mockResolvedValue(emptyCatalog);
+    mocks.createModelProvider.mockResolvedValue({ provider: configuredCatalog.providers[0] });
+    mocks.selectProviderAPIKey.mockResolvedValue({ provider: configuredCatalog.providers[0] });
   });
 
-  it("submits a write-only API key and clears it after save", async () => {
-    const onConfiguredChange = vi.fn();
-    render(<ModelsPage onConfiguredChange={onConfiguredChange} />);
-
-    const baseUrl = await screen.findByLabelText("Provider Base URL");
-    fireEvent.change(baseUrl, { target: { value: "https://provider.example/v1" } });
-    fireEvent.change(screen.getByLabelText("模型 ID"), { target: { value: "tool-model" } });
-    const key = screen.getByLabelText("API Key");
+  it("prefills an official URL and submits a write-only API key", async () => {
+    render(<ModelsPage />);
+    await screen.findByText("还没有供应商");
+    fireEvent.click(screen.getByRole("button", { name: "添加供应商" }));
+    fireEvent.change(screen.getByLabelText("供应商类型"), { target: { value: "deepseek" } });
+    expect(screen.getByLabelText("API URL")).toHaveValue("https://api.deepseek.com");
+    fireEvent.change(screen.getByLabelText("模型名称"), { target: { value: "deepseek-chat" } });
+    const key = screen.getByLabelText("API 密钥");
     expect(key).toHaveAttribute("type", "password");
-    fireEvent.change(key, { target: { value: "browser-secret" } });
-    fireEvent.change(screen.getByLabelText("视觉输入"), { target: { value: "true" } });
-    fireEvent.click(screen.getByRole("button", { name: "保存设置" }));
+    fireEvent.change(key, { target: { value: "secret-key-value" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存供应商" }));
 
-    await waitFor(() => expect(mocks.updateLLMSettings).toHaveBeenCalledWith({
-      base_url: "https://provider.example/v1",
-      model: "tool-model",
-      api_key: "browser-secret",
-      supports_vision: true,
-      max_output_tokens: 1024,
-      timeout_seconds: 60,
-      temperature: 0.2,
-      reasoning_mode: "auto",
+    await waitFor(() => expect(mocks.createModelProvider).toHaveBeenCalledWith({
+      preset_id: "deepseek", name: "DeepSeek", base_url: "https://api.deepseek.com",
+      model: "deepseek-chat", api_key: "secret-key-value",
     }));
-    expect(key).toHaveValue("");
-    expect(onConfiguredChange).toHaveBeenCalledWith(true);
-    expect(screen.getByRole("status")).toHaveTextContent("API Key 不会回显");
+    expect(screen.queryByDisplayValue("secret-key-value")).toBeNull();
   });
 
-  it("never places the saved key into the input", async () => {
-    mocks.getLLMSettings.mockResolvedValue({
-      configured: true,
-      base_url: "https://provider.example/v1",
-      model: "tool-model",
-      api_key_set: true,
-      supports_vision: false,
-      max_output_tokens: 4096, timeout_seconds: 90, temperature: 0.4, reasoning_mode: "enabled",
-    });
+  it("shows only masked keys and selects a key by clicking its detail row", async () => {
+    mocks.fetchProviderCatalog.mockResolvedValue(configuredCatalog);
     render(<ModelsPage />);
 
-    const key = await screen.findByLabelText("API Key");
-    expect(key).toHaveValue("");
-    expect(key).toHaveAttribute("placeholder", "已保存，留空表示不修改");
+    expect(await screen.findByText("••••••••1234")).toBeInTheDocument();
+    expect(screen.queryByText("secret-key-value")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /Backup/ }));
+    await waitFor(() => expect(mocks.selectProviderAPIKey).toHaveBeenCalledWith("provider_deepseek", "key_2"));
+    expect(screen.getByLabelText("添加 API 密钥")).toHaveAttribute("type", "password");
   });
 });

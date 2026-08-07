@@ -61,6 +61,7 @@ export type CreateSessionRequest = {
   input: { text: string; fileIds: string[] };
   executionPolicy: ExecutionPolicy;
   selectedSkills?: string[] | null;
+  agentModels?: Record<string, { providerId: string; modelId: string }>;
   preflightFingerprint?: string | null;
 };
 
@@ -91,6 +92,23 @@ export type LLMVerification = {
 };
 export type LLMSettings = { configured: boolean; base_url: string; model: string; api_key_set: boolean; browser_configured?: boolean; supports_vision?: boolean | null; max_output_tokens?: number; timeout_seconds?: number; temperature?: number; reasoning_mode?: "auto" | "enabled" | "disabled"; verification_status?: LLMVerification["status"]; verification?: LLMVerification };
 export type LLMSettingsUpdate = { base_url: string; model: string; api_key?: string; supports_vision?: boolean | null; max_output_tokens?: number; timeout_seconds?: number; temperature?: number; reasoning_mode?: "auto" | "enabled" | "disabled" };
+export type ProviderPreset = { id: string; name: string; base_url: string };
+export type ProviderAPIKey = { id: string; label: string; masked: string; selected: boolean; created_at?: string };
+export type ProviderModel = {
+  id: string; name: string; supports_vision?: boolean | null; max_output_tokens: number;
+  timeout_seconds: number; temperature: number; reasoning_mode: "auto" | "enabled" | "disabled";
+  verification_status: LLMVerification["status"]; verification: LLMVerification;
+};
+export type ModelProvider = {
+  id: string; name: string; preset_id: string; base_url: string; models: ProviderModel[];
+  api_keys: ProviderAPIKey[]; selected_api_key_id?: string | null; created_at?: string; updated_at?: string;
+};
+export type ProviderCatalog = { schema_version: 1; presets: ProviderPreset[]; providers: ModelProvider[] };
+export type AgentModelOptions = {
+  mode: TaskMode;
+  agents: Array<{ id: string; role: "supervisor" | "worker" | "reviewer" | "reporter"; specialties: string[]; required: boolean }>;
+  models: Array<{ provider_id: string; provider_name: string; model_id: string; model_name: string; api_key_id: string; verification_status: LLMVerification["status"]; ready: boolean }>;
+};
 
 export const createTask = (request: CreateSessionRequest) => requestJson<{
   task_id: string; status: string; scheduled: boolean;
@@ -129,6 +147,19 @@ export const deleteTask = (taskId: string) => requestJson<{ task_id: string; del
 export const getLLMSettings = () => requestJson<LLMSettings>("/api/v2/settings/llm");
 export const updateLLMSettings = (payload: LLMSettingsUpdate) => requestJson<LLMSettings>("/api/v2/settings/llm", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
 export const verifyLLMSettings = () => requestJson<{ configured: boolean; reachable: boolean; action_tools: boolean; model: string; verification_status: LLMVerification["status"]; capabilities: Record<string, boolean | null>; tool_catalog: { tool_count: number; schema_bytes: number; accepted: boolean } }>("/api/v2/settings/llm/verify", { method: "POST" });
+export const fetchProviderCatalog = () => requestJson<ProviderCatalog>("/api/v2/settings/llm/providers");
+export const createModelProvider = (payload: { name: string; preset_id?: string; base_url: string; model: string; api_key: string; api_key_label?: string }) => requestJson<{ provider: ModelProvider }>("/api/v2/settings/llm/providers", {
+  method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
+});
+export const addProviderModel = (providerId: string, payload: { name: string }) => requestJson<{ model: ProviderModel }>(`/api/v2/settings/llm/providers/${encodeURIComponent(providerId)}/models`, {
+  method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
+});
+export const addProviderAPIKey = (providerId: string, payload: { api_key: string; label?: string }) => requestJson<{ api_key: ProviderAPIKey }>(`/api/v2/settings/llm/providers/${encodeURIComponent(providerId)}/api-keys`, {
+  method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
+});
+export const selectProviderAPIKey = (providerId: string, keyId: string) => requestJson<{ provider: ModelProvider }>(`/api/v2/settings/llm/providers/${encodeURIComponent(providerId)}/api-keys/${encodeURIComponent(keyId)}/selection`, { method: "PUT" });
+export const verifyProviderModel = (providerId: string, modelId: string) => requestJson<{ reachable: boolean; action_tools: boolean; model: string; verification_status: LLMVerification["status"] }>(`/api/v2/settings/llm/providers/${encodeURIComponent(providerId)}/models/${encodeURIComponent(modelId)}/verify`, { method: "POST" });
+export const fetchAgentModelOptions = (mode: TaskMode) => requestJson<AgentModelOptions>(`/api/v2/settings/llm/agent-options?mode=${encodeURIComponent(mode)}`);
 export type SkillSetting = { name: string; modes: TaskMode[]; capabilities: string[]; tags: string[]; version: string; source: "builtin" | "custom"; summary: string; editable: boolean };
 export type SkillDetail = SkillSetting & { body: string };
 export type SkillPreview = {

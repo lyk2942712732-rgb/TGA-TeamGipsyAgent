@@ -1,11 +1,11 @@
 ﻿import { ChangeEvent, ClipboardEvent, DragEvent, useEffect, useMemo, useRef, useState } from "react";
 import {
   createTask, deleteStagedInput, fetchModeProfiles, preflightTask, stageInput,
-  fetchSkillSettings, previewTaskSkills,
+  fetchSkillSettings, previewTaskSkills, fetchAgentModelOptions,
   type CreateSessionRequest, type ExecutionPolicy, type ModeConfig,
-  type ModeProfileContract, type SkillPreview, type SkillSetting, type StagedAsset, type TaskPreflight,
+  type AgentModelOptions, type ModeProfileContract, type SkillPreview, type SkillSetting, type StagedAsset, type TaskPreflight,
 } from "../api/tasks";
-import { AlertTriangle, Check, Code2, Crosshair, Search, ShieldCheck, ShieldPlus, Sparkles, Users } from "lucide-react";
+import { AlertTriangle, Check, Code2, Cpu, Crosshair, Search, ShieldCheck, ShieldPlus, Sparkles, Users } from "lucide-react";
 import type { ReactNode } from "react";
 import { runtimeApi } from "../runtime/api-v2";
 import type { MCPHealth } from "../runtime/event-types";
@@ -87,6 +87,9 @@ export function NewTaskPage({ onCreated }: { onCreated: (id: string) => void }) 
   const [skillDialogOpen, setSkillDialogOpen] = useState(false);
   const [skillCatalog, setSkillCatalog] = useState<SkillSetting[]>([]);
   const [skillCatalogLoading, setSkillCatalogLoading] = useState(false);
+  const [agentModelOptions, setAgentModelOptions] = useState<AgentModelOptions | null>(null);
+  const [agentModels, setAgentModels] = useState<Record<string, { providerId: string; modelId: string }>>({});
+  const [agentModelsError, setAgentModelsError] = useState("");
   const draftTouched = useRef(false);
   const uploadControllers = useRef(new Map<string, AbortController>());
   const cancelledUploads = useRef(new Set<string>());
@@ -109,6 +112,27 @@ export function NewTaskPage({ onCreated }: { onCreated: (id: string) => void }) 
     }).catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "无法读取后端模式契约"));
     void runtimeApi.toolHealth().then(setHealth).catch(() => undefined);
   }, []);
+
+  useEffect(() => {
+    let current = true;
+    setAgentModelsError("");
+    void fetchAgentModelOptions(draft.mode).then((value) => {
+      if (!current) return;
+      setAgentModelOptions(value);
+      const ready = value.models.filter((item) => item.ready);
+      const fallback = ready[0];
+      setAgentModels((existing) => Object.fromEntries(value.agents.flatMap((agent) => {
+        const selected = existing[agent.id];
+        const valid = ready.some((item) => item.provider_id === selected?.providerId && item.model_id === selected?.modelId);
+        const choice = valid ? selected : fallback ? { providerId: fallback.provider_id, modelId: fallback.model_id } : null;
+        return choice ? [[agent.id, choice]] : [];
+      })));
+      if (!fallback) setAgentModelsError("没有已验证的模型。请先前往模型供应商页面完成配置与验证。");
+    }).catch((reason: unknown) => {
+      if (current) setAgentModelsError(reason instanceof Error ? reason.message : "无法读取 Agent 模型选项");
+    });
+    return () => { current = false; };
+  }, [draft.mode]);
 
   useEffect(() => () => {
     uploadControllers.current.forEach((controller) => controller.abort());
@@ -145,6 +169,7 @@ export function NewTaskPage({ onCreated }: { onCreated: (id: string) => void }) 
       step !== 5 || !draft.name.trim() || !draft.goal.trim()
       || inputFiles.some((item) => item.status !== "uploaded")
       || (!inputFiles.length && !taskPrompt)
+      || !agentModelOptions || Object.keys(agentModels).length !== agentModelOptions.agents.length
     ) return;
     let current = true;
     const request: CreateSessionRequest = {
@@ -153,6 +178,7 @@ export function NewTaskPage({ onCreated }: { onCreated: (id: string) => void }) 
       goal: draft.goal.trim(),
       input: { text: taskPrompt, fileIds: inputFiles.map((item) => item.id) },
       selectedSkills,
+      agentModels,
     };
     setPreflightLoading(true);
     void preflightTask(request).then((value) => {
@@ -161,7 +187,7 @@ export function NewTaskPage({ onCreated }: { onCreated: (id: string) => void }) 
       if (current) setPreflightError(reason instanceof Error ? reason.message : "启动前检查失败");
     }).finally(() => { if (current) setPreflightLoading(false); });
     return () => { current = false; };
-  }, [step, draft, taskPrompt, inputFiles, selectedSkills]);
+  }, [step, draft, taskPrompt, inputFiles, selectedSkills, agentModels, agentModelOptions]);
 
   const availableMcp = useMemo(() => (
     health?.records ?? []
@@ -222,15 +248,16 @@ export function NewTaskPage({ onCreated }: { onCreated: (id: string) => void }) 
       if (item.status === "uploaded") void deleteStagedInput(item.id).catch(() => undefined);
       if (item.previewUrl) URL.revokeObjectURL(item.previewUrl);
     });
-    draftTouched.current = false; setDraft(defaultDraft()); setInputFiles([]); setPrompt(""); setInstructions(""); setConstraints(""); setSuccessCriteria(""); setDraftSaved(false); setSelectedSkills(null); setSkillDialogOpen(false); setPreflight(null); setPreflightError(""); setError(null); setStep(1);
+    draftTouched.current = false; setDraft(defaultDraft()); setInputFiles([]); setPrompt(""); setInstructions(""); setConstraints(""); setSuccessCriteria(""); setDraftSaved(false); setSelectedSkills(null); setAgentModels({}); setSkillDialogOpen(false); setPreflight(null); setPreflightError(""); setError(null); setStep(1);
   }
 
   async function submit() {
     if (!draft.name.trim() || !draft.goal.trim()) { setError("请填写任务名称和任务目标。"); setStep(1); return; }
     if (inputFiles.some((item) => item.status !== "uploaded")) { setError("请先处理仍在上传或上传失败的文件。"); setStep(2); return; }
     if (!inputFiles.length && !taskPrompt) { setError("请填写任务说明，或添加至少一个附件。"); setStep(1); return; }
+    if (!agentModelOptions || Object.keys(agentModels).length !== agentModelOptions.agents.length) { setError("请先为每个 Agent 选择已验证的模型。"); setStep(4); return; }
     if (!preflight || preflightLoading || preflightError) { setError("启动前检查尚未通过，请修复问题后重试。"); setStep(5); return; }
-    const request: CreateSessionRequest = { ...draft, name: draft.name.trim(), goal: draft.goal.trim(), input: { text: taskPrompt, fileIds: inputFiles.map((item) => item.id) }, selectedSkills, preflightFingerprint: preflight.fingerprint };
+    const request: CreateSessionRequest = { ...draft, name: draft.name.trim(), goal: draft.goal.trim(), input: { text: taskPrompt, fileIds: inputFiles.map((item) => item.id) }, selectedSkills, agentModels, preflightFingerprint: preflight.fingerprint };
     setBusy(true); setError(null);
     try { const result = await createTask(request); onCreated(result.task_id); }
     catch (reason) { setError(reason instanceof Error ? reason.message : "创建任务失败"); }
@@ -245,8 +272,8 @@ export function NewTaskPage({ onCreated }: { onCreated: (id: string) => void }) 
       {step === 1 ? <TaskGoalStep draft={draft} profiles={profiles} instructions={instructions} constraints={constraints} successCriteria={successCriteria} onDraft={(patch) => { draftTouched.current = true; setDraft((current) => ({ ...current, ...patch })); }} onMode={selectMode} onInstructions={setInstructions} onConstraints={setConstraints} onSuccessCriteria={setSuccessCriteria} /> : null}
       {step === 2 ? <div className="wizard-step-stack"><ModeFields mode={draft.mode} config={draft.modeOptions} setConfig={setConfig} /><fieldset className="span-2 multimodal-step"><legend>任务提示与材料</legend><p className="field-help">补充目标网址、代码片段或附件。附件会归档到独立 Workspace，图片可直接参与多模态分析。</p><MultimodalComposer text={prompt} assets={inputFiles} busy={busy} onText={setPrompt} onFiles={upload} onRemove={removeAsset} /></fieldset></div> : null}
       {step === 3 ? <PolicyFields draft={draft} setPolicy={setPolicy} selectPreset={selectPolicyPreset} /> : null}
-      {step === 4 ? <TeamModelStep modeLabel={profile.label} availableMcp={availableMcp.map((item) => item.server).filter((server): server is string => Boolean(server))} skillPreview={skillPreview} skillPreviewLoading={skillPreviewLoading} skillPreviewError={skillPreviewError} selectedSkills={selectedSkills} onSkills={() => void openSkillDialog()} onAutomatic={() => setSelectedSkills(null)} /> : null}
-      {step === 5 ? <fieldset className="span-2 preflight-summary"><legend>第五步：启动前检查</legend><dl className="creation-summary"><dt>场景</dt><dd>{profile.label}</dd><dt>任务</dt><dd>{draft.name || "尚未填写"}</dd><dt>任务目标</dt><dd>{draft.goal || "尚未填写"}</dd><dt>任务说明</dt><dd>{taskPrompt || "无文字说明"}</dd><dt>附件（{inputFiles.length}）</dt><dd>{inputFiles.map((item) => item.originalName).join("；") || "无"}</dd><dt>执行边界</dt><dd>preset={draft.executionPolicy.preset}；network={draft.executionPolicy.network.access}/{draft.executionPolicy.network.interaction}；compute={draft.executionPolicy.local_compute.mode}；high_impact={draft.executionPolicy.high_impact.mode}</dd><dt>预计装配 Skills</dt><dd><SkillPreviewSummary value={skillPreview} loading={skillPreviewLoading} error={skillPreviewError} manual={selectedSkills !== null} onAutomatic={() => setSelectedSkills(null)} /></dd><dt>自动可用 MCP（{availableMcp.length}）</dt><dd>{availableMcp.map((item) => item.server).join(", ") || "当前无已启用且可达/已发现的 MCP 服务"}</dd><dt>完成条件</dt><dd>{successCriteria || `${profile.completion_validator}：${profile.report_sections.join("、") || "证据支持的模式专属验证"}`}</dd><dt>启动前检查</dt><dd><PreflightSummary value={preflight} loading={preflightLoading} error={preflightError} /></dd></dl></fieldset> : null}
+      {step === 4 ? <TeamModelStep modeLabel={profile.label} availableMcp={availableMcp.map((item) => item.server).filter((server): server is string => Boolean(server))} skillPreview={skillPreview} skillPreviewLoading={skillPreviewLoading} skillPreviewError={skillPreviewError} selectedSkills={selectedSkills} onSkills={() => void openSkillDialog()} onAutomatic={() => setSelectedSkills(null)} modelOptions={agentModelOptions} modelAssignments={agentModels} modelError={agentModelsError} onModel={(agentId, value) => setAgentModels((current) => ({ ...current, [agentId]: value }))} /> : null}
+      {step === 5 ? <fieldset className="span-2 preflight-summary"><legend>第五步：启动前检查</legend><dl className="creation-summary"><dt>场景</dt><dd>{profile.label}</dd><dt>任务</dt><dd>{draft.name || "尚未填写"}</dd><dt>任务目标</dt><dd>{draft.goal || "尚未填写"}</dd><dt>任务说明</dt><dd>{taskPrompt || "无文字说明"}</dd><dt>附件（{inputFiles.length}）</dt><dd>{inputFiles.map((item) => item.originalName).join("；") || "无"}</dd><dt>执行边界</dt><dd>preset={draft.executionPolicy.preset}；network={draft.executionPolicy.network.access}/{draft.executionPolicy.network.interaction}；compute={draft.executionPolicy.local_compute.mode}；high_impact={draft.executionPolicy.high_impact.mode}</dd><dt>Agent 模型</dt><dd>{agentModelOptions?.agents.map((agent) => { const selectedModel = agentModelOptions.models.find((item) => item.provider_id === agentModels[agent.id]?.providerId && item.model_id === agentModels[agent.id]?.modelId); return `${agent.id} → ${selectedModel ? `${selectedModel.provider_name} / ${selectedModel.model_name}` : "未选择"}`; }).join("；") || "未选择"}</dd><dt>预计装配 Skills</dt><dd><SkillPreviewSummary value={skillPreview} loading={skillPreviewLoading} error={skillPreviewError} manual={selectedSkills !== null} onAutomatic={() => setSelectedSkills(null)} /></dd><dt>自动可用 MCP（{availableMcp.length}）</dt><dd>{availableMcp.map((item) => item.server).join(", ") || "当前无已启用且可达/已发现的 MCP 服务"}</dd><dt>完成条件</dt><dd>{successCriteria || `${profile.completion_validator}：${profile.report_sections.join("、") || "证据支持的模式专属验证"}`}</dd><dt>启动前检查</dt><dd><PreflightSummary value={preflight} loading={preflightLoading} error={preflightError} /></dd></dl></fieldset> : null}
       {error ? <p role="alert" className="inline-error span-2">{error}</p> : null}
     </section>
     <NewTaskGuide modeLabel={profile.label} modeDescription={profiles[draft.mode].description} />
@@ -282,13 +309,18 @@ function FieldWithCount({ label, required = false, info, value, max, children }:
   return <label className="wizard-counted-field"><span><b>{label}{required ? <sup>*</sup> : null}</b>{info ? <small title={info}>i</small> : null}</span>{children}<em>{value.length}/{max}</em></label>;
 }
 
-function TeamModelStep({ modeLabel, availableMcp, skillPreview, skillPreviewLoading, skillPreviewError, selectedSkills, onSkills, onAutomatic }: { modeLabel: string; availableMcp: string[]; skillPreview: SkillPreview | null; skillPreviewLoading: boolean; skillPreviewError: string; selectedSkills: string[] | null; onSkills: () => void; onAutomatic: () => void }) {
+function TeamModelStep({ modeLabel, availableMcp, skillPreview, skillPreviewLoading, skillPreviewError, selectedSkills, onSkills, onAutomatic, modelOptions, modelAssignments, modelError, onModel }: { modeLabel: string; availableMcp: string[]; skillPreview: SkillPreview | null; skillPreviewLoading: boolean; skillPreviewError: string; selectedSkills: string[] | null; onSkills: () => void; onAutomatic: () => void; modelOptions: AgentModelOptions | null; modelAssignments: Record<string, { providerId: string; modelId: string }>; modelError: string; onModel: (agentId: string, value: { providerId: string; modelId: string }) => void }) {
   return <div className="team-model-step">
     <header><span><Users size={18} /></span><div><h2>团队与模型装配</h2><p>系统会根据「{modeLabel}」自动推荐团队、Solver、Skills 与可用工具。</p></div></header>
-    <div className="team-model-grid"><article><span>团队模板</span><strong>{modeLabel}标准团队</strong><small>Supervisor 按任务复杂度动态创建 Solver</small></article><article><span>模型策略</span><strong>沿用全局默认模型</strong><small>运行前会验证凭证、工具调用和上下文预算</small></article><article><span>编排方式</span><strong>自动匹配</strong><small>支持在运行工作台继续干预和审批</small></article></div>
+    <div className="team-model-grid"><article><span>团队模板</span><strong>{modeLabel}标准团队</strong><small>Supervisor 按任务复杂度动态创建 Solver</small></article><article><span>模型策略</span><strong>逐 Agent 独立分配</strong><small>模型与密钥状态会冻结到任务快照</small></article><article><span>编排方式</span><strong>自动匹配</strong><small>支持在运行工作台继续干预和审批</small></article></div>
+    <section className="agent-model-assignment"><header><div><Cpu size={17} /><h3>Agent 模型</h3></div><b>{modelOptions?.agents.length ?? 0}</b></header>{modelError ? <p className="team-model-empty"><AlertTriangle size={15} />{modelError} <a href="/settings/models">前往配置</a></p> : <div className="agent-model-grid">{modelOptions?.agents.map((agent) => { const selected = modelAssignments[agent.id]; const value = selected ? `${selected.providerId}:${selected.modelId}` : ""; return <label key={agent.id}><span><strong>{agent.id}</strong><small>{roleLabel(agent.role)}{agent.required ? " · 必需" : " · 按需创建"}</small></span><select aria-label={`${agent.id} 模型`} value={value} onChange={(event) => { const [providerId, modelId] = event.target.value.split(":"); onModel(agent.id, { providerId, modelId }); }}><option value="" disabled>选择已验证模型</option>{modelOptions.models.map((model) => <option key={`${model.provider_id}:${model.model_id}`} value={`${model.provider_id}:${model.model_id}`} disabled={!model.ready}>{model.provider_name} / {model.model_name}{model.ready ? "" : `（${model.verification_status}）`}</option>)}</select></label>; })}</div>}</section>
     <section><header><div><Sparkles size={17} /><h3>Skills</h3></div><button type="button" className="ref-secondary-button" onClick={onSkills}>手动选择</button></header><SkillPreviewSummary value={skillPreview} loading={skillPreviewLoading} error={skillPreviewError} manual={selectedSkills !== null} onAutomatic={onAutomatic} /></section>
     <section><header><div><ShieldCheck size={17} /><h3>自动可用 MCP</h3></div><b>{availableMcp.length}</b></header>{availableMcp.length ? <div className="team-model-chips">{availableMcp.map((server) => <span key={server}>{server}</span>)}</div> : <p className="team-model-empty"><AlertTriangle size={15} />当前没有已启用且可达的 MCP 服务</p>}</section>
   </div>;
+}
+
+function roleLabel(role: AgentModelOptions["agents"][number]["role"]): string {
+  return { supervisor: "Supervisor", worker: "Worker", reviewer: "Reviewer", reporter: "Reporter" }[role];
 }
 
 function PreflightSummary({ value, loading, error }: { value: TaskPreflight | null; loading: boolean; error: string }) {
