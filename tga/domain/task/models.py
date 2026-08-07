@@ -207,7 +207,10 @@ class ModelSnapshot(BaseModel):
     model_config = {"extra": "forbid"}
 
     provider: str = Field(default="openai-compatible", max_length=128)
+    provider_id: str | None = Field(default=None, pattern=r"^[A-Za-z0-9_-]{1,128}$")
     model: str = Field(min_length=1, max_length=255)
+    model_id: str | None = Field(default=None, pattern=r"^[A-Za-z0-9_-]{1,128}$")
+    api_key_id: str | None = Field(default=None, pattern=r"^[A-Za-z0-9_-]{1,128}$")
     capability_fingerprint: str = Field(pattern=r"^[a-f0-9]{64}$")
     verification_id: str = Field(min_length=1, max_length=100)
     verified_at: str = Field(min_length=1, max_length=80)
@@ -342,6 +345,7 @@ class TGATask(BaseModel):
     mode_config: ModeConfig
     execution_policy: ExecutionPolicy
     model_snapshot: ModelSnapshot
+    agent_model_snapshots: dict[str, ModelSnapshot] = Field(default_factory=dict, max_length=64)
     agent_prompt_snapshot: dict[str, Any] | None = None
     execution_budget: dict[str, int] = Field(default_factory=dict)
     insecure_tls_origins: list[str] = Field(default_factory=list, max_length=8)

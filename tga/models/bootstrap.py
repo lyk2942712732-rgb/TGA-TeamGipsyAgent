@@ -6,7 +6,15 @@ from tga.models.openai_compatible import OpenAICompatibleClient
 from tga.models.settings import effective_model_settings
 
 
-def build_model_client() -> OpenAICompatibleClient | None:
+def build_model_client(*, snapshot=None) -> OpenAICompatibleClient | None:
+    if snapshot is not None and getattr(snapshot, "provider_id", None) and getattr(snapshot, "model_id", None):
+        from tga.models.provider_catalog import build_catalog_model_client
+
+        return build_catalog_model_client(
+            provider_id=snapshot.provider_id,
+            model_id=snapshot.model_id,
+            api_key_id=getattr(snapshot, "api_key_id", None),
+        )
     settings = effective_model_settings()
     api_key = settings["api_key"]
     base_url = settings["base_url"]
@@ -23,7 +31,15 @@ def build_model_client() -> OpenAICompatibleClient | None:
     )
 
 
-def model_config_status() -> dict:
+def model_config_status(*, snapshot=None) -> dict:
+    if snapshot is not None and getattr(snapshot, "provider_id", None) and getattr(snapshot, "model_id", None):
+        from tga.models.provider_catalog import model_target_status
+
+        return model_target_status(
+            provider_id=snapshot.provider_id,
+            model_id=snapshot.model_id,
+            api_key_id=getattr(snapshot, "api_key_id", None),
+        )
     settings = effective_model_settings()
     client = build_model_client()
     return {

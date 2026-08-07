@@ -7,7 +7,6 @@ from pathlib import Path
 
 from tga.deployment.paths import run_root as resolve_run_root
 from tga.evidence.store import EvidenceStore
-from tga.models.bootstrap import build_model_client
 from tga.infrastructure.solver_definitions.registry import SolverDefinitionRegistry
 from tga.infrastructure.team_templates.registry import TeamTemplateRegistry
 from tga.runtime.manager import Manager
@@ -31,7 +30,6 @@ class Container:
         return Manager(
             store=store,
             run_root=self.run_root,
-            model_client=build_model_client(),
         )
 
     def runtime_service(self) -> TaskRuntimeService:

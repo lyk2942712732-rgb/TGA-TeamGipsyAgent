@@ -1,287 +1,156 @@
-import { FormEvent, useEffect, useState } from "react";
-import { Eye, EyeOff, Plus } from "lucide-react";
-import { getLLMSettings, updateLLMSettings, verifyLLMSettings, type LLMSettings } from "../api/tasks";
-import { CatalogTable, type Column } from "../components/ui/CatalogTable";
-import { EmptyState } from "../components/ui/EmptyState";
-import { DetailTabs, type DetailTab } from "../components/ui/DetailTabs";
-import { FieldGrid } from "../components/ui/FieldGrid";
-import { StatusBadge } from "../shared/StatusBadge";
+import { FormEvent, useEffect, useMemo, useState } from "react";
+import { Check, ChevronRight, Cpu, KeyRound, Plus, Server, ShieldCheck, X } from "lucide-react";
+import {
+  addProviderAPIKey, addProviderModel, createModelProvider, fetchProviderCatalog,
+  selectProviderAPIKey, verifyProviderModel,
+  type ModelProvider, type ProviderCatalog,
+} from "../api/tasks";
 
-/**
- * Reference design shows a multi-provider console.  The backend exposes exactly
- * one OpenAI-compatible provider through `/api/v2/settings/llm`, so the table
- * renders that single real row and every other affordance is marked unbuilt.
- */
+type ProviderDraft = { preset_id: string; name: string; base_url: string; model: string; api_key: string };
 
-const TABS: DetailTab[] = [
-  { id: "providers", label: "Providers" },
-  { id: "profiles", label: "Model Profiles", missing: true },
-  { id: "routing", label: "Role Routing", missing: true },
-  { id: "history", label: "验证历史", missing: true },
-];
-
-type ProviderRow = {
-  id: string;
-  name: string;
-  type: string;
-  status: string;
-  lastVerified: string | null;
-  models: number | null;
-};
-
-type Draft = {
-  base_url: string; model: string; api_key: string;
-  supports_vision: boolean | null; max_output_tokens: number;
-  timeout_seconds: number; temperature: number;
-  reasoning_mode: "auto" | "enabled" | "disabled";
-};
+const EMPTY_PROVIDER: ProviderDraft = { preset_id: "custom", name: "", base_url: "", model: "", api_key: "" };
 
 export function ModelsPage({ onConfiguredChange }: { onConfiguredChange?: (configured: boolean) => void }) {
-  const [tab, setTab] = useState("providers");
-  const [settings, setSettings] = useState<LLMSettings | null>(null);
-  const [verifying, setVerifying] = useState(false);
-  const [showKey, setShowKey] = useState(false);
+  const [catalog, setCatalog] = useState<ProviderCatalog | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [adding, setAdding] = useState(false);
+  const [draft, setDraft] = useState<ProviderDraft>(EMPTY_PROVIDER);
+  const [newModel, setNewModel] = useState("");
+  const [newKey, setNewKey] = useState("");
+  const [newKeyLabel, setNewKeyLabel] = useState("");
+  const [busy, setBusy] = useState("");
   const [message, setMessage] = useState("");
-  const [draft, setDraft] = useState<Draft>({
-    base_url: "", model: "", api_key: "", supports_vision: null,
-    max_output_tokens: 1024, timeout_seconds: 60, temperature: 0.2, reasoning_mode: "auto",
-  });
 
-  useEffect(() => {
-    void getLLMSettings().then((value) => {
-      setSettings(value);
-      setDraft({
-        base_url: value.base_url, model: value.model, api_key: "",
-        supports_vision: value.supports_vision ?? null,
-        max_output_tokens: value.max_output_tokens ?? 1024,
-        timeout_seconds: value.timeout_seconds ?? 60,
-        temperature: value.temperature ?? 0.2,
-        reasoning_mode: value.reasoning_mode ?? "auto",
-      });
-    });
-  }, []);
-
-  const save = async (event: FormEvent) => {
-    event.preventDefault();
-    setMessage("");
-    try {
-      const next = await updateLLMSettings({ ...draft, api_key: draft.api_key || undefined });
-      setSettings(next);
-      onConfiguredChange?.(next.configured);
-      setDraft((current) => ({ ...current, api_key: "" }));
-      setMessage("Provider、模型和凭据设置已保存。API Key 不会回显。");
-    } catch (reason) {
-      setMessage(reason instanceof Error ? reason.message : "保存失败");
-    }
+  const load = async (preferredId?: string) => {
+    const value = await fetchProviderCatalog();
+    setCatalog(value);
+    setSelectedId((current) => preferredId ?? current ?? value.providers[0]?.id ?? null);
+    onConfiguredChange?.(value.providers.some((provider) => provider.models.length > 0 && provider.api_keys.length > 0));
   };
 
-  const verify = async () => {
-    setVerifying(true);
-    setMessage("");
-    try {
-      const result = await verifyLLMSettings();
-      setMessage(result.reachable && result.action_tools
-        ? `模型连接、强制/自动工具调用及产品工具目录验证成功：${result.model}（${result.tool_catalog.tool_count} 个工具）`
-        : "模型未返回有效工具调用。");
-      setSettings(await getLLMSettings());
-    } catch (reason) {
-      setMessage(reason instanceof Error ? reason.message : "模型工具调用协议验证失败");
-      setSettings(await getLLMSettings());
-    } finally {
-      setVerifying(false);
-    }
+  useEffect(() => { void load().catch((reason: unknown) => setMessage(errorText(reason))); }, []);
+
+  const selected = useMemo(
+    () => catalog?.providers.find((provider) => provider.id === selectedId) ?? null,
+    [catalog, selectedId],
+  );
+
+  const choosePreset = (presetId: string) => {
+    const preset = catalog?.presets.find((item) => item.id === presetId);
+    setDraft((current) => ({
+      ...current, preset_id: presetId,
+      name: preset ? preset.name : current.name,
+      base_url: preset ? preset.base_url : current.base_url,
+    }));
   };
 
-  const requestUrl = normalizeUrl(draft.base_url);
-  const rows: ProviderRow[] = settings ? [{
-    id: "openai-compatible",
-    name: providerName(settings.base_url),
-    type: isLocal(settings.base_url) ? "本地" : "云端",
-    status: providerStatus(settings),
-    lastVerified: settings.verification?.verified_at ?? null,
-    models: settings.model ? 1 : null,
-  }] : [];
+  const create = async (event: FormEvent) => {
+    event.preventDefault(); setBusy("create"); setMessage("");
+    try {
+      const result = await createModelProvider({ ...draft, preset_id: draft.preset_id });
+      setDraft(EMPTY_PROVIDER); setAdding(false);
+      await load(result.provider.id);
+      setMessage(`已添加供应商 ${result.provider.name}，请验证模型连接后用于任务。`);
+    } catch (reason) { setMessage(errorText(reason)); }
+    finally { setBusy(""); }
+  };
 
-  const columns: Array<Column<ProviderRow>> = [
-    { id: "name", header: "Provider 名称", render: (row) => <strong>{row.name}</strong> },
-    { id: "type", header: "类型", render: (row) => <span className="cell-muted">{row.type}</span> },
-    {
-      id: "status", header: "状态",
-      render: (row) => <span className={`ref-chip ${row.status === "healthy" ? "tone-ok" : row.status === "degraded" ? "tone-warn" : "tone-danger"}`}>
-        <i className="ref-dot" aria-hidden="true" />{row.status === "healthy" ? "正常" : row.status === "degraded" ? "警告" : "未配置"}
-      </span>,
-    },
-    {
-      id: "verified", header: "最近验证",
-      render: (row) => row.lastVerified
-        ? <span className="cell-muted">{new Date(row.lastVerified).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })}</span>
-        : <span className="field-empty">尚未验证</span>,
-    },
-    { id: "models", header: "可用模型数", render: (row) => row.models ?? <span className="field-empty">—</span>, align: "center" },
-    {
-      id: "actions", header: "操作",
-      render: () => <button
-        className="ref-secondary-button"
-        onClick={(event) => {
-          event.stopPropagation();
-          document.getElementById("provider-settings")?.scrollIntoView({ behavior: "smooth", block: "start" });
-        }}
-      >设置</button>,
-    },
-  ];
+  const appendModel = async (event: FormEvent) => {
+    event.preventDefault(); if (!selected) return;
+    setBusy("model"); setMessage("");
+    try { await addProviderModel(selected.id, { name: newModel }); setNewModel(""); await load(selected.id); }
+    catch (reason) { setMessage(errorText(reason)); }
+    finally { setBusy(""); }
+  };
 
-  return <div className="ref-page">
-    <header className="ref-page-head">
-      <div>
-        <h1>Models 管理</h1>
-        <p>管理模型提供商和模型配置</p>
-      </div>
-      <button className="ref-primary-button" onClick={() => setMessage("添加 Provider：该功能尚未开放，后端目前仅支持单个 OpenAI-compatible Provider。")}>
-        <Plus size={16} />添加 Provider
-      </button>
+  const appendKey = async (event: FormEvent) => {
+    event.preventDefault(); if (!selected) return;
+    setBusy("key"); setMessage("");
+    try {
+      await addProviderAPIKey(selected.id, { api_key: newKey, label: newKeyLabel || undefined });
+      setNewKey(""); setNewKeyLabel(""); await load(selected.id);
+      setMessage("API 密钥已保存并选中。切换密钥后需要重新验证模型。");
+    } catch (reason) { setMessage(errorText(reason)); }
+    finally { setBusy(""); }
+  };
+
+  const selectKey = async (provider: ModelProvider, keyId: string) => {
+    if (provider.selected_api_key_id === keyId) return;
+    setBusy(`key:${keyId}`); setMessage("");
+    try { await selectProviderAPIKey(provider.id, keyId); await load(provider.id); }
+    catch (reason) { setMessage(errorText(reason)); }
+    finally { setBusy(""); }
+  };
+
+  const verify = async (providerId: string, modelId: string) => {
+    setBusy(`verify:${modelId}`); setMessage("");
+    try {
+      await verifyProviderModel(providerId, modelId); await load(providerId);
+      setMessage("连接与工具调用协议验证通过，该模型现在可分配给 Agent。");
+    } catch (reason) { setMessage(errorText(reason)); await load(providerId).catch(() => undefined); }
+    finally { setBusy(""); }
+  };
+
+  return <div className="ref-page models-catalog-page">
+    <header className="ref-page-head models-page-head">
+      <div><span className="eyebrow">MODEL REGISTRY</span><h1>模型供应商</h1><p>集中管理 OpenAI-compatible 供应商、模型和任务使用的 API 密钥。</p></div>
+      <button className="ref-primary-button" onClick={() => setAdding(true)}><Plus size={16} />添加供应商</button>
     </header>
 
-    <DetailTabs tabs={TABS} active={tab} onSelect={setTab} size="lg" />
+    {message ? <p className="settings-message" role="status">{message}</p> : null}
 
-    {tab !== "providers"
-      ? <EmptyState label={`暂无${TABS.find((item) => item.id === tab)?.label}数据`} />
-      : <>
-        <CatalogTable columns={columns} rows={rows} rowKey={(row) => row.id} label="Provider 列表" emptyLabel="正在读取 Provider 设置…" />
+    {adding ? <section className="provider-create-card" aria-label="添加供应商">
+      <header><div><h2>添加供应商</h2><p>选择官方预设会自动填写 API URL；也可以使用任意兼容端点。</p></div><button className="icon-button" aria-label="关闭" onClick={() => setAdding(false)}><X size={18} /></button></header>
+      <form onSubmit={create}>
+        <label>供应商类型<select aria-label="供应商类型" value={draft.preset_id} onChange={(event) => choosePreset(event.target.value)}><option value="custom">自定义</option>{catalog?.presets.map((preset) => <option key={preset.id} value={preset.id}>{preset.name}</option>)}</select></label>
+        <label>供应商名称<input required aria-label="供应商名称" value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} placeholder="例如：团队网关" /></label>
+        <label className="wide">API URL<input required type="url" aria-label="API URL" value={draft.base_url} onChange={(event) => setDraft({ ...draft, base_url: event.target.value })} placeholder="https://api.example.com/v1" /></label>
+        <label>模型名称<input required aria-label="模型名称" value={draft.model} onChange={(event) => setDraft({ ...draft, model: event.target.value })} placeholder="例如：gpt-5" /></label>
+        <label>API 密钥<input required type="password" aria-label="API 密钥" autoComplete="new-password" value={draft.api_key} onChange={(event) => setDraft({ ...draft, api_key: event.target.value })} placeholder="仅写入，不会回显" /></label>
+        <footer><button type="button" className="ref-secondary-button" onClick={() => setAdding(false)}>取消</button><button className="ref-primary-button" disabled={busy === "create"}>{busy === "create" ? "正在保存…" : "保存供应商"}</button></footer>
+      </form>
+    </section> : null}
 
-        <section className="ref-detail-panel ref-fill" id="provider-settings">
-          <header className="ref-detail-head">
-            <div className="ref-detail-title"><h2>{settings ? providerName(settings.base_url) : "Provider"}</h2></div>
-            <StatusBadge value={providerStatus(settings)} label={verificationLabel(settings)} />
-          </header>
+    <div className="provider-layout">
+      <section className="provider-list" aria-label="已配置供应商">
+        <header><div><h2>已配置</h2><span>{catalog?.providers.length ?? 0}</span></div><p>选择供应商查看模型与密钥</p></header>
+        {catalog?.providers.length ? catalog.providers.map((provider) => {
+          const verified = provider.models.filter((model) => model.verification_status === "verified").length;
+          return <button key={provider.id} className={provider.id === selectedId ? "selected" : ""} onClick={() => setSelectedId(provider.id)}>
+            <span className="provider-mark"><Server size={18} /></span><span><strong>{provider.name}</strong><small>{provider.models.length} 个模型 · {provider.api_keys.length} 个密钥</small></span>
+            <em className={verified ? "ready" : "pending"}>{verified ? `${verified} 可用` : "待验证"}</em><ChevronRight size={16} />
+          </button>;
+        }) : <div className="provider-empty"><Server size={24} /><strong>还没有供应商</strong><p>添加一个供应商后即可配置 Agent 使用的模型。</p></div>}
+      </section>
 
-          {/* The reference's read-only summary, then the working settings form
-              below it — the save/verify path is real and must stay usable. */}
-          <FieldGrid columns={2} fields={[
-            { label: "类型", value: settings ? (isLocal(settings.base_url) ? "本地" : "云端") : null },
-            { label: "凭据状态", value: settings?.api_key_set ? "有效" : "未设置" },
-            { label: "API 端点", value: <code className="cell-mono">{settings?.base_url}</code> },
-            { label: "速率限制", missing: true },
-            { label: "组织 ID", missing: true },
-            { label: "并发限制", missing: true },
-            { label: "验证状态", value: verificationLabel(settings) },
-            { label: "超时设置", value: settings?.timeout_seconds ? `${settings.timeout_seconds} 秒` : null },
-            {
-              label: "最后验证",
-              value: settings?.verification?.verified_at
-                ? new Date(settings.verification.verified_at).toLocaleString("zh-CN")
-                : null,
-              missing: !settings?.verification?.verified_at,
-            },
-            { label: "可用模型", value: settings?.model },
-          ]} />
+      <section className="provider-detail" aria-label="供应商详情">
+        {selected ? <>
+          <header className="provider-detail-head"><div><span>{selected.preset_id === "custom" ? "自定义供应商" : "官方预设"}</span><h2>{selected.name}</h2><code>{selected.base_url}</code></div><div className="provider-counts"><span><Cpu size={15} />{selected.models.length} 模型</span><span><KeyRound size={15} />{selected.api_keys.length} 密钥</span></div></header>
 
-          <h3 className="ref-subhead">连接设置</h3>
-          <form className="models-form" onSubmit={save}>
-            <div className="models-form-grid">
-              <label>Provider Base URL
-                <input required type="url" autoComplete="url" placeholder="https://provider.example/v1"
-                  value={draft.base_url} onChange={(e) => setDraft({ ...draft, base_url: e.target.value })} />
-              </label>
-              <label>模型 ID
-                <input required autoComplete="off" placeholder="provider-model-id"
-                  value={draft.model} onChange={(e) => setDraft({ ...draft, model: e.target.value })} />
-              </label>
-              <div className="secret-field">
-                <label htmlFor="llm-api-key">API Key</label>
-                <div className="secret-input">
-                  <input id="llm-api-key" type={showKey ? "text" : "password"} autoComplete="new-password"
-                    placeholder={settings?.api_key_set ? "已保存，留空表示不修改" : "输入 Provider API Key"}
-                    value={draft.api_key} onChange={(e) => setDraft({ ...draft, api_key: e.target.value })} />
-                  <button type="button" className="icon-button"
-                    aria-label={showKey ? "隐藏 API Key" : "显示 API Key"}
-                    onClick={() => setShowKey((value) => !value)}>
-                    {showKey ? <EyeOff size={17} /> : <Eye size={17} />}
-                  </button>
-                </div>
-              </div>
-              <label>视觉输入
-                <select value={draft.supports_vision == null ? "auto" : String(draft.supports_vision)}
-                  onChange={(e) => setDraft({ ...draft, supports_vision: e.target.value === "auto" ? null : e.target.value === "true" })}>
-                  <option value="auto">自动探测</option>
-                  <option value="true">支持图像输入</option>
-                  <option value="false">仅文本</option>
-                </select>
-              </label>
-              <label>最大输出 Token
-                <input type="number" min={256} max={16384} value={draft.max_output_tokens}
-                  onChange={(e) => setDraft({ ...draft, max_output_tokens: Number(e.target.value) })} />
-              </label>
-              <label>请求超时（秒）
-                <input type="number" min={5} max={300} value={draft.timeout_seconds}
-                  onChange={(e) => setDraft({ ...draft, timeout_seconds: Number(e.target.value) })} />
-              </label>
-              <label>Temperature
-                <input type="number" min={0} max={2} step={0.1} value={draft.temperature}
-                  onChange={(e) => setDraft({ ...draft, temperature: Number(e.target.value) })} />
-              </label>
-              <label>推理模型模式
-                <select value={draft.reasoning_mode}
-                  onChange={(e) => setDraft({ ...draft, reasoning_mode: e.target.value as Draft["reasoning_mode"] })}>
-                  <option value="auto">自动</option>
-                  <option value="enabled">开启</option>
-                  <option value="disabled">关闭</option>
-                </select>
-              </label>
-            </div>
+          <div className="provider-detail-grid">
+            <section className="provider-models"><header><div><h3>模型</h3><p>验证通过后可在任务开始前分配给 Agent。</p></div></header>
+              <div className="provider-items">{selected.models.map((model) => <article key={model.id}>
+                <span className="item-icon"><Cpu size={16} /></span><div><strong>{model.name}</strong><small>{model.max_output_tokens} tokens · {model.reasoning_mode === "enabled" ? "推理模式" : "标准模式"}</small></div>
+                <span className={`verification-pill ${model.verification_status}`}>{model.verification_status === "verified" ? <><Check size={12} />已验证</> : model.verification_status === "failed" ? "验证失败" : model.verification_status === "stale" ? "需重新验证" : "未验证"}</span>
+                <button className="ref-secondary-button" disabled={busy === `verify:${model.id}`} onClick={() => void verify(selected.id, model.id)}>{busy === `verify:${model.id}` ? "验证中…" : "验证"}</button>
+              </article>)}</div>
+              <form className="provider-inline-form" onSubmit={appendModel}><input required aria-label="添加模型" value={newModel} onChange={(event) => setNewModel(event.target.value)} placeholder="输入模型名称" /><button disabled={busy === "model"}><Plus size={14} />添加模型</button></form>
+            </section>
 
-            <FieldGrid columns={2} fields={[
-              { label: "最终请求地址", value: <code className="cell-mono">{requestUrl}</code> },
-              { label: "工具协议", value: settings?.verification?.capabilities?.tool_calling ? "已验证" : "待验证" },
-            ]} />
-
-            {settings?.verification?.last_error
-              ? <p className="inline-error" role="alert">{settings.verification.last_error.code}：{settings.verification.last_error.message}</p>
-              : null}
-            {message ? <p className="settings-message" role="status">{message}</p> : null}
-
-            <div className="policy-actions">
-              <button className="ref-primary-button">保存设置</button>
-              <button type="button" className="ref-secondary-button" disabled={!settings?.configured || verifying}
-                onClick={() => void verify()}>{verifying ? "正在验证…" : "验证模型连接"}</button>
-            </div>
-          </form>
-        </section>
-      </>}
+            <section className="provider-keys"><header><div><h3>API 密钥</h3><p>点击条目即可选中；完整密钥不会从服务端回显。</p></div></header>
+              <div className="provider-items key-items">{selected.api_keys.map((key) => <button type="button" key={key.id} className={key.selected ? "selected" : ""} onClick={() => void selectKey(selected, key.id)} disabled={busy === `key:${key.id}`}>
+                <span className="item-icon"><KeyRound size={16} /></span><span><strong>{key.label}</strong><code>{key.masked}</code></span>{key.selected ? <em><Check size={13} />当前使用</em> : <small>点击选中</small>}
+              </button>)}</div>
+              <form className="provider-key-form" onSubmit={appendKey}><input aria-label="密钥备注" value={newKeyLabel} onChange={(event) => setNewKeyLabel(event.target.value)} placeholder="备注（可选）" /><input required type="password" aria-label="添加 API 密钥" autoComplete="new-password" value={newKey} onChange={(event) => setNewKey(event.target.value)} placeholder="输入新的 API 密钥" /><button disabled={busy === "key"}><Plus size={14} />添加 API 密钥</button></form>
+            </section>
+          </div>
+          <footer className="provider-security-note"><ShieldCheck size={16} /><span>密钥以受限权限保存在本机（Windows 使用 DPAPI 保护）；页面和 API 只展示掩码。更换密钥会使模型验证失效，避免任务使用未经确认的凭据。</span></footer>
+        </> : <div className="provider-detail-empty"><Server size={28} /><h2>选择一个供应商</h2><p>在左侧查看已配置供应商，或先添加新的供应商。</p></div>}
+      </section>
+    </div>
   </div>;
 }
 
-/** The reference labels each row by vendor; derive it from the endpoint host. */
-function providerName(baseUrl: string): string {
-  try {
-    const host = new URL(baseUrl).hostname;
-    const parts = host.split(".").filter((part) => part !== "api" && part !== "www");
-    const label = parts[0] ?? host;
-    return label.charAt(0).toUpperCase() + label.slice(1);
-  } catch {
-    return baseUrl || "OpenAI-compatible Provider";
-  }
-}
-
-function isLocal(baseUrl: string): boolean {
-  return /localhost|127\.0\.0\.1|\[::1\]|0\.0\.0\.0/.test(baseUrl);
-}
-
-function normalizeUrl(base: string): string {
-  const trimmed = base.replace(/\/$/, "");
-  return trimmed.endsWith("/chat/completions") ? trimmed : `${trimmed}/chat/completions`;
-}
-
-function providerStatus(settings: LLMSettings | null): string {
-  if (!settings?.configured) return "unavailable";
-  return settings.verification_status === "verified" ? "healthy" : "degraded";
-}
-
-function verificationLabel(settings: LLMSettings | null): string {
-  switch (settings?.verification_status) {
-    case "verified": return "验证通过";
-    case "verifying": return "验证中";
-    case "failed": return "验证失败";
-    case "stale": return "配置已修改，需重新验证";
-    default: return settings?.configured ? "已保存，待验证" : "未配置";
-  }
+function errorText(reason: unknown): string {
+  return reason instanceof Error ? reason.message : "操作失败，请稍后重试";
 }

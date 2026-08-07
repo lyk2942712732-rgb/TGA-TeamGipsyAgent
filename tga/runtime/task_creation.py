@@ -15,6 +15,7 @@ from tga.contracts import ExecutionPolicy, MCPCapabilitySnapshot, MCPCapabilityT
 from tga.application.capabilities import CapabilityAssignmentService
 from tga.inputs import SessionWorkspace
 from tga.models.bootstrap import model_config_status
+from tga.models.provider_catalog import model_target_status
 from tga.modes import mode_profile, normalize_mode, validate_task_profile
 from tga.network_policy import input_network_seeds
 from tga.runtime.service import TaskRuntimeService
@@ -22,6 +23,8 @@ from tga.runtime.prompt_settings import load_agent_prompt_settings, snapshot_for
 from tga.domain.skills.models import TaskCommonSkillSnapshot
 from tga.skills.selection import SkillSelectionRequest, SkillSelector
 from tga.tools.mcp_manager import MCPManager
+from tga.infrastructure.solver_definitions.registry import SolverDefinitionRegistry
+from tga.infrastructure.team_templates.registry import TeamTemplateRegistry
 
 
 class TaskCreationError(ValueError):
@@ -42,6 +45,7 @@ class CreateTaskCommand:
     execution_policy: ExecutionPolicy
     workspace_id: str | None = None
     selected_skill_names: tuple[str, ...] | None = None
+    agent_models: dict[str, dict[str, str]] | None = None
     preflight_fingerprint: str | None = None
 
 
@@ -135,16 +139,50 @@ class TaskCreationService:
         )
 
     def preflight(self, command: CreateTaskCommand) -> TaskPreflight:
-        provider = self.model_status()
-        if not provider.get("configured"):
-            raise TaskCreationError("MODEL_NOT_CONFIGURED", "model_not_configured")
-        if provider.get("verification_status") != "verified":
-            raise TaskCreationError("MODEL_NOT_VERIFIED", "model_not_verified")
-        verification = provider.get("verification") or {}
         try:
             mode = normalize_mode(command.mode)
         except ValueError as exc:
             raise TaskCreationError("INVALID_MODE", str(exc)) from exc
+        agent_snapshots: dict[str, dict[str, Any]] = {}
+        if command.agent_models:
+            required_ids = self._team_definition_ids(mode)
+            missing = required_ids - set(command.agent_models)
+            unknown = set(command.agent_models) - required_ids
+            if missing or unknown:
+                detail = []
+                if missing:
+                    detail.append(f"missing assignments: {', '.join(sorted(missing))}")
+                if unknown:
+                    detail.append(f"unknown agents: {', '.join(sorted(unknown))}")
+                raise TaskCreationError("AGENT_MODEL_ASSIGNMENTS_INVALID", "; ".join(detail))
+            statuses: dict[str, dict[str, Any]] = {}
+            for definition_id in sorted(required_ids):
+                selection = command.agent_models[definition_id]
+                try:
+                    status = model_target_status(
+                        provider_id=selection["provider_id"], model_id=selection["model_id"],
+                    )
+                except (KeyError, ValueError) as exc:
+                    raise TaskCreationError(
+                        "MODEL_NOT_CONFIGURED", f"model selection for {definition_id} is unavailable",
+                    ) from exc
+                if not status.get("configured"):
+                    raise TaskCreationError("MODEL_NOT_CONFIGURED", f"model for {definition_id} is not configured")
+                if status.get("verification_status") != "verified":
+                    raise TaskCreationError("MODEL_NOT_VERIFIED", f"model for {definition_id} is not verified")
+                statuses[definition_id] = status
+                agent_snapshots[definition_id] = self._snapshot_payload(status)
+            template = TeamTemplateRegistry.builtin(
+                definitions=SolverDefinitionRegistry.builtin()
+            ).require(mode)
+            provider = statuses[template.supervisor_definition_id]
+        else:
+            provider = self.model_status()
+            if not provider.get("configured"):
+                raise TaskCreationError("MODEL_NOT_CONFIGURED", "model_not_configured")
+            if provider.get("verification_status") != "verified":
+                raise TaskCreationError("MODEL_NOT_VERIFIED", "model_not_verified")
+        verification = provider.get("verification") or {}
 
         task_id = command.task_id or f"task_{uuid4().hex[:12]}"
         task_root = self.runtime_service.task_root(task_id)
@@ -194,18 +232,8 @@ class TaskCreationService:
                 agent_prompt_snapshot=prompt_snapshot.model_dump(mode="json"),
                 # Schema-v6 Skills live in explicit Task Common and Solver
                 # Specialized snapshots belong to SolverInstances, not Task state.
-                model_snapshot={
-                    "provider": provider.get("provider") or "openai-compatible",
-                    "model": provider.get("model") or "",
-                    "capability_fingerprint": verification.get("capability_fingerprint") or "",
-                    "verification_id": verification.get("id") or "",
-                    "verified_at": verification.get("verified_at") or "",
-                    "capabilities": verification.get("capabilities") or {},
-                    "max_output_tokens": provider.get("max_output_tokens"),
-                    "timeout_seconds": provider.get("timeout_seconds"),
-                    "temperature": provider.get("temperature"),
-                    "reasoning_mode": provider.get("reasoning_mode") or "auto",
-                },
+                model_snapshot=self._snapshot_payload(provider),
+                agent_model_snapshots=agent_snapshots,
                 schema_version=6,
             )
             validate_task_profile(task)
@@ -225,7 +253,10 @@ class TaskCreationService:
             task_common_skills=task_common_skills,
             skill_fingerprint=task_common_skills.fingerprint,
             checks=(
-                {"id": "model", "status": "passed", "detail": "verified model snapshot"},
+                {"id": "model", "status": "passed", "detail": (
+                    f"{len(agent_snapshots)} agent model snapshots verified"
+                    if agent_snapshots else "verified model snapshot"
+                )},
                 {"id": "inputs", "status": "passed", "detail": f"{len(session_input.files)} staged inputs verified"},
                 {"id": "policy", "status": "passed", "detail": "mode and execution policy validated"},
                 {"id": "skills", "status": "passed", "detail": f"{len(task_common_skills.skills)} Skills selected"},
@@ -273,12 +304,46 @@ class TaskCreationService:
                 "mcp_catalog_version": task.mcp_capabilities.catalog_version,
                 "model_verification_id": verification.get("id") or "",
                 "model_capability_fingerprint": verification.get("capability_fingerprint") or "",
+                "agent_model_snapshots": {
+                    key: value.model_dump(mode="json")
+                    for key, value in sorted(task.agent_model_snapshots.items())
+                },
             },
             ensure_ascii=False,
             sort_keys=True,
             default=str,
         ).encode()
         return hashlib.sha256(encoded).hexdigest()
+
+    @staticmethod
+    def _snapshot_payload(provider: dict[str, Any]) -> dict[str, Any]:
+        verification = provider.get("verification") or {}
+        return {
+            "provider": provider.get("provider") or "openai-compatible",
+            "provider_id": provider.get("provider_id"),
+            "model": provider.get("model") or "",
+            "model_id": provider.get("model_id"),
+            "api_key_id": provider.get("api_key_id"),
+            "capability_fingerprint": verification.get("capability_fingerprint") or "",
+            "verification_id": verification.get("id") or "",
+            "verified_at": verification.get("verified_at") or "",
+            "capabilities": verification.get("capabilities") or {},
+            "max_output_tokens": provider.get("max_output_tokens"),
+            "timeout_seconds": provider.get("timeout_seconds"),
+            "temperature": provider.get("temperature"),
+            "reasoning_mode": provider.get("reasoning_mode") or "auto",
+        }
+
+    @staticmethod
+    def _team_definition_ids(mode: str) -> set[str]:
+        definitions = SolverDefinitionRegistry.builtin()
+        template = TeamTemplateRegistry.builtin(definitions=definitions).require(mode)
+        return {
+            template.supervisor_definition_id,
+            template.reviewer_definition_id,
+            template.reporter_definition_id,
+            *template.available_solver_definition_ids,
+        }
 
 
 def build_mcp_capability_snapshot(manager: MCPManager) -> MCPCapabilitySnapshot:

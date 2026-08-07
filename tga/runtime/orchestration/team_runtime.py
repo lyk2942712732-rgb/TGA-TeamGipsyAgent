@@ -405,7 +405,7 @@ class TeamRuntime:
             task=self.task,
             definition=definition,
             intent=intent,
-            model_snapshot=self._model_snapshot(now),
+            model_snapshot=self._model_snapshot(definition, now),
             skill_snapshot=skill,
             capability_binding_snapshot=binding,
             parent_solver_id=parent_solver_id,
@@ -592,8 +592,9 @@ class TeamRuntime:
             ).hexdigest(),
         )
 
-    def _model_snapshot(self, now: str) -> ModelSnapshot:
-        return self.task.model_snapshot or ModelSnapshot(
+    def _model_snapshot(self, definition, now: str) -> ModelSnapshot:
+        selected = self.task.agent_model_snapshots.get(definition.id)
+        return selected or self.task.model_snapshot or ModelSnapshot(
             model="phase6-serial-orchestrator",
             capability_fingerprint="0" * 64,
             verification_id="phase6-serial-orchestrator",
