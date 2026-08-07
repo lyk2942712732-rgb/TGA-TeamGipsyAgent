@@ -13,8 +13,11 @@ User=tga
 Group=tga
 SupplementaryGroups=tga-sandbox
 EnvironmentFile=/etc/tga/tga.env
+Environment=TGA_API_HOST=127.0.0.1
+Environment=TGA_API_PORT=8123
+EnvironmentFile=-/var/lib/tga/state/tga-api.env
 WorkingDirectory=/opt/tga/app
-ExecStart=/opt/tga/bin/tga-internal serve --host 127.0.0.1 --port 8123
+ExecStart=/opt/tga/bin/tga-internal serve --host ${TGA_API_HOST} --port ${TGA_API_PORT}
 Restart=on-failure
 RestartSec=2
 # Graceful shutdown drains every managed Kali container before sandboxd is

@@ -55,6 +55,8 @@ def _serving(monkeypatch, tmp_path, phase: str) -> None:
     current.phase = phase
     current.api_pid = 4242
     current.api_url = "http://127.0.0.1:8123"
+    current.host = "127.0.0.1"
+    current.port = 8123
     state_module.save(current)
 
 
@@ -91,3 +93,13 @@ def test_a_healthy_deployment_is_still_left_alone(monkeypatch, tmp_path):
     assert seen["ran"] == [], "a ready deployment was restarted"
     assert [step.name for step in result.steps] == ["already_running"]
     assert result.ok
+
+
+def test_a_changed_bind_reconfigures_a_healthy_deployment(monkeypatch, tmp_path):
+    """`up --public` is a configuration request, not an idempotent status query."""
+    _serving(monkeypatch, tmp_path, "ready")
+    seen = _stub_steps(monkeypatch)
+
+    lifecycle.up(host="0.0.0.0", port=8173, open_browser=False)
+
+    assert "start_api" in seen["ran"]

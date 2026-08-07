@@ -13,6 +13,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -21,6 +22,7 @@ import (
 
 	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/image"
 	"github.com/moby/moby/api/types/mount"
 	"github.com/moby/moby/api/types/network"
 	"github.com/moby/moby/client"
@@ -80,6 +82,9 @@ type Result struct {
 type HealthInfo struct {
 	DockerAPIVersion       string
 	RunscRuntimeRegistered bool
+	ImageStoreReadable     bool
+	LocalImageDigests      []string
+	ImageStoreError        string
 }
 
 type Runtime struct {
@@ -751,17 +756,42 @@ func IsNotFound(err error) bool { return isNotFound(err) }
 func (r *Runtime) Health(ctx context.Context) (HealthInfo, error) {
 	ping, err := r.docker.Ping(ctx, client.PingOptions{})
 	if err != nil {
-		return HealthInfo{}, err
+		return HealthInfo{ImageStoreError: err.Error()}, err
 	}
 	info, err := r.docker.Info(ctx, client.InfoOptions{})
 	if err != nil {
-		return HealthInfo{}, err
+		return HealthInfo{ImageStoreError: err.Error()}, err
 	}
 	_, runsc := info.Info.Runtimes["runsc"]
-	return HealthInfo{
+	health := HealthInfo{
 		DockerAPIVersion:       ping.APIVersion,
 		RunscRuntimeRegistered: runsc,
-	}, nil
+	}
+	images, err := r.docker.ImageList(ctx, client.ImageListOptions{})
+	if err != nil {
+		health.ImageStoreError = err.Error()
+		return health, nil
+	}
+	health.ImageStoreReadable = true
+	health.LocalImageDigests = localImageDigests(images.Items)
+	return health, nil
+}
+
+func localImageDigests(summaries []image.Summary) []string {
+	digests := make(map[string]struct{})
+	for _, summary := range summaries {
+		for _, reference := range summary.RepoDigests {
+			if index := strings.LastIndex(reference, "@sha256:"); index >= 0 {
+				digests[reference[index+1:]] = struct{}{}
+			}
+		}
+	}
+	result := make([]string, 0, len(digests))
+	for digest := range digests {
+		result = append(result, digest)
+	}
+	sort.Strings(result)
+	return result
 }
 
 func (r *Runtime) bySolverRun(ctx context.Context, taskID, solverID, solverRunID string) (Instance, error) {

@@ -170,6 +170,9 @@ type HealthResponse struct {
 	DockerApiVersion       string                 `protobuf:"bytes,8,opt,name=docker_api_version,json=dockerApiVersion,proto3" json:"docker_api_version,omitempty"`
 	RunscRuntimeRegistered bool                   `protobuf:"varint,9,opt,name=runsc_runtime_registered,json=runscRuntimeRegistered,proto3" json:"runsc_runtime_registered,omitempty"`
 	ClientUidPolicyActive  bool                   `protobuf:"varint,10,opt,name=client_uid_policy_active,json=clientUidPolicyActive,proto3" json:"client_uid_policy_active,omitempty"`
+	ImageStoreReadable     bool                   `protobuf:"varint,11,opt,name=image_store_readable,json=imageStoreReadable,proto3" json:"image_store_readable,omitempty"`
+	LocalImageDigests      []string               `protobuf:"bytes,12,rep,name=local_image_digests,json=localImageDigests,proto3" json:"local_image_digests,omitempty"`
+	ImageStoreError        string                 `protobuf:"bytes,13,opt,name=image_store_error,json=imageStoreError,proto3" json:"image_store_error,omitempty"`
 	unknownFields          protoimpl.UnknownFields
 	sizeCache              protoimpl.SizeCache
 }
@@ -272,6 +275,27 @@ func (x *HealthResponse) GetClientUidPolicyActive() bool {
 		return x.ClientUidPolicyActive
 	}
 	return false
+}
+
+func (x *HealthResponse) GetImageStoreReadable() bool {
+	if x != nil {
+		return x.ImageStoreReadable
+	}
+	return false
+}
+
+func (x *HealthResponse) GetLocalImageDigests() []string {
+	if x != nil {
+		return x.LocalImageDigests
+	}
+	return nil
+}
+
+func (x *HealthResponse) GetImageStoreError() string {
+	if x != nil {
+		return x.ImageStoreError
+	}
+	return ""
 }
 
 type NetworkGrant struct {
@@ -1626,7 +1650,7 @@ const file_sandbox_v1_sandbox_proto_rawDesc = "" +
 	"\x05Empty\"[\n" +
 	"\rHealthRequest\x12%\n" +
 	"\x0eprotocol_major\x18\x01 \x01(\rR\rprotocolMajor\x12#\n" +
-	"\rconfig_digest\x18\x02 \x01(\tR\fconfigDigest\"\xd7\x03\n" +
+	"\rconfig_digest\x18\x02 \x01(\tR\fconfigDigest\"\xe5\x04\n" +
 	"\x0eHealthResponse\x12%\n" +
 	"\x0eprotocol_major\x18\x01 \x01(\rR\rprotocolMajor\x12%\n" +
 	"\x0edaemon_version\x18\x02 \x01(\tR\rdaemonVersion\x12)\n" +
@@ -1638,7 +1662,10 @@ const file_sandbox_v1_sandbox_proto_rawDesc = "" +
 	"\x12docker_api_version\x18\b \x01(\tR\x10dockerApiVersion\x128\n" +
 	"\x18runsc_runtime_registered\x18\t \x01(\bR\x16runscRuntimeRegistered\x127\n" +
 	"\x18client_uid_policy_active\x18\n" +
-	" \x01(\bR\x15clientUidPolicyActive\"8\n" +
+	" \x01(\bR\x15clientUidPolicyActive\x120\n" +
+	"\x14image_store_readable\x18\v \x01(\bR\x12imageStoreReadable\x12.\n" +
+	"\x13local_image_digests\x18\f \x03(\tR\x11localImageDigests\x12*\n" +
+	"\x11image_store_error\x18\r \x01(\tR\x0fimageStoreError\"8\n" +
 	"\fNetworkGrant\x12\x12\n" +
 	"\x04cidr\x18\x01 \x01(\tR\x04cidr\x12\x14\n" +
 	"\x05ports\x18\x02 \x03(\rR\x05ports\"\xfc\x01\n" +

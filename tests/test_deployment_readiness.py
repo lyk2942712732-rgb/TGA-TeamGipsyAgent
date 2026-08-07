@@ -168,3 +168,29 @@ def test_a_present_image_is_ready(monkeypatch):
 
     assert [check.status for check in checks] == ["ready"]
     assert _report(profiles=checks).status == "ready"
+
+
+@pytest.mark.parametrize(
+    ("readable", "digests", "expected"),
+    [
+        (False, (), None),
+        (True, (), set()),
+        (True, ("sha256:" + "a" * 64,), {"sha256:" + "a" * 64}),
+    ],
+)
+def test_local_images_come_from_sandboxd_health(
+    monkeypatch, readable, digests, expected
+):
+    """The unprivileged API must never need the Docker socket itself."""
+    config = _SandboxConfig()
+    health = type(
+        "Health",
+        (),
+        {"image_store_readable": readable, "local_image_digests": digests},
+    )()
+    monkeypatch.setattr(
+        "tga.sandbox.config.load_sandbox_config", lambda *a, **k: (config, None)
+    )
+    monkeypatch.setattr(readiness, "_sandboxd_health", lambda value: health)
+
+    assert readiness._local_image_digests() == expected

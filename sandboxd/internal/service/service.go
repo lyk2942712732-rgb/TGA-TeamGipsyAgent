@@ -48,6 +48,9 @@ func (s *Service) Health(ctx context.Context, request *sandboxv1.HealthRequest) 
 		return nil, errors.New("configuration digest mismatch")
 	}
 	info, healthErr := s.runtime.Health(ctx)
+	if healthErr != nil && info.ImageStoreError == "" {
+		info.ImageStoreError = healthErr.Error()
+	}
 	return &sandboxv1.HealthResponse{
 		ProtocolMajor: 1, DaemonVersion: Version,
 		DockerAvailable:        healthErr == nil,
@@ -58,6 +61,9 @@ func (s *Service) Health(ctx context.Context, request *sandboxv1.HealthRequest) 
 		DockerApiVersion:       info.DockerAPIVersion,
 		RunscRuntimeRegistered: info.RunscRuntimeRegistered,
 		ClientUidPolicyActive:  len(s.config.Sandboxd.AllowedClientUIDs) > 0,
+		ImageStoreReadable:     info.ImageStoreReadable,
+		LocalImageDigests:      info.LocalImageDigests,
+		ImageStoreError:        info.ImageStoreError,
 	}, nil
 }
 

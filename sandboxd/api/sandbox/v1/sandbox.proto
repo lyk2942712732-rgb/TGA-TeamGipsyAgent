@@ -33,6 +33,9 @@ message HealthResponse {
   string docker_api_version = 8;
   bool runsc_runtime_registered = 9;
   bool client_uid_policy_active = 10;
+  bool image_store_readable = 11;
+  repeated string local_image_digests = 12;
+  string image_store_error = 13;
 }
 
 message NetworkGrant {
