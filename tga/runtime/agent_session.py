@@ -361,18 +361,34 @@ class AgentSessionRunner:
                 # A provider/protocol error is recoverable.  Keep the session
                 # resumable and show the actual error instead of fabricating
                 # several waiting Solvers and a generic planning failure.
+                retryable = bool(getattr(exc, "retryable", False))
+                attempts = getattr(exc, "attempts", None)
+                error_payload = {
+                    "code": "MODEL_REQUEST_FAILED",
+                    "message": str(exc)[:1000],
+                    "retryable": retryable,
+                }
+                if isinstance(attempts, int) and attempts > 0:
+                    error_payload["attempts"] = attempts
                 self.store.append_agent_event(
                     self.task.id,
                     "AGENT_ERROR",
                     {
                         "phase": "model_turn",
                         "message": str(exc)[:1000],
+                        "retryable": retryable,
+                        **({"attempts": attempts} if isinstance(attempts, int) and attempts > 0 else {}),
                         "duration_ms": round((time.perf_counter() - provider_started) * 1000, 3)
                         if provider_started is not None else None,
                     },
                     solver_id=self.solver_id,
                 )
-                self.handlers.state.terminal_outcome = SessionOutcome(status="blocked", stop_reason="model_request_failed", turn_count=session.turn_count, error={"code": "MODEL_REQUEST_FAILED", "message": str(exc)[:1000]})
+                self.handlers.state.terminal_outcome = SessionOutcome(
+                    status="blocked",
+                    stop_reason="model_request_failed",
+                    turn_count=session.turn_count,
+                    error=error_payload,
+                )
                 break
 
             # pause/cancel can race a provider request. The control boundary is

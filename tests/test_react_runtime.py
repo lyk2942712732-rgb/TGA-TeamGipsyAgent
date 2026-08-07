@@ -10,6 +10,7 @@ from tga.contracts import ResourceProvenance, SessionFile, SessionInput, TGATask
 from tests.runtime_fixtures import configure_verified_model, task as v6_task
 from tga.evidence.store import EvidenceStore
 from tga.infrastructure.persistence import PersistenceBundle
+from tga.models.openai_compatible import ProviderRequestError
 from tga.runtime.manager import Manager, RuntimeLimits
 from tga.tools.mcp_manager import MCPManager
 from tga.domain.skills.models import SkillSnapshot, TaskCommonSkillSnapshot
@@ -120,6 +121,15 @@ class FailingModelClient:
 
     def chat_tools(self, messages: list[dict], *, tools: list[dict], temperature: float) -> dict:
         raise RuntimeError("controlled provider outage")
+
+
+class RetryableFailingModelClient(FailingModelClient):
+    def chat_tools(self, messages: list[dict], *, tools: list[dict], temperature: float) -> dict:
+        raise ProviderRequestError(
+            "provider request failed after 3 attempts",
+            retryable=True,
+            attempts=3,
+        )
 
 
 class IdleModelClient:
@@ -401,6 +411,21 @@ def test_provider_failure_blocks_with_observable_reason(tmp_path: Path) -> None:
     error = next(event for event in snapshot["events"] if event["type"] == "AGENT_ERROR")
     assert error["payload"]["phase"] == "model_turn"
     assert "controlled provider outage" in error["payload"]["message"]
+
+
+def test_retryable_provider_failure_projects_attempts_for_recovery(tmp_path: Path) -> None:
+    task, _ = _seed_task(tmp_path, task_id="react_retryable_provider_failure")
+    manager = _manager(tmp_path, RetryableFailingModelClient())
+
+    manager.start_session(task_id=task.id)
+    snapshot = manager.run_session(task.id)
+
+    error = next(event for event in snapshot["events"] if event["type"] == "AGENT_ERROR")
+    stopped = next(event for event in snapshot["events"] if event["type"] == "SESSION_STOPPED")
+    assert error["payload"]["retryable"] is True
+    assert error["payload"]["attempts"] == 3
+    assert stopped["payload"]["error"]["retryable"] is True
+    assert stopped["payload"]["error"]["attempts"] == 3
 
 
 def test_max_turns_blocks_after_incremental_continuations(tmp_path: Path) -> None:
