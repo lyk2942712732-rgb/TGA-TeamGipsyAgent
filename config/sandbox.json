@@ -21,7 +21,7 @@
     "architecture-analysis-v1": {
       "id": "architecture-analysis-v1",
       "provider": "sandboxd",
-      "image": "ghcr.io/lyk2942712732-rgb/tga-kali-universal@sha256:REPLACE_WITH_RELEASE_DIGEST",
+      "image": "ghcr.io/lyk2942712732-rgb/tga-kali-universal@sha256:300fca8aaf785e6f8a589e595e08b0174657609e0ca1935960b5bbfa28e7970f",
       "network_mode": "none",
       "allow_net_raw": false,
       "allow_ptrace": false,
@@ -50,7 +50,7 @@
     "binary-triage-v1": {
       "id": "binary-triage-v1",
       "provider": "sandboxd",
-      "image": "ghcr.io/lyk2942712732-rgb/tga-kali-universal@sha256:REPLACE_WITH_RELEASE_DIGEST",
+      "image": "ghcr.io/lyk2942712732-rgb/tga-kali-universal@sha256:300fca8aaf785e6f8a589e595e08b0174657609e0ca1935960b5bbfa28e7970f",
       "network_mode": "none",
       "allow_net_raw": false,
       "allow_ptrace": false,
@@ -84,7 +84,7 @@
     "ctf-classifier-v1": {
       "id": "ctf-classifier-v1",
       "provider": "sandboxd",
-      "image": "ghcr.io/lyk2942712732-rgb/tga-kali-universal@sha256:REPLACE_WITH_RELEASE_DIGEST",
+      "image": "ghcr.io/lyk2942712732-rgb/tga-kali-universal@sha256:300fca8aaf785e6f8a589e595e08b0174657609e0ca1935960b5bbfa28e7970f",
       "network_mode": "none",
       "allow_net_raw": false,
       "allow_ptrace": false,
@@ -116,7 +116,7 @@
     "code-audit-v1": {
       "id": "code-audit-v1",
       "provider": "sandboxd",
-      "image": "ghcr.io/lyk2942712732-rgb/tga-kali-universal@sha256:REPLACE_WITH_RELEASE_DIGEST",
+      "image": "ghcr.io/lyk2942712732-rgb/tga-kali-universal@sha256:300fca8aaf785e6f8a589e595e08b0174657609e0ca1935960b5bbfa28e7970f",
       "network_mode": "none",
       "allow_net_raw": false,
       "allow_ptrace": false,
@@ -146,7 +146,7 @@
     "crash-triage-v1": {
       "id": "crash-triage-v1",
       "provider": "sandboxd",
-      "image": "ghcr.io/lyk2942712732-rgb/tga-kali-universal@sha256:REPLACE_WITH_RELEASE_DIGEST",
+      "image": "ghcr.io/lyk2942712732-rgb/tga-kali-universal@sha256:300fca8aaf785e6f8a589e595e08b0174657609e0ca1935960b5bbfa28e7970f",
       "network_mode": "none",
       "allow_net_raw": false,
       "allow_ptrace": true,
@@ -178,7 +178,7 @@
     "ctf-crypto-v1": {
       "id": "ctf-crypto-v1",
       "provider": "sandboxd",
-      "image": "ghcr.io/lyk2942712732-rgb/tga-kali-universal@sha256:REPLACE_WITH_RELEASE_DIGEST",
+      "image": "ghcr.io/lyk2942712732-rgb/tga-kali-universal@sha256:300fca8aaf785e6f8a589e595e08b0174657609e0ca1935960b5bbfa28e7970f",
       "network_mode": "none",
       "allow_net_raw": false,
       "allow_ptrace": false,
@@ -204,7 +204,7 @@
     "ctf-forensics-v1": {
       "id": "ctf-forensics-v1",
       "provider": "sandboxd",
-      "image": "ghcr.io/lyk2942712732-rgb/tga-kali-universal@sha256:REPLACE_WITH_RELEASE_DIGEST",
+      "image": "ghcr.io/lyk2942712732-rgb/tga-kali-universal@sha256:300fca8aaf785e6f8a589e595e08b0174657609e0ca1935960b5bbfa28e7970f",
       "network_mode": "none",
       "allow_net_raw": false,
       "allow_ptrace": false,
@@ -240,7 +240,7 @@
     "ctf-pwn-v1": {
       "id": "ctf-pwn-v1",
       "provider": "sandboxd",
-      "image": "ghcr.io/lyk2942712732-rgb/tga-kali-universal@sha256:REPLACE_WITH_RELEASE_DIGEST",
+      "image": "ghcr.io/lyk2942712732-rgb/tga-kali-universal@sha256:300fca8aaf785e6f8a589e595e08b0174657609e0ca1935960b5bbfa28e7970f",
       "network_mode": "target_allowlist",
       "allow_net_raw": false,
       "allow_ptrace": true,
@@ -279,7 +279,7 @@
     "ctf-reverse-v1": {
       "id": "ctf-reverse-v1",
       "provider": "sandboxd",
-      "image": "ghcr.io/lyk2942712732-rgb/tga-kali-universal@sha256:REPLACE_WITH_RELEASE_DIGEST",
+      "image": "ghcr.io/lyk2942712732-rgb/tga-kali-universal@sha256:300fca8aaf785e6f8a589e595e08b0174657609e0ca1935960b5bbfa28e7970f",
       "network_mode": "none",
       "allow_net_raw": false,
       "allow_ptrace": false,
@@ -316,7 +316,7 @@
     "ctf-web-v1": {
       "id": "ctf-web-v1",
       "provider": "sandboxd",
-      "image": "ghcr.io/lyk2942712732-rgb/tga-kali-universal@sha256:REPLACE_WITH_RELEASE_DIGEST",
+      "image": "ghcr.io/lyk2942712732-rgb/tga-kali-universal@sha256:300fca8aaf785e6f8a589e595e08b0174657609e0ca1935960b5bbfa28e7970f",
       "network_mode": "target_allowlist",
       "allow_net_raw": false,
       "allow_ptrace": false,
@@ -349,7 +349,7 @@
     "dynamic-analysis-v1": {
       "id": "dynamic-analysis-v1",
       "provider": "sandboxd",
-      "image": "ghcr.io/lyk2942712732-rgb/tga-kali-universal@sha256:REPLACE_WITH_RELEASE_DIGEST",
+      "image": "ghcr.io/lyk2942712732-rgb/tga-kali-universal@sha256:300fca8aaf785e6f8a589e595e08b0174657609e0ca1935960b5bbfa28e7970f",
       "network_mode": "none",
       "allow_net_raw": false,
       "allow_ptrace": true,
@@ -383,7 +383,7 @@
     "dynamic-fuzzing-v1": {
       "id": "dynamic-fuzzing-v1",
       "provider": "sandboxd",
-      "image": "ghcr.io/lyk2942712732-rgb/tga-kali-universal@sha256:REPLACE_WITH_RELEASE_DIGEST",
+      "image": "ghcr.io/lyk2942712732-rgb/tga-kali-universal@sha256:300fca8aaf785e6f8a589e595e08b0174657609e0ca1935960b5bbfa28e7970f",
       "network_mode": "none",
       "allow_net_raw": false,
       "allow_ptrace": false,
@@ -410,7 +410,7 @@
     "evidence-triage-v1": {
       "id": "evidence-triage-v1",
       "provider": "sandboxd",
-      "image": "ghcr.io/lyk2942712732-rgb/tga-kali-universal@sha256:REPLACE_WITH_RELEASE_DIGEST",
+      "image": "ghcr.io/lyk2942712732-rgb/tga-kali-universal@sha256:300fca8aaf785e6f8a589e595e08b0174657609e0ca1935960b5bbfa28e7970f",
       "network_mode": "none",
       "allow_net_raw": false,
       "allow_ptrace": false,
@@ -441,7 +441,7 @@
     "network-forensics-v1": {
       "id": "network-forensics-v1",
       "provider": "sandboxd",
-      "image": "ghcr.io/lyk2942712732-rgb/tga-kali-universal@sha256:REPLACE_WITH_RELEASE_DIGEST",
+      "image": "ghcr.io/lyk2942712732-rgb/tga-kali-universal@sha256:300fca8aaf785e6f8a589e595e08b0174657609e0ca1935960b5bbfa28e7970f",
       "network_mode": "none",
       "allow_net_raw": false,
       "allow_ptrace": false,
@@ -472,7 +472,7 @@
     "logic-recovery-v1": {
       "id": "logic-recovery-v1",
       "provider": "sandboxd",
-      "image": "ghcr.io/lyk2942712732-rgb/tga-kali-universal@sha256:REPLACE_WITH_RELEASE_DIGEST",
+      "image": "ghcr.io/lyk2942712732-rgb/tga-kali-universal@sha256:300fca8aaf785e6f8a589e595e08b0174657609e0ca1935960b5bbfa28e7970f",
       "network_mode": "none",
       "allow_net_raw": false,
       "allow_ptrace": false,
@@ -498,7 +498,7 @@
     "malware-analysis-v1": {
       "id": "malware-analysis-v1",
       "provider": "sandboxd",
-      "image": "ghcr.io/lyk2942712732-rgb/tga-kali-universal@sha256:REPLACE_WITH_RELEASE_DIGEST",
+      "image": "ghcr.io/lyk2942712732-rgb/tga-kali-universal@sha256:300fca8aaf785e6f8a589e595e08b0174657609e0ca1935960b5bbfa28e7970f",
       "network_mode": "none",
       "allow_net_raw": false,
       "allow_ptrace": false,
@@ -532,7 +532,7 @@
     "poc-reproduction-v1": {
       "id": "poc-reproduction-v1",
       "provider": "sandboxd",
-      "image": "ghcr.io/lyk2942712732-rgb/tga-kali-universal@sha256:REPLACE_WITH_RELEASE_DIGEST",
+      "image": "ghcr.io/lyk2942712732-rgb/tga-kali-universal@sha256:300fca8aaf785e6f8a589e595e08b0174657609e0ca1935960b5bbfa28e7970f",
       "network_mode": "target_allowlist",
       "allow_net_raw": false,
       "allow_ptrace": true,
@@ -567,7 +567,7 @@
     "static-analysis-v1": {
       "id": "static-analysis-v1",
       "provider": "sandboxd",
-      "image": "ghcr.io/lyk2942712732-rgb/tga-kali-universal@sha256:REPLACE_WITH_RELEASE_DIGEST",
+      "image": "ghcr.io/lyk2942712732-rgb/tga-kali-universal@sha256:300fca8aaf785e6f8a589e595e08b0174657609e0ca1935960b5bbfa28e7970f",
       "network_mode": "none",
       "allow_net_raw": false,
       "allow_ptrace": false,
@@ -604,7 +604,7 @@
     "pentest-surface-v1": {
       "id": "pentest-surface-v1",
       "provider": "sandboxd",
-      "image": "ghcr.io/lyk2942712732-rgb/tga-kali-universal@sha256:REPLACE_WITH_RELEASE_DIGEST",
+      "image": "ghcr.io/lyk2942712732-rgb/tga-kali-universal@sha256:300fca8aaf785e6f8a589e595e08b0174657609e0ca1935960b5bbfa28e7970f",
       "network_mode": "target_allowlist",
       "allow_net_raw": false,
       "allow_ptrace": false,
@@ -639,7 +639,7 @@
     "timeline-ioc-v1": {
       "id": "timeline-ioc-v1",
       "provider": "sandboxd",
-      "image": "ghcr.io/lyk2942712732-rgb/tga-kali-universal@sha256:REPLACE_WITH_RELEASE_DIGEST",
+      "image": "ghcr.io/lyk2942712732-rgb/tga-kali-universal@sha256:300fca8aaf785e6f8a589e595e08b0174657609e0ca1935960b5bbfa28e7970f",
       "network_mode": "none",
       "allow_net_raw": false,
       "allow_ptrace": false,
@@ -670,7 +670,7 @@
     "pentest-validation-v1": {
       "id": "pentest-validation-v1",
       "provider": "sandboxd",
-      "image": "ghcr.io/lyk2942712732-rgb/tga-kali-universal@sha256:REPLACE_WITH_RELEASE_DIGEST",
+      "image": "ghcr.io/lyk2942712732-rgb/tga-kali-universal@sha256:300fca8aaf785e6f8a589e595e08b0174657609e0ca1935960b5bbfa28e7970f",
       "network_mode": "target_allowlist",
       "allow_net_raw": false,
       "allow_ptrace": false,
@@ -701,7 +701,7 @@
     "pentest-web-api-v1": {
       "id": "pentest-web-api-v1",
       "provider": "sandboxd",
-      "image": "ghcr.io/lyk2942712732-rgb/tga-kali-universal@sha256:REPLACE_WITH_RELEASE_DIGEST",
+      "image": "ghcr.io/lyk2942712732-rgb/tga-kali-universal@sha256:300fca8aaf785e6f8a589e595e08b0174657609e0ca1935960b5bbfa28e7970f",
       "network_mode": "target_allowlist",
       "allow_net_raw": false,
       "allow_ptrace": false,

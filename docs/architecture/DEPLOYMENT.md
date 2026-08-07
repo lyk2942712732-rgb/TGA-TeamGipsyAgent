@@ -132,9 +132,10 @@ legitimate, it just has to say so.
 ## Current state of this installation
 
 `config/sandbox.json` declares `runtime: enforced` and all 22 profiles are
-pinned to published digests under `ghcr.io/lyk2942712732-rgb`, signed and
-scanned by the `sandbox-v0.1.1` release. `resolve_sandbox_digests.py --check`
-reports `22/22 pinned`.
+pinned to the universal image published under `ghcr.io/lyk2942712732-rgb`,
+signed and scanned by the `sandbox-v0.2.1` release. The pinned digest is
+`sha256:300fca8aaf785e6f8a589e595e08b0174657609e0ca1935960b5bbfa28e7970f`,
+and `resolve_sandbox_digests.py --check` reports `22/22 pinned`.
 
 The file is still a template in one respect: `allowed_client_uids` is empty,
 because it is a host fact that provisioning fills in. So validating the

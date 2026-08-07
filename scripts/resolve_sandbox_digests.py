@@ -1,9 +1,9 @@
 """Build, publish and pin the universal Kali image referenced by sandbox.json.
 
-`sandbox.json` ships with `REPLACE_WITH_RELEASE_DIGEST` in every profile image.
-Those placeholders cannot be edited by hand into something meaningful: a
-`repo@sha256:...` reference is a *registry manifest digest*, which only comes
-into existence when an image is pushed. This script closes that loop --
+`sandbox.json` ships with the immutable digest produced by the latest image
+release. A `repo@sha256:...` reference is a *registry manifest digest*, which
+only comes into existence when an image is pushed. This script closes the loop
+for the first release and updates the previous digest on later releases --
 
     build -> push -> read back the real digest -> rewrite sandbox.json
 
@@ -205,10 +205,9 @@ def unresolved(config: dict) -> list[str]:
 def apply_published(config: dict, listing: Path) -> tuple[int, list[str]]:
     """Pin profiles from a release listing of immutable references.
 
-    The release workflow already resolves every digest and records it in
-    ``published-images.txt``, but nothing wrote those values back, so a
-    successful release still left sandbox.json full of placeholders. This
-    closes that gap without rebuilding anything.
+    The release workflow resolves every digest and records it in
+    ``published-images.txt``. Apply that authoritative listing to every local
+    profile, whether its current value is a placeholder or an older digest.
     """
     known_images = {target.image for target in load_matrix()}
     changed = 0
