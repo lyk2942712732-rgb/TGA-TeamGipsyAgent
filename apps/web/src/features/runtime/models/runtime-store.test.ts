@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { normalizeRuntimeSnapshot } from "./normalize";
+import { mergeRuntimeEvents } from "./reducer";
 import {
   selectActiveSolvers,
   selectConfirmedFindings,
@@ -77,5 +78,25 @@ describe("Phase 10 normalized runtime store", () => {
       task: { id: "legacy", name: "Legacy", mode: "ctf", goal: "replay", schema_version: 5 },
       session: { task_id: "legacy", status: "completed", active_solver_id: "main", turn_count: 4, max_turns: 8 },
     })).toThrow();
+  });
+
+  it("projects blocked solver, intent, and session events without leaving stale running state", () => {
+    const store = normalizeRuntimeSnapshot(v6Snapshot());
+    const result = mergeRuntimeEvents(store, [
+      { schemaVersion: 6, id: "event-3", taskId: "task", seq: 3, type: "INTENT_BLOCKED", solverId: "supervisor", intentId: "intent-c", payload: { status: "blocked", reason: "unsupported_intent_kind" }, createdAt: "" },
+      { schemaVersion: 6, id: "event-4", taskId: "task", seq: 4, type: "SOLVER_STATUS_CHANGED", solverId: "supervisor", intentId: null, payload: { status: "blocked" }, createdAt: "" },
+      { schemaVersion: 6, id: "event-5", taskId: "task", seq: 5, type: "TASK_ORCHESTRATOR_BLOCKED", solverId: "supervisor", intentId: null, payload: { reason: "model_request_failed" }, createdAt: "" },
+      { schemaVersion: 6, id: "event-6", taskId: "task", seq: 6, type: "SESSION_STOPPED", solverId: "supervisor", intentId: null, payload: { status: "blocked", reason: "model_request_failed" }, createdAt: "" },
+    ]);
+
+    expect(result.gap).toBe(false);
+    expect(result.needsRefresh).toBe(true);
+    expect(result.state.intentsById["intent-c"].status).toBe("blocked");
+    expect(result.state.intentsById["intent-c"].assignedSolverId).toBeNull();
+    expect(result.state.solversById.supervisor.status).toBe("blocked");
+    expect(result.state.session.status).toBe("blocked");
+    expect(result.state.session.stopReason).toBe("model_request_failed");
+    expect(result.state.session.activeSolverCount).toBe(1);
+    expect(result.state.team.status).toBe("blocked");
   });
 });
