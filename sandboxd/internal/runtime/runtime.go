@@ -141,6 +141,20 @@ func (r *Runtime) Acquire(
 		if fencing < existing.FencingToken {
 			return Instance{}, false, errors.New("stale fencing token")
 		}
+		inspection, inspectErr := r.docker.ContainerInspect(ctx, existing.ID, client.ContainerInspectOptions{})
+		if inspectErr != nil {
+			return Instance{}, false, inspectErr
+		}
+		if inspection.Container.State == nil || !inspection.Container.State.Running {
+			if _, err := r.docker.ContainerStart(ctx, existing.ID, client.ContainerStartOptions{}); err != nil {
+				return Instance{}, false, fmt.Errorf("restart stopped SolverRun sandbox: %w", err)
+			}
+			if err := r.verifyToolset(ctx, existing.ID, profile); err != nil {
+				zero := 0
+				_, _ = r.docker.ContainerStop(context.Background(), existing.ID, client.ContainerStopOptions{Timeout: &zero})
+				return Instance{}, false, fmt.Errorf("verify restarted SolverRun sandbox: %w", err)
+			}
+		}
 		if err := r.writeFencingToken(taskID, solverRunID, fencing); err != nil {
 			return Instance{}, false, fmt.Errorf("persist fencing token: %w", err)
 		}
@@ -177,6 +191,21 @@ func (r *Runtime) Acquire(
 	labels := labels(taskID, solverID, solverRunID, profileID, digest, fencing)
 	labels[LabelKind] = "sandbox"
 	networkName, bridgeName := runNetwork(taskID, solverRunID)
+	orphanFilters := client.Filters{}.
+		Add("name", networkName).
+		Add("label", LabelManaged+"=true")
+	orphans, err := r.docker.NetworkList(ctx, client.NetworkListOptions{Filters: orphanFilters})
+	if err != nil {
+		return Instance{}, false, fmt.Errorf("list existing task network: %w", err)
+	}
+	for _, orphan := range orphans.Items {
+		if orphan.Name != networkName || orphan.Labels[LabelTask] != taskID || orphan.Labels[LabelRun] != solverRunID {
+			return Instance{}, false, errors.New("task network name is occupied by a conflicting resource")
+		}
+		if _, err := r.docker.NetworkRemove(ctx, orphan.ID, client.NetworkRemoveOptions{}); err != nil && !isNotFound(err) {
+			return Instance{}, false, fmt.Errorf("remove orphan task network: %w", err)
+		}
+	}
 	networkCreated, err := r.docker.NetworkCreate(ctx, networkName, client.NetworkCreateOptions{
 		Driver:  "bridge",
 		Options: map[string]string{"com.docker.network.bridge.name": bridgeName},
@@ -610,42 +639,49 @@ func (r *Runtime) Inspect(ctx context.Context, instanceID string, fencing uint64
 	return instance, 0, nil
 }
 
-func (r *Runtime) Destroy(ctx context.Context, instanceID string, fencing uint64) error {
+func (r *Runtime) Destroy(ctx context.Context, instanceID string, fencing uint64, fallbackTaskID, fallbackSolverRunID string) error {
+	instance := Instance{ID: instanceID, TaskID: fallbackTaskID, SolverRunID: fallbackSolverRunID}
 	if err := r.validate(ctx, instanceID, fencing); err != nil {
-		if strings.Contains(strings.ToLower(err.Error()), "not found") {
-			return nil
+		if !isNotFound(err) {
+			return err
 		}
-		return err
-	}
-	instance, _, err := r.Inspect(ctx, instanceID, fencing)
-	if err != nil {
-		return err
-	}
-	if _, err := r.docker.ContainerRemove(ctx, instanceID, client.ContainerRemoveOptions{Force: true, RemoveVolumes: true}); err != nil {
-		return err
+		if !config.ValidIdentifier(fallbackTaskID) || !config.ValidIdentifier(fallbackSolverRunID) {
+			return errors.New("missing valid cleanup identity for absent sandbox")
+		}
+	} else {
+		inspected, _, err := r.Inspect(ctx, instanceID, fencing)
+		if err != nil {
+			return err
+		}
+		instance = inspected
+		if _, err := r.docker.ContainerRemove(ctx, instanceID, client.ContainerRemoveOptions{Force: true, RemoveVolumes: true}); err != nil && !isNotFound(err) {
+			return err
+		}
 	}
 	if err := r.removeFencingToken(instance.TaskID, instance.SolverRunID); err != nil {
 		return err
 	}
 	name, _ := runNetwork(instance.TaskID, instance.SolverRunID)
-	_, err = r.docker.NetworkRemove(ctx, name, client.NetworkRemoveOptions{})
+	_, err := r.docker.NetworkRemove(ctx, name, client.NetworkRemoveOptions{})
+	if isNotFound(err) {
+		return nil
+	}
 	return err
 }
 
-func (r *Runtime) Reconcile(ctx context.Context, valid map[string]struct{}, before time.Time) ([]Instance, []error) {
+func (r *Runtime) Reconcile(ctx context.Context, valid map[string]struct{}, before time.Time) ([]Instance, []string, []error) {
 	args := client.Filters{}.Add("label", LabelManaged+"=true")
 	listed, err := r.docker.ContainerList(ctx, client.ContainerListOptions{All: true, Filters: args})
 	if err != nil {
-		return nil, []error{err}
+		return nil, nil, []error{err}
 	}
 	var destroyed []Instance
+	var active []string
 	var failures []error
+	retainedRuns := make(map[string]struct{})
 	for _, value := range listed.Items {
 		kind := value.Labels[LabelKind]
 		if kind != "sandbox" {
-			continue
-		}
-		if _, ok := valid[value.ID]; ok || value.Created >= before.Unix() {
 			continue
 		}
 		instance := instanceFromLabels(
@@ -653,21 +689,64 @@ func (r *Runtime) Reconcile(ctx context.Context, valid map[string]struct{}, befo
 			value.Labels,
 			time.Unix(value.Created, 0).UTC().Format(time.RFC3339Nano),
 		)
+		if _, ok := valid[value.ID]; ok || value.Created >= before.Unix() {
+			active = append(active, policyIdentity(instance.TaskID, instance.SolverRunID))
+			retainedRuns[instance.TaskID+"\x00"+instance.SolverRunID] = struct{}{}
+			continue
+		}
 		if _, err := r.docker.ContainerRemove(ctx, value.ID, client.ContainerRemoveOptions{Force: true, RemoveVolumes: true}); err != nil {
 			failures = append(failures, err)
+			active = append(active, policyIdentity(instance.TaskID, instance.SolverRunID))
+			retainedRuns[instance.TaskID+"\x00"+instance.SolverRunID] = struct{}{}
 		} else {
 			if err := r.removeFencingToken(instance.TaskID, instance.SolverRunID); err != nil {
 				failures = append(failures, err)
 			}
 			networkName, _ := runNetwork(instance.TaskID, instance.SolverRunID)
-			if _, err := r.docker.NetworkRemove(ctx, networkName, client.NetworkRemoveOptions{}); err != nil {
+			if _, err := r.docker.NetworkRemove(ctx, networkName, client.NetworkRemoveOptions{}); err != nil && !isNotFound(err) {
 				failures = append(failures, err)
 			}
 			destroyed = append(destroyed, instance)
 		}
 	}
-	return destroyed, failures
+	// A crash can happen after NetworkCreate and before ContainerCreate, so
+	// container reconciliation alone cannot see every managed resource.
+	networkFilters := client.Filters{}.
+		Add("label", LabelManaged+"=true").
+		Add("label", LabelKind+"=sandbox")
+	networks, err := r.docker.NetworkList(ctx, client.NetworkListOptions{Filters: networkFilters})
+	if err != nil {
+		failures = append(failures, err)
+	} else {
+		for _, value := range networks.Items {
+			key := value.Labels[LabelTask] + "\x00" + value.Labels[LabelRun]
+			if _, ok := retainedRuns[key]; ok || !value.Created.Before(before) {
+				continue
+			}
+			if _, err := r.docker.NetworkRemove(ctx, value.ID, client.NetworkRemoveOptions{}); err != nil && !isNotFound(err) {
+				failures = append(failures, err)
+			}
+		}
+	}
+	return destroyed, active, failures
 }
+
+// Quarantine fail-closes a sandbox whose per-execution network policy could
+// not be reset.  The next Acquire restarts and verifies it before reuse.
+func (r *Runtime) Quarantine(ctx context.Context, instanceID string) error {
+	zero := 0
+	_, err := r.docker.ContainerStop(ctx, instanceID, client.ContainerStopOptions{Timeout: &zero})
+	if isNotFound(err) {
+		return nil
+	}
+	return err
+}
+
+func isNotFound(err error) bool {
+	return err != nil && strings.Contains(strings.ToLower(err.Error()), "not found")
+}
+
+func IsNotFound(err error) bool { return isNotFound(err) }
 
 func (r *Runtime) Health(ctx context.Context) (HealthInfo, error) {
 	ping, err := r.docker.Ping(ctx, client.PingOptions{})
@@ -853,15 +932,15 @@ func (r *Runtime) NetworkPolicyContext(
 	ctx context.Context,
 	instanceID string,
 	fencing uint64,
-) (string, []string, error) {
+) (string, string, []string, error) {
 	instance, _, err := r.Inspect(ctx, instanceID, fencing)
 	if err != nil {
-		return "", nil, err
+		return "", "", nil, err
 	}
 	networkName, bridge := runNetwork(instance.TaskID, instance.SolverRunID)
 	inspected, err := r.docker.NetworkInspect(ctx, networkName, client.NetworkInspectOptions{})
 	if err != nil {
-		return "", nil, fmt.Errorf("inspect task network: %w", err)
+		return "", "", nil, fmt.Errorf("inspect task network: %w", err)
 	}
 	gateways := make([]string, 0, len(inspected.Network.IPAM.Config))
 	for _, ipam := range inspected.Network.IPAM.Config {
@@ -870,9 +949,13 @@ func (r *Runtime) NetworkPolicyContext(
 		}
 	}
 	if len(gateways) == 0 {
-		return "", nil, errors.New("task network has no inspectable gateway")
+		return "", "", nil, errors.New("task network has no inspectable gateway")
 	}
-	return bridge, gateways, nil
+	return policyIdentity(instance.TaskID, instance.SolverRunID), bridge, gateways, nil
+}
+
+func policyIdentity(taskID, solverRunID string) string {
+	return taskID + "\x00" + solverRunID
 }
 
 func runNetwork(taskID, solverRunID string) (string, string) {

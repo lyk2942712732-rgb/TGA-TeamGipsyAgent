@@ -1450,6 +1450,8 @@ type DestroyRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	InstanceId    string                 `protobuf:"bytes,1,opt,name=instance_id,json=instanceId,proto3" json:"instance_id,omitempty"`
 	FencingToken  uint64                 `protobuf:"varint,2,opt,name=fencing_token,json=fencingToken,proto3" json:"fencing_token,omitempty"`
+	TaskId        string                 `protobuf:"bytes,3,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
+	SolverRunId   string                 `protobuf:"bytes,4,opt,name=solver_run_id,json=solverRunId,proto3" json:"solver_run_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1496,6 +1498,20 @@ func (x *DestroyRequest) GetFencingToken() uint64 {
 		return x.FencingToken
 	}
 	return 0
+}
+
+func (x *DestroyRequest) GetTaskId() string {
+	if x != nil {
+		return x.TaskId
+	}
+	return ""
+}
+
+func (x *DestroyRequest) GetSolverRunId() string {
+	if x != nil {
+		return x.SolverRunId
+	}
+	return ""
 }
 
 type ReconcileRequest struct {
@@ -1724,11 +1740,13 @@ const file_sandbox_v1_sandbox_proto_rawDesc = "" +
 	"\aruntime\x18\x02 \x01(\tR\aruntime\x12)\n" +
 	"\x10active_processes\x18\x03 \x01(\rR\x0factiveProcesses\x12\x1d\n" +
 	"\n" +
-	"created_at\x18\x04 \x01(\tR\tcreatedAt\"V\n" +
+	"created_at\x18\x04 \x01(\tR\tcreatedAt\"\x93\x01\n" +
 	"\x0eDestroyRequest\x12\x1f\n" +
 	"\vinstance_id\x18\x01 \x01(\tR\n" +
 	"instanceId\x12#\n" +
-	"\rfencing_token\x18\x02 \x01(\x04R\ffencingToken\"q\n" +
+	"\rfencing_token\x18\x02 \x01(\x04R\ffencingToken\x12\x17\n" +
+	"\atask_id\x18\x03 \x01(\tR\x06taskId\x12\"\n" +
+	"\rsolver_run_id\x18\x04 \x01(\tR\vsolverRunId\"q\n" +
 	"\x10ReconcileRequest\x12,\n" +
 	"\x12valid_instance_ids\x18\x01 \x03(\tR\x10validInstanceIds\x12/\n" +
 	"\x14grace_before_unix_ms\x18\x02 \x01(\x03R\x11graceBeforeUnixMs\"a\n" +

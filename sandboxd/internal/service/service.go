@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -85,7 +86,7 @@ func imageDigest(image string) string {
 	return image[index+len(marker):]
 }
 
-func (s *Service) Exec(request *sandboxv1.ExecRequest, stream sandboxv1.SandboxService_ExecServer) error {
+func (s *Service) Exec(request *sandboxv1.ExecRequest, stream sandboxv1.SandboxService_ExecServer) (returnErr error) {
 	releaseExecution := s.lockTaskExecution(request.InstanceId, true)
 	defer releaseExecution()
 	profile, err := s.profileForInstance(stream.Context(), request.InstanceId, request.FencingToken)
@@ -100,7 +101,7 @@ func (s *Service) Exec(request *sandboxv1.ExecRequest, stream sandboxv1.SandboxS
 		return err
 	}
 	defer func() {
-		_ = s.applyNetwork(context.Background(), request.InstanceId, request.FencingToken, nil)
+		returnErr = errors.Join(returnErr, s.resetNetwork(request.InstanceId, request.FencingToken))
 	}()
 	result, err := s.runtime.Exec(stream.Context(), request.InstanceId, request.FencingToken, spec, func(frame runtimepkg.Frame) error {
 		kind := sandboxv1.ExecFrame_STDOUT
@@ -122,7 +123,7 @@ func (s *Service) Exec(request *sandboxv1.ExecRequest, stream sandboxv1.SandboxS
 	return stream.Send(&sandboxv1.ExecEvent{Event: &sandboxv1.ExecEvent_Result{Result: value}})
 }
 
-func (s *Service) OpenProcess(stream sandboxv1.SandboxService_OpenProcessServer) error {
+func (s *Service) OpenProcess(stream sandboxv1.SandboxService_OpenProcessServer) (returnErr error) {
 	first, err := stream.Recv()
 	if err != nil {
 		return err
@@ -145,7 +146,7 @@ func (s *Service) OpenProcess(stream sandboxv1.SandboxService_OpenProcessServer)
 		return err
 	}
 	defer func() {
-		_ = s.applyNetwork(context.Background(), start.InstanceId, start.FencingToken, nil)
+		returnErr = errors.Join(returnErr, s.resetNetwork(start.InstanceId, start.FencingToken))
 	}()
 	process, err := s.runtime.OpenProcess(stream.Context(), start.InstanceId, start.FencingToken, spec, func(frame runtimepkg.Frame) error {
 		kind := sandboxv1.ExecFrame_STDOUT
@@ -227,10 +228,27 @@ func (s *Service) Inspect(ctx context.Context, request *sandboxv1.InspectRequest
 func (s *Service) Destroy(ctx context.Context, request *sandboxv1.DestroyRequest) (*sandboxv1.Empty, error) {
 	releaseExecution := s.lockTaskExecution(request.InstanceId, true)
 	defer releaseExecution()
-	if err := s.runtime.Destroy(ctx, request.InstanceId, request.FencingToken); err != nil {
+	cleanupTaskID, cleanupRunID := request.TaskId, request.SolverRunId
+	if !config.ValidIdentifier(cleanupTaskID) || !config.ValidIdentifier(cleanupRunID) {
+		return nil, errors.New("destroy requires valid task and SolverRun ids")
+	}
+	if instance, _, err := s.runtime.Inspect(ctx, request.InstanceId, request.FencingToken); err == nil {
+		cleanupTaskID, cleanupRunID = instance.TaskID, instance.SolverRunID
+	} else if !runtimepkg.IsNotFound(err) {
 		return nil, err
 	}
-	return &sandboxv1.Empty{}, s.network.Delete(ctx, request.InstanceId)
+	// Delete policy first.  If container removal then fails, the operation is
+	// safe to retry; doing this in the opposite order loses the instance ID
+	// needed to remove an nft table after a daemon/network failure.
+	if err := s.network.Delete(ctx, cleanupTaskID+"\x00"+cleanupRunID); err != nil {
+		return nil, err
+	}
+	if err := s.runtime.Destroy(
+		ctx, request.InstanceId, request.FencingToken, cleanupTaskID, cleanupRunID,
+	); err != nil {
+		return nil, err
+	}
+	return &sandboxv1.Empty{}, nil
 }
 
 func (s *Service) Reconcile(ctx context.Context, request *sandboxv1.ReconcileRequest) (*sandboxv1.ReconcileResponse, error) {
@@ -238,18 +256,31 @@ func (s *Service) Reconcile(ctx context.Context, request *sandboxv1.ReconcileReq
 	for _, id := range request.ValidInstanceIds {
 		valid[id] = struct{}{}
 	}
-	destroyed, failures := s.runtime.Reconcile(ctx, valid, time.UnixMilli(request.GraceBeforeUnixMs))
+	destroyed, active, failures := s.runtime.Reconcile(ctx, valid, time.UnixMilli(request.GraceBeforeUnixMs))
 	response := &sandboxv1.ReconcileResponse{}
 	for _, instance := range destroyed {
 		response.DestroyedInstanceIds = append(response.DestroyedInstanceIds, instance.ID)
-		if err := s.network.Delete(ctx, instance.ID); err != nil {
+		if err := s.network.Delete(ctx, instance.TaskID+"\x00"+instance.SolverRunID); err != nil {
 			failures = append(failures, err)
 		}
+	}
+	if _, err := s.network.Reconcile(ctx, active); err != nil {
+		failures = append(failures, err)
 	}
 	for _, failure := range failures {
 		response.Errors = append(response.Errors, failure.Error())
 	}
 	return response, nil
+}
+
+func (s *Service) resetNetwork(instanceID string, fencing uint64) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	if err := s.applyNetwork(ctx, instanceID, fencing, nil); err != nil {
+		quarantineErr := s.runtime.Quarantine(ctx, instanceID)
+		return errors.Join(fmt.Errorf("reset sandbox network policy: %w", err), quarantineErr)
+	}
+	return nil
 }
 
 func (s *Service) profileForInstance(ctx context.Context, id string, fencing uint64) (config.Profile, error) {
@@ -313,7 +344,7 @@ func (s *Service) applyNetwork(
 	fencing uint64,
 	values []*sandboxv1.NetworkGrant,
 ) error {
-	bridge, gateways, err := s.runtime.NetworkPolicyContext(ctx, instanceID, fencing)
+	policyID, bridge, gateways, err := s.runtime.NetworkPolicyContext(ctx, instanceID, fencing)
 	if err != nil {
 		return err
 	}
@@ -324,7 +355,7 @@ func (s *Service) applyNetwork(
 		}
 		grants = append(grants, network.Grant{CIDR: value.Cidr, Ports: value.Ports})
 	}
-	return s.network.Apply(ctx, instanceID, bridge, gateways, grants)
+	return s.network.Apply(ctx, policyID, bridge, gateways, grants)
 }
 
 func commandAvailable(ctx context.Context, name string) bool {

@@ -31,7 +31,10 @@ async def lifespan(_app: FastAPI):
     try:
         yield
     finally:
-        sandbox_lifecycle.close()
+        # The API is stopped before sandboxd by `tga down`; drain while the
+        # privileged daemon is still reachable so shutdown leaves no Kali
+        # containers or per-run network policy behind.
+        sandbox_lifecycle.close(destroy_all=True)
 
 
 app = FastAPI(title="TGA API", version="0.1.0", lifespan=lifespan)

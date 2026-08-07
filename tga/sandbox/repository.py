@@ -75,6 +75,45 @@ class SandboxInstanceRepository:
         )
         self.database._commit()
 
+    def release_orphans(self, now: str | None = None) -> tuple[SandboxHandle, ...]:
+        """Release sandboxes whose owning SolverRun can no longer use them.
+
+        This is the crash-recovery path.  A normal worker releases its sandbox
+        in a ``finally`` block, but a killed API process cannot run that block.
+        Waiting-for-approval runs deliberately retain their sandbox; expired
+        leases and every terminal state do not.
+        """
+        now = now or datetime.now(UTC).isoformat().replace("+00:00", "Z")
+        rows = self.database.conn.execute(
+            "SELECT sandbox_instances.* FROM sandbox_instances "
+            "LEFT JOIN solver_runs ON solver_runs.id=sandbox_instances.solver_run_id "
+            "WHERE sandbox_instances.state IN ('acquiring','ready') AND ("
+            "solver_runs.id IS NULL OR "
+            "solver_runs.state NOT IN ('leased','running','waiting_approval','retry_queued') OR "
+            "(solver_runs.state IN ('leased','running') AND ("
+            "solver_runs.lease_expires_at IS NULL OR solver_runs.lease_expires_at<=?))) "
+            "ORDER BY sandbox_instances.created_at",
+            (now,),
+        ).fetchall()
+        handles = tuple(self._handle(row) for row in rows)
+        if handles:
+            with self.database.transaction():
+                for handle in handles:
+                    self.database.conn.execute(
+                        "UPDATE sandbox_instances SET state='released',destroy_after=?,updated_at=? "
+                        "WHERE instance_id=? AND state IN ('acquiring','ready')",
+                        (now, now, handle.instance_id),
+                    )
+        return handles
+
+    def list_managed(self) -> tuple[SandboxHandle, ...]:
+        rows = self.database.conn.execute(
+            "SELECT * FROM sandbox_instances "
+            "WHERE state IN ('acquiring','ready','released','destroying') "
+            "ORDER BY created_at"
+        ).fetchall()
+        return tuple(self._handle(row) for row in rows)
+
     def due_for_destroy(self, now: str | None = None) -> tuple[SandboxHandle, ...]:
         now = now or datetime.now(UTC).isoformat().replace("+00:00", "Z")
         rows = self.database.conn.execute(

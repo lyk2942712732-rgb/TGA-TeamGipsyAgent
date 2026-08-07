@@ -43,11 +43,36 @@ class SandboxLifecycleService:
         )
         self._thread.start()
 
-    def close(self) -> None:
+    def close(self, *, destroy_all: bool = False) -> None:
         self._stop.set()
         if self._thread is not None:
             self._thread.join(timeout=10)
             self._thread = None
+        if destroy_all and self.config.runtime == "enforced":
+            self.drain()
+
+    def drain(self) -> tuple[str, ...]:
+        """Synchronously destroy every recorded sandbox before sandboxd stops."""
+        cleaned: list[str] = []
+        for database in sorted(self.run_root.glob("*/evidence.db")):
+            store = EvidenceStore(database)
+            try:
+                repository = SandboxInstanceRepository(store)
+                manager = SandboxManager(
+                    config=self.config,
+                    providers=self.providers,
+                    repository=repository,
+                    event_repository=store,
+                )
+                for handle in repository.list_managed():
+                    try:
+                        manager.destroy(handle)
+                        cleaned.append(handle.instance_id)
+                    except Exception:
+                        LOGGER.exception("SANDBOX_DRAIN_FAILED instance_id=%s", handle.instance_id)
+            finally:
+                store.close()
+        return tuple(cleaned)
 
     def run_once(self) -> tuple[str, ...]:
         valid: set[str] = set()
@@ -62,6 +87,12 @@ class SandboxLifecycleService:
                     repository=repository,
                     event_repository=store,
                 )
+                for handle in repository.release_orphans():
+                    LOGGER.warning(
+                        "SANDBOX_ORPHAN_RELEASED instance_id=%s solver_run_id=%s",
+                        handle.instance_id,
+                        handle.solver_run_id,
+                    )
                 cleaned.extend(manager.cleanup_due())
                 valid.update(repository.active_instance_ids())
             finally:
@@ -79,8 +110,12 @@ class SandboxLifecycleService:
         return tuple(cleaned)
 
     def _loop(self) -> None:
-        while not self._stop.wait(self.config.reconcile_interval_seconds):
+        # Run immediately on boot so a previous hard crash does not retain
+        # stale sandboxes for a full reconciliation interval.
+        while not self._stop.is_set():
             try:
                 self.run_once()
             except Exception:
                 LOGGER.exception("periodic sandbox reconciliation failed")
+            if self._stop.wait(self.config.reconcile_interval_seconds):
+                break

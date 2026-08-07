@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
+import logging
 
 from tga.sandbox.config import SandboxConfig
 from tga.sandbox.models import (
@@ -18,6 +19,9 @@ from tga.sandbox.models import (
 from tga.sandbox.provider import SandboxError, SandboxProvider
 from tga.sandbox.readiness import ensure_kali_profile_ready
 from tga.sandbox.repository import SandboxInstanceRepository
+
+
+LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -61,10 +65,6 @@ class SandboxManager:
                 )
             if fencing_token < existing.fencing_token:
                 raise SandboxError("stale fencing token", code="STALE_FENCING_TOKEN")
-            if fencing_token == existing.fencing_token:
-                reused = existing
-                self._event("SANDBOX_REUSED", reused)
-                return reused
             provider = self.providers.get(profile.provider)
             if provider is None:
                 raise SandboxError(
@@ -82,21 +82,39 @@ class SandboxManager:
                 profile=profile,
             )
             if (
-                refreshed.instance_id != existing.instance_id
-                or refreshed.config_digest != existing.config_digest
+                refreshed.config_digest != existing.config_digest
                 or refreshed.profile_id != existing.profile_id
                 or refreshed.provider != existing.provider
                 or refreshed.image_digest != existing.image_digest
                 or refreshed.toolset_digest != existing.toolset_digest
             ):
+                try:
+                    provider.destroy(refreshed)
+                except Exception:
+                    LOGGER.exception(
+                        "failed to destroy mismatched replacement sandbox %s",
+                        refreshed.instance_id,
+                    )
                 raise SandboxError(
                     "provider returned a different sandbox during fencing refresh",
                     code="SANDBOX_IDENTITY_MISMATCH",
                 )
             reused = refreshed
             if self.repository:
+                if refreshed.instance_id != existing.instance_id:
+                    # The external sandbox disappeared or was quarantined.  The
+                    # provider created a healthy replacement for the same
+                    # immutable SolverRun identity, so retire the stale desired
+                    # state instead of poisoning all later tool calls.
+                    self.repository.transition(existing.instance_id, SandboxState.DESTROYED)
                 self.repository.put(reused)
-            self._event("SANDBOX_REUSED", reused)
+            self._event(
+                "SANDBOX_REPLACED" if refreshed.instance_id != existing.instance_id else "SANDBOX_REUSED",
+                reused,
+                {"previous_instance_id": existing.instance_id}
+                if refreshed.instance_id != existing.instance_id
+                else None,
+            )
             return reused
         provider = self.providers.get(profile.provider)
         if provider is None:
@@ -182,11 +200,35 @@ class SandboxManager:
                 destroy_after=destroy_after,
             )
         self._event("SANDBOX_RELEASED", handle, {"destroy_after": destroy_after})
+        if grace == 0:
+            try:
+                self.destroy(handle)
+            except Exception:
+                # destroy() already restored the immediately-due RELEASED
+                # state.  Task completion must not be overwritten by a
+                # transient cleanup failure; the lifecycle loop retries it.
+                LOGGER.exception(
+                    "immediate sandbox destroy failed; background cleanup will retry: %s",
+                    handle.instance_id,
+                )
 
     def destroy(self, handle: SandboxHandle) -> None:
         if self.repository:
             self.repository.transition(handle.instance_id, SandboxState.DESTROYING)
-        self.provider_for(handle).destroy(handle)
+        try:
+            self.provider_for(handle).destroy(handle)
+        except Exception as exc:
+            # ``destroying`` is not selected by due_for_destroy.  Roll back to
+            # an immediately-due state so a transient daemon/Docker/nft error
+            # is retried instead of becoming a permanent leak.
+            if self.repository:
+                self.repository.transition(
+                    handle.instance_id,
+                    SandboxState.RELEASED,
+                    destroy_after=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+                )
+            self._event("SANDBOX_DESTROY_FAILED", handle, {"error": str(exc)[:500]})
+            raise
         if self.repository:
             self.repository.transition(handle.instance_id, SandboxState.DESTROYED)
         self._event("SANDBOX_DESTROYED", handle)
@@ -196,8 +238,11 @@ class SandboxManager:
             return ()
         destroyed = []
         for handle in self.repository.due_for_destroy(now):
-            self.destroy(handle)
-            destroyed.append(handle.instance_id)
+            try:
+                self.destroy(handle)
+                destroyed.append(handle.instance_id)
+            except Exception:
+                LOGGER.exception("sandbox destroy failed; it remains due for retry: %s", handle.instance_id)
         return tuple(destroyed)
 
     def reconcile(self, *, grace_before: datetime | None = None) -> tuple[str, ...]:

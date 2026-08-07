@@ -22,17 +22,23 @@ type Grant struct {
 type Policy struct {
 	nftPath string
 	mu      sync.Mutex
+	run     func(context.Context, ...string) ([]byte, error)
 }
 
 func New(nftPath string) *Policy {
 	if nftPath == "" {
 		nftPath = "/usr/sbin/nft"
 	}
-	return &Policy{nftPath: nftPath}
+	policy := &Policy{nftPath: nftPath}
+	policy.run = func(ctx context.Context, args ...string) ([]byte, error) {
+		return exec.CommandContext(ctx, policy.nftPath, args...).CombinedOutput()
+	}
+	return policy
 }
 
 func (p *Policy) Available(ctx context.Context) bool {
-	return exec.CommandContext(ctx, p.nftPath, "--version").Run() == nil
+	_, err := p.run(ctx, "--version")
+	return err == nil
 }
 
 func (p *Policy) Apply(ctx context.Context, taskID, bridge string, gateways []string, grants []Grant) error {
@@ -59,10 +65,10 @@ func (p *Policy) Apply(ctx context.Context, taskID, bridge string, gateways []st
 	if err := file.Close(); err != nil {
 		return err
 	}
-	if output, err := exec.CommandContext(ctx, p.nftPath, "--check", "--file", name).CombinedOutput(); err != nil {
+	if output, err := p.run(ctx, "--check", "--file", name); err != nil {
 		return fmt.Errorf("nft check failed: %s: %w", bytes.TrimSpace(output), err)
 	}
-	if output, err := exec.CommandContext(ctx, p.nftPath, "--file", name).CombinedOutput(); err != nil {
+	if output, err := p.run(ctx, "--file", name); err != nil {
 		return fmt.Errorf("nft apply failed: %s: %w", bytes.TrimSpace(output), err)
 	}
 	return nil
@@ -71,24 +77,93 @@ func (p *Policy) Apply(ctx context.Context, taskID, bridge string, gateways []st
 func (p *Policy) Delete(ctx context.Context, taskID string) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	return p.deleteLocked(ctx, taskID)
+}
+
+func (p *Policy) deleteLocked(ctx context.Context, taskID string) error {
+	return p.deleteTableLocked(ctx, tableName(taskID))
+}
+
+func (p *Policy) deleteTableLocked(ctx context.Context, table string) error {
 	file, err := os.CreateTemp("", "tga-nft-delete-*.nft")
 	if err != nil {
 		return err
 	}
 	name := file.Name()
 	defer os.Remove(name)
-	if _, err := fmt.Fprintf(file, "destroy table inet %s\n", tableName(taskID)); err != nil {
+	if _, err := fmt.Fprintf(file, "destroy table inet %s\n", table); err != nil {
 		file.Close()
 		return err
 	}
 	if err := file.Close(); err != nil {
 		return err
 	}
-	output, err := exec.CommandContext(ctx, p.nftPath, "--file", name).CombinedOutput()
+	output, err := p.run(ctx, "--file", name)
 	if err != nil {
+		lower := strings.ToLower(string(output) + " " + err.Error())
+		if strings.Contains(lower, "no such file") || strings.Contains(lower, "no such table") {
+			return nil
+		}
 		return fmt.Errorf("nft delete failed: %s: %w", bytes.TrimSpace(output), err)
 	}
 	return nil
+}
+
+// Reconcile removes TGA-owned nft tables which do not belong to any retained
+// managed container.  It intentionally ignores every non-TGA table.
+func (p *Policy) Reconcile(ctx context.Context, validPolicyIDs []string) ([]string, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	output, err := p.run(ctx, "list", "tables")
+	if err != nil {
+		return nil, fmt.Errorf("nft list tables failed: %s: %w", bytes.TrimSpace(output), err)
+	}
+	valid := make(map[string]struct{}, len(validPolicyIDs))
+	for _, id := range validPolicyIDs {
+		valid[tableName(id)] = struct{}{}
+	}
+	var removed []string
+	for _, name := range managedTableNames(string(output)) {
+		if _, ok := valid[name]; ok {
+			continue
+		}
+		if err := p.deleteTableLocked(ctx, name); err != nil {
+			return removed, err
+		}
+		removed = append(removed, name)
+	}
+	return removed, nil
+}
+
+func managedTableNames(output string) []string {
+	seen := make(map[string]struct{})
+	var names []string
+	for _, line := range strings.Split(output, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) != 3 || fields[0] != "table" || fields[1] != "inet" {
+			continue
+		}
+		name := fields[2]
+		if len(name) != 16 || !strings.HasPrefix(name, "tga_") || !isLowerHex(name[4:]) {
+			continue
+		}
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		seen[name] = struct{}{}
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+func isLowerHex(value string) bool {
+	for _, char := range value {
+		if !((char >= '0' && char <= '9') || (char >= 'a' && char <= 'f')) {
+			return false
+		}
+	}
+	return value != ""
 }
 
 func Render(taskID, bridge string, gateways []string, grants []Grant) (string, error) {

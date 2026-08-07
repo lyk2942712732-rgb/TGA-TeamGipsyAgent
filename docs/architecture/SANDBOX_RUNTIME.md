@@ -26,15 +26,18 @@ applying grants. Grants are cleared when each process exits. `NET_ADMIN`,
 `SYS_ADMIN`, host networking, devices and the Docker socket are never client
 options.
 
-Task pause and approval states retain the sandbox. A terminal Worker releases
-only its own SolverRun sandbox. Task cancellation or terminal Task completion
-releases every active SolverRun sandbox. Terminal instances are marked
-released with `destroy_after = terminal time + 15 minutes`; the cleanup worker
-passes the current valid instance set to `Reconcile`.
+Task pause and approval states retain the sandbox. A terminal Worker destroys
+only its own SolverRun sandbox immediately. Task cancellation or terminal Task
+completion destroys every active SolverRun sandbox. A transient destroy error
+returns the instance to an immediately-due `released` state, and the cleanup
+worker retries it while reconciling Docker containers, Docker networks and
+nftables policy. API startup also releases containers whose SolverRun is
+terminal or whose lease expired after a hard crash; API shutdown drains all
+remaining managed sandboxes before sandboxd stops.
 
-The committed configuration is intentionally `disabled` and contains release
-digest placeholders. Enabling enforcement before replacing every selected
-Profile image with a real `@sha256:<64 hex>` reference is rejected.
+The committed competition configuration is enforced and pins every local
+Profile to the universal Kali image by immutable registry digest. A missing or
+placeholder digest is rejected at the execution boundary.
 Remote MCP configuration remains independent from local Kali image pinning.
 # SolverRun Execution Boundary
 
@@ -49,8 +52,7 @@ The same Run and profile may reuse its instance; a retry creates a new Run and
 therefore a new instance. Two Runs in one Task never share a container or
 network namespace.
 
-The committed `config/sandbox.json` is intentionally disabled. Before setting
-`TGA_SANDBOX_RUNTIME=enforced`, operators must:
+Before using `TGA_SANDBOX_RUNTIME=enforced`, a deployment must:
 
 1. Replace every selected local profile image placeholder with a digest-pinned image.
 2. Publish each selected image with its generated `/opt/tga/toolset.json` and replace its `toolset_digest` with the exact SHA256.
