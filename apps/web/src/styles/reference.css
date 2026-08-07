@@ -798,6 +798,9 @@ html, body { height: 100%; overflow: hidden; }
 .team-model-chips span { padding: 5px 8px; border: 1px solid var(--c-accent-border); border-radius: var(--r-sm); color: var(--c-accent-strong); background: #fff; font-size: 10px; }
 .team-model-empty { display: flex; align-items: center; gap: 6px; color: var(--c-warning); font-size: 11px; }
 .preflight-summary { background: var(--c-surface); }
+.preflight-blockers { display: grid; gap: 6px; padding: 10px 11px; border: 1px solid var(--c-warning); border-radius: var(--r-sm); color: var(--c-text-muted); background: var(--c-warning-soft); font-size: 11px; }
+.preflight-blockers strong { color: var(--c-warning); }
+.preflight-blockers span::before { content: "•"; margin-right: 7px; color: var(--c-warning); }
 
 @media (max-width: 1180px) {
   .new-task-wizard .wizard-body { grid-template-columns: 1fr; }

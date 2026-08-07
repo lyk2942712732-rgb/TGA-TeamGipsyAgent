@@ -174,6 +174,25 @@ describe("NewTaskPage multimodal input flow", () => {
     })));
   });
 
+  it("explains preflight blockers and routes the user to the missing field", async () => {
+    const user = userEvent.setup();
+    render(<NewTaskPage onCreated={vi.fn()} />);
+    await user.type(screen.getByLabelText("Objective"), "取得目标 flag");
+    await user.click(screen.getByRole("button", { name: /任务提示与材料/ }));
+    await user.type(screen.getByLabelText("任务提示词"), "分析目标并尝试绕过过滤");
+    await user.click(screen.getByRole("button", { name: /创建摘要/ }));
+
+    expect(await screen.findByText("填写任务名称")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "任务目标" })).toHaveAttribute("data-complete", "false");
+    const submit = screen.getByRole("button", { name: "创建任务并开始" });
+    expect(submit).toBeEnabled();
+    expect(mocks.preflightTask).not.toHaveBeenCalled();
+
+    await user.click(submit);
+    expect(await screen.findByLabelText("任务名称")).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("启动前还需完成：填写任务名称");
+  });
+
   it("blocks creation when authoritative preflight fails", async () => {
     mocks.preflightTask.mockRejectedValueOnce(new Error("Model verification is stale"));
     const user = userEvent.setup();

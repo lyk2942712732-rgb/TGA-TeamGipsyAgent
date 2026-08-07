@@ -54,6 +54,7 @@ const fallbackProfiles = Object.fromEntries(TASK_MODES.map((mode) => [mode, {
 }])) as unknown as Record<TaskMode, ModeProfileContract>;
 
 type Draft = { id: string; name: string; mode: TaskMode; goal: string; modeOptions: ModeConfig; executionPolicy: ExecutionPolicy };
+type PreflightBlocker = { id: string; message: string; step: number };
 const defaultDraft = (): Draft => ({ id: newTaskId(), name: "", mode: "penetration_test", goal: "", modeOptions: fallbackConfig("penetration_test"), executionPolicy: fallbackPolicy("penetration_test") });
 
 const MODE_CARD_META: Record<TaskMode, { label: string; icon: typeof Crosshair; tone: string; description: string }> = {
@@ -101,6 +102,35 @@ export function NewTaskPage({ onCreated }: { onCreated: (id: string) => void }) 
     successCriteria.trim() ? `Success Criteria:\n${successCriteria.trim()}` : "",
     prompt.trim(),
   ].filter(Boolean).join("\n\n"), [instructions, constraints, successCriteria, prompt]);
+  const preflightBlockers = useMemo(() => {
+    const blockers: PreflightBlocker[] = [];
+    if (!draft.name.trim()) blockers.push({ id: "task_name", message: "填写任务名称", step: 1 });
+    if (!draft.goal.trim()) blockers.push({ id: "task_goal", message: "填写 Objective（任务目标）", step: 1 });
+    const incompleteFiles = inputFiles.filter((item) => item.status !== "uploaded");
+    if (incompleteFiles.length) blockers.push({
+      id: "input_files",
+      message: `处理未完成的附件：${incompleteFiles.map((item) => item.originalName).join("、")}`,
+      step: 2,
+    });
+    if (!inputFiles.length && !taskPrompt) blockers.push({
+      id: "task_input", message: "填写任务说明或添加至少一个附件", step: 2,
+    });
+    if (!agentModelOptions) {
+      blockers.push({ id: "model_options", message: "等待 Agent 模型清单加载完成", step: 4 });
+    } else {
+      const missingAgents = agentModelOptions.agents.filter((agent) => !agentModels[agent.id]);
+      if (missingAgents.length) blockers.push({
+        id: "agent_models",
+        message: `为以下 Agent 选择已验证模型：${missingAgents.map((agent) => agent.id).join("、")}`,
+        step: 4,
+      });
+    }
+    return blockers;
+  }, [draft.name, draft.goal, inputFiles, taskPrompt, agentModelOptions, agentModels]);
+  const completedSteps = useMemo(() => {
+    const blocked = new Set(preflightBlockers.map((blocker) => blocker.step));
+    return new Set([1, 2, 3, 4].filter((number) => !blocked.has(number)));
+  }, [preflightBlockers]);
 
   filesRef.current = inputFiles;
 
@@ -165,12 +195,7 @@ export function NewTaskPage({ onCreated }: { onCreated: (id: string) => void }) 
   useEffect(() => {
     setPreflight(null);
     setPreflightError("");
-    if (
-      step !== 5 || !draft.name.trim() || !draft.goal.trim()
-      || inputFiles.some((item) => item.status !== "uploaded")
-      || (!inputFiles.length && !taskPrompt)
-      || !agentModelOptions || Object.keys(agentModels).length !== agentModelOptions.agents.length
-    ) return;
+    if (step !== 5 || preflightBlockers.length) return;
     let current = true;
     const request: CreateSessionRequest = {
       ...draft,
@@ -187,7 +212,7 @@ export function NewTaskPage({ onCreated }: { onCreated: (id: string) => void }) 
       if (current) setPreflightError(reason instanceof Error ? reason.message : "启动前检查失败");
     }).finally(() => { if (current) setPreflightLoading(false); });
     return () => { current = false; };
-  }, [step, draft, taskPrompt, inputFiles, selectedSkills, agentModels, agentModelOptions]);
+  }, [step, draft, taskPrompt, inputFiles, selectedSkills, agentModels, agentModelOptions, preflightBlockers]);
 
   const availableMcp = useMemo(() => (
     health?.records ?? []
@@ -252,10 +277,12 @@ export function NewTaskPage({ onCreated }: { onCreated: (id: string) => void }) 
   }
 
   async function submit() {
-    if (!draft.name.trim() || !draft.goal.trim()) { setError("请填写任务名称和任务目标。"); setStep(1); return; }
-    if (inputFiles.some((item) => item.status !== "uploaded")) { setError("请先处理仍在上传或上传失败的文件。"); setStep(2); return; }
-    if (!inputFiles.length && !taskPrompt) { setError("请填写任务说明，或添加至少一个附件。"); setStep(1); return; }
-    if (!agentModelOptions || Object.keys(agentModels).length !== agentModelOptions.agents.length) { setError("请先为每个 Agent 选择已验证的模型。"); setStep(4); return; }
+    if (preflightBlockers.length) {
+      const blocker = preflightBlockers[0];
+      setError(`启动前还需完成：${blocker.message}。`);
+      setStep(blocker.step);
+      return;
+    }
     if (!preflight || preflightLoading || preflightError) { setError("启动前检查尚未通过，请修复问题后重试。"); setStep(5); return; }
     const request: CreateSessionRequest = { ...draft, name: draft.name.trim(), goal: draft.goal.trim(), input: { text: taskPrompt, fileIds: inputFiles.map((item) => item.id) }, selectedSkills, agentModels, preflightFingerprint: preflight.fingerprint };
     setBusy(true); setError(null);
@@ -268,16 +295,16 @@ export function NewTaskPage({ onCreated }: { onCreated: (id: string) => void }) 
     <NewTaskHeader />
     <div className="wizard-body ref-fill">
     <section className="ref-card form-surface">
-      <NewTaskProgress step={step} onStep={setStep} />
+      <NewTaskProgress step={step} completedSteps={completedSteps} onStep={setStep} />
       {step === 1 ? <TaskGoalStep draft={draft} profiles={profiles} instructions={instructions} constraints={constraints} successCriteria={successCriteria} onDraft={(patch) => { draftTouched.current = true; setDraft((current) => ({ ...current, ...patch })); }} onMode={selectMode} onInstructions={setInstructions} onConstraints={setConstraints} onSuccessCriteria={setSuccessCriteria} /> : null}
       {step === 2 ? <div className="wizard-step-stack"><ModeFields mode={draft.mode} config={draft.modeOptions} setConfig={setConfig} /><fieldset className="span-2 multimodal-step"><legend>任务提示与材料</legend><p className="field-help">补充目标网址、代码片段或附件。附件会归档到独立 Workspace，图片可直接参与多模态分析。</p><MultimodalComposer text={prompt} assets={inputFiles} busy={busy} onText={setPrompt} onFiles={upload} onRemove={removeAsset} /></fieldset></div> : null}
       {step === 3 ? <PolicyFields draft={draft} setPolicy={setPolicy} selectPreset={selectPolicyPreset} /> : null}
       {step === 4 ? <TeamModelStep modeLabel={profile.label} availableMcp={availableMcp.map((item) => item.server).filter((server): server is string => Boolean(server))} skillPreview={skillPreview} skillPreviewLoading={skillPreviewLoading} skillPreviewError={skillPreviewError} selectedSkills={selectedSkills} onSkills={() => void openSkillDialog()} onAutomatic={() => setSelectedSkills(null)} modelOptions={agentModelOptions} modelAssignments={agentModels} modelError={agentModelsError} onModel={(agentId, value) => setAgentModels((current) => ({ ...current, [agentId]: value }))} /> : null}
-      {step === 5 ? <fieldset className="span-2 preflight-summary"><legend>第五步：启动前检查</legend><dl className="creation-summary"><dt>场景</dt><dd>{profile.label}</dd><dt>任务</dt><dd>{draft.name || "尚未填写"}</dd><dt>任务目标</dt><dd>{draft.goal || "尚未填写"}</dd><dt>任务说明</dt><dd>{taskPrompt || "无文字说明"}</dd><dt>附件（{inputFiles.length}）</dt><dd>{inputFiles.map((item) => item.originalName).join("；") || "无"}</dd><dt>执行边界</dt><dd>preset={draft.executionPolicy.preset}；network={draft.executionPolicy.network.access}/{draft.executionPolicy.network.interaction}；compute={draft.executionPolicy.local_compute.mode}；high_impact={draft.executionPolicy.high_impact.mode}</dd><dt>Agent 模型</dt><dd>{agentModelOptions?.agents.map((agent) => { const selectedModel = agentModelOptions.models.find((item) => item.provider_id === agentModels[agent.id]?.providerId && item.model_id === agentModels[agent.id]?.modelId); return `${agent.id} → ${selectedModel ? `${selectedModel.provider_name} / ${selectedModel.model_name}` : "未选择"}`; }).join("；") || "未选择"}</dd><dt>预计装配 Skills</dt><dd><SkillPreviewSummary value={skillPreview} loading={skillPreviewLoading} error={skillPreviewError} manual={selectedSkills !== null} onAutomatic={() => setSelectedSkills(null)} /></dd><dt>自动可用 MCP（{availableMcp.length}）</dt><dd>{availableMcp.map((item) => item.server).join(", ") || "当前无已启用且可达/已发现的 MCP 服务"}</dd><dt>完成条件</dt><dd>{successCriteria || `${profile.completion_validator}：${profile.report_sections.join("、") || "证据支持的模式专属验证"}`}</dd><dt>启动前检查</dt><dd><PreflightSummary value={preflight} loading={preflightLoading} error={preflightError} /></dd></dl></fieldset> : null}
+      {step === 5 ? <fieldset className="span-2 preflight-summary"><legend>第五步：启动前检查</legend><dl className="creation-summary"><dt>场景</dt><dd>{profile.label}</dd><dt>任务</dt><dd>{draft.name || "尚未填写"}</dd><dt>任务目标</dt><dd>{draft.goal || "尚未填写"}</dd><dt>任务说明</dt><dd>{taskPrompt || "无文字说明"}</dd><dt>附件（{inputFiles.length}）</dt><dd>{inputFiles.map((item) => item.originalName).join("；") || "无"}</dd><dt>执行边界</dt><dd>preset={draft.executionPolicy.preset}；network={draft.executionPolicy.network.access}/{draft.executionPolicy.network.interaction}；compute={draft.executionPolicy.local_compute.mode}；high_impact={draft.executionPolicy.high_impact.mode}</dd><dt>Agent 模型</dt><dd>{agentModelOptions?.agents.map((agent) => { const selectedModel = agentModelOptions.models.find((item) => item.provider_id === agentModels[agent.id]?.providerId && item.model_id === agentModels[agent.id]?.modelId); return `${agent.id} → ${selectedModel ? `${selectedModel.provider_name} / ${selectedModel.model_name}` : "未选择"}`; }).join("；") || "未选择"}</dd><dt>预计装配 Skills</dt><dd><SkillPreviewSummary value={skillPreview} loading={skillPreviewLoading} error={skillPreviewError} manual={selectedSkills !== null} onAutomatic={() => setSelectedSkills(null)} /></dd><dt>自动可用 MCP（{availableMcp.length}）</dt><dd>{availableMcp.map((item) => item.server).join(", ") || "当前无已启用且可达/已发现的 MCP 服务"}</dd><dt>完成条件</dt><dd>{successCriteria || `${profile.completion_validator}：${profile.report_sections.join("、") || "证据支持的模式专属验证"}`}</dd><dt>启动前检查</dt><dd><PreflightSummary value={preflight} loading={preflightLoading} error={preflightError} blockers={preflightBlockers} /></dd></dl></fieldset> : null}
       {error ? <p role="alert" className="inline-error span-2">{error}</p> : null}
     </section>
     <NewTaskGuide modeLabel={profile.label} modeDescription={profiles[draft.mode].description} />
-    <footer className="wizard-actions"><button type="button" className="secondary-button" disabled={busy} onClick={reset}>取消</button><span className="wizard-save-state" aria-live="polite">{draftSaved ? <><Check size={14} />草稿已保存</> : null}</span><div>{step > 1 ? <button type="button" disabled={busy} onClick={() => setStep((value) => Math.max(1, value - 1))}>上一步</button> : null}<button type="button" className="save-draft-button" disabled={busy} onClick={() => { localStorage.setItem("tga-new-task-draft", JSON.stringify({ draft, instructions, constraints, successCriteria, prompt })); setDraftSaved(true); }}>保存草稿</button>{step < 5 ? <button type="button" disabled={busy} onClick={() => setStep((value) => Math.min(5, value + 1))}>下一步</button> : <button type="button" disabled={busy || preflightLoading || !preflight || Boolean(preflightError)} onClick={() => void submit()}>{busy ? "处理中..." : preflightLoading ? "正在检查..." : "创建任务并开始"}</button>}</div></footer>
+    <footer className="wizard-actions"><button type="button" className="secondary-button" disabled={busy} onClick={reset}>取消</button><span className="wizard-save-state" aria-live="polite">{draftSaved ? <><Check size={14} />草稿已保存</> : null}</span><div>{step > 1 ? <button type="button" disabled={busy} onClick={() => setStep((value) => Math.max(1, value - 1))}>上一步</button> : null}<button type="button" className="save-draft-button" disabled={busy} onClick={() => { localStorage.setItem("tga-new-task-draft", JSON.stringify({ draft, instructions, constraints, successCriteria, prompt })); setDraftSaved(true); }}>保存草稿</button>{step < 5 ? <button type="button" disabled={busy} onClick={() => setStep((value) => Math.min(5, value + 1))}>下一步</button> : <button type="button" disabled={busy || preflightLoading || Boolean(preflightError) || (!preflight && !preflightBlockers.length)} onClick={() => void submit()}>{busy ? "处理中..." : preflightLoading ? "正在检查..." : "创建任务并开始"}</button>}</div></footer>
     </div>
     {skillDialogOpen ? <SkillSelectionDialog catalog={skillCatalog} loading={skillCatalogLoading} mode={draft.mode} selected={selectedSkills ?? skillPreview?.skills.map((item) => item.name) ?? []} draft={draft} prompt={taskPrompt} files={inputFiles} onClose={() => setSkillDialogOpen(false)} onApply={(names) => { setSelectedSkills(names); setSkillDialogOpen(false); }} /> : null}
   </section>;
@@ -323,10 +350,11 @@ function roleLabel(role: AgentModelOptions["agents"][number]["role"]): string {
   return { supervisor: "Supervisor", worker: "Worker", reviewer: "Reviewer", reporter: "Reporter" }[role];
 }
 
-function PreflightSummary({ value, loading, error }: { value: TaskPreflight | null; loading: boolean; error: string }) {
+function PreflightSummary({ value, loading, error, blockers }: { value: TaskPreflight | null; loading: boolean; error: string; blockers: PreflightBlocker[] }) {
   if (loading) return <div className="creation-skill-status">正在验证模型、输入、策略、Skills 与 MCP 快照…</div>;
   if (error) return <div className="creation-skill-status error" role="alert">检查失败：{error}</div>;
-  if (!value) return <div className="creation-skill-status">填写任务要求并处理完附件后才能执行检查。</div>;
+  if (!value && blockers.length) return <div className="preflight-blockers" role="status"><strong>启动前还需完成</strong>{blockers.map((blocker) => <span key={blocker.id}>{blocker.message}</span>)}</div>;
+  if (!value) return <div className="creation-skill-status">等待启动前检查结果。</div>;
   return <div className="preflight-checks" data-testid="preflight-passed"><strong>全部检查通过</strong>{value.checks.map((check) => <span key={check.id}>{check.detail}</span>)}</div>;
 }
 
