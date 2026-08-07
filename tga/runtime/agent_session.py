@@ -877,6 +877,11 @@ class AgentSessionRunner:
             definition=definition,
             intent=intent,
             catalog=catalog,
+            supported_intent_kinds=(
+                self.task_orchestrator.selector.supported_intent_kinds()
+                if solver.orchestration_role == "supervisor"
+                else ()
+            ),
         )
         control_handlers = self.task_orchestrator.gateway_control_handlers(
             self.solver_id

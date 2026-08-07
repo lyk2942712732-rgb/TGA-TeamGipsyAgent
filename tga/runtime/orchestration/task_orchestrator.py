@@ -382,8 +382,36 @@ class TaskOrchestrator:
         if state.status == "awaiting_input":
             self._set_state("running")
         assignments = []
-        for intent in runnable[:available]:
-            definition = self.selector.select(intent)
+        for intent in runnable:
+            if len(assignments) >= available:
+                break
+            try:
+                definition = self.selector.select(intent)
+            except ValueError as exc:
+                # Old tasks may contain model-authored Intent kinds which no
+                # configured Worker accepts. Isolate that node instead of
+                # allowing it to poison every later dispatch attempt.
+                self.repositories.plans.update_intent_status(
+                    intent.id, "blocked", expected_status=intent.status
+                )
+                self.repositories.events.append_agent_event(
+                    self.task.id,
+                    "INTENT_BLOCKED",
+                    {
+                        "intent_id": intent.id,
+                        "kind": intent.kind,
+                        "status": "blocked",
+                        "reason": "unsupported_intent_kind",
+                        "error": {
+                            "code": "INTENT_KIND_UNSUPPORTED",
+                            "message": str(exc),
+                            "retryable": False,
+                        },
+                    },
+                    solver_id=state.supervisor_solver_id,
+                    intent_id=intent.id,
+                )
+                continue
             try:
                 assignments.append(
                     self.team.create_worker(intent=intent, definition=definition)
@@ -943,9 +971,25 @@ class TaskOrchestrator:
         }
 
     def _gateway_create_intent(self, solver_id: str, args: dict[str, Any]) -> dict[str, Any]:
+        kind = str(args["kind"])
+        if not self.selector.supports_kind(kind):
+            supported = self.selector.supported_intent_kinds()
+            return {
+                "ok": False,
+                "status": "rejected",
+                "supported_intent_kinds": list(supported),
+                "error": {
+                    "code": "INTENT_KIND_UNSUPPORTED",
+                    "message": (
+                        f"Intent kind {kind!r} cannot be assigned in {self.task.mode} mode. "
+                        f"Use one of: {', '.join(supported)}"
+                    ),
+                    "retryable": False,
+                },
+            }
         intent = self.create_intent(
             supervisor_solver_id=solver_id,
-            kind=str(args["kind"]),
+            kind=kind,
             title=str(args["title"]),
             objective=str(args["objective"]),
             allowed_resource_ids=tuple(args.get("allowed_resource_ids") or ()),

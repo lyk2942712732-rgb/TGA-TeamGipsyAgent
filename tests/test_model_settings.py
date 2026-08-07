@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import sys
 from typing import Any
+from urllib.error import URLError
 
 import pytest
 from fastapi.testclient import TestClient
@@ -283,6 +284,42 @@ def test_chat_tools_never_retries_more_than_once(monkeypatch) -> None:
     assert calls == 2
     assert result["finish_reason"] == "length"
     assert result["provider_retry"]["attempts"] == 2
+
+
+def test_provider_transport_retries_transient_connection_refusal(monkeypatch) -> None:
+    client = OpenAICompatibleClient(
+        base_url="https://provider.example/v1", api_key="secret", model="model"
+    )
+    calls = 0
+    delays: list[float] = []
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        @staticmethod
+        def read() -> bytes:
+            return b'{"choices": [{"message": {"content": "ok"}}]}'
+
+    def flaky_urlopen(_request, *, timeout):
+        nonlocal calls
+        assert timeout == client.timeout_s
+        calls += 1
+        if calls < 3:
+            raise URLError(ConnectionRefusedError(111, "Connection refused"))
+        return Response()
+
+    monkeypatch.setattr("tga.models.openai_compatible.urlopen", flaky_urlopen)
+    monkeypatch.setattr("tga.models.openai_compatible.time.sleep", delays.append)
+
+    result = client.chat_tools([], tools=[])
+
+    assert calls == 3
+    assert delays == [0.25, 0.5]
+    assert result["message"]["content"] == "ok"
 
 
 @pytest.mark.parametrize(

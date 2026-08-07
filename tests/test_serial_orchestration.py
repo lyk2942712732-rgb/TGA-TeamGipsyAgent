@@ -121,6 +121,64 @@ def test_five_modes_bootstrap_supervisor_and_dispatch_one_worker(
         bundle.close()
 
 
+def test_dispatch_blocks_unsupported_intent_without_poisoning_valid_work(
+    tmp_path: Path,
+) -> None:
+    task = _task(task_id="serial_unsupported_intent")
+    bundle, orchestrator = _orchestrator(tmp_path, task)
+    try:
+        state = orchestrator.bootstrap()
+        unsupported = orchestrator.create_intent(
+            supervisor_solver_id=state.supervisor_solver_id,
+            kind="web_exploitation",
+            title="Model-authored unsupported alias",
+            objective="Do not let this legacy node block valid work",
+            priority=10,
+        )
+
+        assignment = orchestrator.dispatch_next()
+
+        assert assignment is not None
+        assert assignment.intent.kind == "challenge_classification"
+        plan = bundle.plans.get_global_plan(task.id)
+        blocked = next(item for item in plan.intents if item.id == unsupported.id)
+        assert blocked.status == "blocked"
+        event = next(
+            item for item in bundle.events.list_agent_events(task.id)
+            if item.type == "INTENT_BLOCKED" and item.intent_id == unsupported.id
+        )
+        assert event.payload["reason"] == "unsupported_intent_kind"
+        assert event.payload["error"]["code"] == "INTENT_KIND_UNSUPPORTED"
+    finally:
+        bundle.close()
+
+
+def test_supervisor_gateway_rejects_unassignable_intent_kind(tmp_path: Path) -> None:
+    task = _task(task_id="serial_gateway_intent_kind")
+    bundle, orchestrator = _orchestrator(tmp_path, task)
+    try:
+        state = orchestrator.bootstrap()
+        before = bundle.plans.get_global_plan(task.id)
+        handler = orchestrator.gateway_control_handlers(
+            state.supervisor_solver_id
+        )["create_intent"]
+
+        result = handler({
+            "kind": "command_injection",
+            "title": "Unsupported alias",
+            "objective": "Must be rejected before persistence",
+        })
+
+        assert result["ok"] is False
+        assert result["status"] == "rejected"
+        assert result["error"]["code"] == "INTENT_KIND_UNSUPPORTED"
+        assert "ctf_web" in result["supported_intent_kinds"]
+        assert bundle.plans.get_global_plan(task.id).version == before.version
+        assert len(bundle.plans.get_global_plan(task.id).intents) == len(before.intents)
+    finally:
+        bundle.close()
+
+
 def test_supervisor_worker_result_and_completion_are_separate_and_idempotent(tmp_path: Path) -> None:
     task = _task(task_id="serial_complete")
     bundle, orchestrator = _orchestrator(tmp_path, task)

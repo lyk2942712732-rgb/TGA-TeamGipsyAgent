@@ -8,6 +8,7 @@ using the Python standard library.
 from __future__ import annotations
 
 import json
+import time
 from dataclasses import dataclass
 from typing import Any, Iterable
 from urllib.error import HTTPError, URLError
@@ -15,6 +16,10 @@ from urllib.request import Request, urlopen
 
 from tga.models.base import ModelMessage, ModelResponse
 from tga.models.settings import MAX_MAX_OUTPUT_TOKENS, MIN_MAX_OUTPUT_TOKENS
+
+
+TRANSPORT_ATTEMPTS = 3
+TRANSPORT_RETRY_BASE_SECONDS = 0.25
 
 
 def chat_completions_url(base_url: str) -> str:
@@ -212,11 +217,17 @@ class OpenAICompatibleClient:
                 "Content-Type": "application/json",
             },
         )
-        try:
-            with urlopen(request, timeout=self.timeout_s) as response:
-                raw = json.loads(response.read().decode("utf-8"))
-        except (HTTPError, URLError, TimeoutError) as exc:
-            raise RuntimeError(self._provider_error("request", exc)) from exc
+        raw = None
+        for attempt in range(1, TRANSPORT_ATTEMPTS + 1):
+            try:
+                with urlopen(request, timeout=self.timeout_s) as response:
+                    raw = json.loads(response.read().decode("utf-8"))
+                break
+            except (HTTPError, URLError, TimeoutError) as exc:
+                if attempt < TRANSPORT_ATTEMPTS and _retryable_transport_error(exc):
+                    time.sleep(TRANSPORT_RETRY_BASE_SECONDS * (2 ** (attempt - 1)))
+                    continue
+                raise RuntimeError(self._provider_error("request", exc)) from exc
         if not isinstance(raw, dict):
             raise RuntimeError("provider request returned an invalid JSON envelope")
         return raw
@@ -317,6 +328,12 @@ def _unicode_scalar_value(value: Any) -> Any:
             for key, item in value.items()
         }
     return value
+
+
+def _retryable_transport_error(exc: BaseException) -> bool:
+    if isinstance(exc, HTTPError):
+        return exc.code == 429 or 500 <= exc.code < 600
+    return isinstance(exc, (URLError, TimeoutError))
 
 
 def _redact(value: str) -> str:

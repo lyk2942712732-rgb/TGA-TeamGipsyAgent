@@ -212,6 +212,30 @@ def test_role_manifests_are_distinct_and_respect_completion_authority() -> None:
     assert not {"kali_exec", "kali_session"} & reporter_names
 
 
+def test_supervisor_manifest_constrains_model_authored_intent_kinds() -> None:
+    task = _task("intent_schema")
+    catalog = _catalog(task)
+    all_capabilities = tuple(item.capability for item in catalog.entries)
+    supervisor, definition = _solver("ctf-supervisor", *all_capabilities)
+
+    manifest = ToolManifestBuilder().build(
+        task=task,
+        solver=supervisor,
+        definition=definition,
+        intent=None,
+        catalog=catalog,
+        supported_intent_kinds=("challenge_classification", "ctf_web"),
+    )
+
+    for capability_id in ("create_intent", "update_global_plan"):
+        capability = next(
+            item for item in manifest.host_capabilities if item.id == capability_id
+        )
+        assert capability.input_schema["properties"]["kind"]["enum"] == [
+            "challenge_classification", "ctf_web"
+        ]
+
+
 def test_runtime_catalog_hides_mcp_tools_blocked_by_frozen_policy() -> None:
     snapshot = MCPCatalogSnapshot(
         version="mcp_test",
