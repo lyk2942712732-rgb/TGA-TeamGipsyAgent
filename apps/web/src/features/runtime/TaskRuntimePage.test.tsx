@@ -64,4 +64,33 @@ describe("TaskRuntimePage skeleton", () => {
     expect(screen.getByRole("treeitem", { name: /supervisor/ })).toBeInTheDocument();
     expect(screen.getByRole("complementary", { name: "Solver 检查器" })).toHaveTextContent("coordinate");
   });
+
+  it("shows the exhausted model transport error and a recovery action", () => {
+    const blocked = snapshot(1);
+    blocked.session.status = "blocked";
+    blocked.session.stopReason = "model_request_failed";
+    blocked.team.status = "blocked";
+    blocked.eventsBySeq[31] = {
+      schemaVersion: 6, id: "event-31", taskId: "task", seq: 31,
+      type: "AGENT_ERROR", solverId: "supervisor", intentId: null,
+      payload: { phase: "model_turn", message: "provider request failed after 3 attempts", retryable: true, attempts: 3 },
+      createdAt: "",
+    };
+    blocked.eventsBySeq[34] = {
+      schemaVersion: 6, id: "event-34", taskId: "task", seq: 34,
+      type: "SESSION_STOPPED", solverId: "supervisor", intentId: null,
+      payload: { status: "blocked", reason: "model_request_failed", error: { code: "MODEL_REQUEST_FAILED", message: "provider request failed after 3 attempts", retryable: true, attempts: 3 } },
+      createdAt: "",
+    };
+    blocked.latestSeq = 34;
+    useTaskRuntime.mockReturnValueOnce({ store: blocked, connection: "live", error: null, refresh: vi.fn() });
+
+    render(<MemoryRouter><TaskRuntimePage taskId="task" mode="runtime" /></MemoryRouter>);
+
+    const alert = screen.getByRole("alert");
+    expect(alert).toHaveTextContent("模型连接失败，任务已暂停");
+    expect(alert).toHaveTextContent("provider request failed after 3 attempts");
+    expect(alert).toHaveTextContent("已自动尝试 3 次");
+    expect(screen.getByRole("button", { name: "重新连接并恢复" })).toBeEnabled();
+  });
 });

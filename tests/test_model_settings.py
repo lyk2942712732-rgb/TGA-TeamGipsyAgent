@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sys
+from http.client import RemoteDisconnected
 from typing import Any
 from urllib.error import URLError
 
@@ -11,6 +12,7 @@ from fastapi.testclient import TestClient
 from apps.api.main import app
 from tga.models.bootstrap import build_model_client, model_config_status
 from tga.models.openai_compatible import OpenAICompatibleClient
+from tga.models.openai_compatible import ProviderRequestError
 from tga.models.settings import (
     effective_model_settings,
     model_settings_path,
@@ -320,6 +322,65 @@ def test_provider_transport_retries_transient_connection_refusal(monkeypatch) ->
     assert calls == 3
     assert delays == [0.25, 0.5]
     assert result["message"]["content"] == "ok"
+
+
+def test_provider_transport_retries_remote_disconnect(monkeypatch) -> None:
+    client = OpenAICompatibleClient(
+        base_url="https://provider.example/v1", api_key="secret", model="model"
+    )
+    calls = 0
+    delays: list[float] = []
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        @staticmethod
+        def read() -> bytes:
+            return b'{"choices": [{"message": {"content": "recovered"}}]}'
+
+    def flaky_urlopen(_request, *, timeout):
+        nonlocal calls
+        assert timeout == client.timeout_s
+        calls += 1
+        if calls < 3:
+            raise RemoteDisconnected("Remote end closed connection without response")
+        return Response()
+
+    monkeypatch.setattr("tga.models.openai_compatible.urlopen", flaky_urlopen)
+    monkeypatch.setattr("tga.models.openai_compatible.time.sleep", delays.append)
+
+    result = client.chat_tools([], tools=[])
+
+    assert calls == 3
+    assert delays == [0.25, 0.5]
+    assert result["message"]["content"] == "recovered"
+
+
+def test_provider_transport_reports_exhausted_remote_disconnect(monkeypatch) -> None:
+    client = OpenAICompatibleClient(
+        base_url="https://provider.example/v1", api_key="secret", model="model"
+    )
+    calls = 0
+
+    def disconnected_urlopen(_request, *, timeout):
+        nonlocal calls
+        assert timeout == client.timeout_s
+        calls += 1
+        raise RemoteDisconnected("Remote end closed connection without response")
+
+    monkeypatch.setattr("tga.models.openai_compatible.urlopen", disconnected_urlopen)
+    monkeypatch.setattr("tga.models.openai_compatible.time.sleep", lambda _delay: None)
+
+    with pytest.raises(ProviderRequestError, match="after 3 attempts") as captured:
+        client.chat_tools([], tools=[])
+
+    assert calls == 3
+    assert captured.value.retryable is True
+    assert captured.value.attempts == 3
 
 
 @pytest.mark.parametrize(

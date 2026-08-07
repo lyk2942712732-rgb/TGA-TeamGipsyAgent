@@ -9,6 +9,7 @@ import { TaskCommandHeader } from "./components/TaskCommandHeader";
 import { TaskWorkspaceTabs } from "./components/TaskWorkspaceTabs";
 import { selectSupervisor } from "./models/selectors";
 import { replayStoreAtSeq } from "./models/replay";
+import type { RuntimeStore } from "./models/types";
 import { runtimeApi } from "../../runtime/api-v2";
 import { readRuntimeSelection, writeRuntimeSelection, type RuntimeTab } from "./runtime-selection";
 import { useTaskRuntime } from "./use-task-runtime";
@@ -33,11 +34,20 @@ export function TaskRuntimePage({ taskId, mode = "runtime" }: { taskId: string; 
   const supervisor = selectSupervisor(viewStore);
   const selectedSolver = (selection.solverId ? viewStore.solversById[selection.solverId] : undefined) ?? (intentSolver ? viewStore.solversById[intentSolver] : undefined) ?? supervisor;
   const selectedSolverId = selectedSolver?.solverId ?? null;
+  const terminalFailure = taskFailure(viewStore);
   const control = async (action: "pause" | "resume" | "cancel") => { setBusy(true); setNotice(null); try { await runtimeApi.control(taskId, action); setNotice("Task 控制请求已提交"); refresh(); } catch (reason) { setNotice(reason instanceof Error ? reason.message : "Task 控制失败"); } finally { setBusy(false); } };
   return <section className="task-runtime-page">
     <TaskCommandHeader store={viewStore} connection={connection} mode={mode} busy={busy} onControl={(action) => void control(action)} onIntervention={() => setInterventionOpen(true)} onApprovals={() => setSelection({ tab: "approvals" })} onReplay={() => navigate({ pathname: `/tasks/${encodeURIComponent(taskId)}/replay`, search: location.search })} />
     {mode === "replay" && replaySeq !== null ? <ReplayControls store={store} seq={replaySeq} onSeq={setReplaySeq} /> : null}
     {error ? <div className="runtime-sync-error" role="alert">实时同步暂时中断：{error}<button onClick={refresh}>重试</button></div> : null}
+    {terminalFailure ? <div className="runtime-sync-error runtime-task-failure" role="alert">
+      <strong>{terminalFailure.title}</strong>
+      <span>{terminalFailure.message}</span>
+      {terminalFailure.attempts ? <small>已自动尝试 {terminalFailure.attempts} 次</small> : null}
+      {mode === "runtime" && viewStore.session.status === "blocked"
+        ? <button disabled={busy} onClick={() => void control("resume")}>{terminalFailure.retryable ? "重新连接并恢复" : "恢复任务"}</button>
+        : null}
+    </div> : null}
     {notice ? <div className="runtime-sync-notice" role="status">{notice}<button onClick={() => setNotice(null)}>关闭</button></div> : null}
     <div className="runtime-mobile-switches"><button aria-expanded={drawer === "team"} onClick={() => setDrawer(drawer === "team" ? null : "team")}>团队</button><button aria-expanded={drawer === "inspector"} onClick={() => setDrawer(drawer === "inspector" ? null : "inspector")}>检查器</button></div>
     <div className="task-runtime-layout">
@@ -48,4 +58,34 @@ export function TaskRuntimePage({ taskId, mode = "runtime" }: { taskId: string; 
     <GlobalActionDock store={viewStore} mode={mode} onRefresh={refresh} onOpenApprovals={() => setSelection({ tab: "approvals" })} onIntervention={() => setInterventionOpen(true)} />
     <InterventionDialog store={store} open={interventionOpen && mode === "runtime"} onClose={() => setInterventionOpen(false)} onSubmitted={refresh} />
   </section>;
+}
+
+function taskFailure(store: RuntimeStore): { title: string; message: string; retryable: boolean; attempts: number | null } | null {
+  if (!["blocked", "failed"].includes(store.session.status)) return null;
+  const events = Object.values(store.eventsBySeq).sort((left, right) => right.seq - left.seq);
+  const stopped = events.find((event) => event.type === "SESSION_STOPPED");
+  const agentError = events.find((event) => event.type === "AGENT_ERROR");
+  const stoppedError = objectValue(stopped?.payload.error);
+  const retryable = stoppedError.retryable === true || agentError?.payload.retryable === true;
+  const rawAttempts = stoppedError.attempts ?? agentError?.payload.attempts;
+  const attempts = typeof rawAttempts === "number" && Number.isFinite(rawAttempts) && rawAttempts > 0 ? rawAttempts : null;
+  const message = stringValue(stoppedError.message)
+    ?? stringValue(agentError?.payload.message)
+    ?? stringValue(stopped?.payload.reason)
+    ?? store.session.stopReason
+    ?? "任务运行时发生未分类错误。";
+  const title = ({
+    model_request_failed: "模型连接失败，任务已暂停",
+    session_turn_limit: "任务达到最大回合数",
+    task_budget_exhausted: "任务预算已耗尽",
+  } as Record<string, string>)[store.session.stopReason ?? ""] ?? "任务运行已阻塞";
+  return { title, message, retryable, attempts };
+}
+
+function objectValue(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function stringValue(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value : null;
 }
