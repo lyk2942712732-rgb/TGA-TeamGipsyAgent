@@ -60,26 +60,25 @@ def test_remote_http_profiles_need_no_image():
 
 def test_apply_published_pins_every_matching_profile(tmp_path):
     """The release listing is the authority the workflow already produces."""
-    targets = resolver.load_matrix()
+    target = resolver.load_matrix()[0]
     listing = tmp_path / "published-images.txt"
     listing.write_text(
-        "\n".join(
-            f"ghcr.io/owner/{target.image}@sha256:{index:064x}"
-            for index, target in enumerate(targets, start=1)
-        )
-        + "\n",
+        f"ghcr.io/owner/{target.image}@sha256:{1:064x}\n",
         encoding="utf-8",
     )
-    config = {"profiles": {t.profile_id: {"id": t.profile_id, "provider": "sandboxd"}
-                           for t in targets}}
+    config = {"profiles": {
+        "ctf-web-v1": {"id": "ctf-web-v1", "provider": "sandboxd"},
+        "static-analysis-v1": {"id": "static-analysis-v1", "provider": "sandboxd"},
+        "remote-http": {"id": "remote-http", "provider": "remote_http"},
+    }}
 
     changed, problems = resolver.apply_published(config, listing)
     assert problems == []
-    assert changed == len(targets)
-    for index, target in enumerate(targets, start=1):
-        assert config["profiles"][target.profile_id]["image"] == (
-            f"ghcr.io/owner/{target.image}@sha256:{index:064x}"
-        )
+    assert changed == 2
+    expected = f"ghcr.io/owner/{target.image}@sha256:{1:064x}"
+    assert config["profiles"]["ctf-web-v1"]["image"] == expected
+    assert config["profiles"]["static-analysis-v1"]["image"] == expected
+    assert "image" not in config["profiles"]["remote-http"]
 
 
 def test_apply_published_ignores_the_base_image(tmp_path):
@@ -110,15 +109,19 @@ def test_apply_published_reports_an_unknown_image(tmp_path):
     assert any("does not map to any profile" in problem for problem in problems)
 
 
-def test_matrix_rows_match_the_shipped_profiles():
-    """Every buildable image must correspond to a configured profile."""
+def test_matrix_image_matches_every_shipped_local_profile():
+    """Every local profile must point at the single buildable image."""
     from tga.deployment.paths import project_root
 
     config = json.loads(
         (project_root() / "config" / "sandbox.json").read_text(encoding="utf-8")
     )
-    for target in resolver.load_matrix():
-        assert target.profile_id in config["profiles"], target.profile_id
+    target = resolver.load_matrix()[0]
+    repositories = {
+        profile["image"].split("@", 1)[0].rsplit("/", 1)[-1]
+        for profile in resolver.local_profiles(config).values()
+    }
+    assert repositories == {target.image}
 
 
 def test_solver_dockerfiles_carry_no_placeholder_base():

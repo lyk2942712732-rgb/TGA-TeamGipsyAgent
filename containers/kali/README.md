@@ -1,63 +1,43 @@
-# Kali Solver images
+# Universal Kali Solver image
 
 ## Runtime model
 
-Each `SolverDefinition` may bind one Kali Profile by `kali.profile_id`. The
-Profile in `config/sandbox.json` defines the image reference, executable
-allowlist, network policy, resource limits, and runtime capabilities. Each
-bound Solver has an independent image context under `solvers/<solver-id>` and
-inherits the common `base` image. A short-lived `SolverRun` container is
-created from that Solver image when the runtime executes work.
+Every local Solver still binds its own Kali Profile through `kali.profile_id`.
+The Profile in `config/sandbox.json` keeps the executable allowlist, network
+policy, resource limits, and runtime capabilities independent, but all 22 local
+Profiles now reference the same immutable image:
 
-The Dockerfiles in this directory mean only that image source is prepared.
-They do not make a Profile **Runtime Ready**. An image is Runtime Ready only
-after CI has built and validated it, scanned it, published it, and pinned the
-verified release digest into `config/sandbox.json`. Digests are never written
-by hand: a `repo@sha256:...` reference is a registry manifest digest that only
-exists once something has been pushed.
+`ghcr.io/lyk2942712732-rgb/tga-kali-universal@sha256:<release-digest>`
 
-All 22 Profiles are pinned as of the `sandbox-v0.1.1` release. A digest is
-replaced only by re-running the release workflow, never by editing the file.
+The image is built from `kalilinux/kali-rolling` through the common `base`
+stage. `universal/Dockerfile` installs the union of every Solver toolset and
+`universal/toolset.json` declares schema version 2, the `universal` image role,
+all compatible Profile IDs, and the complete executable inventory. sandboxd
+checks that the selected Profile is listed as compatible and that every
+allowlisted executable is present before it starts a workload.
 
-## Image matrix
+The old `solvers/*` contexts are retained as installation provenance and
+smaller-image references. They are no longer build-matrix targets and are not
+referenced by runtime configuration.
 
-`build-matrix.yaml` is the source of truth for all local Kali images. Every
-context contains a Dockerfile and a byte-identical copy of its generated
-Profile manifest.
+## Source and release configuration
 
-| Solver | Profile | Image | Primary installation sources |
-| --- | --- | --- | --- |
-| architecture-analyst | architecture-analysis-v1 | tga-kali-architecture-analyst | Kali APT; pinned Semgrep via pipx |
-| binary-triage-solver | binary-triage-v1 | tga-kali-binary-triage-solver | Kali APT; pinned flare-capa via pip |
-| challenge-classifier | ctf-classifier-v1 | tga-kali-ctf-classifier | Kali APT; pinned zsteg gem; checksummed Didier Stevens pdfid |
-| code-audit-solver | code-audit-v1 | tga-kali-code-audit | pinned pipx/npm/Go tools; checksummed CodeQL, Trivy, and Syft releases |
-| crash-root-cause-solver | crash-triage-v1 | tga-kali-crash-triage | Kali APT; checksummed CASR release |
-| ctf-crypto-solver | ctf-crypto-v1 | tga-kali-ctf-crypto | checksummed Miniforge with pinned conda-forge Sage; Kali APT PARI/GP and OpenSSL |
-| ctf-forensics-solver | ctf-forensics-v1 | tga-kali-ctf-forensics | Kali APT; pinned Ruby/Python packages; checksummed Didier Stevens tools |
-| ctf-pwn-solver | ctf-pwn-v1 | tga-kali-ctf-pwn | Kali APT; pinned pip and Ruby packages |
-| ctf-reverse-solver | ctf-reverse-v1 | tga-kali-ctf-reverse | Kali APT Ghidra/reversing tools; pinned flare-capa |
-| ctf-web-solver | ctf-web-v1 | tga-kali-ctf-web | Kali APT; pinned Go tools; verified jwt_tool tag/commit |
-| dynamic-analysis-solver | dynamic-analysis-v1 | tga-kali-dynamic-analysis | Kali APT debuggers/tracers; pinned frida-tools |
-| dynamic-fuzzing-solver | dynamic-fuzzing-v1 | tga-kali-dynamic-fuzzing | Kali APT AFL++/clang; verified honggfuzz and radamsa tags built in a separate stage |
-| evidence-triage-solver | evidence-triage-v1 | tga-kali-evidence-triage | lightweight Kali APT packages only |
-| host-network-forensics-solver | network-forensics-v1 | tga-kali-network-forensics | noninteractive Kali APT Wireshark, Zeek, and packet tools |
-| logic-config-recovery-solver | logic-recovery-v1 | tga-kali-logic-recovery | Kali APT diffoscope plus base jq/yq |
-| malware-solver | malware-analysis-v1 | tga-kali-malware-analysis | Kali APT Ghidra/radare2/YARA; pinned Python analysis libraries |
-| poc-reproduction-solver | poc-reproduction-v1 | tga-kali-poc-reproduction | Kali APT compilers, debugger, QEMU, and patchelf |
-| static-analysis-solver | static-analysis-v1 | tga-kali-static-analysis | Kali APT Ghidra/reversing tools; pinned flare-capa |
-| surface-mapper | pentest-surface-v1 | tga-kali-surface-mapper | Kali APT; pinned Go ProjectDiscovery tools |
-| timeline-ioc-solver | timeline-ioc-v1 | tga-kali-timeline-ioc | Kali APT Plaso/Sigma; checksummed Chainsaw, Hayabusa, and evtx releases |
-| vulnerability-validator | pentest-validation-v1 | tga-kali-vulnerability-validator | Kali APT; pinned Go tools; verified jwt_tool tag/commit |
-| web-api-analyst | pentest-web-api-v1 | tga-kali-web-api-analyst | Kali APT/pipx; pinned Go releases; verified GraphQL Cop and jwt_tool commits |
+`build-matrix.yaml` is authoritative and contains one Solver target:
+`tga-kali-universal`. The checked-in `config/sandbox.json` is a release-input
+template and therefore uses `REPLACE_WITH_RELEASE_DIGEST` for that image. It is
+not deployable until the image release workflow has:
 
-The malware Profile intentionally retains `pefile` and `lief` as executable
-names. Its image supplies a restricted, read-only CLI that parses a sample
-with the corresponding real Python library and emits a JSON summary. These
-commands are not empty compatibility shims.
+1. built the base and universal images;
+2. validated the universal manifest against all 22 Profiles;
+3. scanned and published the image; and
+4. broadcast the registry manifest digest to every local Profile.
+
+Digests must not be invented or edited by hand. A `repo@sha256:...` manifest
+digest only exists after the registry accepts the image.
 
 ## Build and validation
 
-List or consume the matrix without Docker:
+List the matrix and run the source-level contract tests:
 
 ```sh
 python scripts/kali_build_matrix.py
@@ -65,14 +45,11 @@ python scripts/kali_build_matrix.py --format json
 python -m pytest -q tests/test_kali_images.py
 ```
 
-CI builds each Solver image from the repository root against a base it has just
-built locally, which is why `BASE_IMAGE` defaults to a local tag rather than a
-digest — a digest default would make the tree unbuildable for anyone who has
-not pulled that exact base:
+Build the one candidate image:
 
 ```sh
 docker build --tag tga-kali-base:release containers/kali/base
-while read -r solver profile image context; do
+while read -r image context; do
   docker build \
     --build-arg BASE_IMAGE=tga-kali-base:release \
     --tag "${image}:candidate" \
@@ -80,27 +57,42 @@ while read -r solver profile image context; do
 done < <(python scripts/kali_build_matrix.py)
 ```
 
-Validate each built candidate before scanning or publishing it:
+Validate it against every Profile before scanning or publishing:
 
 ```sh
-while read -r solver profile image context; do
-  python scripts/validate_kali_image.py \
-    --image "${image}:candidate" \
-    --profile "${profile}"
-done < <(python scripts/kali_build_matrix.py)
+python scripts/validate_kali_image.py \
+  --image tga-kali-universal:candidate \
+  --all-profiles
 ```
 
-`validate_kali_image.py` checks the final UID/GID, manifest digest, Profile
-identity, all allowed executable names, absence of sudo, APT cleanup, and
+Validation checks the final UID/GID, manifest digest and compatibility list,
+the union of all allowed executable names, absence of sudo, APT cleanup, and
 startup with a read-only filesystem, no network, and all Linux capabilities
-dropped. Docker CI remains responsible for the real build, Trivy scan, SBOM,
+dropped. CI remains responsible for the full build, Trivy scan, SBOM,
 signature, publication, and release digest update.
+
+## Pull and startup
+
+After publication, pull only the shared digest (or let `tga up --pull-images` do it):
+
+```sh
+docker pull ghcr.io/lyk2942712732-rgb/tga-kali-universal@sha256:<release-digest>
+tga up
+```
+
+Image readiness deduplicates identical references, so this produces one Docker
+inspect/pull even though 22 Profiles reference the image.
 
 ## Sandbox constraints
 
 Installing a tool does not guarantee that the current sandbox backend can run
 every feature. `rr`, GDB, LLDB, Frida, tracing, perf events, and similar tools
 may require ptrace, kernel facilities, or behavior not exposed by sandboxd or
-gVisor. `allow_ptrace` is Profile/runtime policy. A Dockerfile must not grant
+gVisor. `allow_ptrace` remains Profile/runtime policy. The image does not grant
 itself extra capabilities, use privileged mode, start a daemon, or expose a
-port. Runtime support must be tested separately after the image build.
+port.
+
+The malware Profile intentionally retains `pefile` and `lief` as executable
+names. The universal image supplies a restricted, read-only CLI that parses a
+sample with the corresponding Python library and emits a JSON summary; these
+commands are not empty compatibility shims.

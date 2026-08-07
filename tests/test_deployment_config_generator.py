@@ -128,20 +128,22 @@ def _shipped_config() -> dict:
     )
 
 
-def test_the_shipped_configuration_carries_no_placeholder_images():
-    """A release must pin its digests back into the config it ships.
+def test_source_configuration_waits_for_one_universal_release_digest():
+    """The source tree is the input template for the image release workflow.
 
-    sandbox-v0.1.0 published its images and left this file holding
-    `REPLACE_WITH_RELEASE_DIGEST`, because the workflow only uploaded the
-    rewritten copy as a build artifact. provision.sh seeds /etc/tga from here,
-    so that shipped a config no host could ever enforce -- silently.
+    All local profiles intentionally wait on the same placeholder.  The tag
+    workflow replaces it with the digest of the one universal image and then
+    runs ``resolve_sandbox_digests.py --check`` before publishing the config.
     """
     images = [
         profile.get("image") or ""
         for profile in _shipped_config()["profiles"].values()
+        if profile.get("provider") != "remote_http"
     ]
     assert images, "expected the shipped config to declare profiles"
-    assert [image for image in images if "REPLACE_WITH_RELEASE_DIGEST" in image] == []
+    assert set(images) == {
+        "ghcr.io/lyk2942712732-rgb/tga-kali-universal@sha256:REPLACE_WITH_RELEASE_DIGEST"
+    }
 
 
 def test_shipped_configuration_is_not_certified_until_bound_to_a_host():

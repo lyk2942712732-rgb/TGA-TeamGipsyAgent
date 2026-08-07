@@ -36,6 +36,27 @@ func committedConfig(t *testing.T) map[string]any {
 // committed file ships it empty, and provisioning fills it in.
 func TestCommittedConfigLoadsAfterHostBinding(t *testing.T) {
 	value := committedConfig(t)
+	// The repository carries a release-input template. The image workflow
+	// replaces this marker with the universal image's immutable registry digest
+	// before the config becomes deployable; use a syntactically valid digest
+	// here so this decoder/host-binding test remains independent of publication.
+	profiles, ok := value["profiles"].(map[string]any)
+	if !ok {
+		t.Fatal("the committed config has no profiles section")
+	}
+	for _, entry := range profiles {
+		profile, ok := entry.(map[string]any)
+		if !ok {
+			t.Fatal("a profile is not an object")
+		}
+		if image, ok := profile["image"].(string); ok {
+			profile["image"] = strings.ReplaceAll(
+				image,
+				"REPLACE_WITH_RELEASE_DIGEST",
+				strings.Repeat("a", 64),
+			)
+		}
+	}
 	sandboxd, ok := value["sandboxd"].(map[string]any)
 	if !ok {
 		t.Fatal("the committed config has no sandboxd section")

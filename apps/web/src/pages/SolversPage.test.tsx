@@ -77,7 +77,7 @@ describe("SolversPage capability editor", () => {
       solver_id: solver.id,
       requires_kali: true,
       profile_id: "ctf-pwn-v1",
-      image: "ghcr.io/team-gipsy/tga-kali-ctf-pwn@sha256:REPLACE_WITH_RELEASE_DIGEST",
+      image: "ghcr.io/team-gipsy/tga-kali-universal@sha256:REPLACE_WITH_RELEASE_DIGEST",
       status: "unresolved_digest",
       image_status: "unresolved_digest",
       runtime_status: "sandboxd_unavailable",
@@ -112,8 +112,9 @@ describe("SolversPage capability editor", () => {
     });
     mocks.fetchKaliProfiles.mockResolvedValue({
       items: [{
-        id: "ctf-pwn-v1", display_name: "CTF pwn", image_name: "tga/kali-ctf-pwn",
-        image_tag: "2026.08", image_digest: null, image: "tga/kali-ctf-pwn:2026.08",
+        id: "ctf-pwn-v1", display_name: "CTF pwn", image_name: "ghcr.io/team-gipsy/tga-kali-universal",
+        image_tag: "latest", image_digest: null, image: "ghcr.io/team-gipsy/tga-kali-universal@sha256:REPLACE_WITH_RELEASE_DIGEST",
+        image_role: "universal", shared_image_profile_count: 22,
         tools: [], supported_capabilities: ["kali.exec", "kali.session"],
         allowed_executables: ["gdb"], session_executables: ["gdb"], network_mode: "disabled",
         input_mount: "read_only", scratch_mount: "private_read_write",
@@ -157,7 +158,7 @@ describe("SolversPage capability editor", () => {
 
     expect(await screen.findAllByText("未发布")).not.toHaveLength(0);
     await user.click(screen.getByRole("tab", { name: "Kali 信息" }));
-    expect(screen.getByText("ghcr.io/team-gipsy/tga-kali-ctf-pwn@sha256:REPLACE_WITH_RELEASE_DIGEST")).toBeInTheDocument();
+    expect(screen.getByText("ghcr.io/team-gipsy/tga-kali-universal@sha256:REPLACE_WITH_RELEASE_DIGEST")).toBeInTheDocument();
     expect(screen.getByText("unresolved_image_digest")).toBeInTheDocument();
     expect(screen.queryByText("健康")).not.toBeInTheDocument();
   });

@@ -55,7 +55,7 @@ def load_matrix(path: Path = MATRIX_PATH) -> list[dict[str, str]]:
     if in_images and current is not None:
         values.append(current)
 
-    required = {"solver", "profile", "image", "context"}
+    required = {"image", "context"}
     if not values:
         raise ValueError("build matrix has no images")
     for value in values:
@@ -68,7 +68,7 @@ def load_matrix(path: Path = MATRIX_PATH) -> list[dict[str, str]]:
             raise ValueError("build matrix context escapes containers/kali") from exc
         if not (context / "Dockerfile").is_file() or not (context / "toolset.json").is_file():
             raise ValueError(f"incomplete Solver image context: {value['context']}")
-    for key in ("solver", "profile", "image", "context"):
+    for key in ("image", "context"):
         if len({value[key] for value in values}) != len(values):
             raise ValueError(f"build matrix repeats {key}")
     return values
@@ -84,7 +84,7 @@ def main() -> int:
         print(json.dumps(values, separators=(",", ":")))
     else:
         for value in values:
-            print(" ".join(value[key] for key in ("solver", "profile", "image", "context")))
+            print(" ".join(value[key] for key in ("image", "context")))
     return 0
 
 

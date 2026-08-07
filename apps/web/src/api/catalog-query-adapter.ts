@@ -150,6 +150,8 @@ export type KaliProfileRecord = {
   image_tag: string;
   image_digest: string | null;
   image: string;
+  image_role: "dedicated" | "universal";
+  shared_image_profile_count: number;
   tools: KaliTool[];
   supported_capabilities: Array<"kali.exec" | "kali.session">;
   allowed_executables: string[];

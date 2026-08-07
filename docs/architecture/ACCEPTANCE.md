@@ -238,7 +238,7 @@ apt 依赖模拟安装（25 组）、OSV 查询全部钉版 Go 与 PyPI 包（8 
 sudo deploy/wsl-rootfs/provision.sh
 
 # 2. 拉取要用的 profile 镜像（按需，不必全拉；23 个合计数十 GB）
-docker pull ghcr.io/lyk2942712732-rgb/tga-kali-ctf-web@sha256:...
+docker pull ghcr.io/lyk2942712732-rgb/tga-kali-universal@sha256:...
 
 # 3. 启动并观察
 tga up

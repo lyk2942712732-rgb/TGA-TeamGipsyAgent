@@ -43,7 +43,7 @@ def _build_parser() -> argparse.ArgumentParser:
     up_parser.add_argument(
         "--pull-images",
         action="store_true",
-        help="Fetch any missing Solver images (tens of gigabytes on a first run)",
+        help="Fetch the universal Kali Solver image when it is missing",
     )
 
     subparsers.add_parser("down", parents=[common], help="Stop the deployment, preserving data")
