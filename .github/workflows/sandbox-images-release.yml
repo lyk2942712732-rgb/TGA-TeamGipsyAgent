@@ -35,20 +35,20 @@ jobs:
         run: |
           docker pull kalilinux/kali-rolling
           echo "kali=$(docker image inspect kalilinux/kali-rolling --format '{{index .RepoDigests 0}}')" >> "$GITHUB_OUTPUT"
-      - name: Build and validate Solver images
+      - name: Build and validate universal Solver image
         shell: bash
         run: |
           set -euo pipefail
           docker build \
             --build-arg KALI_BASE="${{ steps.base.outputs.kali }}" \
             --tag tga-kali-base:release containers/kali/base
-          while read -r solver profile image context; do
+          while read -r image context; do
             docker build \
               --build-arg BASE_IMAGE=tga-kali-base:release \
               --tag "$image:release" \
               "containers/kali/$context"
             python scripts/validate_kali_image.py \
-              --image "$image:release" --profile "$profile"
+              --image "$image:release" --all-profiles
           done < <(python scripts/kali_build_matrix.py)
       - name: Publish, scan and record immutable digests
         shell: bash
@@ -59,7 +59,7 @@ jobs:
           set -euo pipefail
           : > published-images.txt
           images=(tga-kali-base)
-          while read -r solver profile image context; do
+          while read -r image context; do
             images+=("$image")
           done < <(python scripts/kali_build_matrix.py)
           for local in "${images[@]}"; do
@@ -81,7 +81,7 @@ jobs:
           # Signing used to happen inside the publish loop, one ambient
           # credential lookup per image. GitHub mints ACTIONS_ID_TOKEN_REQUEST_TOKEN
           # per step, and it expires well inside a step that pushes and scans
-          # 23 images: the sixth cosign call failed with "fetching ambient OIDC
+          # many images: a later cosign call failed with "fetching ambient OIDC
           # credentials: invalid character 'u' looking for beginning of value"
           # -- the endpoint had answered "unauthorized" instead of JSON, seven
           # minutes into the step. Minting the Sigstore identity token once,

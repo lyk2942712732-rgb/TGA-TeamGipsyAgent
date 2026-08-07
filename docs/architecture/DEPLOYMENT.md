@@ -212,7 +212,7 @@ that image is on this host. A pinned reference makes "is it here?" and "is it
 the right one?" the same question, so a successful `docker image inspect` on
 the digest answers both, and nothing re-hashes the image afterwards.
 
-`tga up` checks but does not pull. The twenty-two Solver images run to tens of
+`tga up` checks but does not pull. The shared universal Solver image can run to
 gigabytes; a first run that silently spent an hour downloading — inside a
 ninety-second readiness budget — would be worse than one that says what is
 missing and how to get it. `tga up --pull-images` fetches them. This is a

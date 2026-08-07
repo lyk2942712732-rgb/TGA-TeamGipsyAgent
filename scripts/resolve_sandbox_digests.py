@@ -1,4 +1,4 @@
-"""Build, publish and pin the Kali Solver images referenced by sandbox.json.
+"""Build, publish and pin the universal Kali image referenced by sandbox.json.
 
 `sandbox.json` ships with `REPLACE_WITH_RELEASE_DIGEST` in every profile image.
 Those placeholders cannot be edited by hand into something meaningful: a
@@ -19,9 +19,9 @@ Examples::
     docker run -d -p 5000:5000 --name tga-registry registry:2
     python scripts/resolve_sandbox_digests.py --registry localhost:5000
 
-    # Only a couple of images, to validate the pipeline cheaply.
+    # Build the universal target explicitly.
     python scripts/resolve_sandbox_digests.py --registry localhost:5000 \
-        --only ctf-web-solver,challenge-classifier
+        --only tga-kali-universal
 
     # Report what is still unresolved, changing nothing.
     python scripts/resolve_sandbox_digests.py --check
@@ -52,8 +52,6 @@ CONTAINERS = REPO_ROOT / "containers" / "kali"
 class BuildTarget:
     """One row of the build matrix."""
 
-    solver: str
-    profile_id: str
     image: str
     context: str
 
@@ -93,8 +91,6 @@ def load_matrix() -> list[BuildTarget]:
 
     targets = [
         BuildTarget(
-            solver=row["solver"],
-            profile_id=row["profile"],
             image=row["image"],
             context=row["context"],
         )
@@ -161,9 +157,9 @@ def build_base(*, registry: str, tag: str, push: bool) -> str:
 def build_solver(
     target: BuildTarget, *, base_reference: str, registry: str, tag: str, push: bool
 ) -> tuple[str, str]:
-    """Build one Solver image; return (pinned reference, toolset digest)."""
+    """Build the universal Solver image; return its reference and toolset digest."""
     local = f"{target.image}:{tag}"
-    print(f"[{target.solver}] building", flush=True)
+    print(f"[{target.image}] building", flush=True)
     run(
         "docker", "build",
         "--build-arg", f"BASE_IMAGE={base_reference}",
@@ -175,11 +171,20 @@ def build_solver(
         return local, toolset
     remote = f"{registry}/{target.image}:{tag}"
     run("docker", "tag", local, remote)
-    print(f"[{target.solver}] pushing {remote}", flush=True)
+    print(f"[{target.image}] pushing {remote}", flush=True)
     run("docker", "push", remote)
     digest = repo_digest(remote)
-    print(f"[{target.solver}] {digest}", flush=True)
+    print(f"[{target.image}] {digest}", flush=True)
     return f"{registry}/{target.image}@{digest}", toolset
+
+
+def local_profiles(config: dict) -> dict[str, dict]:
+    """Profiles backed by the one universal local Kali image."""
+    return {
+        profile_id: profile
+        for profile_id, profile in (config.get("profiles") or {}).items()
+        if (profile or {}).get("provider") != "remote_http"
+    }
 
 
 def unresolved(config: dict) -> list[str]:
@@ -205,7 +210,7 @@ def apply_published(config: dict, listing: Path) -> tuple[int, list[str]]:
     successful release still left sandbox.json full of placeholders. This
     closes that gap without rebuilding anything.
     """
-    by_image = {target.image: target.profile_id for target in load_matrix()}
+    known_images = {target.image for target in load_matrix()}
     changed = 0
     problems: list[str] = []
     for line in listing.read_text(encoding="utf-8").splitlines():
@@ -218,17 +223,17 @@ def apply_published(config: dict, listing: Path) -> tuple[int, list[str]]:
         name = reference.rsplit("@", 1)[0].rsplit("/", 1)[-1]
         if name == BASE_IMAGE_NAME:
             continue
-        profile_id = by_image.get(name)
-        if profile_id is None:
+        if name not in known_images:
             problems.append(f"{name} does not map to any profile")
             continue
-        profile = (config.get("profiles") or {}).get(profile_id)
-        if profile is None:
-            problems.append(f"{profile_id} is absent from the configuration")
+        profiles = local_profiles(config)
+        if not profiles:
+            problems.append("the configuration has no local Kali profiles")
             continue
-        if profile.get("image") != reference:
-            profile["image"] = reference
-            changed += 1
+        for profile in profiles.values():
+            if profile.get("image") != reference:
+                profile["image"] = reference
+                changed += 1
     return changed, problems
 
 
@@ -252,14 +257,14 @@ def report(config_path: Path) -> int:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="resolve_sandbox_digests",
-        description="Build, publish and pin the Kali Solver images in sandbox.json.",
+        description="Build, publish and pin the universal Kali image in sandbox.json.",
     )
     parser.add_argument("--registry", default=None,
                         help="Target registry, e.g. localhost:5000 or ghcr.io/<owner>")
     parser.add_argument("--tag", default="release", help="Tag to publish under")
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
     parser.add_argument("--only", default="",
-                        help="Comma-separated solver names to limit the build to")
+                        help="Comma-separated image names or contexts to limit the build to")
     parser.add_argument("--no-push", action="store_true",
                         help="Build without pushing; leaves images unpinnable")
     parser.add_argument("--dry-run", action="store_true",
@@ -301,23 +306,27 @@ def main(argv: list[str] | None = None) -> int:
 
     config = json.loads(args.config.read_text(encoding="utf-8"))
     selected = {name.strip() for name in args.only.split(",") if name.strip()}
-    targets = [t for t in load_matrix() if not selected or t.solver in selected]
+    targets = [
+        target for target in load_matrix()
+        if not selected or target.image in selected or target.context in selected
+    ]
     if selected:
-        unknown = selected - {t.solver for t in targets}
+        matched = {value for target in targets for value in (target.image, target.context)}
+        unknown = selected - matched
         if unknown:
-            parser.error(f"unknown solver(s): {', '.join(sorted(unknown))}")
+            parser.error(f"unknown image target(s): {', '.join(sorted(unknown))}")
     print(f"resolving {len(targets)} image(s) against {args.registry}\n")
 
     push = not args.no_push
     try:
         base_reference = build_base(registry=args.registry, tag=args.tag, push=push)
-        resolved: dict[str, tuple[str, str]] = {}
+        resolved: list[tuple[str, str]] = []
         for target in targets:
             reference, toolset = build_solver(
                 target, base_reference=base_reference,
                 registry=args.registry, tag=args.tag, push=push,
             )
-            resolved[target.profile_id] = (reference, toolset)
+            resolved.append((reference, toolset))
     except BuildError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
@@ -325,31 +334,29 @@ def main(argv: list[str] | None = None) -> int:
     # Refuse to write a reference that is not actually immutable; a mutable
     # tag in sandbox.json would be verified by nothing.
     changed = mismatched = 0
-    for profile_id, (reference, toolset) in sorted(resolved.items()):
-        profile = (config.get("profiles") or {}).get(profile_id)
-        if profile is None:
-            print(f"warning: {profile_id} is not present in {args.config}", file=sys.stderr)
-            continue
-        expected = profile.get("toolset_digest")
-        if expected and expected != toolset:
-            print(
-                f"error: {profile_id} toolset digest {toolset} does not match the "
-                f"configured {expected}; the image and the profile disagree",
-                file=sys.stderr,
-            )
-            mismatched += 1
-            continue
+    profiles = local_profiles(config)
+    for reference, toolset in resolved:
         if not DIGEST_RE.search(reference):
             print(
-                f"error: {profile_id} resolved to {reference}, which is not "
+                f"error: universal image resolved to {reference}, which is not "
                 "digest-pinned (was it pushed?)",
                 file=sys.stderr,
             )
             mismatched += 1
             continue
-        if profile.get("image") != reference:
-            profile["image"] = reference
-            changed += 1
+        for profile_id, profile in sorted(profiles.items()):
+            expected = profile.get("toolset_digest")
+            if expected and expected != toolset:
+                print(
+                    f"error: {profile_id} toolset digest {toolset} does not match the "
+                    f"configured {expected}; the image and the profile disagree",
+                    file=sys.stderr,
+                )
+                mismatched += 1
+                continue
+            if profile.get("image") != reference:
+                profile["image"] = reference
+                changed += 1
 
     if mismatched:
         print(f"\n{mismatched} image(s) failed verification; sandbox.json was not written",

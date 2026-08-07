@@ -140,7 +140,7 @@ def test_an_empty_image_store_makes_every_profile_unavailable(monkeypatch):
     `_local_image_digests` returned an empty set both when the store held
     nothing and when it could not be read, and the guard `if local_images and
     ...` then skipped the comparison entirely.  A first install reported
-    `0/22 images present` and `status: ready` in the same run.
+    `0/1 images present` and `status: ready` in the same run.
     """
     _store(monkeypatch, set())
 

@@ -72,23 +72,23 @@ jobs:
         run: |
           docker pull kalilinux/kali-rolling
           echo "kali=$(docker image inspect kalilinux/kali-rolling --format '{{index .RepoDigests 0}}')" >> "$GITHUB_OUTPUT"
-      - name: Build Solver images
+      - name: Build universal Solver image
         shell: bash
         run: |
           docker build \
             --build-arg KALI_BASE="${{ steps.base.outputs.kali }}" \
             --tag tga-kali-base:pr containers/kali/base
-          while read -r solver profile image context; do
+          while read -r image context; do
             docker build \
               --build-arg BASE_IMAGE=tga-kali-base:pr \
               --tag "$image:pr" \
               "containers/kali/$context"
           done < <(python scripts/kali_build_matrix.py)
-      - name: Validate Solver image contracts
+      - name: Validate universal Solver image contract
         shell: bash
         run: |
-          while read -r solver profile image context; do
-            python scripts/validate_kali_image.py --image "$image:pr" --profile "$profile"
+          while read -r image context; do
+            python scripts/validate_kali_image.py --image "$image:pr" --all-profiles
           done < <(python scripts/kali_build_matrix.py)
       - uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
         with:
@@ -98,7 +98,7 @@ jobs:
         shell: bash
         run: |
           images=(tga-kali-base:pr)
-          while read -r solver profile image context; do
+          while read -r image context; do
             images+=("$image:pr")
           done < <(python scripts/kali_build_matrix.py)
           for image in "${images[@]}"; do

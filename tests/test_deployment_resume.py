@@ -1,7 +1,7 @@
 """A deployment that came up short has to be repairable by `tga up`.
 
 Reported from a first install on someone else's machine.  `tga up` finished
-with `0/22 images present` and told the operator to run `tga up --pull-images`.
+with `0/1 images present` and told the operator to run `tga up --pull-images`.
 That command printed `already_running` and did nothing, every time: the
 short-circuit fired before the flag was read, so the one documented remedy
 could not reach the step that owed the work.

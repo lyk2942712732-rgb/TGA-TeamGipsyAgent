@@ -11,6 +11,7 @@ import (
 
 func TestValidateToolset(t *testing.T) {
 	valid := []byte(`{"profile_id":"offline-analysis","tools":{"file":"1.0","python3":"3.13"}}`)
+	universal := []byte(`{"schema_version":2,"image_role":"universal","compatible_profiles":["offline-analysis","ctf-web-v1"],"tools":{"file":"1.0","python3":"3.13"}}`)
 	digest := sha256.Sum256(valid)
 	profile := config.Profile{
 		ID:                 "offline-analysis",
@@ -25,6 +26,10 @@ func TestValidateToolset(t *testing.T) {
 		wantErr string
 	}{
 		{name: "valid", raw: valid, profile: profile},
+		{
+			name: "valid universal", raw: universal,
+			profile: profileWithDigest(profile, universal),
+		},
 		{
 			name: "digest mismatch", raw: valid,
 			profile: func() config.Profile {
@@ -51,6 +56,24 @@ func TestValidateToolset(t *testing.T) {
 				[]byte(`{"profile_id":"offline-analysis","tools":{"file":"1.0"}}`),
 			),
 			wantErr: `missing allowed executable "python3"`,
+		},
+		{
+			name: "universal profile mismatch",
+			raw:  []byte(`{"schema_version":2,"image_role":"universal","compatible_profiles":["ctf-web-v1"],"tools":{"file":"1.0","python3":"3.13"}}`),
+			profile: profileWithDigest(
+				profile,
+				[]byte(`{"schema_version":2,"image_role":"universal","compatible_profiles":["ctf-web-v1"],"tools":{"file":"1.0","python3":"3.13"}}`),
+			),
+			wantErr: "not compatible",
+		},
+		{
+			name: "unsupported schema",
+			raw:  []byte(`{"schema_version":3,"tools":{"file":"1.0","python3":"3.13"}}`),
+			profile: profileWithDigest(
+				profile,
+				[]byte(`{"schema_version":3,"tools":{"file":"1.0","python3":"3.13"}}`),
+			),
+			wantErr: "unsupported image toolset schema",
 		},
 		{
 			name: "trailing object",

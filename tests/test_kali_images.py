@@ -45,40 +45,44 @@ def _repository_name(image: str) -> str:
     return repository.rsplit("/", 1)[-1]
 
 
-def test_kali_build_matrix_covers_all_bound_solvers_and_local_profiles() -> None:
+def test_kali_build_matrix_declares_one_universal_image_for_all_profiles() -> None:
     values = _matrix_module().load_matrix()
-    entries = {value["solver"]: value for value in values}
-    bindings = _kali_solver_bindings()
     profiles = _sandbox_profiles()
-
-    assert set(entries) == set(bindings)
-    assert {value["profile"] for value in values} == set(profiles)
-    for solver_id, profile_id in bindings.items():
-        entry = entries[solver_id]
-        profile = profiles[profile_id]
-        assert entry["profile"] == profile_id
-        assert entry["image"] == _repository_name(str(profile["image"]))
+    assert values == [{"image": "tga-kali-universal", "context": "universal"}]
+    assert set(_kali_solver_bindings().values()) == set(profiles)
+    assert {
+        _repository_name(str(profile["image"])) for profile in profiles.values()
+    } == {"tga-kali-universal"}
 
 
-def test_matrix_contexts_and_toolsets_match_generated_manifests() -> None:
+def test_universal_toolset_covers_every_profile_manifest() -> None:
     manifest_root = KALI_ROOT / "toolsets" / "generated"
-    for value in _matrix_module().load_matrix():
-        context = KALI_ROOT / value["context"]
-        context_manifest = context / "toolset.json"
-        generated_manifest = manifest_root / f"{value['profile']}.json"
-        assert (context / "Dockerfile").is_file()
-        assert context_manifest.is_file()
-        assert context_manifest.read_bytes() == generated_manifest.read_bytes()
+    value = _matrix_module().load_matrix()[0]
+    context = KALI_ROOT / value["context"]
+    manifest = json.loads((context / "toolset.json").read_text(encoding="utf-8"))
+    profiles = _sandbox_profiles()
+    assert (context / "Dockerfile").is_file()
+    assert manifest["schema_version"] == 2
+    assert manifest["image_role"] == "universal"
+    assert set(manifest["compatible_profiles"]) == set(profiles)
+    for profile_id in profiles:
+        generated = json.loads(
+            (manifest_root / f"{profile_id}.json").read_text(encoding="utf-8")
+        )
+        assert set(generated["tools"]) <= set(manifest["tools"])
 
 
-def test_all_profile_toolset_digests_match_committed_manifests() -> None:
+def test_all_profile_toolset_digests_match_universal_manifest() -> None:
     profiles = _sandbox_profiles()
     manifest_root = KALI_ROOT / "toolsets" / "generated"
+    universal_raw = (KALI_ROOT / "universal" / "toolset.json").read_bytes()
+    universal_digest = hashlib.sha256(universal_raw).hexdigest()
     assert {path.stem for path in manifest_root.glob("*.json")} == set(profiles)
     for profile_id, profile in profiles.items():
-        raw = (manifest_root / f"{profile_id}.json").read_bytes()
-        assert hashlib.sha256(raw).hexdigest() == profile["toolset_digest"]
-        manifest = json.loads(raw)
+        assert universal_digest == profile["toolset_digest"]
+        manifest = json.loads(
+            (manifest_root / f"{profile_id}.json").read_text(encoding="utf-8")
+        )
         assert manifest["profile_id"] == profile_id
         assert set(profile["allowed_executables"]) <= set(manifest["tools"])
 

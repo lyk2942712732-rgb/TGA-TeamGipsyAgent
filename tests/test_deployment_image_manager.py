@@ -91,6 +91,16 @@ def test_profiles_without_an_image_of_their_own_are_not_wanted():
     assert image_manager.wanted_images(config) == []
 
 
+def test_shared_universal_image_is_wanted_only_once():
+    config = _config()
+    first = config.profiles["ctf-web-v1"]
+    config.profiles["static-analysis-v1"] = first.model_copy(
+        update={"id": "static-analysis-v1"}
+    )
+
+    assert image_manager.wanted_images(config) == [("ctf-web-v1", PINNED)]
+
+
 def test_a_present_image_is_reported_without_pulling(docker):
     docker.behaviour["present"] = True
 
@@ -266,7 +276,7 @@ def test_a_finished_pull_reports_how_long_it_took(docker):
 
 
 def test_a_failed_pull_names_the_image_and_the_reason_as_it_happens(docker):
-    """The summary arrives after twenty-two images; this cannot wait for it."""
+    """A large universal image still needs to report a pull failure immediately."""
     docker.behaviour["pull_ok"] = False
     docker.behaviour["pull_stderr"] = "denied: requested access to the resource is denied"
 

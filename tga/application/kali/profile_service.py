@@ -82,11 +82,21 @@ class KaliProfileService:
         self, profile_id: str, *, assigned_solver_ids: tuple[str, ...] = ()
     ) -> KaliProfileDetail:
         profile = self.require(profile_id)
+        raw_image = self.config.profile(profile_id).image
+        shared_image_profile_count = sum(
+            1
+            for candidate in self.config.profiles.values()
+            if candidate.provider != "remote_http" and candidate.image == raw_image
+        )
         return KaliProfileDetail.model_validate({
             **profile.model_dump(mode="json"),
-            "image": f"{profile.image_name}:{profile.image_tag}",
+            "image": raw_image,
             "assigned_solver_count": len(assigned_solver_ids),
             "assigned_solver_ids": assigned_solver_ids,
+            "image_role": (
+                "universal" if shared_image_profile_count > 1 else "dedicated"
+            ),
+            "shared_image_profile_count": shared_image_profile_count,
             "config_sha256": self.config_sha256,
         })
 

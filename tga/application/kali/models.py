@@ -19,6 +19,8 @@ class _KaliProfileWriteCommand(BaseModel):
     image_digest: str | None = None
     # Read-only projections are accepted so a GET response is a valid PUT body.
     image: str | None = None
+    image_role: Literal["dedicated", "universal"] = "dedicated"
+    shared_image_profile_count: int = Field(default=1, ge=1)
     tools: tuple[KaliToolInfo, ...] = ()
     supported_capabilities: tuple[Literal["kali.exec", "kali.session"], ...]
     allowed_executables: tuple[str, ...]

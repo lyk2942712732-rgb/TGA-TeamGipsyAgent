@@ -6,8 +6,8 @@ image. That makes "is it here?" and "is it the right one?" the same question:
 digest cannot quietly hand back something else. Nothing here re-hashes an
 image after pulling it, because the registry contract already did.
 
-`tga up` does not pull by default. The twenty-two Solver images run to tens of
-gigabytes, and a first run that silently spends an hour downloading -- inside a
+`tga up` does not pull by default. The universal Solver image is large, and a
+first run that silently spends a long time downloading -- inside a
 ninety-second readiness budget -- would be worse than one that says what is
 missing and how to fetch it. `ensure_images(pull=True)` is the explicit path.
 """
@@ -184,14 +184,22 @@ def _pull(image: str, *, timeout: float, progress: Progress = None) -> tuple[boo
 
 
 def wanted_images(config: SandboxConfig) -> list[tuple[str, str]]:
-    """Every (profile_id, image) this configuration expects to be able to run."""
+    """Unique images this configuration expects, labelled by the first profile.
+
+    The universal image is shared by every local Kali profile.  Inspecting and
+    pulling the same immutable reference once is sufficient for all of them.
+    """
     wanted: list[tuple[str, str]] = []
+    seen: set[str] = set()
     for profile_id, profile in sorted(config.profiles.items()):
         if profile.provider in IMAGELESS_PROVIDERS:
             continue
         image = profile.image or ""
         if not image:
             continue
+        if image in seen:
+            continue
+        seen.add(image)
         wanted.append((profile_id, image))
     return wanted
 
@@ -255,8 +263,7 @@ def ensure_images(
         else:
             status.code = ErrorCode.PROFILE_IMAGE_MISSING
             status.detail = detail
-            # Named here as well as in the report: at twenty-two images the
-            # summary arrives long after the operator stopped watching.
+            # Name the failed universal image here as well as in the report.
             _say(progress, f"  {position} {profile_id}: FAILED after {elapsed:.0f}s -- {detail}")
 
     return report

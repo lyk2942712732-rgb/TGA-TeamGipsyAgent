@@ -60,6 +60,8 @@ const kaliProfile = {
   image_tag: "2026.08",
   image_digest: "sha256:" + "a".repeat(64),
   image: "tga/kali-ctf-pwn:2026.08",
+  image_role: "universal",
+  shared_image_profile_count: 22,
   tools: [{ name: "gdb", executable: "gdb", version: "16.3", category: "pwn" }],
   supported_capabilities: ["kali.exec", "kali.session"],
   allowed_executables: ["gdb"],
@@ -122,6 +124,7 @@ describe("Tools & MCP", () => {
     expect(screen.getAllByText("ctf-pwn-solver").length).toBeGreaterThan(0);
     expect(screen.getByText("gdb 16.3")).toBeInTheDocument();
     expect(screen.getAllByText("ctf-pwn-v1").length).toBeGreaterThan(0);
+    expect(screen.getByText(/22 Profiles/)).toBeInTheDocument();
   });
 
   it("toggles an MCP server through the management endpoint", async () => {

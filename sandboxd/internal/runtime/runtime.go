@@ -262,8 +262,11 @@ func (r *Runtime) Acquire(
 }
 
 type toolsetManifest struct {
-	ProfileID string            `json:"profile_id"`
-	Tools     map[string]string `json:"tools"`
+	SchemaVersion      int               `json:"schema_version,omitempty"`
+	ImageRole          string            `json:"image_role,omitempty"`
+	ProfileID          string            `json:"profile_id,omitempty"`
+	CompatibleProfiles []string          `json:"compatible_profiles,omitempty"`
+	Tools              map[string]string `json:"tools"`
 }
 
 func (r *Runtime) verifyToolset(ctx context.Context, instanceID string, profile config.Profile) error {
@@ -344,8 +347,29 @@ func validateToolset(raw []byte, profile config.Profile) error {
 	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
 		return errors.New("image toolset must contain exactly one JSON object")
 	}
-	if manifest.ProfileID != profile.ID {
-		return errors.New("image toolset profile id does not match sandbox profile")
+	switch manifest.SchemaVersion {
+	case 0:
+		// Version 1 manifests predate an explicit schema_version and remain
+		// readable for old, profile-specific images.
+		if manifest.ProfileID != profile.ID {
+			return errors.New("image toolset profile id does not match sandbox profile")
+		}
+	case 2:
+		if manifest.ImageRole != "universal" {
+			return errors.New("version 2 image toolset must declare the universal role")
+		}
+		compatible := false
+		for _, profileID := range manifest.CompatibleProfiles {
+			if profileID == profile.ID {
+				compatible = true
+				break
+			}
+		}
+		if !compatible {
+			return errors.New("image toolset is not compatible with sandbox profile")
+		}
+	default:
+		return fmt.Errorf("unsupported image toolset schema version %d", manifest.SchemaVersion)
 	}
 	for _, executable := range profile.AllowedExecutables {
 		if _, ok := manifest.Tools[executable]; !ok {
