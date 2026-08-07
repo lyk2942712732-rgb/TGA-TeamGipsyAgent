@@ -17,7 +17,10 @@ WorkingDirectory=/opt/tga/app
 ExecStart=/opt/tga/bin/tga-internal serve --host 127.0.0.1 --port 8123
 Restart=on-failure
 RestartSec=2
-TimeoutStopSec=30
+# Graceful shutdown drains every managed Kali container before sandboxd is
+# stopped. A many-worker competition task can legitimately need more than the
+# generic 30-second service timeout.
+TimeoutStopSec=300
 KillSignal=SIGTERM
 
 # The API orchestrates sandboxes; it never needs privilege of its own.

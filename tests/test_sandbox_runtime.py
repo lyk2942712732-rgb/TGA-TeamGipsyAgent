@@ -22,6 +22,7 @@ from tga.sandbox.docker_provider import DockerSandboxProvider
 from tga.sandbox.manager import SandboxManager
 from tga.sandbox.models import ProcessSpec, SandboxHandle, SandboxState
 from tga.sandbox.provider import SandboxError
+from tga.sandbox.repository import SandboxInstanceRepository
 from tga.tools.mcp_config import MCPServerConfig, load_mcp_config
 from tga.tools.mcp_sdk import MCPClientConfigurationError, discover_server
 
@@ -67,11 +68,14 @@ class FakeProvider:
     def __init__(self, config):
         self.config = config
         self.calls = 0
+        self.destroy_calls = 0
+        self.fail_destroy_once = False
+        self.replacement_instance_id = None
 
     def acquire(self, **values):
         self.calls += 1
         return SandboxHandle(
-            instance_id=f"tga-instance-{values['solver_run_id']}",
+            instance_id=self.replacement_instance_id or f"tga-instance-{values['solver_run_id']}",
             task_id=values["task_id"],
             solver_id=values["solver_id"],
             solver_run_id=values["solver_run_id"],
@@ -84,18 +88,32 @@ class FakeProvider:
         )
 
     def destroy(self, handle):
+        self.destroy_calls += 1
+        if self.fail_destroy_once:
+            self.fail_destroy_once = False
+            raise RuntimeError("transient destroy failure")
+        return None
+
+    def release(self, handle):
         return None
 
 
 class FakeRepository:
     def __init__(self):
         self.handles = {}
+        self.transitions = []
 
     def get_active(self, *, task_id, solver_id, solver_run_id):
         return self.handles.get((task_id, solver_id, solver_run_id))
 
     def put(self, handle):
         self.handles[(handle.task_id, handle.solver_id, handle.solver_run_id)] = handle
+
+    def transition(self, instance_id, state, *, destroy_after=None):
+        self.transitions.append((instance_id, state, destroy_after))
+        for key, handle in tuple(self.handles.items()):
+            if handle.instance_id == instance_id:
+                self.handles[key] = handle.model_copy(update={"state": state})
 
 
 def test_manager_fails_closed_when_provider_is_missing() -> None:
@@ -155,6 +173,93 @@ def test_manager_isolates_solver_runs_and_reuses_only_the_same_run() -> None:
     assert reused.fencing_token == 2
     assert second.instance_id != first.instance_id
     assert provider.calls == 3
+
+
+def test_manager_revalidates_provider_even_with_same_fencing_token() -> None:
+    config = _config()
+    provider = FakeProvider(config)
+    repository = FakeRepository()
+    manager = SandboxManager(
+        config=config,
+        providers={"docker_sandbox": provider},
+        repository=repository,
+    )
+    values = {
+        "task_id": "task-1", "solver_id": "solver-1", "solver_run_id": "run-1",
+        "profile_id": "offline-analysis", "fencing_token": 1,
+    }
+    manager.acquire(**values, idempotency_key="first")
+    manager.acquire(**values, idempotency_key="health-check")
+    assert provider.calls == 2
+
+
+def test_manager_accepts_healthy_replacement_for_missing_external_sandbox() -> None:
+    config = _config()
+    provider = FakeProvider(config)
+    repository = FakeRepository()
+    manager = SandboxManager(
+        config=config,
+        providers={"docker_sandbox": provider},
+        repository=repository,
+    )
+    original = manager.acquire(
+        task_id="task-1", solver_id="solver-1", solver_run_id="run-1",
+        profile_id="offline-analysis", fencing_token=1, idempotency_key="first",
+    )
+    provider.replacement_instance_id = "tga-recovered-run-1"
+    recovered = manager.acquire(
+        task_id="task-1", solver_id="solver-1", solver_run_id="run-1",
+        profile_id="offline-analysis", fencing_token=1, idempotency_key="recover",
+    )
+    assert recovered.instance_id == "tga-recovered-run-1"
+    assert any(
+        instance_id == original.instance_id and state == SandboxState.DESTROYED
+        for instance_id, state, _ in repository.transitions
+    )
+
+
+def test_destroy_failure_returns_instance_to_immediate_retry_state() -> None:
+    config = _config()
+    provider = FakeProvider(config)
+    repository = FakeRepository()
+    manager = SandboxManager(
+        config=config,
+        providers={"docker_sandbox": provider},
+        repository=repository,
+    )
+    handle = manager.acquire(
+        task_id="task-1", solver_id="solver-1", solver_run_id="run-1",
+        profile_id="offline-analysis", fencing_token=1, idempotency_key="first",
+    )
+    provider.fail_destroy_once = True
+    with pytest.raises(RuntimeError, match="transient destroy failure"):
+        manager.destroy(handle)
+    assert repository.transitions[-1][1] == SandboxState.RELEASED
+    assert repository.transitions[-1][2] is not None
+    manager.destroy(handle)
+    assert repository.transitions[-1][1] == SandboxState.DESTROYED
+    assert provider.destroy_calls == 2
+
+
+def test_zero_grace_release_destroys_immediately_without_poisoning_task_completion() -> None:
+    config = _config(terminal_grace_seconds=0)
+    provider = FakeProvider(config)
+    repository = FakeRepository()
+    manager = SandboxManager(
+        config=config,
+        providers={"docker_sandbox": provider},
+        repository=repository,
+    )
+    handle = manager.acquire(
+        task_id="task-1", solver_id="solver-1", solver_run_id="run-1",
+        profile_id="offline-analysis", fencing_token=1, idempotency_key="first",
+    )
+    provider.fail_destroy_once = True
+    manager.release(handle)
+    assert repository.transitions[-1][1] == SandboxState.RELEASED
+    assert repository.transitions[-1][2] is not None
+    manager.destroy(handle)
+    assert repository.transitions[-1][1] == SandboxState.DESTROYED
 
 
 def test_unresolved_unused_profile_does_not_block_ready_profile() -> None:
@@ -392,6 +497,54 @@ def test_schema_adds_sandbox_instances(tmp_path: Path) -> None:
             "AND name='uq_active_solver_run_sandbox'"
         ).fetchone()
         assert index is not None and "solver_run_id" in index["sql"]
+    finally:
+        store.close()
+
+
+def test_repository_releases_terminal_and_expired_solver_run_sandboxes(tmp_path: Path) -> None:
+    store = EvidenceStore(tmp_path / "evidence.db")
+    try:
+        # This is a focused lifecycle-state test; parent aggregates are not
+        # relevant to the join being exercised.
+        store.conn.execute("PRAGMA foreign_keys=OFF")
+        for run_id, state, lease in (
+            ("run-terminal", "completed", None),
+            ("run-expired", "running", "2026-08-07T00:00:00Z"),
+            ("run-approval", "waiting_approval", None),
+        ):
+            store.conn.execute(
+                "INSERT INTO solver_runs("
+                "id,task_id,solver_id,orchestration_role,state,attempt,turn_count,max_turns,"
+                "fencing_token,lease_expires_at,version,payload_json,created_at,updated_at"
+                ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    run_id, "task-1", "solver-1", "worker", state, 1, 0, 1,
+                    1, lease, 1, "{}", "2026-08-07T00:00:00Z", "2026-08-07T00:00:00Z",
+                ),
+            )
+            store.conn.execute(
+                "INSERT INTO sandbox_instances("
+                "instance_id,task_id,solver_id,solver_run_id,profile_id,provider,config_digest,"
+                "image_digest,toolset_digest,fencing_token,state,created_at,updated_at"
+                ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    "instance-" + run_id, "task-1", "solver-1", run_id,
+                    "offline-analysis", "sandboxd", "c" * 64, "d" * 64, "e" * 64,
+                    1, "ready", "2026-08-07T00:00:00Z", "2026-08-07T00:00:00Z",
+                ),
+            )
+        store.conn.commit()
+        released = SandboxInstanceRepository(store).release_orphans("2026-08-07T01:00:00Z")
+        assert {item.solver_run_id for item in released} == {"run-terminal", "run-expired"}
+        rows = {
+            row["solver_run_id"]: (row["state"], row["destroy_after"])
+            for row in store.conn.execute(
+                "SELECT solver_run_id,state,destroy_after FROM sandbox_instances"
+            ).fetchall()
+        }
+        assert rows["run-terminal"] == ("released", "2026-08-07T01:00:00Z")
+        assert rows["run-expired"] == ("released", "2026-08-07T01:00:00Z")
+        assert rows["run-approval"] == ("ready", None)
     finally:
         store.close()
 

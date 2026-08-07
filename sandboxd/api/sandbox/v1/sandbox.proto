@@ -158,6 +158,8 @@ message InspectResponse {
 message DestroyRequest {
   string instance_id = 1;
   uint64 fencing_token = 2;
+  string task_id = 3;
+  string solver_run_id = 4;
 }
 
 message ReconcileRequest {

@@ -202,6 +202,8 @@ class SandboxdProvider:
             sandbox_pb2.DestroyRequest(
                 instance_id=handle.instance_id,
                 fencing_token=handle.fencing_token,
+                task_id=handle.task_id,
+                solver_run_id=handle.solver_run_id,
             ),
             timeout=self.config.sandboxd.rpc_timeout_seconds,
         )
