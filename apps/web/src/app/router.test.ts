@@ -7,7 +7,7 @@ describe("readRoute", () => {
     expect(readRoute("/approvals")).toEqual({ page: "approvals" });
     expect(readRoute("/resources")).toEqual({ page: "resources" });
     expect(readRoute("/reports")).toEqual({ page: "reports" });
-    expect(readRoute("/knowledge-bases")).toEqual({ page: "knowledge-bases" });
+    expect(readRoute("/knowledge-bases")).toEqual({ page: "not-found" });
     expect(readRoute("/settings/teams")).toEqual({ page: "teams" });
     expect(readRoute("/settings/solvers")).toEqual({ page: "solvers" });
     expect(readRoute("/settings/tools")).toEqual({ page: "tools" });

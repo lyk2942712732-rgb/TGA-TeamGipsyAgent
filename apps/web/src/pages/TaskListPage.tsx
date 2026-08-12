@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Grid2X2, List, Plus, Search, SlidersHorizontal } from "lucide-react";
+import { Grid2X2, List, Plus, Search } from "lucide-react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { fetchTaskList } from "../api/task-query-adapter";
 import type { TaskListItem } from "../api/tasks";
@@ -8,7 +8,6 @@ import { CatalogTable, Pagination, usePage, type Column } from "../components/ui
 import { EmptyState } from "../components/ui/EmptyState";
 import { ErrorState } from "../components/ui/ErrorState";
 import { LoadingSkeleton } from "../components/ui/LoadingSkeleton";
-import { useToast } from "../components/ui/Toast";
 import { statusLabel } from "../shared/status";
 import { MODE_PROFILES, TASK_MODES } from "../modes";
 
@@ -20,7 +19,7 @@ import { MODE_PROFILES, TASK_MODES } from "../modes";
  * the API; an install with no schema-v6 task renders the empty state.
  */
 
-const STATUSES = ["created", "running", "paused", "awaiting_approval", "blocked", "completed", "failed", "cancelled"];
+const STATUSES = ["created", "running", "awaiting_approval", "completed", "failed", "cancelled"];
 
 type TaskRow = {
   taskId: string;
@@ -45,7 +44,6 @@ const SEVERITY_TONES: Record<string, string> = { 高: "tone-danger", 中: "tone-
 
 export function TaskListPage() {
   const navigate = useNavigate();
-  const toast = useToast();
   const [params, setParams] = useSearchParams();
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
@@ -145,9 +143,6 @@ export function TaskListPage() {
         <option value="true">仅需要处理</option>
         <option value="false">无需处理</option>
       </select>
-      <button className="ref-filter-button" onClick={() => toast.notifyUnavailable("更多筛选")}>
-        <SlidersHorizontal size={15} />更多筛选
-      </button>
       <div className="view-toggle push-end" role="group" aria-label="视图切换">
         <button className={view === "list" ? "active" : ""} aria-pressed={view === "list"}
           aria-label="列表视图" onClick={() => update("view", "")}><List size={15} /></button>
@@ -214,12 +209,17 @@ function toRow(task: TaskListItem): TaskRow {
     status: task.status,
     percent: total ? Math.round(done / total * 100) : 0,
     solversActive: task.active_solvers ?? 0,
-    // The list projection has no team size and no aggregated finding severity.
-    solversTotal: null,
+    solversTotal: task.solver_total ?? 0,
     approvals: task.pending_approvals ?? 0,
-    severity: null,
+    severity: task.highest_severity ? severityLabel(task.highest_severity) : null,
     updatedAt: formatDate(task.updated_at ?? task.created_at),
   };
+}
+
+function severityLabel(value: string): TaskRow["severity"] {
+  if (value === "critical" || value === "high") return "高";
+  if (value === "medium") return "中";
+  return "低";
 }
 
 function modeLabel(mode: string): string {

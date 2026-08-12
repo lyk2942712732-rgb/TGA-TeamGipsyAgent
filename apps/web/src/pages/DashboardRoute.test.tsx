@@ -17,7 +17,7 @@ import { DashboardRoute } from "./DashboardRoute";
 const response = {
   schema_version: 1,
   generated_at: "2026-07-30T00:00:00Z",
-  metrics: { running_tasks: 3, pending_approvals: 2, awaiting_user_input: 1, blocked_tasks: 1, active_solvers: 4 },
+  metrics: { running_tasks: 3, pending_approvals: 2, active_solvers: 4 },
   needs_attention: [],
   active_tasks: [],
   recent_completed: [],

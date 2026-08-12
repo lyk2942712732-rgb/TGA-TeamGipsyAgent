@@ -6,7 +6,7 @@ import { DashboardPage } from "./DashboardPage";
 const value: DashboardResponse = {
   view_version: 1,
   generated_at: "2026-07-30T00:00:00Z",
-  metrics: { running_tasks: 2, pending_approvals: 1, awaiting_user_input: 1, blocked_tasks: 1, active_solvers: 3 },
+  metrics: { running_tasks: 2, pending_approvals: 1, active_solvers: 3 },
   needs_attention: [{ id: "approval:action_one", kind: "approval", task_id: "task_one", task_name: "任务一", title: "等待审批", description: "filesystem.write", status: "pending", risk: "active", action_id: "action_one", updated_at: "2026-07-30T00:00:00Z" }],
   active_tasks: [{ task_id: "task_one", name: "任务一", mode: "ctf", status: "blocked", updated_at: "2026-07-30T00:00:00Z", active_solvers: 2, pending_approvals: 1, intent_total: 4, intent_completed: 2, findings: 1, artifacts: 2, turn_count: 3, max_turns: 20, needs_attention: true, latest_event: { seq: 8, type: "ACTION_PROPOSED", created_at: "2026-07-30T00:00:00Z" } }],
   recent_completed: [{ task_id: "task_done", name: "已完成任务", mode: "ctf", status: "completed", updated_at: "2026-07-29T00:00:00Z", active_solvers: 0, pending_approvals: 0, intent_total: 2, intent_completed: 2, findings: 2, artifacts: 3, turn_count: 6, max_turns: 20, needs_attention: false, latest_event: null }],
@@ -27,11 +27,11 @@ describe("DashboardPage", () => {
   it("renders the API metric counts verbatim", () => {
     const { container } = renderPage();
     const cards = container.querySelectorAll(".dashboard-metric");
-    expect(cards).toHaveLength(6);
+    expect(cards).toHaveLength(4);
     expect(cards[0]).toHaveTextContent("运行中任务");
     expect(cards[0]).toHaveTextContent("2");
-    expect(cards[5]).toHaveTextContent("活动 Solver");
-    expect(cards[5]).toHaveTextContent("3");
+    expect(cards[3]).toHaveTextContent("活动 Solver");
+    expect(cards[3]).toHaveTextContent("3");
   });
 
   it("lists exactly the records the API returned", () => {
@@ -53,10 +53,10 @@ describe("DashboardPage", () => {
     expect(taskRows[0]).toHaveTextContent("已阻塞");
   });
 
-  it("renders the reference's five system components", () => {
+  it("renders only system components supplied by the backend", () => {
     const { container } = renderPage();
     const labels = [...container.querySelectorAll(".system-rows strong")].map((node) => node.textContent);
-    expect(labels).toEqual(["Model Providers", "MCP Servers", "Scheduler", "Execution Runtime", "Database"]);
+    expect(labels).toEqual(["API", "SQLite", "Scheduler"]);
   });
 
   it("never renders a demo task, approval or report name", () => {
@@ -85,11 +85,11 @@ describe("DashboardPage", () => {
     expect(callbacks.onRuntime).not.toHaveBeenCalled();
   });
 
-  it("reports Scheduler as unprobed because no health contract backs it", () => {
+  it("reports the Scheduler status supplied by the backend", () => {
     const { container } = renderPage();
     const rows = [...container.querySelectorAll(".system-rows li")];
     const scheduler = rows.find((row) => row.textContent?.includes("Scheduler"));
-    expect(scheduler).toHaveTextContent("未探测");
+    expect(scheduler).toHaveTextContent("异常");
   });
 
   it("opens the approval center and task runtime from real summaries", () => {

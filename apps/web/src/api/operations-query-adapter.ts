@@ -24,8 +24,6 @@ export type DashboardResponse = {
   metrics: {
     running_tasks: number | null;
     pending_approvals: number | null;
-    awaiting_user_input: number | null;
-    blocked_tasks: number | null;
     active_solvers: number | null;
   };
   needs_attention: Array<{

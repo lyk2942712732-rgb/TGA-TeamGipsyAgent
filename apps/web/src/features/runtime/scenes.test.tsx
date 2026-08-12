@@ -8,7 +8,7 @@ describe.each([
   ["penetration_test", "Coverage Matrix"],
   ["incident_response", "Evidence Preservation"],
   ["vulnerability_research", "Root Cause"],
-  ["reverse_engineering", "Function / Call Graph"],
+  ["reverse_analysis", "Function / Call Graph"],
 ])("%s scene", (mode, label) => {
   it("uses the shared shell and renders a projection-only specialized view", () => {
     render(<ScenePanel store={workbenchStore(mode)} />);

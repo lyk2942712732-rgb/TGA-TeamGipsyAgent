@@ -65,10 +65,8 @@ def test_apps_api_is_the_only_http_boundary(tmp_path: Path) -> None:
         },
     )
     assert created.status_code == 201
-    assert (
-        client.get(f"/api/v2/tasks/{created.json()['task_id']}/session").status_code
-        == 200
-    )
+    assert client.get(f"/api/v2/tasks/{created.json()['task_id']}").status_code == 200
+    assert client.get(f"/api/v2/tasks/{created.json()['task_id']}/session").status_code == 404
     assert not (Path(__file__).parents[1] / "tga2" / "api.py").exists()
 
 
@@ -88,6 +86,53 @@ def test_code_audit_mode_is_not_exposed_or_accepted(tmp_path: Path) -> None:
         },
     )
     assert rejected.status_code == 422
+
+
+def test_resource_report_and_policy_catalogs_match_frontend_contracts(
+    tmp_path: Path,
+) -> None:
+    reset_containers()
+    app.state.container = get_container(tmp_path / "runs")
+    client = TestClient(app)
+    source = tmp_path / "target.txt"
+    source.write_text("catalog evidence", encoding="utf-8")
+    made = app.state.container.runtime.create_task(
+        CreateTaskRequest(
+            name="catalog task",
+            objective="Inspect catalog evidence",
+            mode="vulnerability_research",
+            input_paths=[str(source)],
+        )
+    )
+    app.state.container.runtime.run_task(made["task_id"])
+
+    resources = client.get("/api/v2/catalog/resources").json()["items"]
+    assert {item["kind"] for item in resources} == {
+        "artifacts",
+        "evidence",
+        "findings",
+    }
+    assert all(
+        {"id", "task_id", "task_name", "title", "status", "raw"} <= item.keys()
+        for item in resources
+    )
+
+    reports = client.get("/api/v2/catalog/reports").json()["items"]
+    assert reports == [
+        {
+            "id": f"report-{made['task_id']}",
+            "task_id": made["task_id"],
+            "task_name": "catalog task",
+            "title": "catalog task 报告",
+            "mode": "vulnerability_research",
+            "status": "final",
+            "findings": 1,
+            "updated_at": reports[0]["updated_at"],
+        }
+    ]
+
+    policies = client.get("/api/v2/catalog/policies").json()["items"]
+    assert len({item["id"] for item in policies}) == len(policies)
 
 
 def test_prompt_skill_and_solver_settings_reach_runtime(tmp_path: Path) -> None:

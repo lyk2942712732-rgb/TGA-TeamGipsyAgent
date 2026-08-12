@@ -1,16 +1,12 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  Activity, Bot, FileSearch, HeartPulse, RefreshCw, RotateCw,
-  ScanLine, ShieldCheck, SquareCheck,
+  Activity, Bot, HeartPulse, RefreshCw, RotateCw, ShieldCheck, SquareCheck,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
-import { useState } from "react";
 import { fetchSystemHealth, type SystemComponent } from "../api/catalog-query-adapter";
 import { fetchDashboard } from "../api/operations-query-adapter";
 import { runtimeApi } from "../runtime/api-v2";
 import { CatalogTable, type Column } from "../components/ui/CatalogTable";
-import { DetailTabs, type DetailTab } from "../components/ui/DetailTabs";
-import { EmptyState } from "../components/ui/EmptyState";
 import { ErrorState } from "../components/ui/ErrorState";
 import { LoadingSkeleton } from "../components/ui/LoadingSkeleton";
 import { useToast } from "../components/ui/Toast";
@@ -25,27 +21,7 @@ import { buildDashboardView } from "./dashboard-view";
  * source; the three quick actions beyond refresh/verify have no endpoint.
  */
 
-const TABS: DetailTab[] = [
-  { id: "core", label: "核心组件" },
-  { id: "runtime", label: "执行环境" },
-  { id: "storage", label: "存储与索引" },
-  { id: "events", label: "事件流", missing: true },
-  { id: "alerts", label: "最近告警", missing: true },
-];
-
-const GROUPS: Record<string, string[]> = {
-  core: ["scheduler", "runtime", "database", "artifacts", "retrieval", "events", "mcp", "models"],
-  runtime: ["runtime", "mcp", "capabilities"],
-  storage: ["database", "artifacts", "retrieval"],
-};
-
-/** The reference's row order for 核心组件. */
-const CORE_ORDER = ["scheduler", "runtime", "database", "artifacts", "retrieval", "events", "mcp", "models"];
-
 const COMPONENT_LABELS: Record<string, string> = {
-  database: "Database (SQLite)",
-  retrieval: "Vector Index",
-  events: "Event Stream (SSE)",
   mcp: "MCP Gateway",
 };
 
@@ -56,17 +32,12 @@ const OVERALL_LABELS: Record<string, string> = {
 export function SystemPage() {
   const client = useQueryClient();
   const toast = useToast();
-  const [tab, setTab] = useState("core");
 
   const health = useQuery({ queryKey: ["system", "health"], queryFn: fetchSystemHealth });
   const dashboard = useQuery({ queryKey: ["dashboard"], queryFn: fetchDashboard });
   const view = dashboard.data ? buildDashboardView(dashboard.data, health.data) : null;
 
   const components = health.data?.components ?? [];
-  const visible = (GROUPS[tab] ?? [])
-    .map((id) => components.find((item) => item.id === id))
-    .filter((item): item is SystemComponent => !!item)
-    .sort((a, b) => CORE_ORDER.indexOf(a.id) - CORE_ORDER.indexOf(b.id));
 
   const graded = components.filter((item) => item.status !== "unsupported");
   const overall = !graded.length ? "loading"
@@ -135,13 +106,12 @@ export function SystemPage() {
 
     <section className="dashboard-metrics system-metrics" aria-label="系统概览">
       <HealthCard label="整体健康" value={OVERALL_LABELS[overall]} icon={HeartPulse}
-        detail="所有核心组件运行正常" tone={overall === "healthy" ? "success" : overall === "degraded" ? "warning" : overall === "loading" ? "info" : "danger"} />
+        detail={overall === "healthy" ? "所有已接入组件运行正常" : overall === "loading" ? "正在探测组件" : overall === "degraded" ? "部分组件需要检查" : "存在不可用组件"}
+        tone={overall === "healthy" ? "success" : overall === "degraded" ? "warning" : overall === "loading" ? "info" : "danger"} />
       <HealthCard label="运行中任务" value={metric("running_tasks")} icon={Activity} tone="info" detail="正常" />
       <HealthCard label="活跃 Solver" value={metric("active_solvers")} icon={Bot} tone="success" detail="正常" />
       <HealthCard label="待审批" value={metric("pending_approvals")} icon={ShieldCheck} tone="warning" detail="需要处理" />
     </section>
-
-    <DetailTabs tabs={TABS} active={tab} onSelect={setTab} size="lg" />
 
     <div className="system-layout ref-fill">
       <div>
@@ -151,8 +121,7 @@ export function SystemPage() {
             actionLabel="重试"
             onAction={() => void health.refetch()}
           />
-          : GROUPS[tab] ? <CatalogTable fill columns={columns} rows={visible} rowKey={(row) => row.id} label="组件健康列表" />
-            : <EmptyState label={`暂无${TABS.find((item) => item.id === tab)?.label}数据`} />}
+          : <CatalogTable fill columns={columns} rows={components} rowKey={(row) => row.id} label="组件健康列表" />}
       </div>
 
       <aside className="system-side">
@@ -162,16 +131,7 @@ export function SystemPage() {
             <button className="ref-secondary-button" onClick={refreshAll}><RefreshCw size={14} />刷新系统状态</button>
             <a className="ref-secondary-button" href="/settings/models"><SquareCheck size={14} />验证模型连接</a>
             <button className="ref-secondary-button" onClick={() => void refreshMcpCatalog()}><RotateCw size={14} />刷新 MCP Catalog</button>
-            <button className="ref-secondary-button" onClick={() => toast.notifyUnavailable("重建索引校验")}><ScanLine size={14} />重建索引校验</button>
-            <button className="ref-secondary-button" onClick={() => toast.notifyUnavailable("系统诊断报告")}><FileSearch size={14} />系统诊断报告</button>
           </div>
-        </section>
-
-        <section className="ref-card">
-          <header className="ref-card-head"><h2>资源使用</h2></header>
-          {/* The backend exposes no host-metrics endpoint, so rather than draw
-              three permanently empty gauges the card says why it is blank. */}
-          <EmptyState label="后端未提供主机资源指标接口" />
         </section>
       </aside>
     </div>

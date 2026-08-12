@@ -14,6 +14,7 @@ from pydantic import SecretStr
 
 from apps.api.dependencies import container
 from tga2.bootstrap import Container
+from tga2.catalogs import MODES
 from tga2.integrations.model import (
     ModelRegistry,
     ModelSettings,
@@ -502,9 +503,10 @@ def _offline_provider():
 
 
 def _skill(item: Skill):
+    mode_tags = [tag for tag in item.tags if tag in MODES]
     return {
         "name": item.name,
-        "modes": [],
+        "modes": mode_tags or list(MODES),
         "capabilities": [],
         "tags": list(item.tags),
         "version": "1",

@@ -2,7 +2,7 @@
 import {
   createTask, deleteStagedInput, fetchModeProfiles, preflightTask, stageInput,
   fetchSkillSettings, previewTaskSkills, fetchAgentModelOptions,
-  type CreateSessionRequest, type ExecutionPolicy, type ModeConfig,
+  type CreateTaskRequest, type ExecutionPolicy, type ModeConfig,
   type AgentModelOptions, type ModeProfileContract, type SkillPreview, type SkillSetting, type StagedAsset, type TaskPreflight,
 } from "../api/tasks";
 import { AlertTriangle, Check, Code2, Cpu, Crosshair, Search, ShieldCheck, ShieldPlus, Sparkles, Users } from "lucide-react";
@@ -62,7 +62,7 @@ const MODE_CARD_META: Record<TaskMode, { label: string; icon: typeof Crosshair; 
   penetration_test: { label: "渗透测试", icon: ShieldCheck, tone: "blue", description: "模拟黑客攻击，发现并验证安全风险" },
   incident_response: { label: "应急响应", icon: ShieldPlus, tone: "green", description: "快速定位、遏制与恢复安全事件" },
   vulnerability_research: { label: "漏洞研究", icon: Search, tone: "orange", description: "发现、分析与验证安全漏洞" },
-  reverse_engineering: { label: "逆向工程", icon: Code2, tone: "indigo", description: "对二进制文件进行逆向分析与研究" },
+  reverse_analysis: { label: "逆向分析", icon: Code2, tone: "indigo", description: "对二进制文件进行逆向分析与研究" },
 };
 
 export function NewTaskPage({ onCreated }: { onCreated: (id: string) => void }) {
@@ -131,6 +131,27 @@ export function NewTaskPage({ onCreated }: { onCreated: (id: string) => void }) 
     const blocked = new Set(preflightBlockers.map((blocker) => blocker.step));
     return new Set([1, 2, 3, 4].filter((number) => !blocked.has(number)));
   }, [preflightBlockers]);
+
+  useEffect(() => {
+    const saved = localStorage.getItem("tga-new-task-draft");
+    if (!saved) return;
+    try {
+      const value = JSON.parse(saved) as Partial<{
+        draft: Draft; instructions: string; constraints: string; successCriteria: string; prompt: string;
+      }>;
+      if (value.draft && TASK_MODES.includes(value.draft.mode)) {
+        draftTouched.current = true;
+        setDraft(value.draft);
+        setInstructions(value.instructions ?? "");
+        setConstraints(value.constraints ?? "");
+        setSuccessCriteria(value.successCriteria ?? "");
+        setPrompt(value.prompt ?? "");
+        setDraftSaved(true);
+      }
+    } catch {
+      localStorage.removeItem("tga-new-task-draft");
+    }
+  }, []);
 
   useEffect(() => {
     setError((current) => {
@@ -206,7 +227,7 @@ export function NewTaskPage({ onCreated }: { onCreated: (id: string) => void }) 
     setPreflightError("");
     if (step !== 5 || preflightBlockers.length) return;
     let current = true;
-    const request: CreateSessionRequest = {
+    const request: CreateTaskRequest = {
       ...draft,
       name: draft.name.trim(),
       goal: draft.goal.trim(),
@@ -277,6 +298,7 @@ export function NewTaskPage({ onCreated }: { onCreated: (id: string) => void }) 
   }
 
   function reset() {
+    localStorage.removeItem("tga-new-task-draft");
     uploadControllers.current.forEach((controller, id) => { cancelledUploads.current.add(id); controller.abort(); });
     inputFiles.forEach((item) => {
       if (item.status === "uploaded") void deleteStagedInput(item.id).catch(() => undefined);
@@ -293,9 +315,9 @@ export function NewTaskPage({ onCreated }: { onCreated: (id: string) => void }) 
       return;
     }
     if (!preflight || preflightLoading || preflightError) { setError("启动前检查尚未通过，请修复问题后重试。"); setStep(5); return; }
-    const request: CreateSessionRequest = { ...draft, name: draft.name.trim(), goal: draft.goal.trim(), input: { text: taskPrompt, fileIds: inputFiles.map((item) => item.id) }, selectedSkills, agentModels, preflightFingerprint: preflight.fingerprint };
+    const request: CreateTaskRequest = { ...draft, name: draft.name.trim(), goal: draft.goal.trim(), input: { text: taskPrompt, fileIds: inputFiles.map((item) => item.id) }, selectedSkills, agentModels, preflightFingerprint: preflight.fingerprint };
     setBusy(true); setError(null);
-    try { const result = await createTask(request); onCreated(result.task_id); }
+    try { const result = await createTask(request); localStorage.removeItem("tga-new-task-draft"); onCreated(result.task_id); }
     catch (reason) { setError(reason instanceof Error ? reason.message : "创建任务失败"); }
     finally { setBusy(false); }
   }
@@ -313,7 +335,7 @@ export function NewTaskPage({ onCreated }: { onCreated: (id: string) => void }) 
       {error ? <p role="alert" className="inline-error span-2">{error}</p> : null}
     </section>
     <NewTaskGuide modeLabel={profile.label} modeDescription={profiles[draft.mode].description} />
-    <footer className="wizard-actions"><button type="button" className="secondary-button" disabled={busy} onClick={reset}>取消</button><span className="wizard-save-state" aria-live="polite">{draftSaved ? <><Check size={14} />草稿已保存</> : null}</span><div>{step > 1 ? <button type="button" disabled={busy} onClick={() => setStep((value) => Math.max(1, value - 1))}>上一步</button> : null}<button type="button" className="save-draft-button" disabled={busy} onClick={() => { localStorage.setItem("tga-new-task-draft", JSON.stringify({ draft, instructions, constraints, successCriteria, prompt })); setDraftSaved(true); }}>保存草稿</button>{step < 5 ? <button type="button" disabled={busy} onClick={() => setStep((value) => Math.min(5, value + 1))}>下一步</button> : <button type="button" disabled={busy || preflightLoading || Boolean(preflightError) || (!preflight && !preflightBlockers.length)} onClick={() => void submit()}>{busy ? "处理中..." : preflightLoading ? "正在检查..." : "创建任务并开始"}</button>}</div></footer>
+    <footer className="wizard-actions"><button type="button" className="secondary-button" disabled={busy} onClick={reset}>重置</button><span className="wizard-save-state" aria-live="polite">{draftSaved ? <><Check size={14} />草稿已保存并会自动恢复</> : null}</span><div>{step > 1 ? <button type="button" disabled={busy} onClick={() => setStep((value) => Math.max(1, value - 1))}>上一步</button> : null}<button type="button" className="save-draft-button" disabled={busy} onClick={() => { localStorage.setItem("tga-new-task-draft", JSON.stringify({ draft, instructions, constraints, successCriteria, prompt })); setDraftSaved(true); }}>保存草稿</button>{step < 5 ? <button type="button" disabled={busy} onClick={() => setStep((value) => Math.min(5, value + 1))}>下一步</button> : <button type="button" disabled={busy || preflightLoading || Boolean(preflightError) || (!preflight && !preflightBlockers.length)} onClick={() => void submit()}>{busy ? "处理中..." : preflightLoading ? "正在检查..." : "创建任务并开始"}</button>}</div></footer>
     </div>
     {skillDialogOpen ? <SkillSelectionDialog catalog={skillCatalog} loading={skillCatalogLoading} mode={draft.mode} selected={selectedSkills ?? skillPreview?.skills.map((item) => item.name) ?? []} draft={draft} prompt={taskPrompt} files={inputFiles} onClose={() => setSkillDialogOpen(false)} onApply={(names) => { setSelectedSkills(names); setSkillDialogOpen(false); }} /> : null}
   </section>;
@@ -335,9 +357,9 @@ function TaskGoalStep({ draft, profiles, instructions, constraints, successCrite
     <FieldWithCount label="任务名称" required value={draft.name} max={100}><input aria-label="任务名称" value={draft.name} maxLength={100} onChange={(event) => onDraft({ name: event.target.value })} placeholder="请输入任务名称（建议清晰、简洁）" /></FieldWithCount>
     <fieldset className="scene-picker"><legend>模式 <sup>*</sup></legend><div className="mode-card-grid">{TASK_MODES.map((mode) => { const meta = MODE_CARD_META[mode]; const Icon = meta.icon; const selected = draft.mode === mode; return <button type="button" key={mode} className={`mode-card tone-${meta.tone} ${selected ? "selected" : ""}`} aria-pressed={selected} aria-label={`${meta.label}：${meta.description}`} title={profiles[mode].description} onClick={() => onMode(mode)}><span className="mode-card-icon"><Icon size={30} /></span>{selected ? <span className="mode-card-check"><Check size={13} /></span> : null}<strong>{meta.label}</strong><span>{meta.description}</span></button>; })}</div></fieldset>
     <FieldWithCount label="Objective" required info="核心目标与期望结果" value={draft.goal} max={500}><textarea aria-label="Objective" value={draft.goal} maxLength={500} onChange={(event) => onDraft({ goal: event.target.value })} placeholder="请描述本次任务的核心目标与期望达成的结果，例如：发现目标系统中的高危漏洞并获取可复现的利用链。" /></FieldWithCount>
-    <FieldWithCount label="Instructions" required info="任务背景、范围和完成要求" value={instructions} max={2000}><textarea aria-label="Instructions" value={instructions} maxLength={2000} onChange={(event) => onInstructions(event.target.value)} placeholder="请提供详细的任务背景、范围、优先级、关注点及完成任务的具体要求。" /></FieldWithCount>
+    <FieldWithCount label="Instructions" info="任务背景、范围和完成要求" value={instructions} max={2000}><textarea aria-label="Instructions" value={instructions} maxLength={2000} onChange={(event) => onInstructions(event.target.value)} placeholder="请提供详细的任务背景、范围、优先级、关注点及完成任务的具体要求。" /></FieldWithCount>
     <FieldWithCount label="Constraints" info="任务边界与限制" value={constraints} max={1000}><textarea aria-label="Constraints" value={constraints} maxLength={1000} onChange={(event) => onConstraints(event.target.value)} placeholder="请列出任务的边界条件与限制，例如：禁止暴力破解、仅在指定时间段扫描、不得影响生产环境等。" /></FieldWithCount>
-    <FieldWithCount label="Success Criteria" required info="任务完成的判断标准" value={successCriteria} max={500}><textarea aria-label="Success Criteria" value={successCriteria} maxLength={500} onChange={(event) => onSuccessCriteria(event.target.value)} placeholder="请定义任务完成的判定标准，例如：发现 ≥ 3 个高危漏洞并验证，或完成内网横向移动并获取域管理员权限等。" /></FieldWithCount>
+    <FieldWithCount label="Success Criteria" info="任务完成的判断标准" value={successCriteria} max={500}><textarea aria-label="Success Criteria" value={successCriteria} maxLength={500} onChange={(event) => onSuccessCriteria(event.target.value)} placeholder="请定义任务完成的判定标准，例如：发现 ≥ 3 个高危漏洞并验证，或完成内网横向移动并获取域管理员权限等。" /></FieldWithCount>
   </div>;
 }
 

@@ -1,12 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
-import { Download, Plus } from "lucide-react";
+import { Download } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { fetchProductCatalog } from "../api/catalog-query-adapter";
 import { CatalogTable, Pagination, usePage, type Column } from "../components/ui/CatalogTable";
 import { ErrorState } from "../components/ui/ErrorState";
 import { LoadingSkeleton } from "../components/ui/LoadingSkeleton";
-import { useToast } from "../components/ui/Toast";
 import { runtimeApi } from "../runtime/api-v2";
 import { MODE_PROFILES } from "../modes";
 
@@ -15,9 +14,7 @@ const reportUrl = (taskId: string) => runtimeApi.reportUrl(taskId);
 /**
  * 报告中心 (reference image 08).
  *
- * `/api/v2/catalog/reports` lists exported `report.md` files and supplies only
- * id / task_id / status / title / updated_at.  模式, 版本 and Findings have no
- * source at all, so those columns show a dash.
+ * `/api/v2/catalog/reports` lists reports actually persisted by TGA2.
  */
 
 type ReportRow = {
@@ -26,13 +23,15 @@ type ReportRow = {
   title: string;
   taskName: string;
   mode: string | null;
-  version: string | null;
   status: string;
   findings: number | null;
   updatedAt: string;
 };
 
-type CatalogReport = { id: string; task_id: string; status: string; title: string; updated_at: number };
+type CatalogReport = {
+  id: string; task_id: string; task_name: string; status: string; title: string;
+  mode: string; findings: number; updated_at: string;
+};
 
 const STATUS_TONES: Record<string, string> = {
   final: "tone-ok", completed: "tone-ok",
@@ -42,7 +41,6 @@ const STATUS_TONES: Record<string, string> = {
 
 export function ReportsPage() {
   const navigate = useNavigate();
-  const toast = useToast();
   const [task, setTask] = useState("");
   const [status, setStatus] = useState("");
   const [mode, setMode] = useState("");
@@ -74,7 +72,6 @@ export function ReportsPage() {
     { id: "title", header: "报告名称", render: (row) => <strong>{row.title}</strong> },
     { id: "task", header: "任务", render: (row) => <span className="cell-muted">{row.taskName}</span> },
     { id: "mode", header: "模式", render: (row) => row.mode ? <span className="cell-muted">{modeLabel(row.mode)}</span> : dash() },
-    { id: "version", header: "版本", render: (row) => row.version ?? dash() },
     { id: "status", header: "状态", render: (row) => <span className={`ref-chip ${STATUS_TONES[row.status] ?? "tone-muted"}`}>{row.status}</span> },
     { id: "findings", header: "Findings", render: (row) => row.findings === null ? dash() : row.findings },
     { id: "updated", header: "生成时间", render: (row) => <span className="cell-muted">{row.updatedAt}</span> },
@@ -107,9 +104,6 @@ export function ReportsPage() {
         <h1>报告中心</h1>
         <p>查看和管理所有安全报告</p>
       </div>
-      <button className="ref-primary-button" onClick={() => toast.notifyUnavailable("新建报告")}>
-        <Plus size={16} />新建报告
-      </button>
     </header>
 
     <section className="ref-filter-row" aria-label="筛选报告">
@@ -145,13 +139,11 @@ function toRow(item: CatalogReport): ReportRow {
     id: item.id,
     taskId: item.task_id,
     title: item.title,
-    taskName: item.task_id,
-    // The catalog carries no mode, version or finding count for an export.
-    mode: null,
-    version: null,
+    taskName: item.task_name,
+    mode: item.mode,
     status: item.status,
-    findings: null,
-    updatedAt: formatEpoch(item.updated_at),
+    findings: item.findings,
+    updatedAt: formatDate(item.updated_at),
   };
 }
 
@@ -163,8 +155,8 @@ function modeLabel(mode: string): string {
   return MODE_PROFILES[mode as keyof typeof MODE_PROFILES]?.label ?? mode;
 }
 
-function formatEpoch(value: number): string {
+function formatDate(value: string): string {
   if (!value) return "—";
-  // The catalog returns a POSIX mtime in seconds.
-  return new Date(value * 1000).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
 }

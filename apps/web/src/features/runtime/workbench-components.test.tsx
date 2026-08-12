@@ -51,11 +51,11 @@ describe("Phase 11 command workbench components", () => {
     expect(screen.getByRole("table", { name: "Intent 列表" })).toHaveTextContent("Write report");
   });
 
-  it("answers command-level progress, verified knowledge, conflicts and completion criteria", () => {
-    render(<TaskOverview store={workbenchStore()} onSelectSolver={() => undefined} onSelectIntent={() => undefined} />);
+  it("answers command-level progress, confirmed findings, blockers and completion criteria", () => {
+    const { container } = render(<TaskOverview store={workbenchStore()} onSelectSolver={() => undefined} onSelectIntent={() => undefined} />);
     expect(screen.getByRole("region", { name: "任务总体进度" })).toHaveTextContent("1 / 5 Intent 已完成");
-    expect(screen.getByText("Endpoint returns version metadata")).toBeInTheDocument();
-    expect(screen.getByText("Reviewer found conflicting version evidence")).toBeInTheDocument();
+    expect(screen.getByText("Version exposed")).toBeInTheDocument();
+    expect(container.querySelector(".overview-risks")).toHaveTextContent("worker-approval：awaiting_approval");
     expect(screen.getByText("confirmed evidence")).toBeInTheDocument();
   });
 
@@ -66,7 +66,7 @@ describe("Phase 11 command workbench components", () => {
     render(<SolverInspector store={store} solver={store.solversById.reviewer} />);
     const inspector = screen.getByRole("complementary", { name: "Solver 检查器" });
     expect(within(inspector).getByText("reviewer current activity")).toBeInTheDocument();
-    fireEvent.click(within(inspector).getByRole("tab", { name: "Transcript" }));
+    fireEvent.click(within(inspector).getByRole("tab", { name: "事件日志" }));
     expect(inspector).toHaveTextContent("KNOWLEDGE_CONFLICT_DETECTED");
     expect(inspector).not.toHaveTextContent("Mapped HTTP surface");
     fireEvent.click(within(inspector).getByRole("button", { name: "协议模式" }));
@@ -74,9 +74,6 @@ describe("Phase 11 command workbench components", () => {
     expect(inspector).toHaveTextContent("persisted-metadata");
     expect(inspector).not.toHaveTextContent("top-secret-thought");
     expect(inspector).not.toHaveTextContent("nested-secret-thought");
-    fireEvent.click(within(inspector).getByRole("tab", { name: "Knowledge" }));
-    expect(inspector).toHaveTextContent("Task Verified");
-    expect(inspector).toHaveTextContent("Rejected / Superseded");
     fireEvent.click(within(inspector).getByRole("tab", { name: "Skills" }));
     expect(inspector).toHaveTextContent("evidence-method");
     expect(inspector).toHaveTextContent("task common guidance");

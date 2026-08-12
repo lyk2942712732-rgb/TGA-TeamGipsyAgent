@@ -1,5 +1,5 @@
 import {
-  Bot, ChevronRight, CircleAlert, CircleCheck, CircleDot, CircleHelp, CirclePlay,
+  Bot, ChevronRight, CircleAlert, CircleCheck, CircleDot, CirclePlay,
   Clock, Cpu, Database, FileText, Layers, Timer,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
@@ -15,8 +15,6 @@ import { MODE_PROFILES } from "../modes";
 const METRIC_ICONS: Record<string, { icon: LucideIcon; tone: string }> = {
   running_tasks: { icon: CirclePlay, tone: "info" },
   pending_approvals: { icon: Timer, tone: "warning" },
-  awaiting_user_input: { icon: CircleHelp, tone: "info" },
-  blocked_tasks: { icon: CircleAlert, tone: "danger" },
   completed_7d: { icon: CircleCheck, tone: "success" },
   active_solvers: { icon: Bot, tone: "violet" },
 };

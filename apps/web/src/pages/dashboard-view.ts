@@ -53,7 +53,7 @@ export type ReportView = {
   status: string;
 };
 
-/** One row of the reference design's five-component system card. */
+/** One row of the TGA2 component health card. */
 export type SystemRowView = {
   id: string;
   label: string;
@@ -86,8 +86,6 @@ export function buildDashboardView(
   const metrics: MetricView[] = [
     metric("running_tasks", "运行中任务", value.metrics.running_tasks),
     metric("pending_approvals", "待审批", value.metrics.pending_approvals),
-    metric("awaiting_user_input", "待回答", value.metrics.awaiting_user_input),
-    metric("blocked_tasks", "阻塞任务", value.metrics.blocked_tasks),
     metric("completed_7d", "已完成 (7天)", value.recent_completed.length),
     metric("active_solvers", "活动 Solver", value.metrics.active_solvers),
   ];
@@ -170,22 +168,16 @@ function toReport(task: OperationalTaskSummary): ReportView {
  * "未探测" rather than a green "正常" it cannot substantiate.
  */
 function buildSystemRows(value: DashboardResponse, health?: SystemHealthResult): SystemRowView[] {
-  const probe = (id: string) => health?.components.find((item) => item.id === id);
-  const aggregate = (id: string) => value.system_status.find((item) => item.id === id);
-
-  const models = probe("models");
-  const mcp = probe("mcp");
-  const runtime = probe("runtime");
-  const storage = aggregate("task_storage");
-  const sqlite = aggregate("sqlite");
-
-  return [
-    row("models", "Model Providers", null, healthy(models?.status, aggregate("model")?.available)),
-    row("mcp", "MCP Servers", mcp?.detail ?? null, healthy(mcp?.status, true)),
-    unprobedRow("scheduler", "Scheduler", aggregate("scheduler")?.detail ?? null),
-    row("runtime", "Execution Runtime", null, healthy(runtime?.status, aggregate("api")?.available)),
-    row("database", "Database", storage?.detail ?? null, sqlite?.available ?? true, "可用"),
-  ];
+  if (health?.components.length) {
+    return health.components.map((item) => ({
+      id: item.id,
+      label: item.label,
+      note: item.detail,
+      value: item.status === "healthy" || item.status === "available" ? "正常" : item.status === "degraded" ? "降级" : "异常",
+      tone: item.status === "healthy" || item.status === "available" ? "ok" : item.status === "degraded" ? "warn" : "bad",
+    }));
+  }
+  return value.system_status.map((item) => row(item.id, item.label, item.detail ?? null, item.available));
 }
 
 function row(
@@ -194,15 +186,6 @@ function row(
   return { id, label, note, value: ok ? okLabel : "异常", tone: ok ? "ok" : "bad" };
 }
 
-/** A component the backend exposes no health contract for. */
-function unprobedRow(id: string, label: string, note: string | null): SystemRowView {
-  return { id, label, note, value: "未探测", tone: "warn" };
-}
-
-function healthy(status: string | undefined, fallback: boolean | undefined): boolean {
-  if (status) return status === "healthy" || status === "available";
-  return fallback ?? true;
-}
 
 const ACTION_LABELS: Record<AttentionView["kind"], string> = {
   approval: "查看并审批",

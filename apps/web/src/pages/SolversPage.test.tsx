@@ -80,7 +80,7 @@ describe("SolversPage capability editor", () => {
       image: "ghcr.io/team-gipsy/tga-kali-universal@sha256:REPLACE_WITH_RELEASE_DIGEST",
       status: "unresolved_digest",
       image_status: "unresolved_digest",
-      runtime_status: "sandboxd_unavailable",
+      runtime_status: "docker_sandbox_unavailable",
       checked_at: "2026-08-03T14:30:00Z",
       reasons: [{ code: "unresolved_image_digest", message: "image digest has not been resolved" }],
       missing_executables: [],
@@ -116,7 +116,7 @@ describe("SolversPage capability editor", () => {
         id: "ctf-pwn-v1", display_name: "CTF pwn", image_name: "ghcr.io/team-gipsy/tga-kali-universal",
         image_tag: "latest", image_digest: null, image: "ghcr.io/team-gipsy/tga-kali-universal@sha256:REPLACE_WITH_RELEASE_DIGEST",
         image_role: "universal", shared_image_profile_count: 22,
-        tools: [], supported_capabilities: ["kali.exec", "kali.session"],
+        tools: [], supported_capabilities: ["kali.exec"],
         allowed_executables: ["gdb"], session_executables: ["gdb"], network_mode: "disabled",
         input_mount: "read_only", scratch_mount: "private_read_write",
         shared_artifact_mount: "read_only",
@@ -171,8 +171,8 @@ describe("SolversPage capability editor", () => {
     });
     mocks.fetchSolverKaliHealth.mockResolvedValue({
       solver_id: solver.id, requires_kali: true, profile_id: "ctf-pwn-v1", image: "example/image@sha256:" + "a".repeat(64),
-      status: "runtime_unavailable", image_status: "healthy", runtime_status: "sandboxd_unavailable", checked_at: null,
-      reasons: [{ code: "runtime_unavailable", message: "sandboxd is unavailable" }], missing_executables: [],
+      status: "runtime_unavailable", image_status: "healthy", runtime_status: "docker_sandbox_unavailable", checked_at: null,
+      reasons: [{ code: "runtime_unavailable", message: "Docker Sandbox is unavailable" }], missing_executables: [],
       image_store: { status: "unknown", error: null, expected_digest: null, actual_digest: null },
       toolset: { expected_digest: "5f12", actual_digest: "5f12", status: "match" },
     });
@@ -181,15 +181,15 @@ describe("SolversPage capability editor", () => {
     expect((await screen.findAllByText("Runtime 不可用")).length).toBeGreaterThan(0);
     await user.click(screen.getByRole("tab", { name: "Kali 信息" }));
     expect(screen.getByText("健康")).toBeInTheDocument();
-    expect(screen.getByText("sandboxd 不可用")).toBeInTheDocument();
+    expect(screen.getByText("Docker Sandbox 不可用")).toBeInTheDocument();
   });
 
-  it("shows sandboxd image-store and deferred toolset verification facts", async () => {
+  it("shows Docker image-store and deferred toolset verification facts", async () => {
     const user = userEvent.setup();
     mocks.fetchSolverKaliHealth.mockResolvedValue({
       solver_id: solver.id, requires_kali: true, profile_id: "ctf-pwn-v1",
       image: "example/image@sha256:" + "a".repeat(64), status: "healthy",
-      image_status: "healthy", runtime_status: "sandboxd_available", checked_at: "2026-08-08T00:00:00Z",
+      image_status: "healthy", runtime_status: "docker_sandbox_available", checked_at: "2026-08-08T00:00:00Z",
       reasons: [], missing_executables: [], image_store: {
         status: "readable", error: null, expected_digest: "image-expected", actual_digest: "image-actual",
       },
@@ -204,7 +204,7 @@ describe("SolversPage capability editor", () => {
     expect(screen.getByText("image-actual")).toBeInTheDocument();
   });
 
-  it("refreshes Kali health through the sandboxd-backed API", async () => {
+  it("refreshes Kali health through the Docker-backed API", async () => {
     const user = userEvent.setup();
     renderPage();
 

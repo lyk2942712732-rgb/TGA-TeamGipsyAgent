@@ -182,6 +182,8 @@ def runtime_snapshot_projection(
 def task_list_projection(snapshot: dict[str, Any]) -> dict[str, Any]:
     task = snapshot["task"]
     lifecycle = snapshot["lifecycle"]
+    severity_order = {"info": 0, "low": 1, "medium": 2, "high": 3, "critical": 4}
+    severities = [item["severity"] for item in snapshot.get("findings", [])]
     return {
         "schema_version": 6,
         "task_id": task["id"],
@@ -190,6 +192,8 @@ def task_list_projection(snapshot: dict[str, Any]) -> dict[str, Any]:
         "target_summary": task["goal"],
         "target_count": 1,
         "hint_count": len(task["spec"]["instructions"]),
+        "solver_total": len(snapshot.get("solvers", [])),
+        "highest_severity": max(severities, key=severity_order.get) if severities else None,
         **lifecycle,
     }
 

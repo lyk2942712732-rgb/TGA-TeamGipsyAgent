@@ -7,7 +7,6 @@ import {
   FileBarChart,
   Gauge,
   Home,
-  Library,
   Network,
   ShieldCheck,
   SlidersHorizontal,
@@ -41,7 +40,6 @@ export const NAVIGATION_GROUPS: NavigationGroup[] = [
       { id: "approvals", label: "审批", path: "/approvals", icon: ShieldCheck, activePages: ["approvals"] },
       { id: "resources", label: "资源", path: "/resources", icon: Archive, activePages: ["resources"] },
       { id: "reports", label: "报告", path: "/reports", icon: FileBarChart, activePages: ["reports"] },
-      { id: "knowledge", label: "知识库", path: "/knowledge-bases", icon: Library, activePages: ["knowledge-bases"] },
     ],
   },
   {

@@ -8,7 +8,6 @@ export type AppPage =
   | "approvals"
   | "resources"
   | "reports"
-  | "knowledge-bases"
   | "teams"
   | "solvers"
   | "skills"
@@ -27,7 +26,6 @@ const ROOT_ROUTES: Record<string, AppPage> = {
   approvals: "approvals",
   resources: "resources",
   reports: "reports",
-  "knowledge-bases": "knowledge-bases",
   system: "system",
 };
 

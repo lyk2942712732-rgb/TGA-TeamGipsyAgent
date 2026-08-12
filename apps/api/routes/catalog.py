@@ -330,24 +330,67 @@ def catalog(
             for item in app.runtime.skills.list()
         ]
     elif kind == "reports":
-        items = [
-            {"task_id": item["task_id"], "name": item["name"], "status": item["status"]}
-            for item in app.runtime.list_tasks()
-            if item["status"] == "completed"
-        ]
+        items = []
+        for task in app.runtime.list_tasks():
+            report = app.runtime.report(task["task_id"])
+            if report is None:
+                continue
+            items.append(
+                {
+                    "id": f"report-{task['task_id']}",
+                    "task_id": task["task_id"],
+                    "task_name": task["name"],
+                    "title": f"{task['name']} 报告",
+                    "mode": task["mode"],
+                    "status": "final",
+                    "findings": task["findings"],
+                    "updated_at": report["created_at"],
+                }
+            )
     elif kind == "resources":
-        items = [
-            {
-                "task_id": item["task_id"],
-                "name": item["name"],
-                "artifacts": item["artifacts"],
-            }
-            for item in app.runtime.list_tasks()
-        ]
+        items = []
+        for task in app.runtime.list_tasks():
+            snapshot = app.runtime.snapshot(task["task_id"])
+            for artifact in snapshot["artifacts"]:
+                items.append(
+                    {
+                        "id": artifact["artifact_id"],
+                        "task_id": task["task_id"],
+                        "task_name": task["name"],
+                        "kind": "artifacts",
+                        "title": artifact.get("path") or artifact["artifact_id"],
+                        "status": "available",
+                        "raw": artifact,
+                    }
+                )
+            for claim in snapshot["evidence_claims"]:
+                items.append(
+                    {
+                        "id": claim["claim_id"],
+                        "task_id": task["task_id"],
+                        "task_name": task["name"],
+                        "kind": "evidence",
+                        "title": claim["statement_preview"],
+                        "status": claim["status"],
+                        "raw": claim,
+                    }
+                )
+            for finding in snapshot["findings"]:
+                items.append(
+                    {
+                        "id": finding["finding_id"],
+                        "task_id": task["task_id"],
+                        "task_name": task["name"],
+                        "kind": "findings",
+                        "title": finding["title"],
+                        "status": finding["status"],
+                        "raw": finding,
+                    }
+                )
     elif kind == "policies":
         items = [
             {
-                "id": "tga2-evidence-first",
+                "id": f"tga2-evidence-first-{mode}",
                 "type": "execution",
                 "mode": mode,
                 "mode_label": mode.replace("_", " ").title(),
@@ -384,17 +427,13 @@ def catalog(
             }
             for mode in MODES
         ]
-    elif kind == "knowledge-bases":
-        items = []
     else:
         raise HTTPException(404, "catalog not found")
     if query:
         items = [item for item in items if query.casefold() in str(item).casefold()]
     return {
-        "supported": kind != "knowledge-bases",
-        "reason": "TGA2 removed the unused knowledge-base subsystem."
-        if kind == "knowledge-bases"
-        else None,
+        "supported": True,
+        "reason": None,
         "kind": kind,
         "items": items[:limit],
         "total": len(items),

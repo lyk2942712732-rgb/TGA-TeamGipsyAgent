@@ -63,7 +63,7 @@ const kaliProfile = {
   image_role: "universal",
   shared_image_profile_count: 22,
   tools: [{ name: "gdb", executable: "gdb", version: "16.3", category: "pwn" }],
-  supported_capabilities: ["kali.exec", "kali.session"],
+  supported_capabilities: ["kali.exec"],
   allowed_executables: ["gdb"],
   session_executables: ["gdb"],
   network_mode: "disabled",

@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { ClipboardList, Code2, Globe, Plus, Search, Shield, Target, UserRound, CheckCircle2 } from "lucide-react";
+import { ClipboardList, Code2, Globe, Search, Shield, Target, UserRound, CheckCircle2 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { useMemo, useState } from "react";
 import { fetchTeamTemplates, type TeamTemplateRecord } from "../api/catalog-query-adapter";
@@ -7,7 +7,6 @@ import { CatalogTable, Pagination, usePage, type Column } from "../components/ui
 import { ErrorState } from "../components/ui/ErrorState";
 import { FieldGrid } from "../components/ui/FieldGrid";
 import { LoadingSkeleton } from "../components/ui/LoadingSkeleton";
-import { useToast } from "../components/ui/Toast";
 import { solverShortName } from "../i18n/catalog";
 import { MODE_PROFILES } from "../modes";
 
@@ -51,7 +50,6 @@ const ROLE_ICONS: Array<[RegExp, LucideIcon, string]> = [
 ];
 
 export function TeamsPage() {
-  const toast = useToast();
   const [search, setSearch] = useState("");
   const [mode, setMode] = useState("");
   const [selectedMode, setSelectedMode] = useState<string | null>(null);
@@ -93,18 +91,14 @@ export function TeamsPage() {
     { id: "max", header: "最大并行 Solver", render: (row) => row.max_active_workers, align: "center" },
     // The catalog only publishes active templates, so every row is enabled.
     { id: "status", header: "状态", render: () => <span className="ref-chip tone-ok">启用</span> },
-    { id: "updated", header: "更新时间", render: () => <span className="field-empty">—</span> },
   ];
 
   return <div className="ref-page">
     <header className="ref-page-head">
       <div>
         <h1>团队模板</h1>
-        <p>管理团队模板和角色配置</p>
+        <p>查看 TGA2 为各任务模式提供的固定角色编排</p>
       </div>
-      <button className="ref-primary-button" onClick={() => toast.notifyUnavailable("新建模板")}>
-        <Plus size={16} />新建模板
-      </button>
     </header>
 
     <section className="ref-filter-row" aria-label="筛选团队模板">
@@ -122,10 +116,6 @@ export function TeamsPage() {
         {[...new Set(all.map((item) => item.mode))].map((value) => (
           <option key={value} value={value}>{modeLabel(value)}</option>
         ))}
-      </select>
-      <select aria-label="状态筛选" defaultValue="">
-        <option value="">状态: 全部</option>
-        <option value="enabled">启用</option>
       </select>
     </section>
 
@@ -158,12 +148,8 @@ export function TeamsPage() {
             <FieldGrid fields={[
               { label: "最大并行 Solver", value: selected.max_active_workers },
               { label: "最大总数", value: selected.max_total_solvers },
-              { label: "默认模型", missing: true },
-              { label: "工具策略", missing: true },
-              { label: "审批策略", missing: true },
               { label: "Spawn Rules", value: spawnSummary(selected) },
               { label: "Completion Policy", value: completionSummary(selected) },
-              { label: "更新时间", missing: true },
             ]} />
           </section>
         </div> : null}
@@ -174,13 +160,15 @@ export function TeamsPage() {
 /** Supervisor → workers → reviewer/reporter, drawn from the real spawn wiring. */
 function TeamStructure({ record }: { record: TeamTemplateRecord }) {
   const terminals = [record.reviewer_definition_id, record.reporter_definition_id].filter(Boolean);
+  const terminalSet = new Set([record.supervisor_definition_id, ...terminals]);
+  const workers = record.available_solver_definition_ids.filter((id) => !terminalSet.has(id));
   return <div className="org-chart" aria-label="团队结构">
     <div className="org-row">
       <OrgNode id={record.supervisor_definition_id} accent />
     </div>
     <div className="org-connector" aria-hidden="true" />
     <div className="org-row">
-      {record.available_solver_definition_ids.map((id) => <OrgNode
+      {workers.map((id) => <OrgNode
         key={id}
         id={id}
         required={record.required_solver_definition_ids.includes(id)}

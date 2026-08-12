@@ -1,30 +1,28 @@
 import { useQuery } from "@tanstack/react-query";
-import { Search, Upload } from "lucide-react";
+import { ExternalLink, Search } from "lucide-react";
 import { useMemo, useState } from "react";
 import { fetchProductCatalog } from "../api/catalog-query-adapter";
 import { CatalogTable, Pagination, usePage, type Column } from "../components/ui/CatalogTable";
 import { DetailTabs, type DetailTab } from "../components/ui/DetailTabs";
 import { ErrorState } from "../components/ui/ErrorState";
 import { LoadingSkeleton } from "../components/ui/LoadingSkeleton";
-import { useToast } from "../components/ui/Toast";
+import { runtimeApi } from "../runtime/api-v2";
 
 /**
  * 资源中心 (reference image 07).
  *
  * `/api/v2/catalog/resources` projects a task's Artifact / EvidenceClaim /
- * Finding rows.  It carries no byte size, so 大小 shows a dash.  The Knowledge
- * tab is projected from the same catalog and stays empty until a task persists
- * knowledge items.
+ * Finding rows from a flattened TGA2 task-snapshot projection.
  */
 
 type ResourceRow = {
   id: string;
+  taskId: string;
   kind: string;
   name: string;
   type: string;
   taskName: string;
   solver: string | null;
-  size: string | null;
   hash: string | null;
   createdAt: string;
   status: string;
@@ -33,6 +31,7 @@ type ResourceRow = {
 type CatalogResource = {
   id: string;
   task_id: string;
+  task_name: string;
   kind: string;
   title: string;
   status: string | null;
@@ -43,7 +42,6 @@ const TABS: DetailTab[] = [
   { id: "artifacts", label: "Artifacts" },
   { id: "evidence", label: "Evidence Claims" },
   { id: "findings", label: "Findings" },
-  { id: "knowledge", label: "Knowledge" },
 ];
 
 /**
@@ -66,7 +64,6 @@ const STATUS_LABELS: Record<string, string> = {
 };
 
 export function ResourcesPage() {
-  const toast = useToast();
   const [tab, setTab] = useState("artifacts");
   const [search, setSearch] = useState("");
   const [taskName, setTaskName] = useState("");
@@ -104,7 +101,7 @@ export function ResourcesPage() {
 
   const columns: Array<Column<ResourceRow>> = [
     {
-      id: "name", header: "文件名",
+      id: "name", header: "名称",
       render: (row) => <span className="cell-with-icon">
         <span className={`file-badge ${SEVERITY_TONES[row.type] ?? "tone-muted"}`} aria-hidden="true">{row.type.slice(0, 4)}</span>
         <strong className="ellipsis">{row.name}</strong>
@@ -113,7 +110,6 @@ export function ResourcesPage() {
     { id: "type", header: "类型", render: (row) => <span className="cell-muted">{SEVERITY_LABELS[row.type] ?? row.type}</span> },
     { id: "task", header: "来源任务", render: (row) => <span className="cell-muted">{row.taskName}</span> },
     { id: "solver", header: "来源 Solver", render: (row) => row.solver ? <span className="cell-muted">{row.solver}</span> : dash() },
-    { id: "size", header: "大小", render: (row) => row.size ? <span className="cell-muted">{row.size}</span> : dash() },
     { id: "hash", header: "Hash", render: (row) => row.hash ? <code className="cell-mono">{row.hash.slice(0, 10)}…</code> : dash() },
     { id: "created", header: "创建时间", render: (row) => <span className="cell-muted">{row.createdAt}</span> },
     {
@@ -121,6 +117,16 @@ export function ResourcesPage() {
       render: (row) => <span className={`ref-chip ${STATUS_TONES[row.status] ?? "tone-muted"}`}>
         {STATUS_LABELS[row.status] ?? row.status}
       </span>,
+    },
+    {
+      id: "actions", header: "操作",
+      render: (row) => row.kind === "artifacts" ? <a
+        className="ref-link-button"
+        href={runtimeApi.artifactUrl(row.taskId, row.id)}
+        target="_blank"
+        rel="noreferrer"
+        onClick={(event) => event.stopPropagation()}
+      ><ExternalLink size={13} />查看</a> : dash(),
     },
   ];
 
@@ -156,9 +162,6 @@ export function ResourcesPage() {
           onChange={(event) => { setSearch(event.target.value); setPage(1); }}
         />
       </label>
-      <button className="ref-primary-button push-end" onClick={() => toast.notifyUnavailable("上传资源")}>
-        <Upload size={16} />上传
-      </button>
     </section>
 
     {query.isLoading ? <LoadingSkeleton label="正在读取资源目录" rows={6} />
@@ -178,13 +181,12 @@ function toRow(item: CatalogResource): ResourceRow {
   const raw = item.raw ?? {};
   return {
     id: item.id,
+    taskId: item.task_id,
     kind: item.kind,
     name: item.title,
     type: text(raw.media_type) ?? text(raw.kind) ?? "—",
-    taskName: item.task_id,
-    solver: text(raw.source_solver_id),
-    // The resource projection carries no byte size.
-    size: null,
+    taskName: item.task_name,
+    solver: text(raw.source_solver_id) ?? text(raw.created_by_solver_id),
     hash: text(raw.sha256),
     createdAt: formatDate(text(raw.created_at)),
     status: item.status ?? "—",

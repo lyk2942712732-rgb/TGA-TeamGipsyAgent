@@ -254,7 +254,6 @@ def tasks(
 
 
 @router.get("/tasks/{task_id}")
-@router.get("/tasks/{task_id}/session")
 def task(task_id: str, app: Container = Depends(container)):
     return _call(app.runtime.snapshot, task_id)
 
@@ -483,8 +482,6 @@ def dashboard(app: Container = Depends(container)):
             "pending_approvals": sum(
                 int(x.get("pending_approvals", 0)) for x in values
             ),
-            "awaiting_user_input": 0,
-            "blocked_tasks": 0,
             "active_solvers": sum(int(x.get("active_solvers", 0)) for x in values),
         },
         "needs_attention": [],

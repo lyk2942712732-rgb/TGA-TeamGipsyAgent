@@ -20,7 +20,7 @@ const custom = {
   version: "1", source: "custom", summary: "Custom proof workflow", editable: true, body: "# Workflow\nPreserve evidence.",
 };
 const builtin = {
-  name: "binary-triage", modes: ["reverse_engineering", "ctf"], capabilities: ["input.read"], tags: ["binary"],
+  name: "binary-triage", modes: ["reverse_analysis", "ctf"], capabilities: ["input.read"], tags: ["binary"],
   version: "1", source: "builtin", summary: "Inspect binary metadata", editable: true, body: "# Workflow\nInspect metadata.",
 };
 
@@ -114,11 +114,10 @@ describe("SkillsPage", () => {
     await waitFor(() => expect(mocks.deleteSkill).toHaveBeenCalledWith("custom-proof"));
   });
 
-  it("blanks the fields the Skill model does not provide without labelling them", async () => {
+  it("does not render fake missing-data fields", async () => {
     const { container } = renderPage();
     const table = await findTable(container);
-    // 状态 / 更新时间 have no source on the Skill model — a dash, not a marker.
-    expect(within(table).getAllByText("—").length).toBeGreaterThan(0);
+    expect(within(table).queryByText("—")).not.toBeInTheDocument();
     expect(container.querySelectorAll(".not-implemented-inline")).toHaveLength(0);
     expect(container.textContent).not.toContain("项目没有实现");
   });

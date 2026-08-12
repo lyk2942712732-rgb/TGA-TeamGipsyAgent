@@ -70,16 +70,10 @@ describe("TaskRuntimePage skeleton", () => {
     blocked.session.status = "blocked";
     blocked.session.stopReason = "model_request_failed";
     blocked.team.status = "blocked";
-    blocked.eventsBySeq[31] = {
-      schemaVersion: 6, id: "event-31", taskId: "task", seq: 31,
-      type: "AGENT_ERROR", solverId: "supervisor", intentId: null,
-      payload: { phase: "model_turn", message: "provider request failed after 3 attempts", retryable: true, attempts: 3 },
-      createdAt: "",
-    };
     blocked.eventsBySeq[34] = {
       schemaVersion: 6, id: "event-34", taskId: "task", seq: 34,
-      type: "SESSION_STOPPED", solverId: "supervisor", intentId: null,
-      payload: { status: "blocked", reason: "model_request_failed", error: { code: "MODEL_REQUEST_FAILED", message: "provider request failed after 3 attempts", retryable: true, attempts: 3 } },
+      type: "TASK_FAILED", solverId: "supervisor", intentId: null,
+      payload: { error_type: "AuthenticationError", message: "provider request failed after 3 attempts", retryable: true, attempts: 3 },
       createdAt: "",
     };
     blocked.latestSeq = 34;
@@ -88,7 +82,7 @@ describe("TaskRuntimePage skeleton", () => {
     render(<MemoryRouter><TaskRuntimePage taskId="task" mode="runtime" /></MemoryRouter>);
 
     const alert = screen.getByRole("alert");
-    expect(alert).toHaveTextContent("模型连接失败，任务已暂停");
+    expect(alert).toHaveTextContent("模型认证失败");
     expect(alert).toHaveTextContent("provider request failed after 3 attempts");
     expect(alert).toHaveTextContent("已自动尝试 3 次");
     expect(screen.queryByRole("button", { name: "重新连接并恢复" })).toBeNull();

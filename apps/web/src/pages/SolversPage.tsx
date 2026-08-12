@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { LayoutGrid, Plus, RefreshCw, Rows3, Save, Search, Shield, X } from "lucide-react";
+import { LayoutGrid, RefreshCw, Rows3, Save, Search, Shield, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import {
   checkSolverKaliHealth,
@@ -41,7 +41,7 @@ const TABS: DetailTab[] = [
   { id: "kali", label: "Kali 信息" },
 ];
 
-type KaliCapability = "kali.exec" | "kali.session";
+type KaliCapability = "kali.exec";
 type Draft = {
   hostProfileId: string;
   hostAdd: string[];
@@ -90,11 +90,8 @@ export function SolversPage() {
     <header className="ref-page-head">
       <div>
         <h1>Solver 管理</h1>
-        <p>管理 Solver 定义、版本和能力</p>
+        <p>查看固定角色，并配置 TGA2 Runtime 实际使用的能力</p>
       </div>
-      <button className="ref-primary-button" onClick={() => toast.notifyUnavailable("新建 Solver")}>
-        <Plus size={16} />新建 Solver
-      </button>
     </header>
 
     <section className="ref-filter-row" aria-label="筛选 Solver">
@@ -110,10 +107,6 @@ export function SolversPage() {
       <select aria-label="角色筛选" value={role} onChange={(event) => setRole(event.target.value)}>
         <option value="">所有角色</option>
         {roles.map((value) => <option key={value} value={value}>{ROLE_LABELS[value] ?? value}</option>)}
-      </select>
-      <select aria-label="状态筛选" defaultValue="">
-        <option value="">所有状态</option>
-        <option value="enabled">启用</option>
       </select>
       <select aria-label="支持模式筛选" value={mode} onChange={(event) => setMode(event.target.value)}>
         <option value="">支持模式：全部</option>
@@ -442,14 +435,14 @@ function KaliEditor({ draft, setDraft, toggle, profiles }: {
     </label>
     <fieldset>
       <legend>Kali 能力</legend>
-      {(["kali.exec", "kali.session"] as KaliCapability[]).map((capability) => <label key={capability}>
+      {(["kali.exec"] as KaliCapability[]).map((capability) => <label key={capability}>
         <input
           type="checkbox"
           checked={draft.capabilities.includes(capability)}
           disabled={Boolean(selected && !selected.supported_capabilities.includes(capability))}
           onChange={() => toggle(capability)}
         />
-        {capability}<small>{capability === "kali.exec" ? "一次性命令执行" : "交互式 PTY 会话"}</small>
+        {capability}<small>一次性命令执行</small>
       </label>)}
     </fieldset>
     <p className="skill-summary">取消全部能力会移除 Kali Binding，不会提交空能力列表。</p>
@@ -578,8 +571,6 @@ function healthLabel(status: string): string {
 function runtimeLabel(status: string): string {
   return ({
     disabled: "已禁用",
-    sandboxd_unavailable: "sandboxd 不可用",
-    sandboxd_available: "sandboxd 可用",
     docker_sandbox_unavailable: "Docker Sandbox 不可用",
     docker_sandbox_available: "Docker Sandbox 可用",
     not_applicable: "不适用",

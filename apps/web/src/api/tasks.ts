@@ -52,7 +52,7 @@ export type StagedAsset = {
   error?: string;
 };
 
-export type CreateSessionRequest = {
+export type CreateTaskRequest = {
   id: string;
   name: string;
   mode: TaskMode;
@@ -82,6 +82,7 @@ export type TaskListItem = {
   flags: number; findings: number; artifacts: number;
   pending_approvals?: number; needs_attention?: boolean;
   intent_total?: number; intent_completed?: number;
+  solver_total?: number; highest_severity?: "info" | "low" | "medium" | "high" | "critical" | null;
 };
 
 export type LLMVerification = {
@@ -110,14 +111,14 @@ export type AgentModelOptions = {
   models: Array<{ provider_id: string; provider_name: string; model_id: string; model_name: string; api_key_id: string; verification_status: LLMVerification["status"]; ready: boolean }>;
 };
 
-export const createTask = (request: CreateSessionRequest) => requestJson<{
+export const createTask = (request: CreateTaskRequest) => requestJson<{
   task_id: string; status: string; scheduled: boolean;
   mcp_capabilities: { server_ids: string[]; tools: unknown[] };
 }>("/api/v2/tasks", {
   method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(request),
 });
 
-export const preflightTask = (request: CreateSessionRequest) => requestJson<TaskPreflight>("/api/v2/tasks/preflight", {
+export const preflightTask = (request: CreateTaskRequest) => requestJson<TaskPreflight>("/api/v2/tasks/preflight", {
   method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(request),
 });
 
@@ -193,7 +194,7 @@ export async function importSkill(file: File, scene?: TaskMode): Promise<{ skill
   if (!response.ok) throw new Error(uploadError(payload, response.status));
   return payload as { skill: SkillDetail };
 }
-export const updateSkill = (name: string, payload: Pick<SkillDetail, "modes" | "capabilities" | "tags" | "version" | "body">) => requestJson<{ skill: SkillDetail }>(`/api/v2/settings/skills/${encodeURIComponent(name)}`, {
+export const updateSkill = (name: string, payload: Pick<SkillDetail, "summary" | "tags" | "body">) => requestJson<{ skill: SkillDetail }>(`/api/v2/settings/skills/${encodeURIComponent(name)}`, {
   method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
 });
 export const deleteSkill = (name: string) => requestJson<{ name: string; deleted: boolean }>(`/api/v2/settings/skills/${encodeURIComponent(name)}`, { method: "DELETE" });

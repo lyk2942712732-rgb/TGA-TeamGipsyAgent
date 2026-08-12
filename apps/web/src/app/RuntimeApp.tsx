@@ -3,7 +3,6 @@ import { ToastProvider } from "../components/ui/Toast";
 import { TaskRuntimePage } from "../features/runtime/TaskRuntimePage";
 import { ApprovalsPage } from "../pages/ApprovalsPage";
 import { DashboardRoute } from "../pages/DashboardRoute";
-import { KnowledgeBasesPage } from "../pages/KnowledgeBasesPage";
 import { NewTaskPage } from "../pages/NewTaskPage";
 import { ModelsPage } from "../pages/ModelsPage";
 import { PoliciesPage } from "../pages/PoliciesPage";
@@ -44,7 +43,6 @@ function RoutePage({ route, navigate }: { route: AppRoute; navigate: (path: stri
   if (route.page === "skills") return <SkillsPage />;
   if (route.page === "resources") return <ResourcesPage />;
   if (route.page === "reports") return <ReportsPage />;
-  if (route.page === "knowledge-bases") return <KnowledgeBasesPage />;
   if (route.page === "teams") return <TeamsPage />;
   if (route.page === "solvers") return <SolversPage />;
   if (route.page === "policies") return <PoliciesPage />;
@@ -56,7 +54,7 @@ function NotFoundPage({ navigate }: { navigate: (path: string) => void }) {
   return <section className="page-stack route-not-found">
     <span className="eyebrow">404 / ROUTE REMOVED</span>
     <h1>此入口不存在</h1>
-    <p>旧 Session 与聚合 Settings URL 已完成一次性迁移，不再提供别名或重定向。</p>
+    <p>该地址不存在，或对应功能已从当前版本移除。</p>
     <div className="button-row"><button onClick={() => navigate("/tasks")}>打开任务列表</button><button className="secondary-button" onClick={() => navigate("/")}>返回首页</button></div>
   </section>;
 }

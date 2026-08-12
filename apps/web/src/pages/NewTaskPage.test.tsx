@@ -20,7 +20,7 @@ const mocks = vi.hoisted(() => ({
   })),
   fetchSkillSettings: vi.fn(async () => ({ schema_version: 3, skills: [
     { name: "web-recon", modes: ["ctf", "penetration_test"], capabilities: ["http.request"], tags: ["web"], version: "1", source: "builtin", summary: "Map web endpoints", editable: true },
-    { name: "binary-triage", modes: ["reverse_engineering"], capabilities: ["input.read"], tags: ["binary"], version: "1", source: "builtin", summary: "Inspect binary metadata", editable: true },
+    { name: "binary-triage", modes: ["reverse_analysis"], capabilities: ["input.read"], tags: ["binary"], version: "1", source: "builtin", summary: "Inspect binary metadata", editable: true },
   ] })),
   fetchAgentModelOptions: vi.fn(async (mode: string) => ({
     mode,
@@ -215,7 +215,7 @@ describe("NewTaskPage multimodal input flow", () => {
     await user.click(screen.getByRole("button", { name: /任务提示与材料/ }));
     await user.upload(document.querySelector<HTMLInputElement>('input[type="file"]')!, new File(["x"], "old.txt"));
     await screen.findByText("old.txt");
-    await user.click(screen.getByRole("button", { name: "取消" }));
+    await user.click(screen.getByRole("button", { name: "重置" }));
     expect(screen.queryByText("old.txt")).toBeNull();
     expect(mocks.deleteStagedInput).toHaveBeenCalled();
   });

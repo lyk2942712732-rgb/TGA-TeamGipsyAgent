@@ -13,8 +13,8 @@ import { statusDefinition } from "../../../shared/status";
  * the summary keeps the drill-downs the workbench already projects.
  */
 
-type InspectorTab = "overview" | "transcript" | "plan" | "knowledge" | "skills" | "tools" | "artifacts" | "config";
-const TABS: Array<[InspectorTab, string]> = [["overview", "概览"], ["transcript", "Transcript"], ["plan", "Local Plan"], ["knowledge", "Knowledge"], ["skills", "Skills"], ["tools", "Tools"], ["artifacts", "Artifacts"], ["config", "配置"]];
+type InspectorTab = "overview" | "transcript" | "plan" | "skills" | "tools" | "artifacts" | "config";
+const TABS: Array<[InspectorTab, string]> = [["overview", "概览"], ["transcript", "事件日志"], ["plan", "当前 Intent"], ["skills", "Skills"], ["tools", "Tools"], ["artifacts", "Artifacts"], ["config", "配置"]];
 
 export function SolverInspector({ solver, store }: { solver: RuntimeSolver | null; store?: RuntimeStore }) {
   const [tab, setTab] = useState<InspectorTab>("overview");
@@ -32,7 +32,6 @@ export function SolverInspector({ solver, store }: { solver: RuntimeSolver | nul
         {tab === "overview" ? <Overview solver={solver} store={store} /> : null}
         {tab === "transcript" ? <Transcript solver={solver} store={store} /> : null}
         {tab === "plan" ? <LocalPlan solver={solver} store={store} /> : null}
-        {tab === "knowledge" ? <Knowledge solver={solver} store={store} /> : null}
         {tab === "skills" ? <Skills solver={solver} store={store} /> : null}
         {tab === "tools" ? <Tools solver={solver} store={store} /> : null}
         {tab === "artifacts" ? <Artifacts solver={solver} store={store} /> : null}
@@ -127,12 +126,6 @@ function Transcript({ solver, store }: { solver: RuntimeSolver; store?: RuntimeS
 }
 
 function LocalPlan({ solver, store }: { solver: RuntimeSolver; store?: RuntimeStore }) { const intent = solver.assignedIntentId && store ? store.intentsById[solver.assignedIntentId] : undefined; return <section><h4>Local Plan</h4>{intent ? <dl className="solver-summary-list"><Item label="Intent" value={intent.title} /><Item label="目标" value={intent.objective} /><Item label="状态" value={intent.status} /><Item label="依赖" value={intent.dependencies.join("、") || "无"} /></dl> : <p className="runtime-empty">后端未投影该 Solver 的 Local Plan 正文</p>}</section>; }
-
-function Knowledge({ solver, store }: { solver: RuntimeSolver; store?: RuntimeStore }) {
-  const values = store ? Object.values(store.knowledgeById) : [];
-  const groups: Array<[string, typeof values]> = [["Solver Candidate", values.filter((item) => item.scope === "solver" && item.targetId === solver.solverId && item.status === "candidate")], ["Intent Shared", values.filter((item) => item.scope === "intent" && item.targetId === solver.assignedIntentId && !["rejected", "superseded"].includes(item.status))], ["Task Verified", values.filter((item) => item.scope === "task" && item.status === "verified")], ["Rejected / Superseded", values.filter((item) => ["rejected", "superseded"].includes(item.status))]];
-  return <div className="inspector-knowledge">{groups.map(([label, items]) => <section key={label}><h4>{label}</h4>{items.length ? items.map((item) => <p key={item.knowledgeId}>{item.contentPreview}</p>) : <small>暂无</small>}</section>)}</div>;
-}
 
 function Skills({ solver, store }: { solver: RuntimeSolver; store?: RuntimeStore }) { const taskBundle = record(store?.taskCommonSkillSnapshot); const common = list(taskBundle.skills); const names = list(solver.skillSnapshot.names); return <div className="inspector-skills"><section><h4>Task Common Skills</h4>{common.length ? common.map((item, index) => <pre key={index}>{JSON.stringify(item, null, 2)}</pre>) : <small>未投影版本/hash/选择原因</small>}</section><section><h4>Solver Specialized Skills</h4>{names.length ? names.map(String).map((name) => <p key={name}>{name}</p>) : <small>未选择</small>}<dl className="solver-summary-list"><Item label="selector" value={String(solver.skillSnapshot.selector ?? "未投影")} /><Item label="count" value={String(solver.skillSnapshot.count ?? 0)} /></dl></section></div>; }
 

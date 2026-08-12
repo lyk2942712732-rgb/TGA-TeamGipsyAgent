@@ -35,7 +35,7 @@ export function TaskRuntimePage({ taskId, mode = "runtime" }: { taskId: string; 
   const selectedSolver = (selection.solverId ? viewStore.solversById[selection.solverId] : undefined) ?? (intentSolver ? viewStore.solversById[intentSolver] : undefined) ?? supervisor;
   const selectedSolverId = selectedSolver?.solverId ?? null;
   const terminalFailure = taskFailure(viewStore);
-  const control = async (action: "pause" | "resume" | "cancel") => { setBusy(true); setNotice(null); try { const result = await runtimeApi.control(taskId, action); setNotice(result.accepted === false ? (result.reason ?? "当前 Runtime 不支持该控制操作") : "Task 控制请求已提交"); refresh(); } catch (reason) { setNotice(reason instanceof Error ? reason.message : "Task 控制失败"); } finally { setBusy(false); } };
+  const control = async (action: "cancel") => { setBusy(true); setNotice(null); try { const result = await runtimeApi.control(taskId, action); setNotice(result.accepted === false ? (result.reason ?? "当前 Runtime 不支持该控制操作") : "Task 控制请求已提交"); refresh(); } catch (reason) { setNotice(reason instanceof Error ? reason.message : "Task 控制失败"); } finally { setBusy(false); } };
   return <section className="task-runtime-page">
     <TaskCommandHeader store={viewStore} connection={connection} mode={mode} busy={busy} onControl={(action) => void control(action)} onIntervention={() => setInterventionOpen(true)} onApprovals={() => setSelection({ tab: "approvals" })} onReplay={() => navigate({ pathname: `/tasks/${encodeURIComponent(taskId)}/replay`, search: location.search })} />
     {mode === "replay" && replaySeq !== null ? <ReplayControls store={store} seq={replaySeq} onSeq={setReplaySeq} /> : null}
@@ -60,27 +60,19 @@ export function TaskRuntimePage({ taskId, mode = "runtime" }: { taskId: string; 
 function taskFailure(store: RuntimeStore): { title: string; message: string; retryable: boolean; attempts: number | null } | null {
   if (!["blocked", "failed"].includes(store.session.status)) return null;
   const events = Object.values(store.eventsBySeq).sort((left, right) => right.seq - left.seq);
-  const stopped = events.find((event) => event.type === "SESSION_STOPPED");
-  const agentError = events.find((event) => event.type === "AGENT_ERROR");
-  const stoppedError = objectValue(stopped?.payload.error);
-  const retryable = stoppedError.retryable === true || agentError?.payload.retryable === true;
-  const rawAttempts = stoppedError.attempts ?? agentError?.payload.attempts;
+  const failed = events.find((event) => event.type === "TASK_FAILED");
+  const retryable = failed?.payload.retryable === true;
+  const rawAttempts = failed?.payload.attempts;
   const attempts = typeof rawAttempts === "number" && Number.isFinite(rawAttempts) && rawAttempts > 0 ? rawAttempts : null;
-  const message = stringValue(stoppedError.message)
-    ?? stringValue(agentError?.payload.message)
-    ?? stringValue(stopped?.payload.reason)
+  const message = stringValue(failed?.payload.message)
     ?? store.session.stopReason
     ?? "任务运行时发生未分类错误。";
   const title = ({
-    model_request_failed: "模型连接失败，任务已暂停",
-    session_turn_limit: "任务达到最大回合数",
-    task_budget_exhausted: "任务预算已耗尽",
-  } as Record<string, string>)[store.session.stopReason ?? ""] ?? "任务运行已阻塞";
+    AuthenticationError: "模型认证失败",
+    APITimeoutError: "模型请求超时",
+    TaskCancelledError: "任务已取消",
+  } as Record<string, string>)[stringValue(failed?.payload.error_type) ?? ""] ?? "任务运行失败";
   return { title, message, retryable, attempts };
-}
-
-function objectValue(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 }
 
 function stringValue(value: unknown): string | null {

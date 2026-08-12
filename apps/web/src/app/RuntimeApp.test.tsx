@@ -22,7 +22,6 @@ vi.mock("../pages/ModelsPage", () => ({ ModelsPage: () => <div>models</div> }));
 vi.mock("../pages/SkillsPage", () => ({ SkillsPage: () => <div>skills</div> }));
 vi.mock("../pages/ResourcesPage", () => ({ ResourcesPage: () => <h1>资源</h1> }));
 vi.mock("../pages/ReportsPage", () => ({ ReportsPage: () => <div>reports</div> }));
-vi.mock("../pages/KnowledgeBasesPage", () => ({ KnowledgeBasesPage: () => <div>knowledge bases</div> }));
 vi.mock("../pages/TeamsPage", () => ({ TeamsPage: () => <div>teams</div> }));
 vi.mock("../pages/SolversPage", () => ({ SolversPage: () => <div>solvers</div> }));
 vi.mock("../pages/PoliciesPage", () => ({ PoliciesPage: () => <div>policies</div> }));
@@ -47,11 +46,11 @@ function renderShell(entry: string, extra?: ReturnType<typeof LocationProbe>) {
 }
 
 describe("RuntimeApp product shell", () => {
-  it("renders thirteen static product entries without loading tasks or model settings", () => {
+  it("renders the current product entries without loading tasks or model settings", () => {
     renderShell("/resources");
 
     const navigation = screen.getByRole("navigation", { name: "主导航" });
-    expect(navigation.querySelectorAll("button")).toHaveLength(13);
+    expect(navigation.querySelectorAll("button")).toHaveLength(12);
     expect(screen.getByRole("button", { name: "首页" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "任务" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Tools & MCP" })).toBeInTheDocument();

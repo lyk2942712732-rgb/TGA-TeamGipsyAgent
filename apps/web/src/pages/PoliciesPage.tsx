@@ -3,10 +3,8 @@ import { Info, Search } from "lucide-react";
 import { useMemo, useState } from "react";
 import { fetchExecutionPolicies, type ExecutionPolicyRecord } from "../api/catalog-query-adapter";
 import { CatalogTable, type Column } from "../components/ui/CatalogTable";
-import { EmptyState } from "../components/ui/EmptyState";
 import { ErrorState } from "../components/ui/ErrorState";
 import { LoadingSkeleton } from "../components/ui/LoadingSkeleton";
-import { DetailTabs, type DetailTab } from "../components/ui/DetailTabs";
 import { FieldGrid } from "../components/ui/FieldGrid";
 
 /**
@@ -40,15 +38,7 @@ const HIGH_IMPACT_LABELS: Record<string, string> = {
   allowlisted: "白名单放行",
 };
 
-const TABS: DetailTab[] = [
-  { id: "execution", label: "执行策略" },
-  { id: "tools", label: "工具策略", missing: true },
-  { id: "budgets", label: "预算模板", missing: true },
-  { id: "retention", label: "保留策略", missing: true },
-];
-
 export function PoliciesPage() {
-  const [tab, setTab] = useState("execution");
   const [search, setSearch] = useState("");
   const [selectedId, setSelectedId] = useState("");
 
@@ -98,10 +88,7 @@ export function PoliciesPage() {
       </div>
     </header>
 
-    <DetailTabs tabs={TABS} active={tab} onSelect={setTab} size="lg" />
-
-    {tab !== "execution" ? <EmptyState label={`暂无${TABS.find((item) => item.id === tab)?.label}数据`} />
-      : query.isLoading ? <LoadingSkeleton label="正在读取执行策略预设" rows={5} />
+    {query.isLoading ? <LoadingSkeleton label="正在读取执行策略预设" rows={5} />
       : query.isError ? <ErrorState
         description={query.error instanceof Error ? query.error.message : "无法读取执行策略目录"}
         actionLabel="重试"

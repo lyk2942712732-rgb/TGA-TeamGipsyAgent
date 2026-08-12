@@ -1,7 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Save, Search, Trash2, Upload, X } from "lucide-react";
 import { useRef, useMemo, useState, type ChangeEvent } from "react";
-import { fetchSolverDefinitions } from "../api/catalog-query-adapter";
 import {
   deleteSkill, fetchSkillDetail, fetchSkillSettings, importSkill, updateSkill,
   type SkillDetail, type SkillSetting,
@@ -19,10 +18,6 @@ import { MODE_PROFILES, type TaskMode } from "../modes";
 const TABS: DetailTab[] = [
   { id: "overview", label: "概览" },
   { id: "instructions", label: "Instructions" },
-  { id: "params", label: "参数模式", missing: true },
-  { id: "deps", label: "依赖关系" },
-  { id: "usage", label: "使用统计", missing: true },
-  { id: "history", label: "版本历史", missing: true },
 ];
 
 export function SkillsPage() {
@@ -99,14 +94,13 @@ export function SkillsPage() {
     { id: "modes", header: "支持模式", render: (row) => <span className="cell-muted">{row.modes.map(modeLabel).join("、")}</span> },
     // Every skill the settings endpoint returns is loaded and selectable.
     { id: "status", header: "状态", render: () => <span className="ref-chip tone-ok">启用</span> },
-    { id: "updated", header: "更新时间", render: () => <span className="field-empty">—</span> },
   ];
 
   return <div className="ref-page">
     <header className="ref-page-head">
       <div>
         <h1>Skills 管理</h1>
-        <p>管理技能、版本和适用角色</p>
+        <p>管理 TGA2 Runtime 实际装配的 Skill 内容与标签</p>
       </div>
     </header>
 
@@ -125,10 +119,6 @@ export function SkillsPage() {
       <select aria-label="类别筛选" value={tag} onChange={(event) => setTag(event.target.value)}>
         <option value="">所有类别</option>
         {categories.map(([value]) => <option key={value} value={value}>{value}</option>)}
-      </select>
-      <select aria-label="状态筛选" defaultValue="">
-        <option value="">所有状态</option>
-        <option value="enabled">启用</option>
       </select>
       <select aria-label="模式筛选" value={mode} onChange={(event) => setMode(event.target.value)}>
         <option value="">支持模式: 全部</option>
@@ -201,16 +191,6 @@ export function SkillsPage() {
  * endpoint, but the Solver catalog declares which skills each definition pulls
  * in, so the count is derived from the real wiring rather than sampled.
  */
-function useSolverUsage(skill: SkillSetting): number | null {
-  const solvers = useQuery({ queryKey: ["catalog", "solvers"], queryFn: () => fetchSolverDefinitions() });
-  if (!solvers.data) return null;
-  const tags = new Set(skill.tags);
-  return solvers.data.items.filter((solver) => (
-    solver.required_skill_names.includes(skill.name)
-    || solver.default_skill_tags.some((value) => tags.has(value))
-  )).length;
-}
-
 function splitList(value: string): string[] {
   return value.split(/[,，]/).map((item) => item.trim()).filter(Boolean);
 }
@@ -226,7 +206,6 @@ function SkillDetailPanel({ skill, tab, onTab, onRemoved }: {
   const [busy, setBusy] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState("");
-  const usage = useSolverUsage(skill);
 
   const detail = useQuery({
     queryKey: ["settings", "skills", skill.name],
@@ -243,8 +222,7 @@ function SkillDetailPanel({ skill, tab, onTab, onRemoved }: {
     setError("");
     try {
       await updateSkill(draft.name, {
-        modes: draft.modes, capabilities: draft.capabilities,
-        tags: draft.tags, version: draft.version, body: draft.body,
+        summary: draft.summary, tags: draft.tags, body: draft.body,
       });
       await client.invalidateQueries({ queryKey: ["settings", "skills"] });
       setDraft(null);
@@ -312,11 +290,8 @@ function SkillDetailPanel({ skill, tab, onTab, onRemoved }: {
 
     <FieldGrid columns={2} fields={[
       { label: "适用模式", value: <ChipList values={skill.modes.map(modeLabel)} tone="neutral" /> },
-      { label: "依赖能力", value: <ChipList values={skill.capabilities} /> },
       { label: "标签", value: <ChipList values={skill.tags.map(termLabel)} tone="neutral" /> },
       { label: "可编辑", value: skill.editable ? "是" : "否" },
-      { label: "使用情况", value: usage === null ? null : `${usage} 个 Solver`, missing: usage === null },
-      { label: "更新时间", missing: true },
     ]} />
 
     <DetailTabs tabs={TABS} active={tab} onSelect={onTab} />
@@ -326,16 +301,12 @@ function SkillDetailPanel({ skill, tab, onTab, onRemoved }: {
       {tab === "instructions" ? (
         draft
           ? <div className="skill-editor">
-            <label>版本
-              <input value={draft.version} onChange={(event) => setDraft({ ...draft, version: event.target.value })} />
+            <label>摘要
+              <input value={draft.summary} onChange={(event) => setDraft({ ...draft, summary: event.target.value })} />
             </label>
             <label>标签（逗号分隔）
               <input value={draft.tags.join(", ")}
                 onChange={(event) => setDraft({ ...draft, tags: splitList(event.target.value) })} />
-            </label>
-            <label>依赖能力（逗号分隔）
-              <input value={draft.capabilities.join(", ")}
-                onChange={(event) => setDraft({ ...draft, capabilities: splitList(event.target.value) })} />
             </label>
             <label className="skill-editor-body">Instructions 正文
               <textarea rows={16} value={draft.body}
@@ -346,17 +317,6 @@ function SkillDetailPanel({ skill, tab, onTab, onRemoved }: {
             : detail.isError ? <ErrorState description="无法读取 Skill 正文" />
               : <pre className="ref-prompt">{detail.data?.skill.body}</pre>
       ) : null}
-      {tab === "deps" ? <FieldGrid fields={[
-        { label: "依赖能力", value: <ChipList values={skill.capabilities} /> },
-        { label: "适用模式", value: <ChipList values={skill.modes.map(modeLabel)} tone="neutral" /> },
-      ]} /> : null}
-      {tab === "params" ? <EmptyState label="暂无参数模式数据" /> : null}
-      {tab === "usage" ? <FieldGrid fields={[
-        { label: "引用该 Skill 的 Solver", value: usage === null ? null : `${usage} 个`, missing: usage === null },
-        { label: "调用次数", missing: true },
-        { label: "最近使用", missing: true },
-      ]} /> : null}
-      {tab === "history" ? <EmptyState label="暂无版本历史" /> : null}
     </div>
   </section>;
 }

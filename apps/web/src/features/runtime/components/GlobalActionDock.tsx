@@ -5,7 +5,7 @@ import { selectPendingApprovals } from "../models/selectors";
 import type { RuntimeStore } from "../models/types";
 
 /**
- * Reference image 05's bottom dock: five evenly spread outlined buttons, each
+ * Mission Control's bottom dock: three task-level actions, each
  * carrying its own tone.  Every button is always drawn so the bar keeps its
  * shape; the ones the session state forbids are disabled rather than removed.
  */
@@ -23,7 +23,7 @@ export function GlobalActionDock({ store, mode, onRefresh, onOpenApprovals, onIn
   const status = store.session.status;
   const finished = ["completed", "cancelled", "failed"].includes(status);
 
-  const control = async (action: "pause" | "resume" | "cancel") => {
+  const control = async (action: "cancel") => {
     setBusy(action); setMessage(null);
     try { const result = await runtimeApi.control(store.task.id, action); setMessage(result.accepted === false ? (result.reason ?? "当前 Runtime 不支持该控制操作") : "控制请求已提交"); onRefresh(); }
     catch (reason) { setMessage(reason instanceof Error ? reason.message : "控制请求失败"); }

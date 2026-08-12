@@ -5,7 +5,7 @@ export type CatalogAvailability = {
   reason: string | null;
 };
 
-export type ProductCatalogKind = "resources" | "reports" | "knowledge-bases" | "teams" | "solvers" | "policies" | "skills";
+export type ProductCatalogKind = "resources" | "reports" | "teams" | "solvers" | "policies" | "skills";
 export type ProductCatalogResult = CatalogAvailability & {
   kind: ProductCatalogKind;
   items: Array<Record<string, unknown>>;
@@ -67,7 +67,7 @@ export type KaliTool = { name: string; executable: string; version: string | nul
 export type KaliLimits = { cpu_cores: number; memory_mb: number; timeout_seconds: number; max_processes: number };
 export type SolverKaliDetail = {
   profile_id: string;
-  capabilities: Array<"kali.exec" | "kali.session">;
+  capabilities: Array<"kali.exec">;
   image_name: string;
   image_tag: string;
   image_digest: string | null;
@@ -139,7 +139,7 @@ export type HostCapabilityProfileRecord = {
 };
 
 export type KaliCapabilityRecord = {
-  id: "kali.exec" | "kali.session";
+  id: "kali.exec";
   display_name: string;
   description: string;
   risk: string;
@@ -159,7 +159,7 @@ export type KaliProfileRecord = {
   image_role: "dedicated" | "universal";
   shared_image_profile_count: number;
   tools: KaliTool[];
-  supported_capabilities: Array<"kali.exec" | "kali.session">;
+  supported_capabilities: Array<"kali.exec">;
   allowed_executables: string[];
   session_executables: string[];
   network_mode: string;
@@ -192,7 +192,7 @@ export const fetchSolverDefinition = (id: string) => requestJson<SolverDefinitio
 export const fetchSolverManifest = (id: string, mode?: string) => requestJson<Record<string, unknown>>(`/api/v2/solvers/${encodeURIComponent(id)}/manifest-preview${mode ? `?mode=${encodeURIComponent(mode)}` : ""}`);
 export const updateSolverCapabilities = (
   id: string,
-  payload: Pick<SolverDefinitionRecord, "host_capability_profile_id" | "host_capability_overrides"> & { expected_content_sha256: string; kali: { profile_id: string; capabilities: Array<"kali.exec" | "kali.session"> } | null },
+  payload: Pick<SolverDefinitionRecord, "host_capability_profile_id" | "host_capability_overrides"> & { expected_content_sha256: string; kali: { profile_id: string; capabilities: Array<"kali.exec"> } | null },
 ) => requestJson<SolverDefinitionRecord>(`/api/v2/solvers/${encodeURIComponent(id)}/capabilities`, {
   method: "PUT",
   headers: { "Content-Type": "application/json" },
@@ -316,19 +316,14 @@ export async function fetchSystemHealth(): Promise<SystemHealthResult> {
       component(
         "mcp",
         "MCP Servers",
-        tools.configured ? (tools.status === "error" ? "degraded" : "available") : "unavailable",
-        tools.configured ? `${Array.isArray(tools.records) ? tools.records.length : 0} 个已配置` : "未配置 MCP Catalog Runner",
+        tools.configured ? (tools.status === "error" ? "degraded" : "available") : "available",
+        tools.configured ? `${Array.isArray(tools.records) ? tools.records.length : 0} 个已配置` : "未配置可选 MCP 服务",
         null,
         null,
         null,
         tools.last_error ?? null,
       ),
       component("capabilities", "Capability Catalog", "available", `${capabilityCount} 个 Capability · ${toolCount} 个 MCP Tool`, null),
-      unsupportedComponent("scheduler", "Scheduler", "当前 API 未提供独立 Scheduler 诊断。"),
-      unsupportedComponent("database", "Database", "当前 API 未提供脱敏 Database 健康查询。"),
-      unsupportedComponent("artifacts", "Artifact Store", "当前 API 未提供全局 Artifact Store 健康查询。"),
-      unsupportedComponent("events", "Event Stream", "当前 API 未提供全局 Event Stream 健康查询。"),
-      unsupportedComponent("retrieval", "Retrieval Indexes", "当前 API 未提供全局 Retrieval Index 诊断。"),
     ],
   };
 }
@@ -344,8 +339,4 @@ function component(
   lastError: string | null = null,
 ): SystemComponent {
   return { id, label, status, detail, latencyMs, version, lastSuccess, lastError };
-}
-
-function unsupportedComponent(id: string, label: string, detail: string): SystemComponent {
-  return component(id, label, "unsupported", detail, null);
 }

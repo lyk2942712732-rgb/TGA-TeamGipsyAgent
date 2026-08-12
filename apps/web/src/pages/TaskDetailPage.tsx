@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useQuery, type UseQueryResult } from "@tanstack/react-query";
 import {
-  AlertOctagon, ChevronDown, ChevronRight, CirclePlay, Clock, FileText,
+  AlertOctagon, ChevronRight, CirclePlay, Clock, FileText,
   ShieldCheck, Users,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
@@ -15,7 +15,7 @@ import { EmptyState } from "../components/ui/EmptyState";
 import { ErrorState } from "../components/ui/ErrorState";
 import { LoadingSkeleton } from "../components/ui/LoadingSkeleton";
 import { Timeline } from "../components/ui/Timeline";
-import { useToast } from "../components/ui/Toast";
+import { runtimeApi } from "../runtime/api-v2";
 import { StatusBadge } from "../shared/StatusBadge";
 import { statusLabel } from "../shared/status";
 import { MODE_PROFILES } from "../modes";
@@ -69,7 +69,6 @@ function statusTone(status: string): "info" | "success" | "warning" | "danger" {
 
 export function TaskDetailPage({ taskId }: { taskId: string }) {
   const navigate = useNavigate();
-  const toast = useToast();
   const [tab, setTab] = useState<DetailTabId>("overview");
 
   const detail = useQuery({ queryKey: ["task-detail", taskId], queryFn: () => fetchTaskDetail(taskId) });
@@ -127,9 +126,6 @@ export function TaskDetailPage({ taskId }: { taskId: string }) {
         <button className="ref-primary-button" onClick={() => navigate(`/tasks/${encodeURIComponent(taskId)}/runtime`)}>
           <CirclePlay size={16} />进入运行
         </button>
-        <button className="ref-secondary-button" onClick={() => toast.notifyUnavailable("更多任务操作")}>
-          更多 <ChevronDown size={14} />
-        </button>
       </div>
     </header>
 
@@ -150,7 +146,7 @@ export function TaskDetailPage({ taskId }: { taskId: string }) {
       </article>
 
       <StatCard label="Solver" icon={Users} tone="info"
-        value={String(lifecycle.active_solvers ?? 0)} detail="活跃 / 总数" />
+        value={String(lifecycle.active_solvers ?? 0)} detail="当前活动 Solver" />
       <StatCard label="待审批" icon={Clock} tone="warning"
         value={String(lifecycle.pending_approvals ?? 0)}
         detail={lifecycle.needs_attention ? "需要人工审批" : "当前无待处理"} />
@@ -171,7 +167,7 @@ export function TaskDetailPage({ taskId }: { taskId: string }) {
       {tab === "directives" ? <Directives detail={value} /> : null}
       {tab === "team" ? <TeamPanel query={team} /> : null}
       {tab === "inputs" ? <InputsPanel query={inputs} /> : null}
-      {tab === "results" ? <ResultsPanel query={evidence} /> : null}
+      {tab === "results" ? <ResultsPanel query={evidence} taskId={taskId} /> : null}
       {tab === "config" ? <ConfigPanel detail={value} /> : null}
       {tab === "history" ? <HistoryPanel query={history} /> : null}
     </div>
@@ -285,7 +281,7 @@ function toFindings(evidence: any): FindingRow[] {
     id: String(item.finding_id),
     severity: severityLabel(item.severity),
     title: String(item.title ?? item.finding_id),
-    description: String(item.summary ?? item.description ?? ""),
+    description: String(item.description_preview ?? item.summary ?? item.description ?? ""),
     impact: String(item.impact ?? "—"),
     location: String(item.target ?? "—"),
     at: formatDate(item.created_at),
@@ -366,14 +362,14 @@ function InputsPanel({ query }: { query: UseQueryResult<any> }) {
     <p className="skill-summary">{value.prompt || "没有文字提示词"}</p>
     {value.files.length
       ? <ul className="detail-entity-list">{value.files.map((file: Record<string, unknown>) => <li key={String(file.id)}>
-        <div><strong>{String(file.label ?? file.original_name ?? file.id)}</strong>
-          <small>{String(file.mime_type ?? "unknown")} · {String(file.size ?? "-")} bytes</small></div>
+        <div><strong>{String(file.name ?? file.id)}</strong>
+          <small>{String(file.media_type ?? "unknown")} · {String(file.path ?? "未记录路径")}</small></div>
       </li>)}</ul>
       : <EmptyState label="没有上传文件" />}
   </section>;
 }
 
-function ResultsPanel({ query }: { query: UseQueryResult<any> }) {
+function ResultsPanel({ query, taskId }: { query: UseQueryResult<any>; taskId: string }) {
   if (query.isLoading) return <LoadingSkeleton label="正在读取任务结果" rows={5} />;
   if (query.isError) return <ErrorState description="无法读取 Evidence 与 Finding" actionLabel="重试" onAction={() => void query.refetch()} />;
   const value = query.data;
@@ -395,7 +391,7 @@ function ResultsPanel({ query }: { query: UseQueryResult<any> }) {
       <header className="ref-card-head"><h2>证据产物</h2></header>
       {artifacts.length
         ? <ul className="detail-entity-list">{artifacts.slice(0, 8).map((item: Record<string, unknown>) => <li key={String(item.artifact_id)}>
-          <div><strong>{String(item.artifact_id)}</strong><small>{String(item.kind ?? "artifact")} · {formatDate(String(item.created_at ?? ""))}</small></div>
+          <div><a className="ref-link-button" href={runtimeApi.artifactUrl(taskId, String(item.artifact_id))} target="_blank" rel="noreferrer">{String(item.path ?? item.artifact_id)}</a><small>{String(item.kind ?? "artifact")} · {formatDate(String(item.created_at ?? ""))}</small></div>
         </li>)}</ul>
         : <EmptyState label="尚无 Artifact" />}
     </section>

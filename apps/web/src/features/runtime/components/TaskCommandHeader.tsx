@@ -15,7 +15,7 @@ import { StatusBadge } from "../../../shared/StatusBadge";
  * buttons it draws instead live in the bottom action dock.
  */
 
-type Control = "pause" | "resume" | "cancel";
+type Control = "cancel";
 
 export function TaskCommandHeader({ store, connection, mode, busy = false, onControl = () => undefined, onIntervention = () => undefined, onApprovals = () => undefined, onReplay = () => undefined }: { store: RuntimeStore; connection: RuntimeConnection; mode: "runtime" | "replay"; busy?: boolean; onControl?: (action: Control) => void; onIntervention?: () => void; onApprovals?: () => void; onReplay?: () => void }) {
   const solvers = Object.values(store.solversById);
