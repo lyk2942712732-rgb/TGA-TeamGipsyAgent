@@ -12,7 +12,13 @@ from typing import Any
 from langchain_core.tools import BaseTool
 
 from tga2.agent.graph import RuntimeDeps, TaskGraph
-from tga2.agent.roles import AgentSuite, LangChainAgentSuite, OfflineAgentSuite
+from tga2.agent.nodes import TaskCancelledError
+from tga2.agent.roles import (
+    AgentSuite,
+    LangChainAgentSuite,
+    OfflineAgentSuite,
+    RoutedAgentSuite,
+)
 from tga2.config import Configuration
 from tga2.core.models import AgentEvent, ResourceRef, Task, TaskSpec, TaskStatus
 from tga2.core.policy import ExecutionPolicy
@@ -88,6 +94,38 @@ class TaskRuntimeService:
             selected_names=list(selected) if selected is not None else None,
         )
 
+    def _agents_for_task(self, task: Task) -> AgentSuite:
+        if self._agents_overridden:
+            return self.agents
+        assignments = task.spec.agent_models
+        if not assignments:
+            return self.agents
+        offline = OfflineAgentSuite()
+        roles: dict[str, AgentSuite] = {}
+        built: dict[tuple[str, str], AgentSuite] = {}
+        for role in ("supervisor", "worker", "reviewer", "reporter"):
+            selection = assignments.get(role) or {}
+            provider_id = selection.get("providerId")
+            model_id = selection.get("modelId")
+            if (provider_id, model_id) == ("offline", "offline"):
+                roles[role] = offline
+                continue
+            if not provider_id or not model_id:
+                roles[role] = self.agents
+                continue
+            key = (provider_id, model_id)
+            if key not in built:
+                settings = self.configuration.model_registry.settings(
+                    provider_id, model_id, require_verified=True
+                )
+                built[key] = LangChainAgentSuite(
+                    build_chat_model(settings),
+                    self._select_skills,
+                    self.configuration.agent_prompts(),
+                )
+            roles[role] = built[key]
+        return RoutedAgentSuite(roles)
+
     def create_task(self, request: Any) -> dict[str, Any]:
         policy = request.execution_policy or ExecutionPolicy()
         task = Task(
@@ -154,6 +192,8 @@ class TaskRuntimeService:
                 return {"task_id": task_id, "status": "completed", "interrupts": []}
             try:
                 result = graph.invoke(task_id)
+            except TaskCancelledError:
+                return {"task_id": task_id, "status": "cancelled", "interrupts": []}
             except BaseException as exc:
                 store.set_task_status(task_id, TaskStatus.FAILED)
                 store.append_event(
@@ -257,11 +297,15 @@ class TaskRuntimeService:
         if not workspace.database_path.is_file():
             raise KeyError(f"task not found: {task_id}")
         store = TaskStore(workspace.database_path)
+        task = store.get_task(task_id)
+        if task is None:
+            store.close()
+            raise KeyError(f"task not found: {task_id}")
         graph = TaskGraph(
             RuntimeDeps(
                 store=store,
                 workspace=workspace,
-                agents=self.agents,
+                agents=self._agents_for_task(task),
                 sandbox_image=self.configuration.runtime.sandbox_image,
                 configuration=self.configuration,
                 external_tools=self.external_tools,

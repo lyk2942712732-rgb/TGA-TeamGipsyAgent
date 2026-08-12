@@ -144,7 +144,7 @@ export function ModelsPage({ onConfiguredChange }: { onConfiguredChange?: (confi
               <form className="provider-key-form" onSubmit={appendKey}><input aria-label="密钥备注" value={newKeyLabel} onChange={(event) => setNewKeyLabel(event.target.value)} placeholder="备注（可选）" /><input required type="password" aria-label="添加 API 密钥" autoComplete="new-password" value={newKey} onChange={(event) => setNewKey(event.target.value)} placeholder="输入新的 API 密钥" /><button disabled={busy === "key"}><Plus size={14} />添加 API 密钥</button></form>
             </section>
           </div>
-          <footer className="provider-security-note"><ShieldCheck size={16} /><span>密钥以受限权限保存在本机（Windows 使用 DPAPI 保护）；页面和 API 只展示掩码。更换密钥会使模型验证失效，避免任务使用未经确认的凭据。</span></footer>
+          <footer className="provider-security-note"><ShieldCheck size={16} /><span>密钥保存在后端运行目录的受限配置文件中，页面和 API 只展示掩码。更换密钥会使该供应商的模型验证失效；请仅部署在可信主机，并限制运行目录权限。</span></footer>
         </> : <div className="provider-detail-empty"><Server size={28} /><h2>选择一个供应商</h2><p>在左侧查看已配置供应商，或先添加新的供应商。</p></div>}
       </section>
     </div>

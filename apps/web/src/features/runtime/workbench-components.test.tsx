@@ -19,10 +19,9 @@ describe("Phase 11 command workbench components", () => {
     // Reference 05 collapses the task controls into the 任务操作 menu.
     expect(screen.queryByRole("button", { name: "暂停全部" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: /任务操作/ }));
-    fireEvent.click(screen.getByRole("menuitem", { name: "暂停全部" }));
-    fireEvent.click(screen.getByRole("button", { name: /任务操作/ }));
+    expect(screen.queryByRole("menuitem", { name: "暂停全部" })).toBeNull();
     fireEvent.click(screen.getByRole("menuitem", { name: "审批中心 (2)" }));
-    expect(onControl).toHaveBeenCalledWith("pause");
+    expect(onControl).not.toHaveBeenCalled();
     expect(onApprovals).toHaveBeenCalledOnce();
 
     fireEvent.click(screen.getByRole("button", { name: /任务操作/ }));

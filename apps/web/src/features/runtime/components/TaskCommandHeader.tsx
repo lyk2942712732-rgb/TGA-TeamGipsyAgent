@@ -100,10 +100,6 @@ function TaskActionMenu({ store, readonly, busy, approvals, mode, onControl, onI
       任务操作 <ChevronDown size={15} aria-hidden="true" />
     </button>
     {open ? <div className="mission-action-list" role="menu">
-      {!readonly && status === "running"
-        ? <button role="menuitem" disabled={busy} onClick={run(() => onControl("pause"))}>暂停全部</button> : null}
-      {!readonly && ["paused", "blocked"].includes(status)
-        ? <button role="menuitem" disabled={busy} onClick={run(() => onControl("resume"))}>恢复全部</button> : null}
       {!readonly ? <button role="menuitem" onClick={run(onIntervention)}>补充信息</button> : null}
       <button role="menuitem" onClick={run(onApprovals)}>审批中心 {approvals ? `(${approvals})` : ""}</button>
       {mode === "runtime" ? <button role="menuitem" onClick={run(onReplay)}>回放</button> : null}

@@ -117,7 +117,8 @@ def create_task(
     background_tasks: BackgroundTasks,
     app: Container = Depends(container),
 ):
-    request = _request(
+    request = _call(
+        _request,
         payload,
         app.run_root / ".staging",
         {tool.name for tool in app.runtime.external_tools},
@@ -143,11 +144,13 @@ def create_task(
 
 @router.post("/tasks/preflight")
 def preflight(payload: dict, app: Container = Depends(container)):
-    request = _request(
+    request = _call(
+        _request,
         payload,
         app.run_root / ".staging",
         {tool.name for tool in app.runtime.external_tools},
     )
+    _validate_agent_models(request, app)
     selected = app.runtime.skills.select(
         request.objective, selected_names=request.selected_skills
     )
@@ -178,10 +181,9 @@ def preflight(payload: dict, app: Container = Depends(container)):
             ).hexdigest(),
         },
         "mcp_catalog_version": "langchain-mcp-adapters",
-        "model_verification_id": app.configuration.model.model
-        if app.configuration.model.can_call_model
-        and app.configuration.model.verified
-        else "offline",
+        "model_verification_id": hashlib.sha256(
+            json.dumps(request.agent_models, sort_keys=True).encode()
+        ).hexdigest(),
     }
 
 
@@ -551,21 +553,30 @@ def _page(items: list, offset: int, limit: int):
 def _validate_agent_models(request: CreateTaskRequest, app: Container) -> None:
     if not request.agent_models:
         return
-    settings = app.configuration.model
-    expected = (
-        (settings.provider, settings.model)
-        if settings.can_call_model and settings.verified
-        else ("offline", "offline")
-    )
-    invalid = {
-        role: value
-        for role, value in request.agent_models.items()
-        if (value.get("providerId"), value.get("modelId")) != expected
-    }
+    valid_roles = {"supervisor", "worker", "reviewer", "reporter"}
+    invalid = {}
+    for role, value in request.agent_models.items():
+        provider_id = value.get("providerId")
+        model_id = value.get("modelId")
+        if role not in valid_roles:
+            invalid[role] = value
+            continue
+        if (provider_id, model_id) == ("offline", "offline"):
+            continue
+        try:
+            app.configuration.model_registry.settings(
+                str(provider_id), str(model_id), require_verified=True
+            )
+        except (KeyError, ValueError):
+            invalid[role] = value
     if invalid:
         raise HTTPException(
             422,
-            "TGA2 currently uses one active model for all roles; refresh model options.",
+            {
+                "code": "INVALID_AGENT_MODEL",
+                "message": "One or more Agent model selections are missing or unverified.",
+                "assignments": invalid,
+            },
         )
 
 

@@ -91,6 +91,6 @@ describe("TaskRuntimePage skeleton", () => {
     expect(alert).toHaveTextContent("模型连接失败，任务已暂停");
     expect(alert).toHaveTextContent("provider request failed after 3 attempts");
     expect(alert).toHaveTextContent("已自动尝试 3 次");
-    expect(screen.getByRole("button", { name: "重新连接并恢复" })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: "重新连接并恢复" })).toBeNull();
   });
 });

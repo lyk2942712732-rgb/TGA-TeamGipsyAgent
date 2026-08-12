@@ -1,12 +1,19 @@
-"""Small provider configuration; LangChain owns provider-specific clients."""
+"""Persisted model registry and LangChain provider adapters."""
 
 from __future__ import annotations
 
 import os
+from datetime import UTC, datetime
+from typing import Any
+from uuid import uuid4
 
 from langchain.chat_models import init_chat_model
 from langchain_core.language_models.chat_models import BaseChatModel
 from pydantic import BaseModel, ConfigDict, Field, SecretStr
+
+
+def utc_now() -> datetime:
+    return datetime.now(UTC)
 
 
 class ModelSettings(BaseModel):
@@ -37,7 +44,131 @@ class ModelSettings(BaseModel):
 
     @property
     def can_call_model(self) -> bool:
-        return not self.offline and self.api_key is not None
+        return (
+            not self.offline
+            and self.api_key is not None
+            and bool(self.api_key.get_secret_value())
+        )
+
+
+class RegisteredModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(default_factory=lambda: f"model_{uuid4().hex[:12]}")
+    name: str
+    max_output_tokens: int = 8192
+    timeout_seconds: int = 120
+    temperature: float | None = None
+    reasoning_mode: str = "auto"
+    verification_status: str = "unverified"
+    verified_at: datetime | None = None
+    last_error: dict[str, str] | None = None
+
+
+class RegisteredAPIKey(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(default_factory=lambda: f"key_{uuid4().hex[:12]}")
+    label: str = "Active"
+    api_key: SecretStr
+    created_at: datetime = Field(default_factory=utc_now)
+
+
+class RegisteredProvider(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(default_factory=lambda: f"provider_{uuid4().hex[:12]}")
+    name: str
+    preset_id: str = "custom"
+    # DeepSeek, OpenRouter and most competition gateways expose an
+    # OpenAI-compatible protocol.  This is the LangChain adapter name, not the
+    # user-facing provider name.
+    model_provider: str = "openai"
+    base_url: str | None = None
+    models: list[RegisteredModel] = Field(default_factory=list)
+    api_keys: list[RegisteredAPIKey] = Field(default_factory=list)
+    selected_api_key_id: str | None = None
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
+
+    def model(self, model_id: str) -> RegisteredModel:
+        value = next((item for item in self.models if item.id == model_id), None)
+        if value is None:
+            raise KeyError(f"model not found: {model_id}")
+        return value
+
+    def selected_key(self) -> RegisteredAPIKey:
+        value = next(
+            (item for item in self.api_keys if item.id == self.selected_api_key_id),
+            None,
+        )
+        if value is None:
+            raise KeyError(f"provider has no selected API key: {self.id}")
+        return value
+
+    def settings(self, model_id: str, *, require_verified: bool = False) -> ModelSettings:
+        model = self.model(model_id)
+        key = self.selected_key()
+        if require_verified and model.verification_status != "verified":
+            raise ValueError(f"model is not verified: {self.id}/{model.id}")
+        return ModelSettings(
+            provider=self.model_provider,
+            model=model.name,
+            api_key=key.api_key,
+            base_url=self.base_url,
+            temperature=model.temperature,
+            offline=False,
+            verified=model.verification_status == "verified",
+        )
+
+
+class ModelRegistry(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: int = 1
+    providers: list[RegisteredProvider] = Field(default_factory=list)
+    active_provider_id: str | None = None
+    active_model_id: str | None = None
+
+    def provider(self, provider_id: str) -> RegisteredProvider:
+        value = next((item for item in self.providers if item.id == provider_id), None)
+        if value is None:
+            raise KeyError(f"provider not found: {provider_id}")
+        return value
+
+    def settings(
+        self, provider_id: str, model_id: str, *, require_verified: bool = False
+    ) -> ModelSettings:
+        return self.provider(provider_id).settings(
+            model_id, require_verified=require_verified
+        )
+
+    def active_settings(self) -> ModelSettings | None:
+        if not self.active_provider_id or not self.active_model_id:
+            return None
+        try:
+            return self.settings(
+                self.active_provider_id,
+                self.active_model_id,
+                require_verified=True,
+            )
+        except (KeyError, ValueError):
+            return None
+
+    def persisted_payload(self) -> dict[str, Any]:
+        payload = self.model_dump(mode="json", exclude={"providers"})
+        payload["providers"] = []
+        for provider in self.providers:
+            value = provider.model_dump(mode="json", exclude={"api_keys"})
+            value["api_keys"] = [
+                {
+                    **key.model_dump(mode="json", exclude={"api_key"}),
+                    "api_key": key.api_key.get_secret_value(),
+                }
+                for key in provider.api_keys
+            ]
+            payload["providers"].append(value)
+        return payload
 
 
 def build_chat_model(settings: ModelSettings) -> BaseChatModel:
@@ -54,4 +185,12 @@ def build_chat_model(settings: ModelSettings) -> BaseChatModel:
     return init_chat_model(settings.model, model_provider=settings.provider, **kwargs)
 
 
-__all__ = ["ModelSettings", "build_chat_model"]
+__all__ = [
+    "ModelRegistry",
+    "ModelSettings",
+    "RegisteredAPIKey",
+    "RegisteredModel",
+    "RegisteredProvider",
+    "build_chat_model",
+    "utc_now",
+]

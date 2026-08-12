@@ -497,8 +497,8 @@ function KaliHealthPanel({ record, health, loading, failed, onRetry }: {
       <div><span>Runtime status</span><strong>{runtimeLabel(health.runtime_status)}</strong></div>
       <div><span>Image store</span><strong>{imageStoreLabel(health.image_store.status)}</strong></div>
       <div><span>Toolset</span><strong>{toolsetLabel(health.toolset.status)}</strong></div>
-      <div><span>Expected toolset digest</span><code>{health.toolset.expected_digest ?? "未配置"}</code></div>
-      <div><span>Actual toolset digest</span><code>{health.toolset.actual_digest ?? "容器启动时读取"}</code></div>
+      <div><span>Expected image digest</span><code>{health.image_store.expected_digest ?? "未配置"}</code></div>
+      <div><span>Actual image digest</span><code>{health.image_store.actual_digest ?? "检查后读取"}</code></div>
     </div>
     {health.reasons.length ? <div className="kali-health-reasons">
       <span>Details</span>

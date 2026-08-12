@@ -108,6 +108,8 @@ export type SolverKaliHealth = SolverKaliHealthSummary & {
   image_store: {
     status: "not_applicable" | "unknown" | "unreadable" | "readable";
     error: string | null;
+    expected_digest: string | null;
+    actual_digest: string | null;
   };
   toolset: {
     expected_digest: string | null;
@@ -175,6 +177,14 @@ export const fetchHostCapabilities = () => requestJson<{ items: HostCapabilityRe
 export const fetchHostCapabilityProfiles = () => requestJson<{ items: HostCapabilityProfileRecord[]; total: number }>("/api/v2/capabilities/host-profiles");
 export const fetchKaliCapabilities = () => requestJson<{ items: KaliCapabilityRecord[]; total: number }>("/api/v2/capabilities/kali");
 export const fetchKaliProfiles = () => requestJson<{ items: KaliProfileRecord[]; total: number }>("/api/v2/kali/profiles");
+export const updateKaliProfile = (
+  id: string,
+  payload: { enabled: boolean; image: string; expected_digest: string | null },
+) => requestJson<KaliProfileRecord>(`/api/v2/kali/profiles/${encodeURIComponent(id)}`, {
+  method: "PUT",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify(payload),
+});
 export const fetchSolverKaliHealth = (id: string) => requestJson<SolverKaliHealth>(`/api/v2/solvers/${encodeURIComponent(id)}/kali-health`);
 export const fetchSolverKaliHealthSummary = () => requestJson<{ items: SolverKaliHealthSummary[]; total: number }>("/api/v2/solvers/kali-health");
 export const checkSolverKaliHealth = (id: string) => requestJson<SolverKaliHealth>(`/api/v2/solvers/${encodeURIComponent(id)}/kali-health/check`, { method: "POST" });

@@ -90,8 +90,8 @@ export type LLMVerification = {
   last_error?: { code: string; message: string } | null;
   capabilities?: Record<string, boolean | null>;
 };
-export type LLMSettings = { configured: boolean; base_url: string; model: string; api_key_set: boolean; browser_configured?: boolean; supports_vision?: boolean | null; max_output_tokens?: number; timeout_seconds?: number; temperature?: number; reasoning_mode?: "auto" | "enabled" | "disabled"; verification_status?: LLMVerification["status"]; verification?: LLMVerification };
-export type LLMSettingsUpdate = { base_url: string; model: string; api_key?: string; supports_vision?: boolean | null; max_output_tokens?: number; timeout_seconds?: number; temperature?: number; reasoning_mode?: "auto" | "enabled" | "disabled" };
+export type LLMSettings = { configured: boolean; active?: boolean; provider_id?: string | null; provider_name?: string | null; base_url: string; model_id?: string | null; model: string; api_key_set: boolean; browser_configured?: boolean; supports_vision?: boolean | null; max_output_tokens?: number; timeout_seconds?: number; temperature?: number; reasoning_mode?: "auto" | "enabled" | "disabled"; verification_status?: LLMVerification["status"]; verification?: LLMVerification };
+export type LLMSettingsUpdate = { provider?: string; provider_name?: string; preset_id?: string; base_url: string; model: string; api_key?: string; supports_vision?: boolean | null; max_output_tokens?: number; timeout_seconds?: number; temperature?: number; reasoning_mode?: "auto" | "enabled" | "disabled" };
 export type ProviderPreset = { id: string; name: string; base_url: string };
 export type ProviderAPIKey = { id: string; label: string; masked: string; selected: boolean; created_at?: string };
 export type ProviderModel = {
@@ -101,7 +101,7 @@ export type ProviderModel = {
 };
 export type ModelProvider = {
   id: string; name: string; preset_id: string; base_url: string; models: ProviderModel[];
-  api_keys: ProviderAPIKey[]; selected_api_key_id?: string | null; created_at?: string; updated_at?: string;
+  api_keys: ProviderAPIKey[]; selected_api_key_id?: string | null; active_model_id?: string | null; created_at?: string; updated_at?: string;
 };
 export type ProviderCatalog = { schema_version: 1; presets: ProviderPreset[]; providers: ModelProvider[] };
 export type AgentModelOptions = {

@@ -5,17 +5,27 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
+import shutil
+import subprocess
+from datetime import UTC, datetime
+
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import ValidationError
 
 from apps.api.dependencies import container
+from tga2.agent.roles import DEFAULT_ROLE_PROMPTS
 from tga2.bootstrap import Container
 from tga2.catalogs import (
+    MODES,
     host_capabilities,
     kali_capabilities,
     kali_profiles,
     solver_definitions,
     team_templates,
 )
+from tga2.config import KALI_PROFILE_ID, KaliSandboxSettings
 
 router = APIRouter(tags=["catalog"])
 
@@ -23,6 +33,14 @@ router = APIRouter(tags=["catalog"])
 def _solvers(app: Container):
     values = solver_definitions()
     for value in values:
+        role = value["role"]
+        common = app.configuration.runtime.prompts.get("common", "").strip()
+        role_prompt = app.configuration.runtime.prompts.get(role, "").strip()
+        value["system_prompt_template"] = "\n\n".join(
+            item
+            for item in (common, role_prompt or DEFAULT_ROLE_PROMPTS[role])
+            if item
+        )
         names = app.configuration.runtime.solver_tools.get(value["id"], [])
         value["host_capabilities"] = [
             {
@@ -36,6 +54,36 @@ def _solvers(app: Container):
             if item["id"] in names
         ]
         value["host_capability_overrides"] = {"add": names, "remove": []}
+        if role == "worker" and "run_command" in names:
+            kali = app.configuration.runtime.kali
+            image_name, image_tag = _image_parts(kali.image)
+            value["kali"] = {
+                "profile_id": kali.profile_id,
+                "capabilities": ["kali.exec"],
+                "image_name": image_name,
+                "image_tag": image_tag,
+                "image_digest": kali.expected_digest,
+                "allowed_executables": [],
+                "session_executables": [],
+                "network_mode": "task_policy",
+                "limits": {
+                    "cpu_cores": 1,
+                    "memory_mb": 1024,
+                    "timeout_seconds": 120,
+                    "max_processes": 256,
+                },
+                "tools": [],
+            }
+        value["content_sha256"] = hashlib.sha256(
+            json.dumps(
+                {
+                    "role": role,
+                    "prompt": value["system_prompt_template"],
+                    "tools": names,
+                },
+                sort_keys=True,
+            ).encode()
+        ).hexdigest()
     return values
 
 
@@ -126,10 +174,50 @@ def kali():
 @router.get("/kali/profiles")
 def kali_profile_list(app: Container = Depends(container)):
     items = kali_profiles()
+    settings = app.configuration.runtime.kali
     for item in items:
-        item["enabled"] = bool(app.configuration.runtime.sandbox_image)
-        item["image"] = app.configuration.runtime.sandbox_image or item["image"]
+        image_name, image_tag = _image_parts(settings.image)
+        item.update(
+            {
+                "id": settings.profile_id,
+                "enabled": settings.enabled,
+                "image": settings.image,
+                "image_name": image_name,
+                "image_tag": image_tag,
+                "image_digest": settings.expected_digest,
+            }
+        )
+        item["config_sha256"] = hashlib.sha256(
+            json.dumps(item, sort_keys=True, default=str).encode()
+        ).hexdigest()
     return {"items": items, "total": len(items)}
+
+
+@router.put("/kali/profiles/{profile_id}")
+def update_kali_profile(
+    profile_id: str, payload: dict, app: Container = Depends(container)
+):
+    if profile_id != KALI_PROFILE_ID:
+        raise HTTPException(404, "Kali profile not found")
+    current = app.configuration.runtime.kali
+    try:
+        settings = KaliSandboxSettings.model_validate(
+            {
+                "profile_id": profile_id,
+                "enabled": payload.get("enabled", current.enabled),
+                "image": str(payload.get("image", current.image)).strip(),
+                "expected_digest": payload.get(
+                    "expected_digest", current.expected_digest
+                )
+                or None,
+            }
+        )
+    except ValidationError as exc:
+        raise HTTPException(422, exc.errors()) from exc
+    if settings.enabled and not settings.image:
+        raise HTTPException(422, "enabled Kali profile requires an image")
+    app.configuration.update_kali(settings)
+    return kali_profile_list(app)["items"][0]
 
 
 @router.get("/solvers")
@@ -170,13 +258,20 @@ def update_solver(solver_id: str, payload: dict, app: Container = Depends(contai
     unknown = current - valid
     if unknown:
         raise HTTPException(422, f"unknown capabilities: {sorted(unknown)}")
-    app.configuration.update_solver_tools(solver_id, sorted(current))
     kali = payload.get("kali")
-    if kali and "kali.exec" in (kali.get("capabilities") or []):
-        app.configuration.runtime = app.configuration.runtime.model_copy(
-            update={"sandbox_image": "kalilinux/kali-rolling:latest"}
-        )
-        app.configuration.save()
+    if kali:
+        if kali.get("profile_id") != app.configuration.runtime.kali.profile_id:
+            raise HTTPException(422, "unknown Kali profile")
+        kali_capabilities = set(kali.get("capabilities") or ())
+        if kali_capabilities - {"kali.exec"}:
+            raise HTTPException(422, "unsupported Kali capability")
+        if "kali.exec" in kali_capabilities:
+            current.add("run_command")
+        else:
+            current.discard("run_command")
+    else:
+        current.discard("run_command")
+    app.configuration.update_solver_tools(solver_id, sorted(current))
     return solver(solver_id, app)
 
 
@@ -184,7 +279,7 @@ def update_solver(solver_id: str, payload: dict, app: Container = Depends(contai
 @router.post("/solvers/{solver_id}/kali-health/check")
 def solver_health(solver_id: str, app: Container = Depends(container)):
     solver(solver_id, app)
-    return _health(solver_id, app, detail=True)
+    return _health(solver_id, app, detail=True, probe=True)
 
 
 @router.get("/tools/health")
@@ -287,14 +382,7 @@ def catalog(
                     "high_impact": {"mode": "forbidden", "allowed_actions": []},
                 },
             }
-            for mode in (
-                "ctf",
-                "code_audit",
-                "penetration_test",
-                "incident_response",
-                "vulnerability_research",
-                "reverse_analysis",
-            )
+            for mode in MODES
         ]
     elif kind == "knowledge-bases":
         items = []
@@ -324,17 +412,61 @@ def readiness(app: Container = Depends(container)):
     }
 
 
-def _health(solver_id: str, app: Container, detail: bool = False):
+def _health(
+    solver_id: str,
+    app: Container,
+    detail: bool = False,
+    probe: bool = False,
+):
     requires = (
         solver_id == "worker"
         and "run_command" in app.configuration.runtime.solver_tools.get("worker", ())
     )
-    ready = bool(app.configuration.runtime.sandbox_image)
+    kali = app.configuration.runtime.kali
+    image = kali.image if kali.enabled else None
+    ready = bool(image)
+    docker = shutil.which("docker") if probe and ready else None
+    image_ready = False
+    digest_verified = False
+    actual_digest = None
+    probe_error = None
+    if docker:
+        try:
+            result = subprocess.run(
+                [docker, "image", "inspect", image],
+                capture_output=True,
+                text=True,
+                timeout=8,
+                check=False,
+            )
+            image_ready = result.returncode == 0
+            if image_ready:
+                inspected = json.loads(result.stdout)[0]
+                actual_digest = inspected.get("Id")
+                candidates = {actual_digest, *(inspected.get("RepoDigests") or [])}
+                digest_verified = not kali.expected_digest or any(
+                    candidate == kali.expected_digest
+                    or str(candidate).endswith(f"@{kali.expected_digest}")
+                    for candidate in candidates
+                    if candidate
+                )
+            else:
+                probe_error = (result.stderr or result.stdout).strip()[:1000]
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            probe_error = str(exc)
+    elif probe and ready:
+        probe_error = "Docker executable was not found."
     value = {
         "solver_id": solver_id,
         "requires_kali": requires,
-        "profile_id": "tga2-kali" if requires else None,
-        "status": "unknown"
+        "profile_id": kali.profile_id if requires else None,
+        "status": "healthy"
+        if requires and ready and probe and image_ready and digest_verified
+        else "image_unverified"
+        if requires and ready and probe and image_ready
+        else "runtime_unavailable"
+        if requires and ready and probe
+        else "unknown"
         if requires and ready
         else "runtime_disabled"
         if requires
@@ -343,25 +475,64 @@ def _health(solver_id: str, app: Container, detail: bool = False):
     if detail:
         value.update(
             {
-                "image": app.configuration.runtime.sandbox_image,
-                "image_status": "configured" if ready else "disabled",
-                "runtime_status": "not_probed",
-                "checked_at": None,
+                "image": image,
+                "image_status": "healthy"
+                if image_ready and digest_verified
+                else "image_unverified"
+                if image_ready
+                else "configured"
+                if ready
+                else "disabled",
+                "runtime_status": "docker_sandbox_available"
+                if image_ready
+                else "docker_sandbox_unavailable"
+                if probe and ready
+                else "disabled"
+                if not ready
+                else "not_probed",
+                "checked_at": datetime.now(UTC).isoformat() if probe else None,
                 "reasons": [
                     {
-                        "code": "NOT_PROBED",
-                        "message": "Docker is probed only when a task invokes the shell.",
+                        "code": "IMAGE_DIGEST_MISMATCH"
+                        if image_ready and not digest_verified
+                        else "DOCKER_PROBE_FAILED"
+                        if probe
+                        else "NOT_PROBED",
+                        "message": (
+                            f"Expected {kali.expected_digest}, found {actual_digest}."
+                            if image_ready and not digest_verified
+                            else probe_error
+                            or "Use the health-check endpoint to probe Docker and the image."
+                        ),
                     }
                 ]
-                if ready
+                if ready and (not image_ready or not digest_verified)
                 else [],
                 "missing_executables": [],
-                "image_store": {"status": "unknown", "error": None},
+                "image_store": {
+                    "status": "readable"
+                    if image_ready
+                    else "unreadable"
+                    if probe and ready
+                    else "unknown",
+                    "error": probe_error,
+                    "expected_digest": kali.expected_digest,
+                    "actual_digest": actual_digest,
+                },
                 "toolset": {
                     "expected_digest": None,
                     "actual_digest": None,
-                    "status": "not_probed",
+                    "status": "not_applicable",
                 },
             }
         )
     return value
+
+
+def _image_parts(image: str) -> tuple[str, str]:
+    without_digest = image.split("@", 1)[0]
+    slash = without_digest.rfind("/")
+    colon = without_digest.rfind(":")
+    if colon > slash:
+        return without_digest[:colon], without_digest[colon + 1 :]
+    return without_digest, "latest"

@@ -1,7 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, RefreshCw, Search, Trash2 } from "lucide-react";
-import { useMemo, useState } from "react";
-import { fetchHostCapabilities, fetchKaliCapabilities, fetchKaliProfiles, type HostCapabilityRecord, type KaliProfileRecord } from "../api/catalog-query-adapter";
+import { useEffect, useMemo, useState } from "react";
+import { fetchHostCapabilities, fetchKaliCapabilities, fetchKaliProfiles, updateKaliProfile, type HostCapabilityRecord, type KaliProfileRecord } from "../api/catalog-query-adapter";
 import { runtimeApi } from "../runtime/api-v2";
 import type { MCPManagedServer } from "../runtime/event-types";
 import { MCPWizard } from "../components/mcp/MCPWizard";
@@ -37,12 +37,46 @@ function HostTab() {
   return <><section className="ref-filter-row"><label className="ref-search"><Search size={16} /><input aria-label="搜索 Host 能力" placeholder="搜索能力名称或描述" value={search} onChange={(e) => setSearch(e.target.value)} /></label><select aria-label="能力分类" value={category} onChange={(e) => setCategory(e.target.value)}><option value="">全部分类</option>{[...new Set(all.map((item) => item.category))].map((value) => <option key={value}>{value}</option>)}</select><select aria-label="适用角色" value={role} onChange={(e) => setRole(e.target.value)}><option value="">全部角色</option>{["supervisor", "worker", "reviewer", "reporter"].map((value) => <option key={value}>{value}</option>)}</select></section>{!items.length ? <EmptyState title="没有匹配的 Host 能力" /> : <div className="ref-master-detail tools-layout ref-fill"><CatalogTable fill columns={columns} rows={items} rowKey={(row) => row.id} selectedKey={selected?.id} onSelect={(row) => setSelectedId(row.id)} />{selected ? <section className="ref-detail-panel"><header className="ref-detail-head"><h2>{selected.id}</h2><StatusBadge value={selected.handler_status} label="Handler ready" /></header><p className="skill-summary">{selected.description}</p><FieldGrid fields={[{ label: "显示名称", value: selected.display_name }, { label: "分类", value: selected.category }, { label: "风险", value: <RiskBadge value={selected.risk} /> }, { label: "Handler", value: <code>{selected.handler_key}</code> }, { label: "适用角色", value: <ChipList values={selected.allowed_roles} tone="neutral" /> }, { label: "参数", value: <ChipList values={Object.keys(selected.input_schema.properties ?? {})} /> }, { label: "配置该能力的 Solver", value: <ChipList values={selected.assigned_solver_ids} tone="neutral" /> }]} /></section> : null}</div>}</>;
 }
 function KaliTab() {
-  const capabilities = useQuery({ queryKey: ["capabilities", "kali"], queryFn: fetchKaliCapabilities }); const profiles = useQuery({ queryKey: ["kali", "profiles"], queryFn: fetchKaliProfiles }); const [selectedProfile, setSelectedProfile] = useState<string | null>(null);
+  const client = useQueryClient();
+  const capabilities = useQuery({ queryKey: ["capabilities", "kali"], queryFn: fetchKaliCapabilities });
+  const profiles = useQuery({ queryKey: ["kali", "profiles"], queryFn: fetchKaliProfiles });
+  const [selectedProfile, setSelectedProfile] = useState<string | null>(null);
+  const [image, setImage] = useState("");
+  const [digest, setDigest] = useState("");
+  const [enabled, setEnabled] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState("");
+  const profileItems = profiles.data?.items ?? [];
+  const active = profileItems.find((item) => item.id === selectedProfile) ?? profileItems[0] ?? null;
+  useEffect(() => {
+    if (!active) return;
+    setImage(active.image);
+    setDigest(active.image_digest ?? "");
+    setEnabled(active.enabled);
+    setMessage("");
+  }, [active?.id, active?.image, active?.image_digest, active?.enabled]);
   if (capabilities.isLoading || profiles.isLoading) return <LoadingSkeleton label="正在读取 Kali 配置" rows={7} />;
   if (capabilities.isError || profiles.isError) return <ErrorState description="无法读取 Kali 配置" actionLabel="重试" onAction={() => { void capabilities.refetch(); void profiles.refetch(); }} />;
-  const profileItems = profiles.data?.items ?? []; const active = profileItems.find((item) => item.id === selectedProfile) ?? profileItems[0] ?? null;
   const columns: Array<Column<KaliProfileRecord>> = [{ id: "profile", header: "Profile", render: (row) => <strong>{row.id}</strong> }, { id: "image", header: "镜像", render: (row) => <code>{row.image}</code> }, { id: "tools", header: "工具", render: (row) => row.tools.length, align: "center" }, { id: "caps", header: "能力", render: (row) => <ChipList values={row.supported_capabilities} /> }, { id: "network", header: "网络", render: (row) => row.network_mode }, { id: "solvers", header: "Solver", render: (row) => row.assigned_solver_count, align: "center" }];
-  return <div className="ref-detail-body"><section><h2>Kali 执行能力</h2><div className="capability-grid">{(capabilities.data?.items ?? []).map((item) => <article className="capability-card" key={item.id}><div className="capability-title"><div><h3>{item.id}</h3><p>{item.description}</p></div><RiskBadge value={item.risk} /></div><FieldGrid fields={[{ label: "配置 Solver", value: <ChipList values={item.assigned_solver_ids} /> }, { label: "绑定 Profile", value: <ChipList values={item.profile_ids} tone="neutral" /> }, { label: "参数", value: <ChipList values={Object.keys(item.input_schema.properties ?? {})} tone="neutral" /> }]} /></article>)}</div></section><section><h2>Kali Profiles</h2>{active?.image_role === "universal" ? <p className="skill-summary">全部 Solver Profile 共享通用 Kali 工具镜像；网络、命令白名单和资源限制仍按 Profile 独立执行。</p> : null}<div className="ref-master-detail tools-layout"><CatalogTable columns={columns} rows={profileItems} rowKey={(row) => row.id} selectedKey={active?.id} onSelect={(row) => setSelectedProfile(row.id)} />{active ? <section className="ref-detail-panel"><header className="ref-detail-head"><div><h2>{active.id}</h2><code>{active.image}</code></div><StatusBadge value={active.enabled ? "available" : "unavailable"} /></header><FieldGrid fields={[{ label: "镜像模式", value: active.image_role === "universal" ? `通用镜像（${active.shared_image_profile_count} Profiles）` : "独立镜像" }, { label: "镜像摘要", value: active.image_digest ? <code>{active.image_digest}</code> : "等待发布固定" }, { label: "能力", value: <ChipList values={active.supported_capabilities} /> }, { label: "绑定 Solver", value: <ChipList values={active.assigned_solver_ids} tone="neutral" /> }, { label: "可用工具", value: <ChipList values={active.tools.map((tool) => tool.version ? `${tool.name} ${tool.version}` : tool.name)} tone="neutral" /> }, { label: "网络", value: active.network_mode }, { label: "挂载", value: `Inputs ${active.input_mount} / Scratch ${active.scratch_mount} / Artifacts ${active.shared_artifact_mount}` }, { label: "资源", value: `${active.limits.cpu_cores} CPU / ${active.limits.memory_mb} MB / ${active.limits.timeout_seconds}s` }]} /></section> : null}</div></section></div>;
+  const save = async () => {
+    if (!active || !image.trim()) return;
+    setSaving(true);
+    setMessage("");
+    try {
+      await updateKaliProfile(active.id, { enabled, image: image.trim(), expected_digest: digest.trim() || null });
+      await Promise.all([
+        client.invalidateQueries({ queryKey: ["kali", "profiles"] }),
+        client.invalidateQueries({ queryKey: ["solvers"] }),
+        client.invalidateQueries({ queryKey: ["solvers", "kali-health"] }),
+      ]);
+      setMessage("Kali 镜像配置已保存；请在 Solver 页面执行健康检查。");
+    } catch (reason) {
+      setMessage(reason instanceof Error ? reason.message : "Kali 镜像配置保存失败");
+    } finally {
+      setSaving(false);
+    }
+  };
+  return <div className="ref-detail-body"><section><h2>Kali 执行能力</h2><div className="capability-grid">{(capabilities.data?.items ?? []).map((item) => <article className="capability-card" key={item.id}><div className="capability-title"><div><h3>{item.id}</h3><p>{item.description}</p></div><RiskBadge value={item.risk} /></div><FieldGrid fields={[{ label: "配置 Solver", value: <ChipList values={item.assigned_solver_ids} /> }, { label: "绑定 Profile", value: <ChipList values={item.profile_ids} tone="neutral" /> }, { label: "参数", value: <ChipList values={Object.keys(item.input_schema.properties ?? {})} tone="neutral" /> }]} /></article>)}</div></section><section><h2>Kali Profiles</h2>{active?.image_role === "universal" ? <p className="skill-summary">全部 Solver Profile 共享通用 Kali 工具镜像；网络、命令白名单和资源限制仍按 Profile 独立执行。</p> : null}<div className="ref-master-detail tools-layout"><CatalogTable columns={columns} rows={profileItems} rowKey={(row) => row.id} selectedKey={active?.id} onSelect={(row) => setSelectedProfile(row.id)} />{active ? <section className="ref-detail-panel"><header className="ref-detail-head"><div><h2>{active.id}</h2><code>{active.image}</code></div><StatusBadge value={active.enabled ? "available" : "unavailable"} /></header><div className="skill-editor"><label>镜像引用<input aria-label="Kali 镜像引用" value={image} onChange={(event) => setImage(event.target.value)} placeholder="ghcr.io/owner/image:tag" /></label><label>预期镜像摘要<input aria-label="Kali 镜像摘要" value={digest} onChange={(event) => setDigest(event.target.value)} placeholder="sha256:..." /></label><label><input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} />启用 Kali Runtime</label><button className="ref-primary-button" disabled={saving || !image.trim()} onClick={() => void save()}>{saving ? "保存中" : "保存镜像配置"}</button>{message ? <p className="skill-summary" role="status">{message}</p> : null}</div><FieldGrid fields={[{ label: "镜像模式", value: active.image_role === "universal" ? `通用镜像（${active.shared_image_profile_count} Profiles）` : "独立镜像" }, { label: "镜像摘要", value: active.image_digest ? <code>{active.image_digest}</code> : "未固定" }, { label: "能力", value: <ChipList values={active.supported_capabilities} /> }, { label: "绑定 Solver", value: <ChipList values={active.assigned_solver_ids} tone="neutral" /> }, { label: "可用工具", value: <ChipList values={active.tools.map((tool) => tool.version ? `${tool.name} ${tool.version}` : tool.name)} tone="neutral" /> }, { label: "网络", value: active.network_mode }, { label: "挂载", value: `Inputs ${active.input_mount} / Scratch ${active.scratch_mount} / Artifacts ${active.shared_artifact_mount}` }, { label: "资源", value: `${active.limits.cpu_cores} CPU / ${active.limits.memory_mb} MB / ${active.limits.timeout_seconds}s` }]} /></section> : null}</div></section></div>;
 }
 type McpRecord = { server: string; configured: boolean; enabled: boolean; reachable: boolean; discovered: boolean; tools: number; transport: string; image?: string | null; endpoint?: string | null; error?: string | null };
 function ServersTab() {

@@ -22,6 +22,10 @@ from tga2.core.models import (
 from tga2.core.report import render_markdown
 
 
+class TaskCancelledError(RuntimeError):
+    """Raised at graph node boundaries after an operator cancels a task."""
+
+
 class GraphNodes:
     def __init__(self, dependencies: RuntimeDeps) -> None:
         self.deps = dependencies
@@ -110,11 +114,35 @@ class GraphNodes:
                 for tool in tools
                 if tool.name in role_tools or tool.name in configured
             ]
+        interventions = [
+            event.payload
+            for event in self.deps.store.list_events(task.id, limit=1000)
+            if event.type == "USER_INTERVENTION"
+            and (
+                event.payload.get("scope") == "task"
+                or event.payload.get("target_id") in {intent.id, "worker"}
+            )
+        ]
+        feedback = state.get("review_feedback", "")
+        if interventions:
+            intervention_text = "\n".join(
+                f"- [{item.get('kind', 'hint')}] {item.get('content', '')}"
+                for item in interventions[-10:]
+            )
+            feedback = "\n\n".join(
+                item
+                for item in (
+                    feedback,
+                    "User interventions recorded for this task/intent:\n"
+                    + intervention_text,
+                )
+                if item
+            )
         draft = self.deps.agents.work(
             task,
             intent.model_dump(mode="json"),
             tools,
-            state.get("review_feedback", ""),
+            feedback,
             worker_middleware(
                 task=task,
                 store=self.deps.store,
@@ -269,6 +297,8 @@ class GraphNodes:
         task = self.deps.store.get_task(state["task_id"])
         if task is None:
             raise KeyError(f"task not found: {state['task_id']}")
+        if task.status == TaskStatus.CANCELLED:
+            raise TaskCancelledError(f"task cancelled: {task.id}")
         return task
 
     def _intent(self, state: TGAState) -> Intent:

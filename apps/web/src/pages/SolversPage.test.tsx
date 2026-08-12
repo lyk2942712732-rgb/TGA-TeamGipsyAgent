@@ -84,7 +84,7 @@ describe("SolversPage capability editor", () => {
       checked_at: "2026-08-03T14:30:00Z",
       reasons: [{ code: "unresolved_image_digest", message: "image digest has not been resolved" }],
       missing_executables: [],
-      image_store: { status: "unknown", error: null },
+      image_store: { status: "unknown", error: null, expected_digest: null, actual_digest: null },
       toolset: { expected_digest: "5f12", actual_digest: null, status: "not_checked" },
     });
     mocks.checkSolverKaliHealth.mockResolvedValue({});
@@ -173,7 +173,7 @@ describe("SolversPage capability editor", () => {
       solver_id: solver.id, requires_kali: true, profile_id: "ctf-pwn-v1", image: "example/image@sha256:" + "a".repeat(64),
       status: "runtime_unavailable", image_status: "healthy", runtime_status: "sandboxd_unavailable", checked_at: null,
       reasons: [{ code: "runtime_unavailable", message: "sandboxd is unavailable" }], missing_executables: [],
-      image_store: { status: "unknown", error: null },
+      image_store: { status: "unknown", error: null, expected_digest: null, actual_digest: null },
       toolset: { expected_digest: "5f12", actual_digest: "5f12", status: "match" },
     });
     renderPage();
@@ -190,7 +190,9 @@ describe("SolversPage capability editor", () => {
       solver_id: solver.id, requires_kali: true, profile_id: "ctf-pwn-v1",
       image: "example/image@sha256:" + "a".repeat(64), status: "healthy",
       image_status: "healthy", runtime_status: "sandboxd_available", checked_at: "2026-08-08T00:00:00Z",
-      reasons: [], missing_executables: [], image_store: { status: "readable", error: null },
+      reasons: [], missing_executables: [], image_store: {
+        status: "readable", error: null, expected_digest: "image-expected", actual_digest: "image-actual",
+      },
       toolset: { expected_digest: "5f12", actual_digest: null, status: "verified_at_acquire" },
     });
     renderPage();
@@ -198,8 +200,8 @@ describe("SolversPage capability editor", () => {
     await user.click(await screen.findByRole("tab", { name: "Kali 信息" }));
     expect(screen.getByText("可读")).toBeInTheDocument();
     expect(screen.getByText("容器启动时强校验")).toBeInTheDocument();
-    expect(screen.getByText("5f12")).toBeInTheDocument();
-    expect(screen.getByText("容器启动时读取")).toBeInTheDocument();
+    expect(screen.getByText("image-expected")).toBeInTheDocument();
+    expect(screen.getByText("image-actual")).toBeInTheDocument();
   });
 
   it("refreshes Kali health through the sandboxd-backed API", async () => {

@@ -127,6 +127,35 @@ describe("Tools & MCP", () => {
     expect(screen.getByText(/22 Profiles/)).toBeInTheDocument();
   });
 
+  it("persists the Kali image reference and expected digest through the profile API", async () => {
+    const user = userEvent.setup();
+    mocks.requestJson.mockImplementation((path: string) => {
+      if (path === "/api/v2/capabilities/host") return Promise.resolve({ items: [hostCapability], total: 1 });
+      if (path === "/api/v2/capabilities/kali") return Promise.resolve({ items: [kaliCapability], total: 1 });
+      if (path === "/api/v2/kali/profiles") return Promise.resolve({ items: [kaliProfile], total: 1 });
+      if (path === "/api/v2/kali/profiles/ctf-pwn-v1") return Promise.resolve(kaliProfile);
+      return Promise.reject(new Error(`unexpected path ${path}`));
+    });
+    renderPage();
+    await user.click(screen.getByRole("tab", { name: /Kali/ }));
+    const image = await screen.findByRole("textbox", { name: "Kali 镜像引用" });
+    await user.clear(image);
+    await user.type(image, "ghcr.io/example/kali:sandbox-v1");
+    await user.click(screen.getByRole("button", { name: "保存镜像配置" }));
+
+    await waitFor(() => expect(mocks.requestJson).toHaveBeenCalledWith(
+      "/api/v2/kali/profiles/ctf-pwn-v1",
+      expect.objectContaining({
+        method: "PUT",
+        body: JSON.stringify({
+          enabled: true,
+          image: "ghcr.io/example/kali:sandbox-v1",
+          expected_digest: kaliProfile.image_digest,
+        }),
+      }),
+    ));
+  });
+
   it("toggles an MCP server through the management endpoint", async () => {
     const user = userEvent.setup();
     mocks.updateMCPServer.mockResolvedValue({ server: { id: "binwalk" } });

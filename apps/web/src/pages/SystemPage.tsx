@@ -178,14 +178,9 @@ export function SystemPage() {
   </div>;
 }
 
-/**
- * `unsupported` means "no read-only probe exists", not "broken".  Those rows are
- * shown as 正常 to match the reference — the honest detail stays one click away
- * behind 查看, and the empty 延迟 / 最近检查 cells mark them as unmeasured.
- */
 function StatusChip({ status }: { status: SystemComponent["status"] }) {
-  const tone = status === "degraded" ? "tone-warn" : status === "unavailable" ? "tone-danger" : "tone-ok";
-  const label = status === "degraded" ? "警告" : status === "unavailable" ? "异常" : "正常";
+  const tone = status === "degraded" || status === "unsupported" ? "tone-warn" : status === "unavailable" ? "tone-danger" : "tone-ok";
+  const label = status === "unsupported" ? "未接入" : status === "degraded" ? "警告" : status === "unavailable" ? "异常" : "正常";
   return <span className={`ref-chip ${tone}`}><i className="ref-dot" aria-hidden="true" />{label}</span>;
 }
 

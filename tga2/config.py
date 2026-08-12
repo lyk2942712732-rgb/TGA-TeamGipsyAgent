@@ -10,7 +10,14 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from tga2.integrations.model import ModelSettings
+from tga2.core.models import SUPPORTED_MODES
+from tga2.integrations.model import (
+    ModelRegistry,
+    ModelSettings,
+    RegisteredAPIKey,
+    RegisteredModel,
+    RegisteredProvider,
+)
 
 DEFAULT_PROMPTS = {
     "common": "Evidence first. Never expand task authorization.",
@@ -19,6 +26,27 @@ DEFAULT_PROMPTS = {
     "reviewer": "",
     "reporter": "",
 }
+
+KALI_PROFILE_ID = "tga2-kali"
+DEFAULT_KALI_IMAGE = (
+    "ghcr.io/lyk2942712732-rgb/tga-kali-universal:sandbox-v0.2.1"
+)
+DEFAULT_KALI_IMAGE_DIGEST = (
+    "sha256:300fca8aaf785e6f8a589e595e08b0174657609e0ca1935960b5bbfa28e7970f"
+)
+
+
+class KaliSandboxSettings(BaseModel):
+    """The single Kali image profile used by LangChain's Docker policy."""
+
+    model_config = ConfigDict(extra="forbid")
+    enabled: bool = True
+    profile_id: str = KALI_PROFILE_ID
+    image: str = DEFAULT_KALI_IMAGE
+    expected_digest: str | None = Field(
+        default=DEFAULT_KALI_IMAGE_DIGEST,
+        pattern=r"^sha256:[a-fA-F0-9]{64}$",
+    )
 
 
 class RuntimeSettings(BaseModel):
@@ -40,7 +68,13 @@ class RuntimeSettings(BaseModel):
             "reporter": [],
         }
     )
-    sandbox_image: str | None = None
+    kali: KaliSandboxSettings = Field(default_factory=KaliSandboxSettings)
+
+    @property
+    def sandbox_image(self) -> str | None:
+        """Compatibility projection consumed by the agent composition root."""
+
+        return self.kali.image if self.kali.enabled else None
 
 
 class Configuration:
@@ -49,9 +83,14 @@ class Configuration:
         self.root.mkdir(parents=True, exist_ok=True)
         self.path = self.root / "runtime.json"
         self.model_path = self.root / "model.json"
+        self.model_registry_path = self.root / "model-registry.json"
         self._lock = RLock()
         self.runtime = self._load()
         self.model = self._load_model()
+        self.model_registry = self._load_model_registry()
+        active = self.model_registry.active_settings()
+        if active is not None:
+            self.model = active
 
     def save(self) -> None:
         with self._lock:
@@ -77,6 +116,23 @@ class Configuration:
                 pass
             self.model = settings
 
+    def save_model_registry(self) -> None:
+        with self._lock:
+            temporary = self.model_registry_path.with_suffix(".tmp")
+            temporary.write_text(
+                json.dumps(
+                    self.model_registry.persisted_payload(),
+                    ensure_ascii=False,
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+            temporary.replace(self.model_registry_path)
+            try:
+                os.chmod(self.model_registry_path, 0o600)
+            except OSError:
+                pass
+
     def update_prompts(self, payload: dict[str, Any]) -> dict[str, Any]:
         prompts = dict(self.runtime.prompts)
         common = payload.get("common_system_prompt")
@@ -88,6 +144,11 @@ class Configuration:
         modes = payload.get("modes", self.runtime.mode_prompts)
         if not isinstance(modes, list):
             raise TypeError("modes must be a list")
+        modes = [
+            item
+            for item in modes
+            if isinstance(item, dict) and item.get("id") in SUPPORTED_MODES
+        ]
         self.runtime = self.runtime.model_copy(
             update={"prompts": prompts, "mode_prompts": modes}
         )
@@ -114,12 +175,38 @@ class Configuration:
         self.runtime = self.runtime.model_copy(update={"solver_tools": values})
         self.save()
 
+    def update_kali(self, settings: KaliSandboxSettings) -> None:
+        self.runtime = self.runtime.model_copy(update={"kali": settings})
+        self.save()
+
     def _load(self) -> RuntimeSettings:
         if not self.path.is_file():
             return RuntimeSettings()
-        return RuntimeSettings.model_validate_json(
-            self.path.read_text(encoding="utf-8")
-        )
+        payload = json.loads(self.path.read_text(encoding="utf-8"))
+        # Migrate the first TGA2 rewrite, which stored one nullable image string
+        # and whose UI could overwrite it with kali-rolling.  A null or that
+        # obsolete default now selects the released project image.
+        legacy_image = payload.pop("sandbox_image", None)
+        if "kali" not in payload:
+            image = (
+                legacy_image
+                if legacy_image and legacy_image != "kalilinux/kali-rolling:latest"
+                else DEFAULT_KALI_IMAGE
+            )
+            payload["kali"] = {
+                "enabled": True,
+                "profile_id": KALI_PROFILE_ID,
+                "image": image,
+                "expected_digest": DEFAULT_KALI_IMAGE_DIGEST
+                if image == DEFAULT_KALI_IMAGE
+                else None,
+            }
+        payload["mode_prompts"] = [
+            item
+            for item in payload.get("mode_prompts", [])
+            if isinstance(item, dict) and item.get("id") in SUPPORTED_MODES
+        ]
+        return RuntimeSettings.model_validate(payload)
 
     def _load_model(self) -> ModelSettings:
         if not self.model_path.is_file():
@@ -127,5 +214,53 @@ class Configuration:
         payload = json.loads(self.model_path.read_text(encoding="utf-8"))
         return ModelSettings.model_validate(payload)
 
+    def _load_model_registry(self) -> ModelRegistry:
+        if self.model_registry_path.is_file():
+            return ModelRegistry.model_validate_json(
+                self.model_registry_path.read_text(encoding="utf-8")
+            )
+        # Migrate the previous single-model configuration.  Provider display
+        # names were not persisted before this schema, so infer well-known
+        # OpenAI-compatible endpoints where possible.
+        current = self.model
+        if not current.api_key or not current.api_key.get_secret_value():
+            return ModelRegistry()
+        host = (current.base_url or "").casefold()
+        if "deepseek" in host:
+            name, preset = "DeepSeek", "deepseek"
+        elif "openrouter" in host:
+            name, preset = "OpenRouter", "openrouter"
+        else:
+            name, preset = "OpenAI", "openai"
+        model = RegisteredModel(
+            name=current.model,
+            verification_status="verified" if current.verified else "unverified",
+        )
+        key = RegisteredAPIKey(label="Migrated key", api_key=current.api_key)
+        provider = RegisteredProvider(
+            name=name,
+            preset_id=preset,
+            model_provider="openai",
+            base_url=current.base_url,
+            models=[model],
+            api_keys=[key],
+            selected_api_key_id=key.id,
+        )
+        registry = ModelRegistry(
+            providers=[provider],
+            active_provider_id=provider.id if current.verified else None,
+            active_model_id=model.id if current.verified else None,
+        )
+        self.model_registry = registry
+        self.save_model_registry()
+        return registry
 
-__all__ = ["Configuration", "RuntimeSettings"]
+
+__all__ = [
+    "DEFAULT_KALI_IMAGE",
+    "DEFAULT_KALI_IMAGE_DIGEST",
+    "KALI_PROFILE_ID",
+    "Configuration",
+    "KaliSandboxSettings",
+    "RuntimeSettings",
+]

@@ -6,15 +6,15 @@ import hashlib
 import json
 from typing import Any
 
-ROLES = ("supervisor", "worker", "reviewer", "reporter")
-MODES = (
-    "ctf",
-    "code_audit",
-    "penetration_test",
-    "incident_response",
-    "vulnerability_research",
-    "reverse_analysis",
+from tga2.config import (
+    DEFAULT_KALI_IMAGE,
+    DEFAULT_KALI_IMAGE_DIGEST,
+    KALI_PROFILE_ID,
 )
+from tga2.core.models import SUPPORTED_MODES
+
+ROLES = ("supervisor", "worker", "reviewer", "reporter")
+MODES = SUPPORTED_MODES
 
 
 def host_capabilities() -> list[dict[str, Any]]:
@@ -127,12 +127,12 @@ def solver_definitions() -> list[dict[str, Any]]:
 
 def kali_profiles() -> list[dict[str, Any]]:
     value = {
-        "id": "tga2-kali",
+        "id": KALI_PROFILE_ID,
         "display_name": "TGA2 isolated Kali",
-        "image_name": "kalilinux/kali-rolling",
-        "image_tag": "latest",
-        "image_digest": None,
-        "image": "kalilinux/kali-rolling:latest",
+        "image_name": "ghcr.io/lyk2942712732-rgb/tga-kali-universal",
+        "image_tag": "sandbox-v0.2.1",
+        "image_digest": DEFAULT_KALI_IMAGE_DIGEST,
+        "image": DEFAULT_KALI_IMAGE,
         "image_role": "universal",
         "shared_image_profile_count": 1,
         "tools": [],
@@ -170,7 +170,7 @@ def kali_capabilities() -> list[dict[str, Any]]:
             },
             "assigned_solver_count": 1,
             "assigned_solver_ids": ["worker"],
-            "profile_ids": ["tga2-kali"],
+            "profile_ids": [KALI_PROFILE_ID],
         }
     ]
 

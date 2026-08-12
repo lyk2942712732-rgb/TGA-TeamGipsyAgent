@@ -9,6 +9,14 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+SUPPORTED_MODES = (
+    "ctf",
+    "penetration_test",
+    "incident_response",
+    "vulnerability_research",
+    "reverse_analysis",
+)
+
 
 def utc_now() -> datetime:
     return datetime.now(UTC)
@@ -57,7 +65,6 @@ class Task(BaseModel):
     name: str = Field(min_length=1, max_length=255)
     mode: Literal[
         "ctf",
-        "code_audit",
         "penetration_test",
         "incident_response",
         "vulnerability_research",
@@ -219,7 +226,6 @@ class CreateTaskRequest(BaseModel):
     objective: str = Field(min_length=1, max_length=8000)
     mode: Literal[
         "ctf",
-        "code_audit",
         "penetration_test",
         "incident_response",
         "vulnerability_research",
@@ -235,6 +241,7 @@ class CreateTaskRequest(BaseModel):
 
 
 __all__ = [
+    "SUPPORTED_MODES",
     "AgentEvent",
     "Artifact",
     "CreateTaskRequest",
