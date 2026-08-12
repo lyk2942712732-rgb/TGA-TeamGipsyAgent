@@ -9,14 +9,6 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-SUPPORTED_MODES = (
-    "ctf",
-    "penetration_test",
-    "incident_response",
-    "vulnerability_research",
-    "reverse_analysis",
-)
-
 
 def utc_now() -> datetime:
     return datetime.now(UTC)
@@ -49,7 +41,15 @@ class TaskSpec(BaseModel):
     success_criteria: tuple[str, ...] = Field(default_factory=tuple, max_length=128)
     resources: tuple[ResourceRef, ...] = Field(default_factory=tuple, max_length=256)
     selected_skill_names: tuple[str, ...] | None = None
-    agent_models: dict[str, dict[str, str]] = Field(default_factory=dict)
+    mode_options: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="before")
+    @classmethod
+    def discard_legacy_task_model_assignments(cls, value: Any) -> Any:
+        if isinstance(value, dict) and "agent_models" in value:
+            value = dict(value)
+            value.pop("agent_models", None)
+        return value
 
     @model_validator(mode="after")
     def validate_text(self) -> TaskSpec:
@@ -63,13 +63,7 @@ class Task(BaseModel):
     model_config = ConfigDict(extra="forbid")
     id: str = Field(default_factory=lambda: uuid4().hex)
     name: str = Field(min_length=1, max_length=255)
-    mode: Literal[
-        "ctf",
-        "penetration_test",
-        "incident_response",
-        "vulnerability_research",
-        "reverse_analysis",
-    ] = "ctf"
+    mode: str = Field(default="ctf", pattern=r"^[a-z][a-z0-9_]{1,63}$")
     spec: TaskSpec
     status: TaskStatus = TaskStatus.CREATED
     created_at: datetime = Field(default_factory=utc_now)
@@ -224,24 +218,17 @@ class CreateTaskRequest(BaseModel):
     id: str | None = None
     name: str = Field(min_length=1, max_length=255)
     objective: str = Field(min_length=1, max_length=8000)
-    mode: Literal[
-        "ctf",
-        "penetration_test",
-        "incident_response",
-        "vulnerability_research",
-        "reverse_analysis",
-    ] = "ctf"
+    mode: str = Field(default="ctf", pattern=r"^[a-z][a-z0-9_]{1,63}$")
+    mode_options: dict[str, Any] = Field(default_factory=dict)
     instructions: list[str] = Field(default_factory=list, max_length=128)
     constraints: list[str] = Field(default_factory=list, max_length=128)
     success_criteria: list[str] = Field(default_factory=list, max_length=128)
     input_paths: list[str] = Field(default_factory=list, max_length=256)
     selected_skills: list[str] | None = None
-    agent_models: dict[str, dict[str, str]] = Field(default_factory=dict)
     execution_policy: Any = None  # ExecutionPolicy; Any avoids a core module cycle.
 
 
 __all__ = [
-    "SUPPORTED_MODES",
     "AgentEvent",
     "Artifact",
     "CreateTaskRequest",

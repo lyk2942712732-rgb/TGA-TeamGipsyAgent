@@ -33,8 +33,8 @@ SAFE_DEFAULT_TOOLS = frozenset(
 )
 
 
-def skill_prompt_middleware(skills: Sequence[Skill]):
-    bounded = list(skills)[:5]
+def skill_prompt_middleware(skills: Sequence[Skill], *, limit: int = 5):
+    bounded = list(skills)[:limit]
 
     @dynamic_prompt
     def inject_skills(request: ModelRequest) -> str:
@@ -228,10 +228,14 @@ def worker_middleware(
     intent_id: str,
     tools: Sequence[BaseTool],
     sandbox_image: str | None,
+    configuration: Any | None = None,
 ) -> list[Any]:
+    tool_retry_count = (
+        configuration.runtime.tool_defaults.retry_count if configuration else 1
+    )
     middleware: list[Any] = [
         FilesystemFileSearchMiddleware(root_path=str(workspace.root)),
-        ToolRetryMiddleware(max_retries=1),
+        ToolRetryMiddleware(max_retries=tool_retry_count),
         ToolCallLimitMiddleware(
             run_limit=store.get_policy(task.id).tool.max_tool_calls,
             exit_behavior="error",
@@ -246,6 +250,7 @@ def worker_middleware(
     ]
     policy = store.get_policy(task.id)
     if policy.local_compute == "isolated" and sandbox_image:
+        kali = configuration.runtime.kali if configuration else None
         middleware.append(
             ShellToolMiddleware(
                 workspace_root=workspace.inputs,
@@ -254,9 +259,9 @@ def worker_middleware(
                     image=sandbox_image,
                     network_enabled=policy.network_access != "disabled",
                     command_timeout=float(policy.command_timeout_seconds),
-                    read_only_rootfs=True,
-                    memory_bytes=1024 * 1024 * 1024,
-                    cpus="1",
+                    read_only_rootfs=kali.read_only_rootfs if kali else True,
+                    memory_bytes=(kali.memory_mb if kali else 1024) * 1024 * 1024,
+                    cpus=str(kali.cpu_cores if kali else 1),
                 ),
             )
         )

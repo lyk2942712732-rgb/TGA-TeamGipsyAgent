@@ -15,10 +15,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import ValidationError
 
 from apps.api.dependencies import container
-from tga2.agent.roles import DEFAULT_ROLE_PROMPTS
 from tga2.bootstrap import Container
 from tga2.catalogs import (
-    MODES,
     host_capabilities,
     kali_capabilities,
     kali_profiles,
@@ -31,17 +29,20 @@ router = APIRouter(tags=["catalog"])
 
 
 def _solvers(app: Container):
-    values = solver_definitions()
+    values = solver_definitions(
+        app.configuration.supported_modes, app.configuration.runtime
+    )
     for value in values:
         role = value["role"]
-        common = app.configuration.runtime.prompts.get("common", "").strip()
-        role_prompt = app.configuration.runtime.prompts.get(role, "").strip()
+        common = app.configuration.runtime.common_prompt.strip()
+        role_prompt = app.configuration.runtime.roles[role].prompt.strip()
         value["system_prompt_template"] = "\n\n".join(
             item
-            for item in (common, role_prompt or DEFAULT_ROLE_PROMPTS[role])
+            for item in (common, role_prompt)
             if item
         )
-        names = app.configuration.runtime.solver_tools.get(value["id"], [])
+        names = app.configuration.runtime.roles[value["id"]].tools
+        value["model"] = app.configuration.role_model_status(role)
         value["host_capabilities"] = [
             {
                 "id": item["id"],
@@ -67,10 +68,10 @@ def _solvers(app: Container):
                 "session_executables": [],
                 "network_mode": "task_policy",
                 "limits": {
-                    "cpu_cores": 1,
-                    "memory_mb": 1024,
-                    "timeout_seconds": 120,
-                    "max_processes": 256,
+                    "cpu_cores": kali.cpu_cores,
+                    "memory_mb": kali.memory_mb,
+                    "timeout_seconds": kali.command_timeout_seconds,
+                    "max_processes": kali.max_processes,
                 },
                 "tools": [],
             }
@@ -80,6 +81,7 @@ def _solvers(app: Container):
                     "role": role,
                     "prompt": value["system_prompt_template"],
                     "tools": names,
+                    "model": value["model"],
                 },
                 sort_keys=True,
             ).encode()
@@ -173,20 +175,11 @@ def kali():
 
 @router.get("/kali/profiles")
 def kali_profile_list(app: Container = Depends(container)):
-    items = kali_profiles()
+    items = kali_profiles(app.configuration.runtime.kali)
     settings = app.configuration.runtime.kali
     for item in items:
         image_name, image_tag = _image_parts(settings.image)
-        item.update(
-            {
-                "id": settings.profile_id,
-                "enabled": settings.enabled,
-                "image": settings.image,
-                "image_name": image_name,
-                "image_tag": image_tag,
-                "image_digest": settings.expected_digest,
-            }
-        )
+        item.update({"image_name": image_name, "image_tag": image_tag})
         item["config_sha256"] = hashlib.sha256(
             json.dumps(item, sort_keys=True, default=str).encode()
         ).hexdigest()
@@ -201,17 +194,15 @@ def update_kali_profile(
         raise HTTPException(404, "Kali profile not found")
     current = app.configuration.runtime.kali
     try:
-        settings = KaliSandboxSettings.model_validate(
-            {
-                "profile_id": profile_id,
+        settings = current.model_copy(
+            update={
                 "enabled": payload.get("enabled", current.enabled),
                 "image": str(payload.get("image", current.image)).strip(),
-                "expected_digest": payload.get(
-                    "expected_digest", current.expected_digest
-                )
+                "expected_digest": payload.get("expected_digest", current.expected_digest)
                 or None,
             }
         )
+        settings = KaliSandboxSettings.model_validate(settings.model_dump())
     except ValidationError as exc:
         raise HTTPException(422, exc.errors()) from exc
     if settings.enabled and not settings.image:
@@ -249,7 +240,7 @@ def manifest(solver_id: str, app: Container = Depends(container)):
 def update_solver(solver_id: str, payload: dict, app: Container = Depends(container)):
     solver(solver_id, app)
     overrides = payload.get("host_capability_overrides") or {}
-    current = set(app.configuration.runtime.solver_tools.get(solver_id, ()))
+    current = set(app.configuration.runtime.roles[solver_id].tools)
     current.update(overrides.get("add") or ())
     current.difference_update(overrides.get("remove") or ())
     valid = {item["id"] for item in host_capabilities()} | {
@@ -271,7 +262,25 @@ def update_solver(solver_id: str, payload: dict, app: Container = Depends(contai
             current.discard("run_command")
     else:
         current.discard("run_command")
-    app.configuration.update_solver_tools(solver_id, sorted(current))
+    model = payload.get("model")
+    if model is not None:
+        provider_id = str(model.get("provider_id") or "")
+        model_id = str(model.get("model_id") or "")
+        if (provider_id, model_id) != ("offline", "offline"):
+            try:
+                app.configuration.model_registry.settings(
+                    provider_id, model_id, require_verified=True
+                )
+            except (KeyError, ValueError) as exc:
+                raise HTTPException(422, str(exc)) from exc
+        app.configuration.update_role(
+            solver_id,
+            tools=sorted(current),
+            model={"provider_id": provider_id, "model_id": model_id},
+        )
+    else:
+        app.configuration.update_solver_tools(solver_id, sorted(current))
+    app.runtime.reload_configuration()
     return solver(solver_id, app)
 
 
@@ -321,7 +330,9 @@ def catalog(
     kind: str, query: str = "", limit: int = 100, app: Container = Depends(container)
 ):
     if kind == "teams":
-        items = team_templates()
+        items = team_templates(
+            app.configuration.supported_modes, app.configuration.runtime.graph
+        )
     elif kind == "solvers":
         items = _solvers(app)
     elif kind == "skills":
@@ -390,42 +401,17 @@ def catalog(
     elif kind == "policies":
         items = [
             {
-                "id": f"tga2-evidence-first-{mode}",
+                "id": f"tga2-evidence-first-{scene['id']}",
                 "type": "execution",
-                "mode": mode,
-                "mode_label": mode.replace("_", " ").title(),
-                "preset": "offline_analysis",
+                "mode": scene["id"],
+                "mode_label": scene["label"],
+                "preset": scene["default_execution_policy"]["preset"],
                 "status": "active",
-                "source": "tga2",
+                "source": "scenes.json",
                 "editable": False,
-                "execution_policy": {
-                    "preset": "offline_analysis",
-                    "network": {
-                        "access": "disabled",
-                        "interaction": "observe",
-                        "seed_origins": [],
-                        "custom_origins": [],
-                        "custom_domains": [],
-                        "custom_cidrs": [],
-                        "custom_ports": [],
-                        "deny_private_networks": True,
-                        "deny_loopback": True,
-                        "deny_link_local": True,
-                        "deny_cloud_metadata": True,
-                        "rate_limit_per_minute": 30,
-                        "concurrency": 1,
-                        "request_timeout_seconds": 30,
-                    },
-                    "local_compute": {
-                        "mode": "disabled",
-                        "timeout_seconds": 120,
-                        "concurrency": 1,
-                        "network_inheritance": "task_network_policy",
-                    },
-                    "high_impact": {"mode": "forbidden", "allowed_actions": []},
-                },
+                "execution_policy": scene["default_execution_policy"],
             }
-            for mode in MODES
+            for scene in app.configuration.scenes.scenes
         ]
     else:
         raise HTTPException(404, "catalog not found")
@@ -459,7 +445,7 @@ def _health(
 ):
     requires = (
         solver_id == "worker"
-        and "run_command" in app.configuration.runtime.solver_tools.get("worker", ())
+        and "run_command" in app.configuration.runtime.roles["worker"].tools
     )
     kali = app.configuration.runtime.kali
     image = kali.image if kali.enabled else None

@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from tga2.config import RuntimeSettings
 
 
 def event_projection(event: dict[str, Any]) -> dict[str, Any]:
@@ -20,7 +23,9 @@ def event_projection(event: dict[str, Any]) -> dict[str, Any]:
 
 
 def runtime_snapshot_projection(
-    raw: dict[str, Any], events: list[dict[str, Any]]
+    raw: dict[str, Any],
+    events: list[dict[str, Any]],
+    runtime: RuntimeSettings | None = None,
 ) -> dict[str, Any]:
     task = raw["task"]
     task_id = task["id"]
@@ -53,7 +58,7 @@ def runtime_snapshot_projection(
         "status": status,
         "supervisor_solver_id": "supervisor" if solvers else None,
         "active_solver_count": sum(item["status"] == "running" for item in solvers),
-        "max_active_workers": 1,
+        "max_active_workers": runtime.graph.max_active_workers if runtime else 1,
         "task_budget_usage": {
             "turns": len(raw.get("solver_runs", [])),
             "tool_calls": len(actions),
@@ -61,7 +66,7 @@ def runtime_snapshot_projection(
         },
         "stop_reason": None,
         "turn_count": len(raw.get("solver_runs", [])),
-        "max_turns": 32,
+        "max_turns": runtime.graph.max_turns if runtime else 32,
         "timestamps": {
             "created_at": task["created_at"],
             "started_at": started,
@@ -73,8 +78,8 @@ def runtime_snapshot_projection(
         "task_id": task_id,
         "status": status,
         "supervisor_solver_id": session["supervisor_solver_id"],
-        "max_active_workers": 1,
-        "max_total_solvers": 4,
+        "max_active_workers": runtime.graph.max_active_workers if runtime else 1,
+        "max_total_solvers": runtime.graph.max_total_solvers if runtime else 4,
         "active_solver_count": session["active_solver_count"],
         "solver_ids": [item["solver_id"] for item in solvers],
         "version": 1,
@@ -99,7 +104,7 @@ def runtime_snapshot_projection(
         "updated_at": task["updated_at"],
         "status": status,
         "turn_count": session["turn_count"],
-        "max_turns": 32,
+        "max_turns": runtime.graph.max_turns if runtime else 32,
         "started_at": started,
         "finished_at": finished,
         "stop_reason": None,
@@ -136,10 +141,18 @@ def runtime_snapshot_projection(
             "task_entry_url": None,
         },
         "config_snapshot": {
-            "mode_config": {"mode": task["mode"]},
+            "mode_config": task["spec"].get("mode_options")
+            or {"mode": task["mode"]},
             "execution_policy": policy,
-            "execution_budget": {"max_turns": 32},
-            "model": task["spec"].get("agent_models") or None,
+            "execution_budget": {
+                "max_turns": runtime.graph.max_turns if runtime else 32
+            },
+            "model": {
+                role: settings.model.model_dump(mode="json")
+                for role, settings in runtime.roles.items()
+            }
+            if runtime
+            else None,
             "mcp_capabilities": {
                 "tool_names": sorted((policy.get("tool") or {}).get("allowed_tools") or [])
             },

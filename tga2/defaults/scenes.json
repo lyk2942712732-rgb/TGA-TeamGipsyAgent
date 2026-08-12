@@ -1,0 +1,92 @@
+{
+  "schema_version": 1,
+  "scenes": [
+    {
+      "id": "ctf",
+      "label": "CTF 解题",
+      "description": "分析授权挑战，选择合适路线并验证真实 Flag。",
+      "default_goal": "分析挑战并获取有证据支持、可验证的真实 Flag。",
+      "default_mode_config": { "mode": "ctf", "subtype": "auto", "flag_format": "[A-Za-z0-9_]{2,32}\\{[^{}\\s]{4,200}\\}", "expected_flag_count": 1, "verifier": { "kind": "local_regex" } },
+      "default_execution_policy": { "preset": "autonomous_ctf", "network": { "access": "public_internet", "interaction": "interact", "seed_origins": [], "custom_origins": [], "custom_domains": [], "custom_cidrs": [], "deny_private_networks": true, "deny_loopback": true, "deny_link_local": true, "deny_cloud_metadata": true, "rate_limit_per_minute": 30, "concurrency": 2, "request_timeout_seconds": 30 }, "local_compute": { "mode": "isolated", "timeout_seconds": 60, "concurrency": 1, "network_inheritance": "task_network_policy" }, "high_impact": { "mode": "approval_required", "allowed_actions": [] } },
+      "fields": [
+        { "key": "subtype", "label": "CTF 子类型", "type": "select", "options": ["auto", "web", "pwn", "reverse", "crypto", "misc", "forensics", "unknown"] },
+        { "key": "flag_format", "label": "Flag 格式（可选）", "type": "text" },
+        { "key": "expected_flag_count", "label": "预期 Flag 数量", "type": "number", "min": 1 }
+      ],
+      "prompts": { "methodology": ["先识别题型，再制定最小可验证解题路径。", "保留命令输出、候选 Flag 和验证结果。"], "completion_focus": "只有通过验证且有证据支持的 Flag 才算完成。", "observer_focus": "拒绝没有验证结果或证据定位的候选 Flag。", "roles": {} },
+      "allowed_input_kinds": ["file", "archive", "image", "text"],
+      "required_conditions": ["prompt_or_files"],
+      "recommended_capabilities": ["read_input", "run_command"],
+      "completion_validator": "ctf_flag_verified",
+      "report_sections": ["summary", "challenge_classification", "solution_path", "flags", "evidence", "limitations"],
+      "uses_flag": true
+    },
+    {
+      "id": "penetration_test",
+      "label": "渗透测试",
+      "description": "在明确授权范围内进行侦察、验证并形成证据化结论。",
+      "default_goal": "在授权范围内完成渗透测试，记录覆盖、证据、结论与限制。",
+      "default_mode_config": { "mode": "penetration_test", "depth": "reconnaissance", "included_scopes": [], "exclusions": [], "rules_of_engagement": "" },
+      "default_execution_policy": { "preset": "safe_observation", "network": { "access": "task_sources", "interaction": "observe", "seed_origins": [], "custom_origins": [], "custom_domains": [], "custom_cidrs": [], "deny_private_networks": true, "deny_loopback": true, "deny_link_local": true, "deny_cloud_metadata": true, "rate_limit_per_minute": 30, "concurrency": 2, "request_timeout_seconds": 30 }, "local_compute": { "mode": "isolated", "timeout_seconds": 60, "concurrency": 1, "network_inheritance": "task_network_policy" }, "high_impact": { "mode": "forbidden", "allowed_actions": [] } },
+      "fields": [
+        { "key": "depth", "label": "测试深度", "type": "select", "options": ["reconnaissance", "validation", "comprehensive"] },
+        { "key": "included_scopes", "label": "包含范围", "type": "csv" },
+        { "key": "exclusions", "label": "排除范围", "type": "csv" },
+        { "key": "rules_of_engagement", "label": "Rules of Engagement", "type": "textarea" }
+      ],
+      "prompts": { "methodology": ["先确认范围和交战规则，再进行最小必要验证。", "将基线、测试请求和影响证据分别保存。"], "completion_focus": "完成范围覆盖说明并只报告已确认风险。", "observer_focus": "拒绝越界测试和只有扫描器提示、没有复现证据的结论。", "roles": {} },
+      "allowed_input_kinds": ["file", "text"], "required_conditions": ["prompt_or_files"], "recommended_capabilities": ["read_input"], "completion_validator": "penetration_evidence_review", "report_sections": ["summary", "scope", "coverage", "findings", "evidence", "limitations"], "uses_flag": false
+    },
+    {
+      "id": "incident_response",
+      "label": "应急响应",
+      "description": "保全并分析日志、流量、磁盘、内存或主机证据。",
+      "default_goal": "保全并分析相关证据，形成时间线、IOC、影响和处置建议。",
+      "default_mode_config": { "mode": "incident_response", "phase": "triage", "response_authority": "analysis_only", "timezone": "UTC", "affected_assets": [], "known_iocs": [] },
+      "default_execution_policy": { "preset": "offline_analysis", "network": { "access": "disabled", "interaction": "observe", "seed_origins": [], "custom_origins": [], "custom_domains": [], "custom_cidrs": [], "deny_private_networks": true, "deny_loopback": true, "deny_link_local": true, "deny_cloud_metadata": true, "rate_limit_per_minute": 30, "concurrency": 1, "request_timeout_seconds": 30 }, "local_compute": { "mode": "isolated", "timeout_seconds": 120, "concurrency": 1, "network_inheritance": "task_network_policy" }, "high_impact": { "mode": "forbidden", "allowed_actions": [] } },
+      "fields": [
+        { "key": "phase", "label": "事件阶段", "type": "select", "options": ["triage", "investigation", "containment", "eradication", "recovery", "post-incident"] },
+        { "key": "response_authority", "label": "响应权限", "type": "select", "options": ["analysis_only", "containment_with_approval", "authorized_containment"] },
+        { "key": "timezone", "label": "时区", "type": "text" },
+        { "key": "known_iocs", "label": "已知 IOC", "type": "csv" }
+      ],
+      "prompts": { "methodology": ["优先保全原始证据和哈希，再构建时间线。", "严格区分观察、假设、IOC 和处置建议。"], "completion_focus": "交付证据时间线、IOC、受影响资产、限制和建议。", "observer_focus": "检查证据来源、时间一致性，并拒绝把假设写成事实。", "roles": {} },
+      "allowed_input_kinds": ["file", "archive", "image", "text"], "required_conditions": ["prompt_or_files"], "recommended_capabilities": ["read_input"], "completion_validator": "incident_evidence_review", "report_sections": ["summary", "timeline", "iocs", "affected_assets", "recommendations", "limitations"], "uses_flag": false
+    },
+    {
+      "id": "vulnerability_research",
+      "label": "漏洞研究",
+      "description": "分析候选漏洞并形成可复现、可审查的根因结论。",
+      "default_goal": "分析并验证候选漏洞，记录复现证据、根因、影响、覆盖与限制。",
+      "default_mode_config": { "mode": "vulnerability_research", "depth": "triage", "software_version": "", "commit": "", "allow_fuzzing": false, "require_poc": false },
+      "default_execution_policy": { "preset": "offline_analysis", "network": { "access": "disabled", "interaction": "observe", "seed_origins": [], "custom_origins": [], "custom_domains": [], "custom_cidrs": [], "deny_private_networks": true, "deny_loopback": true, "deny_link_local": true, "deny_cloud_metadata": true, "rate_limit_per_minute": 30, "concurrency": 1, "request_timeout_seconds": 30 }, "local_compute": { "mode": "isolated", "timeout_seconds": 120, "concurrency": 1, "network_inheritance": "task_network_policy" }, "high_impact": { "mode": "forbidden", "allowed_actions": [] } },
+      "fields": [
+        { "key": "depth", "label": "研究深度", "type": "select", "options": ["triage", "focused", "deep"] },
+        { "key": "software_version", "label": "软件版本", "type": "text" },
+        { "key": "commit", "label": "Commit", "type": "text" },
+        { "key": "allow_fuzzing", "label": "允许 Fuzz", "type": "checkbox" },
+        { "key": "require_poc", "label": "要求 PoC", "type": "checkbox" }
+      ],
+      "prompts": { "methodology": ["固定软件版本和输入，先复现再缩小根因。", "将扫描或 Fuzz 结果视为线索，保留最小复现证据。"], "completion_focus": "说明复现条件、根因、影响、覆盖和未验证边界。", "observer_focus": "拒绝无法复现或没有证据链支撑的漏洞结论。", "roles": {} },
+      "allowed_input_kinds": ["file", "archive", "text"], "required_conditions": ["prompt_or_files"], "recommended_capabilities": ["read_input", "run_command"], "completion_validator": "vulnerability_reproduction_review", "report_sections": ["summary", "reproduction", "root_cause", "impact", "evidence", "limitations"], "uses_flag": false
+    },
+    {
+      "id": "reverse_analysis",
+      "label": "逆向分析",
+      "description": "分析二进制、固件、字节码或恶意样本并恢复所需逻辑。",
+      "default_goal": "逆向分析目标并以真实分析产物支撑逻辑、行为或数据恢复结论。",
+      "default_mode_config": { "mode": "reverse_analysis", "analysis_method": "static_only", "sample_type": "auto", "platform": "auto", "architecture": "auto", "analysis_goals": [], "expected_outputs": [] },
+      "default_execution_policy": { "preset": "offline_analysis", "network": { "access": "disabled", "interaction": "observe", "seed_origins": [], "custom_origins": [], "custom_domains": [], "custom_cidrs": [], "deny_private_networks": true, "deny_loopback": true, "deny_link_local": true, "deny_cloud_metadata": true, "rate_limit_per_minute": 30, "concurrency": 1, "request_timeout_seconds": 30 }, "local_compute": { "mode": "isolated", "timeout_seconds": 120, "concurrency": 1, "network_inheritance": "task_network_policy" }, "high_impact": { "mode": "forbidden", "allowed_actions": [] } },
+      "fields": [
+        { "key": "analysis_method", "label": "分析方式", "type": "select", "options": ["static_only", "static_and_dynamic", "deep_instrumentation"] },
+        { "key": "sample_type", "label": "样本类型", "type": "text" },
+        { "key": "platform", "label": "目标平台", "type": "text" },
+        { "key": "architecture", "label": "架构", "type": "text" },
+        { "key": "analysis_goals", "label": "分析目标", "type": "csv" },
+        { "key": "expected_outputs", "label": "预期产物", "type": "csv" }
+      ],
+      "prompts": { "methodology": ["从文件类型、架构、哈希、字符串和结构开始静态分析。", "动态执行必须在隔离环境中进行并保存输出。"], "completion_focus": "用分析产物支撑关键函数、行为、配置或协议恢复结论。", "observer_focus": "检查地址、函数、字符串和动态输出能否支撑结论。", "roles": {} },
+      "allowed_input_kinds": ["file", "archive", "text"], "required_conditions": ["prompt_or_files"], "recommended_capabilities": ["read_input", "run_command"], "completion_validator": "reverse_artifact_review", "report_sections": ["summary", "binary_metadata", "recovered_logic", "behavior", "evidence", "limitations"], "uses_flag": false
+    }
+  ]
+}

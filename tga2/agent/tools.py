@@ -20,12 +20,14 @@ class ToolRegistry:
         workspace: TaskWorkspace,
         task_id: str,
         intent_id: str,
+        model_read_max_bytes: int,
         external_tools: Sequence[BaseTool] = (),
     ) -> None:
         self.store = store
         self.workspace = workspace
         self.task_id = task_id
         self.intent_id = intent_id
+        self.model_read_max_bytes = model_read_max_bytes
         self.external_tools = list(external_tools)
 
     def tools(self) -> list[BaseTool]:
@@ -58,8 +60,11 @@ class ToolRegistry:
         def handler() -> str:
             source = self.workspace.resolve_input(path)
             raw = source.read_bytes()
-            if len(raw) > 2_000_000:
-                raise ValueError("input exceeds the 2 MB model-reading limit")
+            if len(raw) > self.model_read_max_bytes:
+                raise ValueError(
+                    "input exceeds the configured model-reading limit "
+                    f"({self.model_read_max_bytes} bytes)"
+                )
             content = raw.decode("utf-8", errors="replace")
             artifact, _ = self.workspace.publish_text(
                 task_id=self.task_id,

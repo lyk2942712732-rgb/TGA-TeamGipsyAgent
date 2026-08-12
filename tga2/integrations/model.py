@@ -126,6 +126,7 @@ class ModelRegistry(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     schema_version: int = 1
+    presets: list[dict[str, str]] = Field(default_factory=list)
     providers: list[RegisteredProvider] = Field(default_factory=list)
     active_provider_id: str | None = None
     active_model_id: str | None = None

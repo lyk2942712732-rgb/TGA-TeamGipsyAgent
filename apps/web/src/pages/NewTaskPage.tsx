@@ -22,52 +22,34 @@ const csv = (value: string) => value.split(/[,\n]/).map((item) => item.trim()).f
 const join = (value: unknown) => Array.isArray(value) ? value.join(", ") : "";
 const bytes = (value: number) => value < 1024 ? `${value} B` : value < 1024 ** 2 ? `${(value / 1024).toFixed(1)} KB` : `${(value / 1024 ** 2).toFixed(1)} MB`;
 
-const fallbackPolicy = (mode: TaskMode): ExecutionPolicy => ({
-  preset: mode === "ctf" ? "autonomous_ctf" : mode === "penetration_test" ? "safe_observation" : "offline_analysis",
+const emptyPolicy: ExecutionPolicy = {
+  preset: "offline_analysis",
   network: {
-    access: mode === "ctf" ? "public_internet" : mode === "penetration_test" ? "task_sources" : "disabled",
-    interaction: mode === "ctf" ? "interact" : "observe",
+    access: "disabled", interaction: "observe",
     seed_origins: [], custom_origins: [], custom_domains: [], custom_cidrs: [], deny_private_networks: true, deny_loopback: true,
-    deny_link_local: true, deny_cloud_metadata: true, rate_limit_per_minute: 30, concurrency: 2,
-    request_timeout_seconds: 30,
+    deny_link_local: true, deny_cloud_metadata: true, rate_limit_per_minute: 1, concurrency: 1, request_timeout_seconds: 1,
   },
-  local_compute: { mode: "isolated", timeout_seconds: 60, concurrency: 1, network_inheritance: "task_network_policy" },
-  high_impact: { mode: mode === "ctf" ? "approval_required" : "forbidden", allowed_actions: [] },
-});
+  local_compute: { mode: "disabled", timeout_seconds: 1, concurrency: 1, network_inheritance: "task_network_policy" },
+  high_impact: { mode: "forbidden", allowed_actions: [] },
+};
 
 const copyPolicy = (value: ExecutionPolicy): ExecutionPolicy => structuredClone(value);
 
-const fallbackConfig = (mode: TaskMode): ModeConfig => {
-  if (mode === "ctf") return { mode, subtype: "auto", flag_format: "[A-Za-z0-9_]{2,32}\\{[^{}\\s]{4,200}\\}", expected_flag_count: 1, verifier: { kind: "local_regex" } };
-  if (mode === "penetration_test") return { mode, depth: "reconnaissance", included_scopes: [], exclusions: [], rules_of_engagement: "" };
-  if (mode === "incident_response") return { mode, phase: "triage", response_authority: "analysis_only", timezone: "UTC", affected_assets: [], known_iocs: [] };
-  if (mode === "vulnerability_research") return { mode, depth: "triage", software_version: "", commit: "", allow_fuzzing: false, require_poc: false };
-  return { mode, analysis_method: "static_only", sample_type: "auto", platform: "auto", architecture: "auto", analysis_goals: [], expected_outputs: [] };
-};
-
-const fallbackProfiles = Object.fromEntries(TASK_MODES.map((mode) => [mode, {
-  id: mode, label: MODE_PROFILES[mode].label, description: MODE_PROFILES[mode].description,
-  default_goal: MODE_PROFILES[mode].defaultGoal, default_mode_config: fallbackConfig(mode), default_execution_policy: fallbackPolicy(mode),
-  allowed_input_kinds: ["file", "archive", "image"], required_conditions: ["prompt_or_files"], recommended_capabilities: [],
-  completion_validator: mode, report_sections: [], uses_flag: mode === "ctf", advanced_settings: [],
-  mode_config_schema: {}, execution_policy_schema: {},
-}])) as unknown as Record<TaskMode, ModeProfileContract>;
-
 type Draft = { id: string; name: string; mode: TaskMode; goal: string; modeOptions: ModeConfig; executionPolicy: ExecutionPolicy };
 type PreflightBlocker = { id: string; message: string; step: number };
-const defaultDraft = (): Draft => ({ id: newTaskId(), name: "", mode: "penetration_test", goal: "", modeOptions: fallbackConfig("penetration_test"), executionPolicy: fallbackPolicy("penetration_test") });
+const defaultDraft = (): Draft => ({ id: newTaskId(), name: "", mode: "penetration_test", goal: "", modeOptions: { mode: "penetration_test" }, executionPolicy: structuredClone(emptyPolicy) });
 
-const MODE_CARD_META: Record<TaskMode, { label: string; icon: typeof Crosshair; tone: string; description: string }> = {
-  ctf: { label: "CTF", icon: Crosshair, tone: "violet", description: "面向夺旗赛的自动化解题与攻防验证" },
-  penetration_test: { label: "渗透测试", icon: ShieldCheck, tone: "blue", description: "模拟黑客攻击，发现并验证安全风险" },
-  incident_response: { label: "应急响应", icon: ShieldPlus, tone: "green", description: "快速定位、遏制与恢复安全事件" },
-  vulnerability_research: { label: "漏洞研究", icon: Search, tone: "orange", description: "发现、分析与验证安全漏洞" },
-  reverse_analysis: { label: "逆向分析", icon: Code2, tone: "indigo", description: "对二进制文件进行逆向分析与研究" },
+const MODE_CARD_META: Record<TaskMode, { icon: typeof Crosshair; tone: string }> = {
+  ctf: { icon: Crosshair, tone: "violet" },
+  penetration_test: { icon: ShieldCheck, tone: "blue" },
+  incident_response: { icon: ShieldPlus, tone: "green" },
+  vulnerability_research: { icon: Search, tone: "orange" },
+  reverse_analysis: { icon: Code2, tone: "indigo" },
 };
 
 export function NewTaskPage({ onCreated }: { onCreated: (id: string) => void }) {
   const [draft, setDraft] = useState(defaultDraft);
-  const [profiles, setProfiles] = useState(fallbackProfiles);
+  const [profiles, setProfiles] = useState<Partial<Record<TaskMode, ModeProfileContract>>>({});
   const [step, setStep] = useState(1);
   const [inputFiles, setInputFiles] = useState<StagedAsset[]>([]);
   const [prompt, setPrompt] = useState("");
@@ -89,7 +71,6 @@ export function NewTaskPage({ onCreated }: { onCreated: (id: string) => void }) 
   const [skillCatalog, setSkillCatalog] = useState<SkillSetting[]>([]);
   const [skillCatalogLoading, setSkillCatalogLoading] = useState(false);
   const [agentModelOptions, setAgentModelOptions] = useState<AgentModelOptions | null>(null);
-  const [agentModels, setAgentModels] = useState<Record<string, { providerId: string; modelId: string }>>({});
   const [agentModelsError, setAgentModelsError] = useState("");
   const draftTouched = useRef(false);
   const uploadControllers = useRef(new Map<string, AbortController>());
@@ -118,15 +99,15 @@ export function NewTaskPage({ onCreated }: { onCreated: (id: string) => void }) 
     if (!agentModelOptions) {
       blockers.push({ id: "model_options", message: "等待 Agent 模型清单加载完成", step: 4 });
     } else {
-      const missingAgents = agentModelOptions.agents.filter((agent) => !agentModels[agent.id]);
-      if (missingAgents.length) blockers.push({
+      const unavailableAgents = agentModelOptions.agents.filter((agent) => !agent.model.ready);
+      if (unavailableAgents.length) blockers.push({
         id: "agent_models",
-        message: `为以下 Agent 选择已验证模型：${missingAgents.map((agent) => agent.id).join("、")}`,
+        message: `请先在 Solver 页面修复以下模型配置：${unavailableAgents.map((agent) => agent.id).join("、")}`,
         step: 4,
       });
     }
     return blockers;
-  }, [draft.name, draft.goal, inputFiles, taskPrompt, agentModelOptions, agentModels]);
+  }, [draft.name, draft.goal, inputFiles, taskPrompt, agentModelOptions]);
   const completedSteps = useMemo(() => {
     const blocked = new Set(preflightBlockers.map((blocker) => blocker.step));
     return new Set([1, 2, 3, 4].filter((number) => !blocked.has(number)));
@@ -167,8 +148,8 @@ export function NewTaskPage({ onCreated }: { onCreated: (id: string) => void }) 
   useEffect(() => {
     void fetchModeProfiles().then((contract) => {
       const mapped = Object.fromEntries(contract.profiles.map((item) => [item.id, item])) as Record<TaskMode, ModeProfileContract>;
-      setProfiles({ ...fallbackProfiles, ...mapped });
-      if (mapped.penetration_test && !draftTouched.current) setDraft((value) => ({ ...value, modeOptions: structuredClone(mapped.penetration_test.default_mode_config), executionPolicy: copyPolicy(mapped.penetration_test.default_execution_policy) }));
+      setProfiles(mapped);
+      if (mapped.penetration_test && !draftTouched.current) setDraft((value) => ({ ...value, goal: value.goal || mapped.penetration_test.default_goal, modeOptions: structuredClone(mapped.penetration_test.default_mode_config), executionPolicy: copyPolicy(mapped.penetration_test.default_execution_policy) }));
     }).catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "无法读取后端模式契约"));
     void runtimeApi.toolHealth().then(setHealth).catch(() => undefined);
   }, []);
@@ -179,15 +160,8 @@ export function NewTaskPage({ onCreated }: { onCreated: (id: string) => void }) 
     void fetchAgentModelOptions(draft.mode).then((value) => {
       if (!current) return;
       setAgentModelOptions(value);
-      const ready = value.models.filter((item) => item.ready);
-      const fallback = ready[0];
-      setAgentModels((existing) => Object.fromEntries(value.agents.flatMap((agent) => {
-        const selected = existing[agent.id];
-        const valid = ready.some((item) => item.provider_id === selected?.providerId && item.model_id === selected?.modelId);
-        const choice = valid ? selected : fallback ? { providerId: fallback.provider_id, modelId: fallback.model_id } : null;
-        return choice ? [[agent.id, choice]] : [];
-      })));
-      if (!fallback) setAgentModelsError("没有已验证的模型。请先前往模型供应商页面完成配置与验证。");
+      const unavailable = value.agents.filter((agent) => !agent.model.ready);
+      if (unavailable.length) setAgentModelsError(`以下 Solver 的模型不可用：${unavailable.map((agent) => agent.id).join("、")}。请前往 Solver 页面统一配置。`);
     }).catch((reason: unknown) => {
       if (current) setAgentModelsError(reason instanceof Error ? reason.message : "无法读取 Agent 模型选项");
     });
@@ -233,7 +207,6 @@ export function NewTaskPage({ onCreated }: { onCreated: (id: string) => void }) 
       goal: draft.goal.trim(),
       input: { text: taskPrompt, fileIds: inputFiles.map((item) => item.id) },
       selectedSkills,
-      agentModels,
     };
     setPreflightLoading(true);
     void preflightTask(request).then((value) => {
@@ -242,7 +215,7 @@ export function NewTaskPage({ onCreated }: { onCreated: (id: string) => void }) 
       if (current) setPreflightError(reason instanceof Error ? reason.message : "启动前检查失败");
     }).finally(() => { if (current) setPreflightLoading(false); });
     return () => { current = false; };
-  }, [step, draft, taskPrompt, inputFiles, selectedSkills, agentModels, agentModelOptions, preflightBlockers]);
+  }, [step, draft, taskPrompt, inputFiles, selectedSkills, agentModelOptions, preflightBlockers]);
 
   const availableMcp = useMemo(() => (
     health?.records ?? []
@@ -253,11 +226,12 @@ export function NewTaskPage({ onCreated }: { onCreated: (id: string) => void }) 
     draftTouched.current = true;
     if (preset === "custom") { setDraft((current) => ({ ...current, executionPolicy: { ...current.executionPolicy, preset } })); return; }
     const backendDefault = Object.values(profiles).find((item) => item.default_execution_policy.preset === preset)?.default_execution_policy;
-    setDraft((current) => ({ ...current, executionPolicy: copyPolicy(backendDefault ?? fallbackPolicy(preset === "autonomous_ctf" ? "ctf" : preset === "safe_observation" ? "penetration_test" : "incident_response")) }));
+    if (backendDefault) setDraft((current) => ({ ...current, executionPolicy: copyPolicy(backendDefault) }));
   };
 
   function selectMode(mode: TaskMode) {
-    const next = profiles[mode] ?? fallbackProfiles[mode];
+    const next = profiles[mode];
+    if (!next) return;
     draftTouched.current = true;
     setSelectedSkills(null);
     setDraft((current) => ({ ...current, mode, modeOptions: structuredClone(next.default_mode_config), executionPolicy: copyPolicy(next.default_execution_policy) }));
@@ -304,7 +278,10 @@ export function NewTaskPage({ onCreated }: { onCreated: (id: string) => void }) 
       if (item.status === "uploaded") void deleteStagedInput(item.id).catch(() => undefined);
       if (item.previewUrl) URL.revokeObjectURL(item.previewUrl);
     });
-    draftTouched.current = false; setDraft(defaultDraft()); setInputFiles([]); setPrompt(""); setInstructions(""); setConstraints(""); setSuccessCriteria(""); setDraftSaved(false); setSelectedSkills(null); setAgentModels({}); setSkillDialogOpen(false); setPreflight(null); setPreflightError(""); setError(null); setStep(1);
+    draftTouched.current = false;
+    const defaultProfile = profiles.penetration_test;
+    setDraft(defaultProfile ? { ...defaultDraft(), goal: defaultProfile.default_goal, modeOptions: structuredClone(defaultProfile.default_mode_config), executionPolicy: copyPolicy(defaultProfile.default_execution_policy) } : defaultDraft());
+    setInputFiles([]); setPrompt(""); setInstructions(""); setConstraints(""); setSuccessCriteria(""); setDraftSaved(false); setSelectedSkills(null); setSkillDialogOpen(false); setPreflight(null); setPreflightError(""); setError(null); setStep(1);
   }
 
   async function submit() {
@@ -315,12 +292,14 @@ export function NewTaskPage({ onCreated }: { onCreated: (id: string) => void }) 
       return;
     }
     if (!preflight || preflightLoading || preflightError) { setError("启动前检查尚未通过，请修复问题后重试。"); setStep(5); return; }
-    const request: CreateTaskRequest = { ...draft, name: draft.name.trim(), goal: draft.goal.trim(), input: { text: taskPrompt, fileIds: inputFiles.map((item) => item.id) }, selectedSkills, agentModels, preflightFingerprint: preflight.fingerprint };
+    const request: CreateTaskRequest = { ...draft, name: draft.name.trim(), goal: draft.goal.trim(), input: { text: taskPrompt, fileIds: inputFiles.map((item) => item.id) }, selectedSkills, preflightFingerprint: preflight.fingerprint };
     setBusy(true); setError(null);
     try { const result = await createTask(request); localStorage.removeItem("tga-new-task-draft"); onCreated(result.task_id); }
     catch (reason) { setError(reason instanceof Error ? reason.message : "创建任务失败"); }
     finally { setBusy(false); }
   }
+
+  if (!profile) return <section className="ref-page new-task-wizard"><NewTaskHeader /><div className="ref-card form-surface"><p>{error ?? "正在从 .config/scenes.json 读取场景配置…"}</p></div></section>;
 
   return <section className="ref-page new-task-wizard">
     <NewTaskHeader />
@@ -328,13 +307,13 @@ export function NewTaskPage({ onCreated }: { onCreated: (id: string) => void }) 
     <section className="ref-card form-surface">
       <NewTaskProgress step={step} completedSteps={completedSteps} onStep={setStep} />
       {step === 1 ? <TaskGoalStep draft={draft} profiles={profiles} instructions={instructions} constraints={constraints} successCriteria={successCriteria} onDraft={(patch) => { draftTouched.current = true; setDraft((current) => ({ ...current, ...patch })); }} onMode={selectMode} onInstructions={setInstructions} onConstraints={setConstraints} onSuccessCriteria={setSuccessCriteria} /> : null}
-      {step === 2 ? <div className="wizard-step-stack"><ModeFields mode={draft.mode} config={draft.modeOptions} setConfig={setConfig} /><fieldset className="span-2 multimodal-step"><legend>任务提示与材料</legend><p className="field-help">补充目标网址、代码片段或附件。附件会归档到独立 Workspace，图片可直接参与多模态分析。</p><MultimodalComposer text={prompt} assets={inputFiles} busy={busy} onText={setPrompt} onFiles={upload} onRemove={removeAsset} /></fieldset></div> : null}
+      {step === 2 ? <div className="wizard-step-stack"><ModeFields profile={profile} config={draft.modeOptions} setConfig={setConfig} /><fieldset className="span-2 multimodal-step"><legend>任务提示与材料</legend><p className="field-help">补充目标网址、代码片段或附件。附件会归档到独立 Workspace，图片可直接参与多模态分析。</p><MultimodalComposer text={prompt} assets={inputFiles} busy={busy} onText={setPrompt} onFiles={upload} onRemove={removeAsset} /></fieldset></div> : null}
       {step === 3 ? <PolicyFields draft={draft} setPolicy={setPolicy} selectPreset={selectPolicyPreset} /> : null}
-      {step === 4 ? <TeamModelStep modeLabel={profile.label} availableMcp={availableMcp.map((item) => item.server).filter((server): server is string => Boolean(server))} skillPreview={skillPreview} skillPreviewLoading={skillPreviewLoading} skillPreviewError={skillPreviewError} selectedSkills={selectedSkills} onSkills={() => void openSkillDialog()} onAutomatic={() => setSelectedSkills(null)} modelOptions={agentModelOptions} modelAssignments={agentModels} modelError={agentModelsError} onModel={(agentId, value) => setAgentModels((current) => ({ ...current, [agentId]: value }))} /> : null}
-      {step === 5 ? <fieldset className="span-2 preflight-summary"><legend>第五步：启动前检查</legend><dl className="creation-summary"><dt>场景</dt><dd>{profile.label}</dd><dt>任务</dt><dd>{draft.name || "尚未填写"}</dd><dt>任务目标</dt><dd>{draft.goal || "尚未填写"}</dd><dt>任务说明</dt><dd>{taskPrompt || "无文字说明"}</dd><dt>附件（{inputFiles.length}）</dt><dd>{inputFiles.map((item) => item.originalName).join("；") || "无"}</dd><dt>执行边界</dt><dd>preset={draft.executionPolicy.preset}；network={draft.executionPolicy.network.access}/{draft.executionPolicy.network.interaction}；compute={draft.executionPolicy.local_compute.mode}；high_impact={draft.executionPolicy.high_impact.mode}</dd><dt>Agent 模型</dt><dd>{agentModelOptions?.agents.map((agent) => { const selectedModel = agentModelOptions.models.find((item) => item.provider_id === agentModels[agent.id]?.providerId && item.model_id === agentModels[agent.id]?.modelId); return `${agent.id} → ${selectedModel ? `${selectedModel.provider_name} / ${selectedModel.model_name}` : "未选择"}`; }).join("；") || "未选择"}</dd><dt>预计装配 Skills</dt><dd><SkillPreviewSummary value={skillPreview} loading={skillPreviewLoading} error={skillPreviewError} manual={selectedSkills !== null} onAutomatic={() => setSelectedSkills(null)} /></dd><dt>自动可用 MCP（{availableMcp.length}）</dt><dd>{availableMcp.map((item) => item.server).join(", ") || "当前无已启用且可达/已发现的 MCP 服务"}</dd><dt>完成条件</dt><dd>{successCriteria || `${profile.completion_validator}：${profile.report_sections.join("、") || "证据支持的模式专属验证"}`}</dd><dt>启动前检查</dt><dd><PreflightSummary value={preflight} loading={preflightLoading} error={preflightError} blockers={preflightBlockers} /></dd></dl></fieldset> : null}
+      {step === 4 ? <TeamModelStep modeLabel={profile.label} availableMcp={availableMcp.map((item) => item.server).filter((server): server is string => Boolean(server))} skillPreview={skillPreview} skillPreviewLoading={skillPreviewLoading} skillPreviewError={skillPreviewError} selectedSkills={selectedSkills} onSkills={() => void openSkillDialog()} onAutomatic={() => setSelectedSkills(null)} modelOptions={agentModelOptions} modelError={agentModelsError} /> : null}
+      {step === 5 ? <fieldset className="span-2 preflight-summary"><legend>第五步：启动前检查</legend><dl className="creation-summary"><dt>场景</dt><dd>{profile.label}</dd><dt>任务</dt><dd>{draft.name || "尚未填写"}</dd><dt>任务目标</dt><dd>{draft.goal || "尚未填写"}</dd><dt>任务说明</dt><dd>{taskPrompt || "无文字说明"}</dd><dt>附件（{inputFiles.length}）</dt><dd>{inputFiles.map((item) => item.originalName).join("；") || "无"}</dd><dt>执行边界</dt><dd>preset={draft.executionPolicy.preset}；network={draft.executionPolicy.network.access}/{draft.executionPolicy.network.interaction}；compute={draft.executionPolicy.local_compute.mode}；high_impact={draft.executionPolicy.high_impact.mode}</dd><dt>Agent 模型</dt><dd>{agentModelOptions?.agents.map((agent) => `${agent.id} → ${agent.model.provider_name} / ${agent.model.model_name}`).join("；") || "正在读取 Solver 配置"}</dd><dt>预计装配 Skills</dt><dd><SkillPreviewSummary value={skillPreview} loading={skillPreviewLoading} error={skillPreviewError} manual={selectedSkills !== null} onAutomatic={() => setSelectedSkills(null)} /></dd><dt>自动可用 MCP（{availableMcp.length}）</dt><dd>{availableMcp.map((item) => item.server).join(", ") || "当前无已启用且可达/已发现的 MCP 服务"}</dd><dt>完成条件</dt><dd>{successCriteria || `${profile.completion_validator}：${profile.report_sections.join("、") || "证据支持的模式专属验证"}`}</dd><dt>启动前检查</dt><dd><PreflightSummary value={preflight} loading={preflightLoading} error={preflightError} blockers={preflightBlockers} /></dd></dl></fieldset> : null}
       {error ? <p role="alert" className="inline-error span-2">{error}</p> : null}
     </section>
-    <NewTaskGuide modeLabel={profile.label} modeDescription={profiles[draft.mode].description} />
+    <NewTaskGuide modeLabel={profile.label} modeDescription={profile.description} />
     <footer className="wizard-actions"><button type="button" className="secondary-button" disabled={busy} onClick={reset}>重置</button><span className="wizard-save-state" aria-live="polite">{draftSaved ? <><Check size={14} />草稿已保存并会自动恢复</> : null}</span><div>{step > 1 ? <button type="button" disabled={busy} onClick={() => setStep((value) => Math.max(1, value - 1))}>上一步</button> : null}<button type="button" className="save-draft-button" disabled={busy} onClick={() => { localStorage.setItem("tga-new-task-draft", JSON.stringify({ draft, instructions, constraints, successCriteria, prompt })); setDraftSaved(true); }}>保存草稿</button>{step < 5 ? <button type="button" disabled={busy} onClick={() => setStep((value) => Math.min(5, value + 1))}>下一步</button> : <button type="button" disabled={busy || preflightLoading || Boolean(preflightError) || (!preflight && !preflightBlockers.length)} onClick={() => void submit()}>{busy ? "处理中..." : preflightLoading ? "正在检查..." : "创建任务并开始"}</button>}</div></footer>
     </div>
     {skillDialogOpen ? <SkillSelectionDialog catalog={skillCatalog} loading={skillCatalogLoading} mode={draft.mode} selected={selectedSkills ?? skillPreview?.skills.map((item) => item.name) ?? []} draft={draft} prompt={taskPrompt} files={inputFiles} onClose={() => setSkillDialogOpen(false)} onApply={(names) => { setSelectedSkills(names); setSkillDialogOpen(false); }} /> : null}
@@ -352,10 +331,10 @@ export function NewTaskPage({ onCreated }: { onCreated: (id: string) => void }) 
   }
 }
 
-function TaskGoalStep({ draft, profiles, instructions, constraints, successCriteria, onDraft, onMode, onInstructions, onConstraints, onSuccessCriteria }: { draft: Draft; profiles: Record<TaskMode, ModeProfileContract>; instructions: string; constraints: string; successCriteria: string; onDraft: (patch: Partial<Draft>) => void; onMode: (mode: TaskMode) => void; onInstructions: (value: string) => void; onConstraints: (value: string) => void; onSuccessCriteria: (value: string) => void }) {
+function TaskGoalStep({ draft, profiles, instructions, constraints, successCriteria, onDraft, onMode, onInstructions, onConstraints, onSuccessCriteria }: { draft: Draft; profiles: Partial<Record<TaskMode, ModeProfileContract>>; instructions: string; constraints: string; successCriteria: string; onDraft: (patch: Partial<Draft>) => void; onMode: (mode: TaskMode) => void; onInstructions: (value: string) => void; onConstraints: (value: string) => void; onSuccessCriteria: (value: string) => void }) {
   return <div className="task-goal-step">
     <FieldWithCount label="任务名称" required value={draft.name} max={100}><input aria-label="任务名称" value={draft.name} maxLength={100} onChange={(event) => onDraft({ name: event.target.value })} placeholder="请输入任务名称（建议清晰、简洁）" /></FieldWithCount>
-    <fieldset className="scene-picker"><legend>模式 <sup>*</sup></legend><div className="mode-card-grid">{TASK_MODES.map((mode) => { const meta = MODE_CARD_META[mode]; const Icon = meta.icon; const selected = draft.mode === mode; return <button type="button" key={mode} className={`mode-card tone-${meta.tone} ${selected ? "selected" : ""}`} aria-pressed={selected} aria-label={`${meta.label}：${meta.description}`} title={profiles[mode].description} onClick={() => onMode(mode)}><span className="mode-card-icon"><Icon size={30} /></span>{selected ? <span className="mode-card-check"><Check size={13} /></span> : null}<strong>{meta.label}</strong><span>{meta.description}</span></button>; })}</div></fieldset>
+    <fieldset className="scene-picker"><legend>模式 <sup>*</sup></legend><div className="mode-card-grid">{TASK_MODES.flatMap((mode) => { const profile = profiles[mode]; if (!profile) return []; const meta = MODE_CARD_META[mode]; const Icon = meta.icon; const selected = draft.mode === mode; return [<button type="button" key={mode} className={`mode-card tone-${meta.tone} ${selected ? "selected" : ""}`} aria-pressed={selected} aria-label={`${profile.label}：${profile.description}`} title={profile.description} onClick={() => onMode(mode)}><span className="mode-card-icon"><Icon size={30} /></span>{selected ? <span className="mode-card-check"><Check size={13} /></span> : null}<strong>{profile.label}</strong><span>{profile.description}</span></button>]; })}</div></fieldset>
     <FieldWithCount label="Objective" required info="核心目标与期望结果" value={draft.goal} max={500}><textarea aria-label="Objective" value={draft.goal} maxLength={500} onChange={(event) => onDraft({ goal: event.target.value })} placeholder="请描述本次任务的核心目标与期望达成的结果，例如：发现目标系统中的高危漏洞并获取可复现的利用链。" /></FieldWithCount>
     <FieldWithCount label="Instructions" info="任务背景、范围和完成要求" value={instructions} max={2000}><textarea aria-label="Instructions" value={instructions} maxLength={2000} onChange={(event) => onInstructions(event.target.value)} placeholder="请提供详细的任务背景、范围、优先级、关注点及完成任务的具体要求。" /></FieldWithCount>
     <FieldWithCount label="Constraints" info="任务边界与限制" value={constraints} max={1000}><textarea aria-label="Constraints" value={constraints} maxLength={1000} onChange={(event) => onConstraints(event.target.value)} placeholder="请列出任务的边界条件与限制，例如：禁止暴力破解、仅在指定时间段扫描、不得影响生产环境等。" /></FieldWithCount>
@@ -367,11 +346,11 @@ function FieldWithCount({ label, required = false, info, value, max, children }:
   return <label className="wizard-counted-field"><span><b>{label}{required ? <sup>*</sup> : null}</b>{info ? <small title={info}>i</small> : null}</span>{children}<em>{value.length}/{max}</em></label>;
 }
 
-function TeamModelStep({ modeLabel, availableMcp, skillPreview, skillPreviewLoading, skillPreviewError, selectedSkills, onSkills, onAutomatic, modelOptions, modelAssignments, modelError, onModel }: { modeLabel: string; availableMcp: string[]; skillPreview: SkillPreview | null; skillPreviewLoading: boolean; skillPreviewError: string; selectedSkills: string[] | null; onSkills: () => void; onAutomatic: () => void; modelOptions: AgentModelOptions | null; modelAssignments: Record<string, { providerId: string; modelId: string }>; modelError: string; onModel: (agentId: string, value: { providerId: string; modelId: string }) => void }) {
+function TeamModelStep({ modeLabel, availableMcp, skillPreview, skillPreviewLoading, skillPreviewError, selectedSkills, onSkills, onAutomatic, modelOptions, modelError }: { modeLabel: string; availableMcp: string[]; skillPreview: SkillPreview | null; skillPreviewLoading: boolean; skillPreviewError: string; selectedSkills: string[] | null; onSkills: () => void; onAutomatic: () => void; modelOptions: AgentModelOptions | null; modelError: string }) {
   return <div className="team-model-step">
     <header><span><Users size={18} /></span><div><h2>团队与模型装配</h2><p>系统会根据「{modeLabel}」自动推荐团队、Solver、Skills 与可用工具。</p></div></header>
-    <div className="team-model-grid"><article><span>团队模板</span><strong>{modeLabel}标准团队</strong><small>Supervisor 按任务复杂度动态创建 Solver</small></article><article><span>模型策略</span><strong>逐 Agent 独立分配</strong><small>模型与密钥状态会冻结到任务快照</small></article><article><span>编排方式</span><strong>自动匹配</strong><small>支持在运行工作台继续干预和审批</small></article></div>
-    <section className="agent-model-assignment"><header><div><Cpu size={17} /><h3>Agent 模型</h3></div><b>{modelOptions?.agents.length ?? 0}</b></header>{modelError ? <p className="team-model-empty"><AlertTriangle size={15} />{modelError} <a href="/settings/models">前往配置</a></p> : <div className="agent-model-grid">{modelOptions?.agents.map((agent) => { const selected = modelAssignments[agent.id]; const value = selected ? `${selected.providerId}:${selected.modelId}` : ""; return <label key={agent.id}><span><strong>{agent.id}</strong><small>{roleLabel(agent.role)}{agent.required ? " · 必需" : " · 按需创建"}</small></span><select aria-label={`${agent.id} 模型`} value={value} onChange={(event) => { const [providerId, modelId] = event.target.value.split(":"); onModel(agent.id, { providerId, modelId }); }}><option value="" disabled>选择已验证模型</option>{modelOptions.models.map((model) => <option key={`${model.provider_id}:${model.model_id}`} value={`${model.provider_id}:${model.model_id}`} disabled={!model.ready}>{model.provider_name} / {model.model_name}{model.ready ? "" : `（${model.verification_status}）`}</option>)}</select></label>; })}</div>}</section>
+    <div className="team-model-grid"><article><span>团队模板</span><strong>{modeLabel}标准团队</strong><small>Supervisor 按任务复杂度动态创建 Solver</small></article><article><span>模型策略</span><strong>Solver 统一配置</strong><small>角色模型来自 .config/runtime.json</small></article><article><span>编排方式</span><strong>自动匹配</strong><small>支持在运行工作台继续干预和审批</small></article></div>
+    <section className="agent-model-assignment"><header><div><Cpu size={17} /><h3>Agent 模型（只读）</h3></div><a href="/settings/solvers">前往 Solver 配置</a></header>{modelError ? <p className="team-model-empty"><AlertTriangle size={15} />{modelError}</p> : <div className="agent-model-grid">{modelOptions?.agents.map((agent) => <div className="agent-model-readonly" key={agent.id}><span><strong>{agent.id}</strong><small>{roleLabel(agent.role)}{agent.required ? " · 必需" : " · 按需创建"}</small></span><span><strong>{agent.model.provider_name} / {agent.model.model_name}</strong><small>{agent.model.ready ? "可用" : agent.model.verification_status}</small></span></div>)}</div>}</section>
     <section><header><div><Sparkles size={17} /><h3>Skills</h3></div><button type="button" className="ref-secondary-button" onClick={onSkills}>手动选择</button></header><SkillPreviewSummary value={skillPreview} loading={skillPreviewLoading} error={skillPreviewError} manual={selectedSkills !== null} onAutomatic={onAutomatic} /></section>
     <section><header><div><ShieldCheck size={17} /><h3>自动可用 MCP</h3></div><b>{availableMcp.length}</b></header>{availableMcp.length ? <div className="team-model-chips">{availableMcp.map((server) => <span key={server}>{server}</span>)}</div> : <p className="team-model-empty"><AlertTriangle size={15} />当前没有已启用且可达的 MCP 服务</p>}</section>
   </div>;
@@ -446,12 +425,16 @@ function MultimodalComposer({ text, assets, busy, onText, onFiles, onRemove }: {
   </section>;
 }
 
-function ModeFields({ mode, config, setConfig }: { mode: TaskMode; config: ModeConfig; setConfig: (key: string, value: unknown) => void }) {
-  if (mode === "ctf") return <fieldset><legend>CTF 配置</legend><label>CTF 子类型<select value={String(config.subtype ?? "auto")} onChange={(event) => setConfig("subtype", event.target.value)}>{["auto", "web", "pwn", "reverse", "crypto", "misc", "forensics", "unknown"].map((item) => <option key={item}>{item}</option>)}</select></label><label>Flag 格式（可选）<input value={String(config.flag_format ?? "")} onChange={(event) => setConfig("flag_format", event.target.value || null)} /></label></fieldset>;
-  if (mode === "penetration_test") return <fieldset><legend>渗透测试配置</legend><label>测试深度<select value={String(config.depth ?? "reconnaissance")} onChange={(event) => setConfig("depth", event.target.value)}><option value="reconnaissance">reconnaissance</option><option value="validation">validation</option><option value="comprehensive">comprehensive</option></select></label><label>包含范围<input value={join(config.included_scopes)} onChange={(event) => setConfig("included_scopes", csv(event.target.value))} /></label><label>排除范围<input value={join(config.exclusions)} onChange={(event) => setConfig("exclusions", csv(event.target.value))} /></label><label className="span-2">Rules of Engagement<textarea value={String(config.rules_of_engagement ?? "")} onChange={(event) => setConfig("rules_of_engagement", event.target.value)} /></label></fieldset>;
-  if (mode === "incident_response") return <fieldset><legend>应急响应配置</legend><label>事件阶段<select value={String(config.phase ?? "triage")} onChange={(event) => setConfig("phase", event.target.value)}>{["triage", "investigation", "containment", "eradication", "recovery", "post-incident"].map((item) => <option key={item}>{item}</option>)}</select></label><label>响应权限<select value={String(config.response_authority ?? "analysis_only")} onChange={(event) => setConfig("response_authority", event.target.value)}><option value="analysis_only">analysis_only</option><option value="containment_with_approval">containment_with_approval</option><option value="authorized_containment">authorized_containment</option></select></label></fieldset>;
-  if (mode === "vulnerability_research") return <fieldset><legend>漏洞挖掘配置</legend><label>研究深度<select value={String(config.depth ?? "triage")} onChange={(event) => setConfig("depth", event.target.value)}><option value="triage">triage</option><option value="focused">focused</option><option value="deep">deep</option></select></label><label>软件版本<input value={String(config.software_version ?? "")} onChange={(event) => setConfig("software_version", event.target.value)} /></label><label><input type="checkbox" checked={Boolean(config.allow_fuzzing)} onChange={(event) => setConfig("allow_fuzzing", event.target.checked)} />允许 Fuzz</label></fieldset>;
-  return <fieldset><legend>逆向分析配置</legend><label>分析方式<select value={String(config.analysis_method ?? "static_only")} onChange={(event) => setConfig("analysis_method", event.target.value)}><option value="static_only">static_only</option><option value="static_and_dynamic">static_and_dynamic</option><option value="deep_instrumentation">deep_instrumentation</option></select></label><label>样本类型<input value={String(config.sample_type ?? "auto")} onChange={(event) => setConfig("sample_type", event.target.value)} /></label><label>目标平台<input value={String(config.platform ?? "auto")} onChange={(event) => setConfig("platform", event.target.value)} /></label><label>架构<input value={String(config.architecture ?? "auto")} onChange={(event) => setConfig("architecture", event.target.value)} /></label></fieldset>;
+function ModeFields({ profile, config, setConfig }: { profile: ModeProfileContract; config: ModeConfig; setConfig: (key: string, value: unknown) => void }) {
+  return <fieldset><legend>{profile.label}配置</legend>{profile.fields.map((field) => {
+    const value = config[field.key];
+    if (field.type === "select") return <label key={field.key}>{field.label}<select value={String(value ?? "")} onChange={(event) => setConfig(field.key, event.target.value)}>{(field.options ?? []).map((option) => <option key={option} value={option}>{option}</option>)}</select></label>;
+    if (field.type === "checkbox") return <label key={field.key}><input type="checkbox" checked={Boolean(value)} onChange={(event) => setConfig(field.key, event.target.checked)} />{field.label}</label>;
+    if (field.type === "number") return <label key={field.key}>{field.label}<input type="number" min={field.min} max={field.max} value={Number(value ?? field.min ?? 0)} onChange={(event) => setConfig(field.key, Number(event.target.value))} /></label>;
+    if (field.type === "textarea") return <label className="span-2" key={field.key}>{field.label}<textarea value={String(value ?? "")} onChange={(event) => setConfig(field.key, event.target.value)} /></label>;
+    if (field.type === "csv") return <label key={field.key}>{field.label}<input value={join(value)} onChange={(event) => setConfig(field.key, csv(event.target.value))} /></label>;
+    return <label key={field.key}>{field.label}<input value={String(value ?? "")} onChange={(event) => setConfig(field.key, event.target.value)} /></label>;
+  })}</fieldset>;
 }
 
 function PolicyFields({ draft, setPolicy, selectPreset }: { draft: Draft; setPolicy: <K extends keyof ExecutionPolicy>(key: K, value: ExecutionPolicy[K]) => void; selectPreset: (preset: ExecutionPolicy["preset"]) => void }) {

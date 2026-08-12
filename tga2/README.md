@@ -29,3 +29,24 @@ npm run dev
 
 With no API key, tasks use the deterministic offline agent suite but still pass
 through the same LangGraph, evidence store and report flow.
+
+## Configuration source of truth
+
+Every process reads and writes runtime configuration through
+`<TGA2_RUN_ROOT>/.config`:
+
+- `models.json` owns providers, models, verification state and API keys. API
+  keys are intentionally stored as plain JSON for this competition project.
+- `runtime.json` owns the four Solver roles, including each role's provider and
+  model selection, prompts, tools, graph limits, Kali profile and file limits.
+- `scenes.json` owns the five task scenes, their form fields, default policy and
+  scene prompt additions.
+- `mcp.json` owns MCP server definitions.
+
+Files in `tga2/defaults` are installation seeds only. They are copied into a
+new run root on first start and are not an alternative live configuration
+source. Legacy `model.json` and `model-registry.json` are read only once when
+`models.json` does not yet exist.
+
+Configure a role's model on the Solver page. Creating a task no longer accepts
+or stores a second per-task model assignment.

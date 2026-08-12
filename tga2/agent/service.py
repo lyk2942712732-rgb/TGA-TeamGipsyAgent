@@ -21,7 +21,7 @@ from tga2.agent.roles import (
 )
 from tga2.config import Configuration
 from tga2.core.models import AgentEvent, ResourceRef, Task, TaskSpec, TaskStatus
-from tga2.core.policy import ExecutionPolicy
+from tga2.core.policy import ExecutionPolicy, ToolPolicy
 from tga2.core.store import TaskStore
 from tga2.core.workspace import TaskWorkspace
 from tga2.integrations.model import ModelSettings, build_chat_model
@@ -47,32 +47,17 @@ class TaskRuntimeService:
         self.run_root.mkdir(parents=True, exist_ok=True)
         self.configuration = configuration or Configuration(self.run_root / ".config")
         self.skills = SkillRepository(self.run_root / ".config" / "skills")
-        settings = model_settings or self.configuration.model
-        self.configuration.model = settings
         self._agents_overridden = agents is not None
-        self.agents = agents or (
-            LangChainAgentSuite(
-                build_chat_model(settings),
-                self._select_skills,
-                self.configuration.agent_prompts(),
-            )
-            if settings.can_call_model and settings.verified
-            else OfflineAgentSuite()
-        )
+        self.agents = agents or self._build_agents(model_settings)
         self.external_tools = list(external_tools)
 
     def configure_model(self, settings: ModelSettings) -> dict[str, Any]:
-        self.configuration.save_model(settings)
-        self._agents_overridden = False
-        self.agents = (
-            LangChainAgentSuite(
-                build_chat_model(settings),
-                self._select_skills,
-                self.configuration.agent_prompts(),
-            )
-            if settings.can_call_model and settings.verified
-            else OfflineAgentSuite()
-        )
+        """Compatibility hook; model definitions persist in models.json.
+
+        Role assignments in runtime.json remain authoritative, so registering or
+        verifying a model never silently changes which model a Solver uses.
+        """
+        self.reload_configuration()
         return {
             "configured": settings.can_call_model,
             "provider": settings.provider,
@@ -81,8 +66,8 @@ class TaskRuntimeService:
         }
 
     def reload_configuration(self) -> None:
-        if isinstance(self.agents, LangChainAgentSuite):
-            self.agents.prompts = self.configuration.agent_prompts()
+        if not self._agents_overridden:
+            self.agents = self._build_agents()
 
     def set_external_tools(self, tools: Sequence[BaseTool]) -> None:
         self.external_tools = list(tools)
@@ -92,42 +77,60 @@ class TaskRuntimeService:
         return self.skills.select(
             task.spec.objective,
             selected_names=list(selected) if selected is not None else None,
+            limit=self.configuration.runtime.skill_selection.automatic_limit,
         )
 
     def _agents_for_task(self, task: Task) -> AgentSuite:
-        if self._agents_overridden:
-            return self.agents
-        assignments = task.spec.agent_models
-        if not assignments:
-            return self.agents
+        return self.agents
+
+    def _build_agents(self, fallback: ModelSettings | None = None) -> AgentSuite:
         offline = OfflineAgentSuite()
         roles: dict[str, AgentSuite] = {}
-        built: dict[tuple[str, str], AgentSuite] = {}
+        built: dict[tuple[str, str, int, int], AgentSuite] = {}
         for role in ("supervisor", "worker", "reviewer", "reporter"):
-            selection = assignments.get(role) or {}
-            provider_id = selection.get("providerId")
-            model_id = selection.get("modelId")
+            role_config = self.configuration.runtime.roles[role]
+            provider_id = role_config.model.provider_id
+            model_id = role_config.model.model_id
             if (provider_id, model_id) == ("offline", "offline"):
+                if fallback and fallback.can_call_model and fallback.verified:
+                    roles[role] = LangChainAgentSuite(
+                        build_chat_model(fallback),
+                        self._select_skills,
+                        self.configuration.agent_prompts(),
+                        model_call_limit=role_config.model_call_limit,
+                        model_retries=role_config.model_retries,
+                        skill_prompt_limit=self.configuration.runtime.skill_selection.prompt_injection_limit,
+                    )
+                else:
+                    roles[role] = offline
+                continue
+            key = (
+                provider_id,
+                model_id,
+                role_config.model_call_limit,
+                role_config.model_retries,
+            )
+            try:
+                settings = self.configuration.role_model_settings(role)
+                if key not in built and settings is not None:
+                    built[key] = LangChainAgentSuite(
+                        build_chat_model(settings),
+                        self._select_skills,
+                        self.configuration.agent_prompts(),
+                        model_call_limit=role_config.model_call_limit,
+                        model_retries=role_config.model_retries,
+                        skill_prompt_limit=self.configuration.runtime.skill_selection.prompt_injection_limit,
+                    )
+                roles[role] = built.get(key, offline)
+            except (KeyError, ValueError):
+                # Keep the control plane available so the Solver page can repair
+                # a deleted/stale assignment. Preflight reports it as a blocker.
                 roles[role] = offline
-                continue
-            if not provider_id or not model_id:
-                roles[role] = self.agents
-                continue
-            key = (provider_id, model_id)
-            if key not in built:
-                settings = self.configuration.model_registry.settings(
-                    provider_id, model_id, require_verified=True
-                )
-                built[key] = LangChainAgentSuite(
-                    build_chat_model(settings),
-                    self._select_skills,
-                    self.configuration.agent_prompts(),
-                )
-            roles[role] = built[key]
         return RoutedAgentSuite(roles)
 
     def create_task(self, request: Any) -> dict[str, Any]:
-        policy = request.execution_policy or ExecutionPolicy()
+        scene = self.configuration.scene(request.mode)
+        policy = request.execution_policy or self._default_policy(scene)
         task = Task(
             **({"id": request.id} if getattr(request, "id", None) else {}),
             name=request.name,
@@ -140,7 +143,7 @@ class TaskRuntimeService:
                 selected_skill_names=tuple(request.selected_skills)
                 if request.selected_skills is not None
                 else None,
-                agent_models=dict(getattr(request, "agent_models", {}) or {}),
+                mode_options=dict(getattr(request, "mode_options", {}) or {}),
             ),
         )
         workspace = TaskWorkspace(self.run_root, task.id)
@@ -182,6 +185,42 @@ class TaskRuntimeService:
             "status": task.status.value,
             "task": task.model_dump(mode="json"),
         }
+
+    def _default_policy(self, scene: dict[str, Any]) -> ExecutionPolicy:
+        """Translate the scene default into the compact persisted policy.
+
+        HTTP clients normally send the policy returned by ``scenes.json``.
+        CLI and direct Python callers use this path, so they resolve the same
+        source instead of silently falling back to model-class defaults.
+        """
+        value = dict(scene.get("default_execution_policy") or {})
+        network = dict(value.get("network") or {})
+        compute = dict(value.get("local_compute") or {})
+        high_impact = dict(value.get("high_impact") or {})
+        allowed = set(self.configuration.runtime.tool_defaults.allowed)
+        approval_required: set[str] = set()
+        if compute.get("mode") == "isolated":
+            allowed.add("run_command")
+            if high_impact.get("mode") == "approval_required":
+                approval_required.add("run_command")
+        return ExecutionPolicy(
+            tool=ToolPolicy(
+                allowed_tools=frozenset(allowed),
+                approval_required=frozenset(approval_required),
+                max_tool_calls=self.configuration.runtime.tool_defaults.max_calls,
+            ),
+            network_access=network.get("access", "disabled"),
+            allowed_origins=tuple(
+                network.get("custom_origins") or network.get("seed_origins") or ()
+            ),
+            local_compute=compute.get("mode", "disabled"),
+            command_timeout_seconds=int(
+                compute.get(
+                    "timeout_seconds",
+                    self.configuration.runtime.kali.command_timeout_seconds,
+                )
+            ),
+        )
 
     def run_task(self, task_id: str) -> dict[str, Any]:
         with self._runtime(task_id) as (store, graph):
@@ -254,7 +293,7 @@ class TaskRuntimeService:
                 item.model_dump(mode="json")
                 for item in store.list_events(task_id, limit=1000)
             ]
-            return runtime_snapshot_projection(raw, events)
+            return runtime_snapshot_projection(raw, events, self.configuration.runtime)
 
     def events(
         self, task_id: str, *, after_seq: int = 0, limit: int = 200
@@ -285,7 +324,11 @@ class TaskRuntimeService:
                         for item in store.list_events(task_id, limit=1000)
                     ]
                     tasks.append(
-                        task_list_projection(runtime_snapshot_projection(raw, events))
+                        task_list_projection(
+                            runtime_snapshot_projection(
+                                raw, events, self.configuration.runtime
+                            )
+                        )
                     )
             finally:
                 store.close()

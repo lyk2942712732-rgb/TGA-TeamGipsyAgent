@@ -46,6 +46,7 @@ export type SolverDefinitionRecord = {
   default_budget: SolverBudget;
   completion_authority: string;
   content_sha256: string;
+  model: { provider_id: string; provider_name: string; model_id: string; model_name: string; verification_status: string; ready: boolean };
 };
 
 export async function fetchSolverDefinitions(query = ""): Promise<{ items: SolverDefinitionRecord[]; total: number }> {
@@ -192,7 +193,7 @@ export const fetchSolverDefinition = (id: string) => requestJson<SolverDefinitio
 export const fetchSolverManifest = (id: string, mode?: string) => requestJson<Record<string, unknown>>(`/api/v2/solvers/${encodeURIComponent(id)}/manifest-preview${mode ? `?mode=${encodeURIComponent(mode)}` : ""}`);
 export const updateSolverCapabilities = (
   id: string,
-  payload: Pick<SolverDefinitionRecord, "host_capability_profile_id" | "host_capability_overrides"> & { expected_content_sha256: string; kali: { profile_id: string; capabilities: Array<"kali.exec"> } | null },
+  payload: Pick<SolverDefinitionRecord, "host_capability_profile_id" | "host_capability_overrides"> & { expected_content_sha256: string; model?: { provider_id: string; model_id: string }; kali: { profile_id: string; capabilities: Array<"kali.exec"> } | null },
 ) => requestJson<SolverDefinitionRecord>(`/api/v2/solvers/${encodeURIComponent(id)}/capabilities`, {
   method: "PUT",
   headers: { "Content-Type": "application/json" },

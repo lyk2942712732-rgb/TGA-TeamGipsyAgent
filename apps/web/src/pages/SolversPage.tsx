@@ -1,6 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { LayoutGrid, RefreshCw, Rows3, Save, Search, Shield, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { fetchAgentModelOptions } from "../api/tasks";
 import {
   checkSolverKaliHealth,
   fetchHostCapabilities,
@@ -316,6 +317,7 @@ function SolverDetail({ record, tab, onTab }: {
 
 function BasicTab({ record, onInstructions }: { record: SolverDefinitionRecord; onInstructions: () => void }) {
   return <>
+    <SolverModelControl record={record} />
     <div className="solver-prompt-block">
       <h3>System Prompt 模板</h3>
       <div className="solver-prompt-box">
@@ -334,6 +336,44 @@ function BasicTab({ record, onInstructions }: { record: SolverDefinitionRecord; 
     </div>
     <FieldGrid columns={2} fields={budgetFields(record.default_budget)} />
   </>;
+}
+
+function SolverModelControl({ record }: { record: SolverDefinitionRecord }) {
+  const client = useQueryClient();
+  const options = useQuery({ queryKey: ["solvers", "model-options"], queryFn: () => fetchAgentModelOptions("ctf") });
+  const model = record.model ?? { provider_id: "offline", provider_name: "Offline demo", model_id: "offline", model_name: "Rule-based demo", verification_status: "verified", ready: true };
+  const [value, setValue] = useState(`${model.provider_id}:${model.model_id}`);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  useEffect(() => setValue(`${model.provider_id}:${model.model_id}`), [model.provider_id, model.model_id]);
+  const save = async () => {
+    const [provider_id, model_id] = value.split(":");
+    setBusy(true); setMessage("");
+    try {
+      await updateSolverCapabilities(record.id, {
+        expected_content_sha256: record.content_sha256,
+        host_capability_profile_id: record.host_capability_profile_id,
+        host_capability_overrides: record.host_capability_overrides,
+        kali: record.kali ? { profile_id: record.kali.profile_id, capabilities: record.kali.capabilities } : null,
+        model: { provider_id, model_id },
+      });
+      await client.invalidateQueries({ queryKey: ["solvers"] });
+      setMessage("模型配置已写入 runtime.json");
+    } catch (reason) { setMessage(reason instanceof Error ? reason.message : "保存失败"); }
+    finally { setBusy(false); }
+  };
+  return <section className="solver-model-control">
+    <h3>统一模型配置</h3>
+    <p>此处配置写入当前运行目录的 <code>.config/runtime.json</code>，新建任务不再重复选择。</p>
+    <div className="solver-form-grid cols-2">
+      <label>供应商 / 模型<select value={value} onChange={(event) => setValue(event.target.value)}>
+        <option value="offline:offline">Offline demo / Rule-based demo</option>
+        {(options.data?.models ?? []).filter((item) => item.ready && item.provider_id !== "offline").map((item) => <option key={`${item.provider_id}:${item.model_id}`} value={`${item.provider_id}:${item.model_id}`}>{item.provider_name} / {item.model_name}</option>)}
+      </select></label>
+      <button className="ref-primary-button" disabled={busy || options.isLoading} onClick={() => void save()}>{busy ? "保存中" : "保存模型配置"}</button>
+    </div>
+    <p className="skill-summary" role="status">{message || `当前：${model.provider_name} / ${model.model_name}`}</p>
+  </section>;
 }
 
 function ToolsTab({ record, editing, draft, setDraft, profiles, capabilities, onEdit }: {

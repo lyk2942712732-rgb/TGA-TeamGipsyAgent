@@ -156,13 +156,12 @@ def test_prompt_skill_and_solver_settings_reach_runtime(tmp_path: Path) -> None:
         },
     )
     assert prompt.status_code == 200
+    assert app.state.container.configuration.runtime.common_prompt == "competition prompt"
     assert (
-        app.state.container.configuration.runtime.prompts["common"]
-        == "competition prompt"
-    )
-    assert (
-        app.state.container.configuration.runtime.mode_prompts[0]["id"]
-        == "vulnerability_research"
+        app.state.container.configuration.scene("vulnerability_research")["prompts"][
+            "methodology"
+        ]
+        == ["Trace data flow"]
     )
     imported = client.post(
         "/api/v2/settings/skills/import",
@@ -185,7 +184,7 @@ def test_prompt_skill_and_solver_settings_reach_runtime(tmp_path: Path) -> None:
     assert solver.status_code == 200
     assert (
         "save_note"
-        not in app.state.container.configuration.runtime.solver_tools["worker"]
+        not in app.state.container.configuration.runtime.roles["worker"].tools
     )
 
 
@@ -325,7 +324,13 @@ def test_provider_registry_verifies_selected_provider_and_persists(
     assert verified.status_code == 200
     assert verified.json()["provider_name"] == "My DeepSeek Gateway"
     assert verified.json()["model"] == "deepseek-chat"
-    assert isinstance(app.state.container.runtime.agents, LangChainAgentSuite)
+    assert isinstance(app.state.container.runtime.agents, RoutedAgentSuite)
+    assert all(
+        isinstance(suite, OfflineAgentSuite)
+        for suite in app.state.container.runtime.agents.roles.values()
+    )
+    persisted = json.loads((run_root / ".config" / "models.json").read_text())
+    assert persisted["providers"][0]["api_keys"][0]["api_key"] == "deepseek-secret"
 
     reset_containers()
     reloaded = get_container(run_root)
@@ -359,17 +364,20 @@ def test_agent_model_assignments_are_validated_and_routed(
     assert client.post(
         f"/api/v2/settings/llm/providers/{provider['id']}/models/{model_id}/verify"
     ).status_code == 200
-    assignments = {
-        "supervisor": {"providerId": provider["id"], "modelId": model_id},
-        "worker": {"providerId": "offline", "modelId": "offline"},
-        "reviewer": {"providerId": provider["id"], "modelId": model_id},
-        "reporter": {"providerId": "offline", "modelId": "offline"},
-    }
+    for role in ("supervisor", "reviewer"):
+        changed = client.put(
+            f"/api/v2/solvers/{role}/capabilities",
+            json={
+                "host_capability_overrides": {"add": [], "remove": []},
+                "kali": None,
+                "model": {"provider_id": provider["id"], "model_id": model_id},
+            },
+        )
+        assert changed.status_code == 200
     request = CreateTaskRequest(
         name="routed",
         objective="route models",
         mode="vulnerability_research",
-        agent_models=assignments,
     )
     made = app.state.container.runtime.create_task(request)
     with app.state.container.runtime._runtime(made["task_id"]) as (_store, graph):
@@ -377,6 +385,13 @@ def test_agent_model_assignments_are_validated_and_routed(
         assert isinstance(routed, RoutedAgentSuite)
         assert isinstance(routed.roles["supervisor"], LangChainAgentSuite)
         assert isinstance(routed.roles["worker"], OfflineAgentSuite)
+    runtime_payload = json.loads(
+        (app.state.container.run_root / ".config" / "runtime.json").read_text()
+    )
+    assert runtime_payload["roles"]["supervisor"]["model"] == {
+        "provider_id": provider["id"],
+        "model_id": model_id,
+    }
 
 
 def test_cancelled_task_is_not_restarted_or_completed(tmp_path: Path) -> None:

@@ -14,7 +14,6 @@ from pydantic import SecretStr
 
 from apps.api.dependencies import container
 from tga2.bootstrap import Container
-from tga2.catalogs import MODES
 from tga2.integrations.model import (
     ModelRegistry,
     ModelSettings,
@@ -27,13 +26,6 @@ from tga2.integrations.model import (
 from tga2.skills import Skill
 
 router = APIRouter(tags=["settings"])
-
-PRESETS = [
-    {"id": "openai", "name": "OpenAI", "base_url": "https://api.openai.com/v1"},
-    {"id": "deepseek", "name": "DeepSeek", "base_url": "https://api.deepseek.com"},
-    {"id": "openrouter", "name": "OpenRouter", "base_url": "https://openrouter.ai/api/v1"},
-]
-
 
 def _active(app: Container) -> tuple[RegisteredProvider, RegisteredModel] | None:
     registry = app.configuration.model_registry
@@ -91,7 +83,7 @@ def llm(app: Container = Depends(container)):
 @router.post("/settings/llm")
 def update_llm(payload: dict, app: Container = Depends(container)):
     """Compatibility write for older clients; it creates one real provider."""
-    current = app.configuration.model
+    current = app.configuration.model_registry.active_settings() or ModelSettings.from_env()
     secret = payload.get("api_key")
     key = SecretStr(str(secret)) if secret else current.api_key
     if key is None or not key.get_secret_value():
@@ -127,7 +119,7 @@ def verify_llm(app: Container = Depends(container)):
 def providers(app: Container = Depends(container)):
     return {
         "schema_version": 1,
-        "presets": PRESETS,
+        "presets": app.configuration.model_registry.presets,
         "providers": [
             _offline_provider(),
             *(
@@ -309,7 +301,13 @@ def agent_options(mode: str = "ctf", app: Container = Depends(container)):
     return {
         "mode": mode,
         "agents": [
-            {"id": role, "role": role, "specialties": ["evidence"], "required": True}
+            {
+                "id": role,
+                "role": role,
+                "specialties": ["evidence"],
+                "required": True,
+                "model": app.configuration.role_model_status(role),
+            }
             for role in ("supervisor", "worker", "reviewer", "reporter")
         ],
         "models": models,
@@ -332,7 +330,10 @@ def update_prompts(payload: dict, app: Container = Depends(container)):
 def skills(app: Container = Depends(container)):
     return {
         "schema_version": 1,
-        "skills": [_skill(item) for item in app.runtime.skills.list()],
+        "skills": [
+            _skill(item, app.configuration.supported_modes)
+            for item in app.runtime.skills.list()
+        ],
     }
 
 
@@ -341,15 +342,23 @@ def skill(name: str, app: Container = Depends(container)):
     item = app.runtime.skills.get(name)
     if item is None:
         raise HTTPException(404, "skill not found")
-    return {"skill": {**_skill(item), "body": item.content}}
+    return {
+        "skill": {
+            **_skill(item, app.configuration.supported_modes),
+            "body": item.content,
+        }
+    }
 
 
 @router.post("/settings/skills/import", status_code=201)
 async def import_skill(request: Request, app: Container = Depends(container)):
     filename = unquote(request.headers.get("x-tga-filename") or "custom-skill.md")
     body = (await request.body()).decode("utf-8")
-    if len(body.encode()) > 512_000:
-        raise HTTPException(413, "skill exceeds 512 KB")
+    byte_limit = app.configuration.runtime.files.skill_import_max_bytes
+    if len(body.encode()) > byte_limit:
+        raise HTTPException(
+            413, f"skill exceeds configured limit ({byte_limit} bytes)"
+        )
     name = _identifier(Path(filename).stem)
     scene = request.headers.get("x-tga-scene")
     item = Skill(
@@ -362,7 +371,12 @@ async def import_skill(request: Request, app: Container = Depends(container)):
         app.runtime.skills.save(item)
     except ValueError as exc:
         raise HTTPException(409, str(exc)) from exc
-    return {"skill": {**_skill(item), "body": item.content}}
+    return {
+        "skill": {
+            **_skill(item, app.configuration.supported_modes),
+            "body": item.content,
+        }
+    }
 
 
 @router.put("/settings/skills/{name}")
@@ -380,7 +394,12 @@ def update_skill(name: str, payload: dict, app: Container = Depends(container)):
         enabled=True,
     )
     app.runtime.skills.save(item)
-    return {"skill": {**_skill(item), "body": item.content}}
+    return {
+        "skill": {
+            **_skill(item, app.configuration.supported_modes),
+            "body": item.content,
+        }
+    }
 
 
 @router.delete("/settings/skills/{name}")
@@ -502,11 +521,12 @@ def _offline_provider():
     }
 
 
-def _skill(item: Skill):
-    mode_tags = [tag for tag in item.tags if tag in MODES]
+def _skill(item: Skill, modes: tuple[str, ...] | None = None):
+    available_modes = modes or ()
+    mode_tags = [tag for tag in item.tags if tag in available_modes]
     return {
         "name": item.name,
-        "modes": mode_tags or list(MODES),
+        "modes": mode_tags or list(available_modes),
         "capabilities": [],
         "tags": list(item.tags),
         "version": "1",

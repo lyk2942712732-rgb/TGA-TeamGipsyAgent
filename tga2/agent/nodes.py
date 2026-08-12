@@ -45,7 +45,9 @@ class GraphNodes:
             "status": "running",
             "intent_index": 0,
             "iteration": 0,
-            "max_iterations": 2,
+            "max_iterations": self.deps.configuration.runtime.graph.max_review_retries
+            if self.deps.configuration
+            else 2,
         }
 
     def supervisor(self, state: TGAState) -> TGAState:
@@ -100,11 +102,16 @@ class GraphNodes:
             workspace=self.deps.workspace,
             task_id=task.id,
             intent_id=intent.id,
+            model_read_max_bytes=(
+                self.deps.configuration.runtime.files.model_read_max_bytes
+                if self.deps.configuration
+                else 2_000_000
+            ),
             external_tools=self.deps.external_tools,
         ).tools()
         configured = set(self.deps.store.get_policy(task.id).tool.allowed_tools)
         role_tools = (
-            set(self.deps.configuration.runtime.solver_tools.get("worker", ()))
+            set(self.deps.configuration.runtime.roles["worker"].tools)
             if self.deps.configuration
             else set()
         )
@@ -152,6 +159,7 @@ class GraphNodes:
                 sandbox_image=(
                     self.deps.sandbox_image if "run_command" in role_tools else None
                 ),
+                configuration=self.deps.configuration,
             ),
         )
         claim_ids = self._persist_claims(task.id, intent.id, draft)

@@ -17,7 +17,7 @@ from fastapi.responses import FileResponse, PlainTextResponse, StreamingResponse
 
 from apps.api.dependencies import container
 from tga2.bootstrap import Container
-from tga2.catalogs import MODES
+from tga2.config import Configuration
 from tga2.core.models import CreateTaskRequest
 from tga2.core.policy import ExecutionPolicy, ToolPolicy
 from tga2.core.workspace import TaskWorkspace
@@ -43,7 +43,10 @@ def _call(function, *args, **kwargs):
 
 
 def _request(
-    payload: dict, staging: Path, external_tool_names: set[str] | None = None
+    payload: dict,
+    staging: Path,
+    configuration: Configuration,
+    external_tool_names: set[str] | None = None,
 ) -> CreateTaskRequest:
     browser_input = payload.get("input") or {}
     paths = []
@@ -52,17 +55,20 @@ def _request(
         if matches:
             paths.append(str(matches[0]))
     execution = payload.get("executionPolicy") or payload.get("execution_policy") or {}
+    mode = str(payload.get("mode") or "ctf")
+    try:
+        scene = configuration.scene(mode)
+    except KeyError as exc:
+        raise ValueError(str(exc)) from exc
+    mode_options = {
+        **dict(scene.get("default_mode_config") or {}),
+        **dict(payload.get("modeOptions") or payload.get("mode_options") or {}),
+    }
     network = execution.get("network") or {}
     compute = execution.get("local_compute") or {}
     allowed = set((execution.get("tool") or {}).get("allowed_tools") or ())
     if not allowed:
-        allowed = {
-            "list_inputs",
-            "read_input",
-            "glob_search",
-            "grep_search",
-            "save_note",
-        }
+        allowed = set(configuration.runtime.tool_defaults.allowed)
         if compute.get("mode") == "isolated":
             allowed.add("run_command")
     allowed.update(external_tool_names or ())
@@ -77,7 +83,8 @@ def _request(
         id=payload.get("id"),
         name=str(payload.get("name") or "Untitled task"),
         objective=str(payload.get("goal") or payload.get("objective") or "").strip(),
-        mode=payload.get("mode") or "ctf",
+        mode=mode,
+        mode_options=mode_options,
         instructions=[str(browser_input.get("text"))]
         if browser_input.get("text")
         else list(payload.get("instructions") or []),
@@ -85,7 +92,6 @@ def _request(
         success_criteria=list(payload.get("success_criteria") or []),
         input_paths=paths,
         selected_skills=payload.get("selectedSkills"),
-        agent_models=payload.get("agentModels") or {},
         execution_policy=ExecutionPolicy(
             tool=ToolPolicy(
                 allowed_tools=frozenset(allowed),
@@ -93,6 +99,7 @@ def _request(
                 denied_tools=frozenset(
                     (execution.get("tool") or {}).get("denied_tools") or ()
                 ),
+                max_tool_calls=configuration.runtime.tool_defaults.max_calls,
             ),
             network_access=network.get("access", "disabled")
             if network.get("access") in {"disabled", "task_sources", "public_internet"}
@@ -101,14 +108,22 @@ def _request(
                 network.get("custom_origins") or network.get("seed_origins") or ()
             ),
             local_compute=compute.get("mode", "disabled"),
-            command_timeout_seconds=int(compute.get("timeout_seconds", 120)),
+            command_timeout_seconds=int(
+                compute.get(
+                    "timeout_seconds",
+                    configuration.runtime.kali.command_timeout_seconds,
+                )
+            ),
         ),
     )
 
 
 @router.get("/mode-profiles")
-def mode_profiles():
-    return {"schema_version": 6, "profiles": [_mode_profile(mode) for mode in MODES]}
+def mode_profiles(app: Container = Depends(container)):
+    return {
+        "schema_version": app.configuration.scenes.schema_version,
+        "profiles": app.configuration.scenes.scenes,
+    }
 
 
 @router.post("/tasks", status_code=201)
@@ -121,9 +136,10 @@ def create_task(
         _request,
         payload,
         app.run_root / ".staging",
+        app.configuration,
         {tool.name for tool in app.runtime.external_tools},
     )
-    _validate_agent_models(request, app)
+    _validate_role_models(app)
     result = _call(app.runtime.create_task, request)
     for source in request.input_paths:
         path = Path(source).resolve()
@@ -148,11 +164,14 @@ def preflight(payload: dict, app: Container = Depends(container)):
         _request,
         payload,
         app.run_root / ".staging",
+        app.configuration,
         {tool.name for tool in app.runtime.external_tools},
     )
-    _validate_agent_models(request, app)
+    _validate_role_models(app)
     selected = app.runtime.skills.select(
-        request.objective, selected_names=request.selected_skills
+        request.objective,
+        selected_names=request.selected_skills,
+        limit=app.configuration.runtime.skill_selection.automatic_limit,
     )
     fingerprint = hashlib.sha256(
         json.dumps(payload, sort_keys=True, default=str).encode()
@@ -182,7 +201,13 @@ def preflight(payload: dict, app: Container = Depends(container)):
         },
         "mcp_catalog_version": "langchain-mcp-adapters",
         "model_verification_id": hashlib.sha256(
-            json.dumps(request.agent_models, sort_keys=True).encode()
+            json.dumps(
+                {
+                    role: app.configuration.runtime.roles[role].model.model_dump()
+                    for role in app.configuration.runtime.roles
+                },
+                sort_keys=True,
+            ).encode()
         ).hexdigest(),
     }
 
@@ -190,7 +215,9 @@ def preflight(payload: dict, app: Container = Depends(container)):
 @router.post("/tasks/skill-preview")
 def skill_preview(payload: dict, app: Container = Depends(container)):
     selected = app.runtime.skills.select(
-        str(payload.get("goal") or ""), selected_names=payload.get("selectedSkills")
+        str(payload.get("goal") or ""),
+        selected_names=payload.get("selectedSkills"),
+        limit=app.configuration.runtime.skill_selection.automatic_limit,
     )
     return {
         "selector": "tga2.skills",
@@ -380,12 +407,13 @@ def artifact(
             path, media_type=item.get("media_type") or "application/octet-stream"
         )
     raw = path.read_bytes()
+    byte_limit = app.configuration.runtime.files.artifact_preview_max_bytes
     return {
         "artifact": {"id": artifact_id, **item},
-        "preview": raw[:200_000].decode("utf-8", errors="replace"),
-        "truncated": len(raw) > 200_000,
+        "preview": raw[:byte_limit].decode("utf-8", errors="replace"),
+        "truncated": len(raw) > byte_limit,
         "redactions": 0,
-        "byte_limit": 200_000,
+        "byte_limit": byte_limit,
         "download_url": f"/api/v2/tasks/{task_id}/artifacts/{artifact_id}?download=true",
     }
 
@@ -395,8 +423,9 @@ async def stage_input(
     request: Request, filename: str, app: Container = Depends(container)
 ):
     raw = await request.body()
-    if len(raw) > 25_000_000:
-        raise HTTPException(413, "input exceeds 25 MB")
+    byte_limit = app.configuration.runtime.files.upload_max_bytes
+    if len(raw) > byte_limit:
+        raise HTTPException(413, f"input exceeds configured limit ({byte_limit} bytes)")
     staging = app.run_root / ".staging"
     staging.mkdir(parents=True, exist_ok=True)
     asset_id = uuid4().hex
@@ -547,75 +576,18 @@ def _page(items: list, offset: int, limit: int):
     }
 
 
-def _validate_agent_models(request: CreateTaskRequest, app: Container) -> None:
-    if not request.agent_models:
-        return
-    valid_roles = {"supervisor", "worker", "reviewer", "reporter"}
-    invalid = {}
-    for role, value in request.agent_models.items():
-        provider_id = value.get("providerId")
-        model_id = value.get("modelId")
-        if role not in valid_roles:
-            invalid[role] = value
-            continue
-        if (provider_id, model_id) == ("offline", "offline"):
-            continue
-        try:
-            app.configuration.model_registry.settings(
-                str(provider_id), str(model_id), require_verified=True
-            )
-        except (KeyError, ValueError):
-            invalid[role] = value
+def _validate_role_models(app: Container) -> None:
+    invalid = [
+        role
+        for role in app.configuration.runtime.roles
+        if not app.configuration.role_model_status(role)["ready"]
+    ]
     if invalid:
         raise HTTPException(
-            422,
+            409,
             {
-                "code": "INVALID_AGENT_MODEL",
-                "message": "One or more Agent model selections are missing or unverified.",
-                "assignments": invalid,
+                "code": "SOLVER_MODEL_CONFIGURATION_REQUIRED",
+                "message": "Configure a verified model for every Solver in the Solver page.",
+                "invalid": invalid,
             },
         )
-
-
-def _mode_profile(mode: str):
-    return {
-        "id": mode,
-        "label": mode.replace("_", " ").title(),
-        "description": f"{mode} workflow",
-        "default_goal": "Analyze the authorized target and report evidence-backed findings.",
-        "default_mode_config": {"mode": mode},
-        "default_execution_policy": {
-            "preset": "offline_analysis",
-            "network": {
-                "access": "disabled",
-                "interaction": "observe",
-                "seed_origins": [],
-                "custom_origins": [],
-                "custom_domains": [],
-                "custom_cidrs": [],
-                "deny_private_networks": True,
-                "deny_loopback": True,
-                "deny_link_local": True,
-                "deny_cloud_metadata": True,
-                "rate_limit_per_minute": 30,
-                "concurrency": 1,
-                "request_timeout_seconds": 30,
-            },
-            "local_compute": {
-                "mode": "disabled",
-                "timeout_seconds": 120,
-                "concurrency": 1,
-                "network_inheritance": "task_network_policy",
-            },
-            "high_impact": {"mode": "forbidden", "allowed_actions": []},
-        },
-        "allowed_input_kinds": ["file", "text"],
-        "required_conditions": [],
-        "recommended_capabilities": ["read_input"],
-        "completion_validator": "evidence_review",
-        "report_sections": ["summary", "findings", "evidence", "limitations"],
-        "uses_flag": mode == "ctf",
-        "advanced_settings": [],
-        "mode_config_schema": {"type": "object"},
-        "execution_policy_schema": {"type": "object"},
-    }

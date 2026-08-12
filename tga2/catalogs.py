@@ -7,14 +7,13 @@ import json
 from typing import Any
 
 from tga2.config import (
-    DEFAULT_KALI_IMAGE,
-    DEFAULT_KALI_IMAGE_DIGEST,
     KALI_PROFILE_ID,
+    GraphSettings,
+    KaliSandboxSettings,
+    RuntimeSettings,
 )
-from tga2.core.models import SUPPORTED_MODES
 
 ROLES = ("supervisor", "worker", "reviewer", "reporter")
-MODES = SUPPORTED_MODES
 
 
 def host_capabilities() -> list[dict[str, Any]]:
@@ -80,7 +79,7 @@ def host_capabilities() -> list[dict[str, Any]]:
     ]
 
 
-def solver_definitions() -> list[dict[str, Any]]:
+def solver_definitions(modes: tuple[str, ...], runtime: RuntimeSettings) -> list[dict[str, Any]]:
     capabilities = host_capabilities()
     by_role = {
         role: [item for item in capabilities if role in item["allowed_roles"]]
@@ -92,7 +91,7 @@ def solver_definitions() -> list[dict[str, Any]]:
             "version": "2.0",
             "role": role,
             "specialties": ["planning"] if role == "supervisor" else ["evidence"],
-            "supported_modes": list(MODES),
+            "supported_modes": list(modes),
             "supported_subtypes": [],
             "system_prompt_template": f"TGA2 {role} prompt is assembled by LangChain middleware.",
             "default_skill_tags": [],
@@ -115,7 +114,10 @@ def solver_definitions() -> list[dict[str, Any]]:
                 "name": f"{role}_draft",
                 "required_fields": ["summary"],
             },
-            "default_budget": {"max_turns": 8, "max_tool_calls": 30},
+            "default_budget": {
+                "max_turns": runtime.roles[role].model_call_limit,
+                "max_tool_calls": runtime.tool_defaults.max_calls,
+            },
             "completion_authority": "reviewer" if role == "reviewer" else "none",
             "content_sha256": _hash(
                 {"role": role, "tools": [item["id"] for item in by_role[role]]}
@@ -125,14 +127,14 @@ def solver_definitions() -> list[dict[str, Any]]:
     ]
 
 
-def kali_profiles() -> list[dict[str, Any]]:
+def kali_profiles(settings: KaliSandboxSettings) -> list[dict[str, Any]]:
     value = {
-        "id": KALI_PROFILE_ID,
+        "id": settings.profile_id,
         "display_name": "TGA2 isolated Kali",
-        "image_name": "ghcr.io/lyk2942712732-rgb/tga-kali-universal",
-        "image_tag": "sandbox-v0.2.1",
-        "image_digest": DEFAULT_KALI_IMAGE_DIGEST,
-        "image": DEFAULT_KALI_IMAGE,
+        "image_name": settings.image,
+        "image_tag": "",
+        "image_digest": settings.expected_digest,
+        "image": settings.image,
         "image_role": "universal",
         "shared_image_profile_count": 1,
         "tools": [],
@@ -144,12 +146,12 @@ def kali_profiles() -> list[dict[str, Any]]:
         "scratch_mount": "/tmp",
         "shared_artifact_mount": "/artifacts",
         "limits": {
-            "cpu_cores": 1,
-            "memory_mb": 1024,
-            "timeout_seconds": 120,
-            "max_processes": 256,
+            "cpu_cores": settings.cpu_cores,
+            "memory_mb": settings.memory_mb,
+            "timeout_seconds": settings.command_timeout_seconds,
+            "max_processes": settings.max_processes,
         },
-        "enabled": False,
+        "enabled": settings.enabled,
         "assigned_solver_count": 1,
         "assigned_solver_ids": ["worker"],
     }
@@ -175,7 +177,7 @@ def kali_capabilities() -> list[dict[str, Any]]:
     ]
 
 
-def team_templates() -> list[dict[str, Any]]:
+def team_templates(modes: tuple[str, ...], graph: GraphSettings) -> list[dict[str, Any]]:
     return [
         {
             "mode": mode,
@@ -185,15 +187,15 @@ def team_templates() -> list[dict[str, Any]]:
             "reviewer_definition_id": "reviewer",
             "reporter_definition_id": "reporter",
             "spawn_rules": [],
-            "max_active_workers": 1,
-            "max_total_solvers": 4,
+            "max_active_workers": graph.max_active_workers,
+            "max_total_solvers": graph.max_total_solvers,
             "completion_policy": {
                 "review_required": True,
                 "evidence_required_for_findings": True,
             },
             "content_sha256": _hash({"mode": mode, "roles": ROLES}),
         }
-        for mode in MODES
+        for mode in modes
     ]
 
 
@@ -204,7 +206,6 @@ def _hash(value: Any) -> str:
 
 
 __all__ = [
-    "MODES",
     "host_capabilities",
     "kali_capabilities",
     "kali_profiles",

@@ -37,7 +37,8 @@ export type ModeProfileContract = {
   allowed_input_kinds: string[]; required_conditions: string[];
   recommended_capabilities: string[];
   completion_validator: string; report_sections: string[]; uses_flag: boolean;
-  advanced_settings: string[]; mode_config_schema: Record<string, unknown>; execution_policy_schema: Record<string, unknown>;
+  fields: Array<{ key: string; label: string; type: "text" | "textarea" | "select" | "number" | "checkbox" | "csv"; options?: string[]; min?: number; max?: number }>;
+  advanced_settings?: string[]; mode_config_schema?: Record<string, unknown>; execution_policy_schema?: Record<string, unknown>;
 };
 
 export type StagedAsset = {
@@ -61,7 +62,6 @@ export type CreateTaskRequest = {
   input: { text: string; fileIds: string[] };
   executionPolicy: ExecutionPolicy;
   selectedSkills?: string[] | null;
-  agentModels?: Record<string, { providerId: string; modelId: string }>;
   preflightFingerprint?: string | null;
 };
 
@@ -107,7 +107,7 @@ export type ModelProvider = {
 export type ProviderCatalog = { schema_version: 1; presets: ProviderPreset[]; providers: ModelProvider[] };
 export type AgentModelOptions = {
   mode: TaskMode;
-  agents: Array<{ id: string; role: "supervisor" | "worker" | "reviewer" | "reporter"; specialties: string[]; required: boolean }>;
+  agents: Array<{ id: string; role: "supervisor" | "worker" | "reviewer" | "reporter"; specialties: string[]; required: boolean; model: { provider_id: string; provider_name: string; model_id: string; model_name: string; verification_status: LLMVerification["status"]; ready: boolean } }>;
   models: Array<{ provider_id: string; provider_name: string; model_id: string; model_name: string; api_key_id: string; verification_status: LLMVerification["status"]; ready: boolean }>;
 };
 
