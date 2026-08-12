@@ -1,4 +1,4 @@
-import { ChangeEvent, DragEvent, useRef, useState } from "react";
+import { useState } from "react";
 import { runtimeApi } from "../../runtime/api-v2";
 import type { MCPManagedServer, MCPServerTools } from "../../runtime/event-types";
 
@@ -25,19 +25,14 @@ export function MCPWizard({ initial, onClose, onSaved }: Props) {
   const [enableOnSave, setEnableOnSave] = useState(initial?.config.enabled ?? true);
   const [tools, setTools] = useState<MCPServerTools | null>(null);
   const [selected, setSelected] = useState<Set<string>>(() => new Set(initial?.config.enabledTools ?? []));
-  const [candidateImages, setCandidateImages] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
-  const [progress, setProgress] = useState(0);
   const [error, setError] = useState("");
-  const fileInput = useRef<HTMLInputElement>(null);
-  const uploadController = useRef<AbortController | null>(null);
 
   const normalizedId = serverId.trim();
   const persistConnection = async () => {
     if (!/^[A-Za-z0-9_-]+$/.test(normalizedId)) throw new Error("服务 ID 只能包含字母、数字、下划线和连字符");
     if (transport === "stdio") {
       if (!image.trim()) throw new Error("请选择或输入本地 Docker 镜像名");
-      await runtimeApi.inspectMCPImage(image.trim());
       const config = {
         enabled: false,
         transport: "stdio" as const,
@@ -86,45 +81,21 @@ export function MCPWizard({ initial, onClose, onSaved }: Props) {
     } catch (reason) { setError(reason instanceof Error ? reason.message : "保存 MCP 服务失败"); } finally { setBusy(false); }
   };
 
-  const upload = async (file: File) => {
-    setBusy(true); setError(""); setProgress(5);
-    const controller = new AbortController();
-    uploadController.current = controller;
-    try {
-      const result = await runtimeApi.importMCP(file, setProgress, controller.signal);
-      setProgress(100);
-      if (result.requires_selection && result.images?.length) {
-        setCandidateImages(result.images); setImage(result.images[0]);
-        if (!normalizedId) setServerId(result.images[0].split("/").pop()?.split(":")[0].replace(/-mcp$/, "") ?? "imported-mcp");
-      } else {
-        setImage(result.image); setServerId(result.server_id); setStep(3);
-      }
-    } catch (reason) {
-      setProgress(0);
-      setError(reason instanceof DOMException && reason.name === "AbortError" ? "镜像导入已取消" : reason instanceof Error ? reason.message : "镜像导入失败");
-    } finally { uploadController.current = null; setBusy(false); }
-  };
-  const choose = (event: ChangeEvent<HTMLInputElement>) => { const file = event.target.files?.[0]; if (file) void upload(file); };
-  const drop = (event: DragEvent<HTMLDivElement>) => { event.preventDefault(); const file = event.dataTransfer.files?.[0]; if (file && !busy) void upload(file); };
-
   return <div className="dialog-backdrop mcp-wizard-backdrop" role="presentation">
     <section className="mcp-wizard" role="dialog" aria-modal="true" aria-labelledby="mcp-wizard-title">
       <header><div><span className="eyebrow">MCP 服务向导 · 第 {step}/4 步</span><h2 id="mcp-wizard-title">{initial ? `编辑 ${initial.id}` : "添加 MCP 服务"}</h2></div><button aria-label="关闭 MCP 向导" onClick={onClose}>×</button></header>
       <ol className="mcp-wizard-steps">{["传输方式", "连接参数", "连接测试", "工具与保存"].map((label, index) => <li className={step >= index + 1 ? "active" : ""} key={label}><b>{index + 1}</b><span>{label}</span></li>)}</ol>
       {step === 1 ? <div className="mcp-choice-grid">
-        <button className={transport === "stdio" ? "selected" : ""} onClick={() => setTransport("stdio")}><strong>STDIO / Docker</strong><span>导入 docker save 归档，或使用已经存在的本地镜像。</span></button>
+        <button className={transport === "stdio" ? "selected" : ""} onClick={() => setTransport("stdio")}><strong>STDIO / Docker</strong><span>配置已经存在的本地镜像；镜像生命周期交给 Docker 管理。</span></button>
         <button className={transport === "streamable_http" ? "selected" : ""} onClick={() => setTransport("streamable_http")}><strong>Streamable HTTP</strong><span>连接支持 JSON 或 SSE 的远程 MCP endpoint。</span></button>
       </div> : null}
       {step === 2 ? <div className="mcp-wizard-form">
         <label>服务 ID<input value={serverId} onChange={(event) => setServerId(event.target.value)} placeholder="例如 burp-suite" disabled={Boolean(initial)} /></label>
         {transport === "stdio" ? <>
           <label>本地镜像名<input value={image} onChange={(event) => setImage(event.target.value)} placeholder="repository/mcp-server:tag" /></label>
-          {candidateImages.length > 1 ? <label>归档包含多个 RepoTag<select value={image} onChange={(event) => setImage(event.target.value)}>{candidateImages.map((item) => <option key={item}>{item}</option>)}</select></label> : null}
           <div className="mcp-field-pair"><label>内存限制<input value={memory ?? ""} onChange={(event) => setMemory(event.target.value)} placeholder="512m" /></label><label>CPU 限制<input type="number" min="0.1" step="0.1" value={cpus ?? 1} onChange={(event) => setCpus(Number(event.target.value))} /></label></div>
           <div className="mcp-field-pair"><label>PID 限制<input type="number" min="1" value={pidsLimit ?? 256} onChange={(event) => setPidsLimit(Number(event.target.value))} /></label><label>Docker 网络<select value={network} onChange={(event) => setNetwork(event.target.value)}><option value="none">none（隔离）</option><option value="bridge">bridge</option></select></label></div>
           <label className="mcp-inline-check"><input type="checkbox" checked={readOnly} onChange={(event) => setReadOnly(event.target.checked)} />只读根文件系统</label>
-          <input ref={fileInput} hidden type="file" accept=".tar,.tar.gz,.tgz,application/x-tar" onChange={choose} />
-          <div className={`mcp-drop-zone compact ${busy ? "busy" : ""}`} role="button" tabIndex={0} onClick={() => !busy && fileInput.current?.click()} onDragOver={(event) => event.preventDefault()} onDrop={drop}><strong>{busy ? `正在上传/加载 Docker 镜像… ${progress}%` : "拖入 docker save 镜像归档"}</strong><span>.tar / .tar.gz / .tgz；不接受 Dockerfile 或源码 ZIP</span>{progress > 0 ? <progress max="100" value={progress}>{progress}%</progress> : null}{busy && uploadController.current ? <button className="danger-button" onClick={(event) => { event.stopPropagation(); uploadController.current?.abort(); }}>取消导入</button> : null}</div>
         </> : <>
           <label>Streamable HTTP URL<input value={url} onChange={(event) => setUrl(event.target.value)} placeholder="https://mcp.example.com/mcp" /></label>
           <label className="mcp-inline-check"><input type="checkbox" checked={verifyTls} onChange={(event) => setVerifyTls(event.target.checked)} />校验 TLS 证书（推荐且默认开启）</label>

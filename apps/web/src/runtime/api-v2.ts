@@ -1,7 +1,7 @@
 import { apiBase, ApiError, requestJson } from "../api/client";
 import { normalizeRuntimeEvent, normalizeRuntimeSnapshot } from "../features/runtime/models/normalize";
 import type { RuntimeStore } from "../features/runtime/models/types";
-import type { CapabilityCatalog, MCPHealth, MCPImportResult, MCPManagedServer, MCPServerConfig, MCPServerTools } from "./event-types";
+import type { CapabilityCatalog, MCPHealth, MCPManagedServer, MCPServerConfig, MCPServerTools } from "./event-types";
 
 export type ArtifactPreviewResponse = {
   artifact: {
@@ -26,29 +26,6 @@ async function get<T>(path: string): Promise<T> {
   return requestJson<T>(`/api/v2${path}`);
 }
 
-function uploadMCP(file: File, onProgress?: (percent: number) => void, signal?: AbortSignal): Promise<MCPImportResult> {
-  return new Promise((resolve, reject) => {
-    const request = new XMLHttpRequest();
-    request.open("POST", `${apiBase}/api/v2/mcp/images/import`);
-    request.setRequestHeader("Content-Type", "application/octet-stream");
-    request.setRequestHeader("X-TGA-Filename", encodeURIComponent(file.name));
-    request.upload.onprogress = (event) => { if (event.lengthComputable) onProgress?.(Math.round(event.loaded / event.total * 100)); };
-    request.onload = () => {
-      let payload: unknown;
-      try { payload = JSON.parse(request.responseText); } catch { payload = null; }
-      if (request.status >= 200 && request.status < 300) resolve(payload as MCPImportResult);
-      else reject(new Error((payload as { detail?: string } | null)?.detail ?? `MCP import failed (${request.status})`));
-    };
-    request.onerror = () => reject(new Error("MCP image upload failed"));
-    request.onabort = () => reject(new DOMException("MCP image import cancelled", "AbortError"));
-    if (signal) {
-      if (signal.aborted) { request.abort(); return; }
-      signal.addEventListener("abort", () => request.abort(), { once: true });
-    }
-    request.send(file);
-  });
-}
-
 export const runtimeApi = {
   taskRuntime: async (taskId: string): Promise<RuntimeStore> => normalizeRuntimeSnapshot(await get<unknown>(`/tasks/${encodeURIComponent(taskId)}/session`)),
   runtimeEvents: async (taskId: string, afterSeq: number) => {
@@ -57,7 +34,6 @@ export const runtimeApi = {
   },
   capabilities: () => get<CapabilityCatalog>("/capabilities"),
   toolHealth: () => get<MCPHealth>("/tools/health"),
-  importMCP: (file: File, onProgress?: (percent: number) => void, signal?: AbortSignal) => uploadMCP(file, onProgress, signal),
   mcpServers: () => requestJson<{ servers: MCPManagedServer[] }>("/api/v2/mcp/servers"),
   createMCPServer: (id: string, config: Partial<MCPServerConfig>) => requestJson<{ action: string; server: MCPManagedServer }>("/api/v2/mcp/servers", {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id, config }),
@@ -71,7 +47,6 @@ export const runtimeApi = {
   testMCPMethod: (id: string, method: string, argumentsValue: Record<string, unknown>, confirmActive: boolean) => requestJson<{ ok: boolean; trace_id: string; request_id: string; timings: Record<string, number>; content_preview: string; error?: { code?: string; message?: string } | null }>(`/api/v2/mcp/servers/${encodeURIComponent(id)}/tools/${encodeURIComponent(method)}/test`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ arguments: argumentsValue, confirm_active: confirmActive }),
   }),
-  inspectMCPImage: (image: string) => requestJson<{ image: string; local: boolean; details: Record<string, unknown> }>(`/api/v2/mcp/images/${encodeURIComponent(image)}/inspect`, { method: "POST" }),
   artifact: (taskId: string, artifactId: string) => get<ArtifactPreviewResponse>(`/tasks/${encodeURIComponent(taskId)}/artifacts/${encodeURIComponent(artifactId)}`),
   artifactUrl: (taskId: string, artifactId: string) => url(`/tasks/${encodeURIComponent(taskId)}/artifacts/${encodeURIComponent(artifactId)}`),
   artifactDownloadUrl: (taskId: string, artifactId: string) => url(`/tasks/${encodeURIComponent(taskId)}/artifacts/${encodeURIComponent(artifactId)}?download=true`),

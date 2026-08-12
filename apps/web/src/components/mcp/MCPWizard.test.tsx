@@ -2,13 +2,11 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { MCPWizard } from "./MCPWizard";
 
-const inspectMCPImage = vi.fn();
 const createMCPServer = vi.fn();
 const updateMCPServer = vi.fn();
 
 vi.mock("../../runtime/api-v2", () => ({
   runtimeApi: {
-    inspectMCPImage: (...args: unknown[]) => inspectMCPImage(...args),
     createMCPServer: (...args: unknown[]) => createMCPServer(...args),
     updateMCPServer: (...args: unknown[]) => updateMCPServer(...args),
   },
@@ -16,7 +14,6 @@ vi.mock("../../runtime/api-v2", () => ({
 
 describe("MCPWizard edit", () => {
   it("patches an existing connection instead of replacing its complete policy", async () => {
-    inspectMCPImage.mockResolvedValue({ image: "binwalk-mcp:latest", local: true, details: {} });
     updateMCPServer.mockResolvedValue({ server: {} });
     const onSaved = vi.fn();
 

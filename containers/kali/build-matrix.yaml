@@ -1,7 +1,0 @@
-version: 2
-base:
-  image: ghcr.io/team-gipsy/tga-kali-base
-  context: base
-images:
-  - image: tga-kali-universal
-    context: universal

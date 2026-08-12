@@ -1,6 +1,0 @@
-{
-  "deprecated": true,
-  "replacement": "config/mcp.example.json",
-  "message": "Set TGA_MCP_CONFIG_PATH to an explicit mcp.json allowlist. Source-directory discovery is legacy-only."
-}
-

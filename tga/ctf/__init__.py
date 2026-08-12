@@ -1,1 +1,0 @@
-"""CTF solving helpers."""

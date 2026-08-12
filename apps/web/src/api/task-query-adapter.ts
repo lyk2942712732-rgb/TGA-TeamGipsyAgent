@@ -54,7 +54,7 @@ export type TaskDetail = {
     execution_budget: Record<string, number>;
     model: Record<string, unknown> | null;
     mcp_capabilities: Record<string, unknown>;
-    task_common_skills: Record<string, unknown> | null;
+    task_common_skills: string[] | null;
     agent_prompt: Record<string, unknown> | null;
   };
 };

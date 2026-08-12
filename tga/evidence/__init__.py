@@ -1,2 +1,0 @@
-"""Evidence and artifact storage."""
-

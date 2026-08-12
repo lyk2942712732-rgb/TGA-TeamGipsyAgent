@@ -207,11 +207,14 @@ tempCodeRunnerFile.py
 
 # TGA runtime output
 runs/
+runs2/
+output/
 config/*.v1.bak
 
 # TGA web UI dependencies/build output
 apps/web/node_modules/
 apps/web/dist/
+apps/web/state/
 
 # Ruff stuff:
 .ruff_cache/
