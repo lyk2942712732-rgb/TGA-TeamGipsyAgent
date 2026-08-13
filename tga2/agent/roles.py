@@ -153,7 +153,13 @@ class LangChainAgentSuite:
             "success_criteria as an acceptance checklist: after each observation, "
             "identify the first unmet criterion and call a tool only when it can "
             "close that specific evidence gap. Once all criteria can be supported "
-            "by Artifact IDs, stop immediately. If a stop_condition is reached, "
+            "by Artifact IDs, stop immediately. On a retry, retry_context is an "
+            "authoritative Runtime ledger: preserve its confirmed evidence, never "
+            "repeat an executed command, and investigate only criteria the latest "
+            "review did not verify. Use read_artifact to inspect an existing output. "
+            "Every Artifact ID used by a met criterion_assessment must also appear "
+            "in at least one ClaimDraft so Reviewer receives that evidence. "
+            "If a stop_condition is reached, "
             "stop and report incomplete, blocked, or needs_user instead of "
             "repeating commands."
         )
@@ -381,6 +387,9 @@ class LangChainAgentSuite:
                         "observations are insufficient, return limitations instead "
                         "of requesting a tool. Return exactly one "
                         "criterion_assessment for every numbered success criterion "
+                        "and include a ClaimDraft for every Artifact ID cited by a "
+                        "met criterion_assessment. Preserve criteria already verified "
+                        "in retry_context and do not demand their commands be rerun. "
                         "and choose completion_status from completed, incomplete, "
                         "blocked, or needs_user. Never emit tool calls, DSML, XML, "
                         "or Markdown; return the WorkerDraft JSON object only."
@@ -647,9 +656,7 @@ class OfflineAgentSuite:
                         else "The deterministic offline run completed without inspectable evidence."
                     ),
                 )
-                for index, _criterion in enumerate(
-                    packet.intent_success_criteria
-                )
+                for index, _criterion in enumerate(packet.intent_success_criteria)
             ],
         )
 

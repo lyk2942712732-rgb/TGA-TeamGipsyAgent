@@ -28,6 +28,18 @@ def host_capabilities() -> list[dict[str, Any]]:
             ("worker",),
         ),
         (
+            "read_artifact",
+            "Read existing task Artifact",
+            "evidence",
+            "passive",
+            {
+                "artifact_id": {"type": "string"},
+                "start_line": {"type": "integer", "default": 1},
+                "max_lines": {"type": "integer", "default": 200},
+            },
+            ("worker",),
+        ),
+        (
             "glob_search",
             "Find Skill documents",
             "knowledge",
@@ -90,7 +102,9 @@ def host_capabilities() -> list[dict[str, Any]]:
     ]
 
 
-def solver_definitions(modes: tuple[str, ...], runtime: RuntimeSettings) -> list[dict[str, Any]]:
+def solver_definitions(
+    modes: tuple[str, ...], runtime: RuntimeSettings
+) -> list[dict[str, Any]]:
     capabilities = host_capabilities()
     by_role = {
         role: [item for item in capabilities if role in item["allowed_roles"]]
@@ -198,7 +212,9 @@ def kali_capabilities() -> list[dict[str, Any]]:
     ]
 
 
-def team_templates(modes: tuple[str, ...], graph: GraphSettings) -> list[dict[str, Any]]:
+def team_templates(
+    modes: tuple[str, ...], graph: GraphSettings
+) -> list[dict[str, Any]]:
     return [
         {
             "mode": mode,

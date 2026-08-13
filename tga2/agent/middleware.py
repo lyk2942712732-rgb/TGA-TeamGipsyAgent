@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import shlex
 from collections.abc import Sequence
+from datetime import timedelta
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 
 from langchain.agents.middleware import (
     AgentMiddleware,
@@ -31,6 +34,7 @@ SAFE_DEFAULT_TOOLS = frozenset(
     {
         "list_inputs",
         "read_input",
+        "read_artifact",
         "glob_search",
         "grep_search",
         "save_note",
@@ -82,7 +86,10 @@ class ApprovalAuditMiddleware(HumanInTheLoopMiddleware):
         name = str(tool_call.get("name") or "")
         if name in self.explicit_approval_tools:
             return True
-        if name != "run_command" or self.execution_policy.high_impact_mode != "approval_required":
+        if (
+            name != "run_command"
+            or self.execution_policy.high_impact_mode != "approval_required"
+        ):
             return False
         command = str((tool_call.get("args") or {}).get("command") or "")
         return _high_impact_command(command)
@@ -146,6 +153,7 @@ class PolicyAuditMiddleware(AgentMiddleware):
         workspace: TaskWorkspace,
         intent_id: str,
         attempt_tool_limit: int | None = None,
+        task_duration_limit_minutes: int | None = None,
     ) -> None:
         super().__init__()
         self.task = task
@@ -153,6 +161,7 @@ class PolicyAuditMiddleware(AgentMiddleware):
         self.workspace = workspace
         self.intent_id = intent_id
         self.attempt_tool_limit = attempt_tool_limit
+        self.task_duration_limit_minutes = task_duration_limit_minutes
 
     def wrap_tool_call(self, request, handler):
         name = request.tool_call["name"]
@@ -170,12 +179,33 @@ class PolicyAuditMiddleware(AgentMiddleware):
         allowed = policy.allowed_tools or SAFE_DEFAULT_TOOLS
         risk = _risk(name, request.tool)
         reason = None
-        if name in policy.denied_tools:
+        started = next(
+            (
+                item.created_at
+                for item in self.store.list_events(self.task.id, limit=1000)
+                if item.type == "TASK_STARTED"
+            ),
+            self.task.created_at,
+        )
+        deadline = (
+            started + timedelta(minutes=self.task_duration_limit_minutes)
+            if self.task_duration_limit_minutes
+            else None
+        )
+        if deadline is not None and utc_now() >= deadline:
+            reason = "task duration budget exhausted before tool execution"
+        elif name in policy.denied_tools:
             reason = "tool is explicitly denied"
         elif name not in allowed:
             reason = "tool is outside the task allowlist"
         elif risk == RiskLevel.DESTRUCTIVE:
             reason = "destructive tools are not supported"
+        elif name == "run_command" and (
+            redundant := self._redundant_network_observation(
+                str(arguments.get("command") or "")
+            )
+        ):
+            reason = redundant
         elif name == "run_command" and (
             high_impact_action := _high_impact_action(
                 str(arguments.get("command") or "")
@@ -253,6 +283,7 @@ class PolicyAuditMiddleware(AgentMiddleware):
             )
             raise
         artifact_ids: tuple[str, ...] = ()
+        result_failed = isinstance(result, ToolMessage) and result.status == "error"
         if name == "run_command":
             content = result.content if isinstance(result, ToolMessage) else str(result)
             artifact, _ = self.workspace.publish_text(
@@ -262,12 +293,37 @@ class PolicyAuditMiddleware(AgentMiddleware):
                 tool_name=name,
                 intent_id=self.intent_id,
             )
-            self.store.save_artifact(artifact)
+            artifact = artifact.model_copy(
+                update={
+                    "metadata": {
+                        "action_id": action.id,
+                        "tool_status": "failed" if result_failed else "succeeded",
+                    }
+                }
+            )
+            existing_artifact = next(
+                (
+                    item
+                    for item in self.store.list_artifacts(self.task.id)
+                    if item.intent_id == self.intent_id
+                    and item.kind == artifact.kind
+                    and item.sha256 == artifact.sha256
+                ),
+                None,
+            )
+            if existing_artifact is None:
+                self.store.save_artifact(artifact)
+            else:
+                artifact = existing_artifact
             artifact_ids = (artifact.id,)
             self.store.append_event(
                 AgentEvent(
                     task_id=self.task.id,
-                    type="ARTIFACT_CREATED",
+                    type=(
+                        "ARTIFACT_CREATED"
+                        if existing_artifact is None
+                        else "ARTIFACT_REUSED"
+                    ),
                     solver_id="worker",
                     intent_id=self.intent_id,
                     payload={
@@ -293,7 +349,6 @@ class PolicyAuditMiddleware(AgentMiddleware):
                     "content": f"{result.content}\n\n{self._acceptance_checkpoint()}"
                 }
             )
-        result_failed = isinstance(result, ToolMessage) and result.status == "error"
         self.store.save_action(
             action.model_copy(
                 update={
@@ -320,6 +375,34 @@ class PolicyAuditMiddleware(AgentMiddleware):
         )
         return result
 
+    def _redundant_network_observation(self, command: str) -> str | None:
+        key = _network_observation_key(command)
+        if key is None:
+            return None
+        matching: list[ToolAction] = []
+        for action in self.store.list_actions(self.task.id):
+            if action.intent_id != self.intent_id or action.tool_name != "run_command":
+                continue
+            prior = str(action.arguments.get("command") or "")
+            if _network_observation_key(prior) == key:
+                matching.append(action)
+        if len(matching) < 4:
+            return None
+        artifact_ids = list(
+            dict.fromkeys(
+                artifact_id
+                for action in matching
+                for artifact_id in action.artifact_ids
+            )
+        )
+        references = ", ".join(artifact_ids[-4:]) or "the earlier Tool results"
+        return (
+            "redundant network observation blocked: this Intent already executed "
+            f"four {key[0]} observations for {key[1]}. Reuse Artifact(s) "
+            f"{references} with read_artifact, or choose an action that tests a "
+            "different acceptance criterion."
+        )
+
     def _acceptance_checkpoint(self) -> str:
         intent = next(
             (
@@ -335,9 +418,10 @@ class PolicyAuditMiddleware(AgentMiddleware):
             item.intent_id == self.intent_id
             for item in self.store.list_actions(self.task.id)
         )
-        limit = self.attempt_tool_limit or self.store.get_policy(
-            self.task.id
-        ).tool.max_tool_calls
+        limit = (
+            self.attempt_tool_limit
+            or self.store.get_policy(self.task.id).tool.max_tool_calls
+        )
         criteria = "\n".join(
             f"{index + 1}. {criterion}"
             for index, criterion in enumerate(intent.success_criteria)
@@ -413,6 +497,11 @@ def worker_middleware(
             workspace=workspace,
             intent_id=intent_id,
             attempt_tool_limit=attempt_tool_limit,
+            task_duration_limit_minutes=(
+                configuration.runtime.budget.task.max_duration_minutes
+                if configuration
+                else None
+            ),
         ),
         governed_tool_errors,
     ]
@@ -427,7 +516,9 @@ def worker_middleware(
                 tool_description=(
                     "Run one bounded command in the isolated Kali sandbox. "
                     "The current directory is writable task scratch; copied task "
-                    "inputs are in ./inputs and /tmp is writable. Command output is "
+                    "inputs are in ./inputs. The current directory persists across "
+                    "tool calls, but /tmp belongs to one disposable command container "
+                    "and MUST NOT be used for files needed by a later call. Command output is "
                     "automatically persisted as an Artifact, so do not save HTTP "
                     "responses merely to preserve evidence. Add curl --max-time 15 "
                     "or an equivalent timeout to every network command."
@@ -464,6 +555,7 @@ def _risk(name: str, tool: BaseTool | None) -> RiskLevel:
     if name in {
         "list_inputs",
         "read_input",
+        "read_artifact",
         "glob_search",
         "grep_search",
         "read_skill",
@@ -474,6 +566,49 @@ def _risk(name: str, tool: BaseTool | None) -> RiskLevel:
         if declared in {item.value for item in RiskLevel}
         else RiskLevel.ACTIVE
     )
+
+
+def _network_observation_key(command: str) -> tuple[str, str] | None:
+    """Collapse cosmetic curl flag changes into one auditable observation key."""
+    url_match = re.search(r"https?://[^\s'\";|]+", command, flags=re.IGNORECASE)
+    if url_match is None or not re.search(r"(?:^|\s)curl(?:\s|$)", command):
+        return None
+    raw_url = url_match.group(0).rstrip(").,]")
+    parts = urlsplit(raw_url)
+    normalized_url = urlunsplit(
+        (
+            parts.scheme.casefold(),
+            parts.netloc.casefold(),
+            parts.path or "/",
+            parts.query,
+            "",
+        )
+    )
+    explicit = re.search(r"(?:^|\s)(?:-X|--request)\s+([A-Za-z]+)", command)
+    if explicit:
+        method = explicit.group(1).upper()
+    elif re.search(r"(?:^|\s)(?:-I|--head)(?:\s|$)", command):
+        method = "HEAD"
+    elif re.search(
+        r"(?:^|\s)(?:-d|--data(?:-raw|-binary|-urlencode)?|-F|--form)(?:\s|=)",
+        command,
+    ):
+        method = "POST"
+    else:
+        method = "GET"
+    if method in {"POST", "PUT", "PATCH"}:
+        payload = re.search(
+            r"(?:^|\s)(?:-d|--data(?:-raw|-binary|-urlencode)?|-F|--form)"
+            r"(?:\s|=)(?:'([^']*)'|\"([^\"]*)\"|([^\s]+))",
+            command,
+        )
+        if payload:
+            raw_payload = next(
+                (item for item in payload.groups() if item is not None), ""
+            )
+            digest = hashlib.sha256(raw_payload.encode("utf-8")).hexdigest()[:12]
+            normalized_url = f"{normalized_url}#payload-{digest}"
+    return method, normalized_url
 
 
 def _action_target(name: str, arguments: dict[str, Any]) -> str:
@@ -490,6 +625,7 @@ def _expected_outcome(name: str) -> str:
     return {
         "run_command": "Execute the displayed command once in the isolated Kali sandbox and capture its output as an Artifact.",
         "read_input": "Read the selected authorized task input and preserve the result as evidence.",
+        "read_artifact": "Read an already persisted task Artifact without repeating the originating action.",
         "save_note": "Persist the displayed analysis note as a task Artifact.",
     }.get(name, f"Execute {name} once and return its governed result to the Worker.")
 
@@ -504,7 +640,9 @@ def _effect(name: str, risk: RiskLevel) -> dict[str, str]:
     return {
         "persistence": "task_workspace" if name == "save_note" else "none",
         "reversibility": "reversible" if name == "save_note" else "not_applicable",
-        "description": "Task-scoped operation." if risk != RiskLevel.DESTRUCTIVE else "Potentially destructive operation.",
+        "description": "Task-scoped operation."
+        if risk != RiskLevel.DESTRUCTIVE
+        else "Potentially destructive operation.",
     }
 
 
@@ -514,8 +652,13 @@ def _approval_reason(name: str, target: str) -> str:
 
 def _alternatives(name: str) -> list[str]:
     if name == "run_command":
-        return ["Reject this command and provide a safer hint", "Use existing task inputs or Artifacts instead"]
-    return ["Reject this operation and let the Worker choose another allowed capability"]
+        return [
+            "Reject this command and provide a safer hint",
+            "Use existing task inputs or Artifacts instead",
+        ]
+    return [
+        "Reject this operation and let the Worker choose another allowed capability"
+    ]
 
 
 def _high_impact_command(command: str) -> bool:
@@ -533,7 +676,10 @@ def _high_impact_command(command: str) -> bool:
 def _high_impact_action(command: str) -> str | None:
     value = command.casefold()
     patterns = (
-        ("credential_attack", r"\b(?:hydra|medusa|patator|sshpass|crackmapexec|netexec)\b"),
+        (
+            "credential_attack",
+            r"\b(?:hydra|medusa|patator|sshpass|crackmapexec|netexec)\b",
+        ),
         ("exploit_framework", r"\b(?:msfconsole|metasploit|sqlmap)\b"),
         (
             "state_changing_http",

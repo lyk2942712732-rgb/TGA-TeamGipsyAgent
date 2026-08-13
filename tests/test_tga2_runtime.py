@@ -21,7 +21,11 @@ from langgraph.types import Command
 from pydantic import Field
 
 from apps.api.main import app
-from tga2.agent.middleware import _bounded_network_command, _high_impact_action
+from tga2.agent.middleware import (
+    _bounded_network_command,
+    _high_impact_action,
+    _network_observation_key,
+)
 from tga2.agent.roles import LangChainAgentSuite, OfflineAgentSuite, RoutedAgentSuite
 from tga2.agent.schemas import (
     PlanDraft,
@@ -81,6 +85,7 @@ class _CheckpointSuite(OfflineAgentSuite):
     def __init__(self) -> None:
         self.reviews = 0
         self.worker_attempts: list[int] = []
+        self.retry_contexts: list[dict] = []
 
     def plan(self, _task):
         return PlanDraft(
@@ -103,6 +108,7 @@ class _CheckpointSuite(OfflineAgentSuite):
 
     def work(self, task, intent, tools, feedback, middleware=()):
         self.worker_attempts.append(int(intent["attempt"]))
+        self.retry_contexts.append(intent.get("retry_context") or {})
         return WorkerDraft(
             summary=f"Attempt {intent['attempt']}",
             completion_status="completed",
@@ -161,6 +167,47 @@ class _CheckpointSuite(OfflineAgentSuite):
         return ReportDraft(executive_summary="Checkpoint flow completed.")
 
 
+class _AcceptanceArtifactSuite(OfflineAgentSuite):
+    reviewer_claims: list[dict]
+
+    def __init__(self) -> None:
+        self.reviewer_claims = []
+
+    def work(self, task, intent, tools, feedback, middleware=()):
+        read_input = next(tool for tool in tools if tool.name == "read_input")
+        payload = json.loads(read_input.invoke({"path": "target.txt"}))
+        return WorkerDraft(
+            summary="The input supports the acceptance criterion.",
+            completion_status="completed",
+            criterion_assessments=[
+                {
+                    "criterion_index": 0,
+                    "status": "met",
+                    "artifact_ids": [payload["artifact_id"]],
+                    "note": "The target marker is present in the supplied input.",
+                }
+            ],
+            claims=[],
+        )
+
+    def review(self, task, packet):
+        self.reviewer_claims = [item.claim for item in packet.evidence]
+        ids = [str(item["id"]) for item in self.reviewer_claims]
+        return ReviewDraft(
+            verdict="pass",
+            feedback="The acceptance evidence is visible.",
+            confirmed_claim_ids=ids,
+            criterion_results=[
+                {
+                    "criterion_index": 0,
+                    "status": "verified",
+                    "evidence_claim_ids": ids,
+                    "reason": "Artifact-backed acceptance evidence is present.",
+                }
+            ],
+        )
+
+
 def test_langchain_json_mode_receives_the_full_pydantic_schema() -> None:
     suite = LangChainAgentSuite(_VerificationModel())
     draft = suite.plan(
@@ -212,9 +259,7 @@ def _inspect_authorized_value(value: str) -> str:
 
 def test_deepseek_thinking_worker_does_not_force_tool_choice() -> None:
     model = _RecordingToolModel()
-    suite = LangChainAgentSuite(
-        model, force_prompt_worker_output=True
-    )
+    suite = LangChainAgentSuite(model, force_prompt_worker_output=True)
     draft = suite.work(
         Task(
             name="deepseek tools",
@@ -423,9 +468,7 @@ def test_runtime_approval_resume_does_not_duplicate_or_replay_tool(
         executed.append(value)
         return value
 
-    worker = LangChainAgentSuite(
-        _ApprovalToolModel(), force_prompt_worker_output=True
-    )
+    worker = LangChainAgentSuite(_ApprovalToolModel(), force_prompt_worker_output=True)
     offline = OfflineAgentSuite()
     service = TaskRuntimeService(
         run_root=tmp_path / "runs",
@@ -460,9 +503,7 @@ def test_runtime_approval_resume_does_not_duplicate_or_replay_tool(
     assert snapshot["approvals"][0]["action"]["arguments"] == {"value": "ok"}
     assert executed == []
 
-    resumed = service.decide_tool_action(
-        made["task_id"], "call-1", approved=True
-    )
+    resumed = service.decide_tool_action(made["task_id"], "call-1", approved=True)
     snapshot = service.snapshot(made["task_id"])
     assert resumed["status"] == "completed"
     assert executed == ["ok"]
@@ -470,9 +511,12 @@ def test_runtime_approval_resume_does_not_duplicate_or_replay_tool(
     assert [event["type"] for event in snapshot["events"]].count(
         "APPROVAL_REQUESTED"
     ) == 1
-    assert next(
-        item for item in snapshot["actions"] if item["action_id"] == "call-1"
-    )["status"] == "succeeded"
+    assert (
+        next(item for item in snapshot["actions"] if item["action_id"] == "call-1")[
+            "status"
+        ]
+        == "succeeded"
+    )
 
 
 def test_high_impact_classifier_does_not_gate_read_only_shell_setup() -> None:
@@ -487,9 +531,27 @@ def test_high_impact_classifier_does_not_gate_read_only_shell_setup() -> None:
     assert _bounded_network_command("curl -s https://target.test/").startswith(
         "timeout 20s bash -lc "
     )
-    assert _bounded_network_command(
-        "curl --max-time 5 https://target.test/"
-    ) == "curl --max-time 5 https://target.test/"
+    assert (
+        _bounded_network_command("curl --max-time 5 https://target.test/")
+        == "curl --max-time 5 https://target.test/"
+    )
+    assert _network_observation_key("curl -skv https://TARGET.test/") == (
+        "GET",
+        "https://target.test/",
+    )
+    assert _network_observation_key("curl -k -i https://target.test/") == (
+        "GET",
+        "https://target.test/",
+    )
+    post_key = _network_observation_key(
+        "curl -k -d 'code=id' https://target.test/"
+    )
+    assert post_key is not None
+    assert post_key[0] == "POST"
+    assert post_key[1].startswith("https://target.test/#payload-")
+    assert post_key != _network_observation_key(
+        "curl -k -d 'code=whoami' https://target.test/"
+    )
 
 
 def test_worker_uses_a_clean_finalizer_after_bounded_tool_investigation() -> None:
@@ -696,6 +758,33 @@ def test_runtime_rejects_reviewer_pass_without_criterion_coverage(
     assert "Unverified Intent criteria: 1" in review["payload"]["feedback"]
 
 
+def test_acceptance_artifact_is_promoted_to_reviewer_visible_claim(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "target.txt"
+    source.write_text("acceptance marker", encoding="utf-8")
+    suite = _AcceptanceArtifactSuite()
+    service = TaskRuntimeService(run_root=tmp_path / "runs", agents=suite)
+    made = service.create_task(
+        CreateTaskRequest(
+            name="acceptance evidence",
+            objective="Inspect target",
+            mode="vulnerability_research",
+            input_paths=[str(source)],
+        )
+    )
+
+    result = service.run_task(made["task_id"])
+    snapshot = service.snapshot(made["task_id"])
+
+    assert result["status"] == "completed"
+    assert len(suite.reviewer_claims) == 1
+    assert suite.reviewer_claims[0]["created_by"] == (
+        "runtime_from_acceptance_assessment"
+    )
+    assert snapshot["evidence_claims"][0]["status"] == "confirmed"
+
+
 def test_supervisor_checkpoint_retries_then_advances_plan(tmp_path: Path) -> None:
     service = TaskRuntimeService(run_root=tmp_path / "runs")
     suite = _CheckpointSuite()
@@ -712,6 +801,9 @@ def test_supervisor_checkpoint_retries_then_advances_plan(tmp_path: Path) -> Non
 
     assert result["status"] == "completed"
     assert suite.worker_attempts == [1, 2, 1]
+    assert suite.retry_contexts[1]["previous_reviews"][0]["feedback"] == (
+        "Collect stronger evidence."
+    )
     assert snapshot["global_plan"]["version"] == 1
     assert len(snapshot["intents"]) == 2
     assert all(item["status"] == "completed" for item in snapshot["intents"])
@@ -760,7 +852,7 @@ def test_supervisor_user_input_interrupt_has_distinct_status_and_resumes(
 def test_runtime_json_is_the_single_budget_source(tmp_path: Path) -> None:
     service = TaskRuntimeService(run_root=tmp_path / "runs")
     runtime = service.configuration.runtime
-    assert runtime.schema_version == 4
+    assert runtime.schema_version == 5
     assert runtime.budget.task.model_dump() == {
         "max_intents": 4,
         "max_model_calls": 60,
@@ -1044,7 +1136,9 @@ def test_skill_zip_installs_one_directory_package_and_rejects_unsafe_paths(
     )
     assert imported.status_code == 201
     assert imported.json()["skill"]["file_count"] == 2
-    assert (tmp_path / "runs" / ".config" / "skills" / "ctf-crypto" / "rsa.md").is_file()
+    assert (
+        tmp_path / "runs" / ".config" / "skills" / "ctf-crypto" / "rsa.md"
+    ).is_file()
 
     unsafe = io.BytesIO()
     with zipfile.ZipFile(unsafe, "w") as archive:

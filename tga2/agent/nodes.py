@@ -98,13 +98,14 @@ class GraphNodes:
         task = self._task(state)
         self._ensure_task_time(task.id)
         self._ensure_model_budget(state, "supervisor")
-        self._solver_activity(task.id, "supervisor", "running", "正在拆解任务并生成初始 Plan")
+        self._solver_activity(
+            task.id, "supervisor", "running", "正在拆解任务并生成初始 Plan"
+        )
         draft = self.deps.agents.plan(task)
         calls = self._take_model_calls("supervisor")
         maximum = self.deps.configuration.runtime.budget.task.max_intents
         intents = tuple(
-            self._intent_from_draft(task.id, item)
-            for item in draft.intents[:maximum]
+            self._intent_from_draft(task.id, item) for item in draft.intents[:maximum]
         )
         if not intents:
             raise ValueError("supervisor produced an empty plan")
@@ -132,7 +133,9 @@ class GraphNodes:
                 },
             )
         )
-        self._solver_activity(task.id, "supervisor", "waiting", "初始 Plan 已生成，等待 Worker 执行")
+        self._solver_activity(
+            task.id, "supervisor", "waiting", "初始 Plan 已生成，等待 Worker 执行"
+        )
         for intent in intents:
             self.deps.store.append_event(
                 AgentEvent(
@@ -225,9 +228,14 @@ class GraphNodes:
                 )
                 if item
             )
+        intent_payload = {
+            **intent.model_dump(mode="json"),
+            "attempt": attempt,
+            "retry_context": self._retry_context(task.id, intent.id),
+        }
         draft = self.deps.agents.work(
             task,
-            {**intent.model_dump(mode="json"), "attempt": attempt},
+            intent_payload,
             tools,
             feedback,
             worker_middleware(
@@ -304,14 +312,12 @@ class GraphNodes:
         proposed_review = self.deps.agents.review(task, packet)
         calls = self._take_model_calls("reviewer")
         review = self._guard_review(intent, state, proposed_review)
-        confirmed = set(review.confirmed_claim_ids).intersection(
-            state.get("claim_ids", [])
-        )
+        eligible_claim_ids = {str(item.claim.get("id")) for item in packet.evidence}
+        confirmed = set(review.confirmed_claim_ids).intersection(eligible_claim_ids)
         rejected = (
-            set(review.rejected_claim_ids).intersection(state.get("claim_ids", []))
-            - confirmed
+            set(review.rejected_claim_ids).intersection(eligible_claim_ids) - confirmed
         )
-        for claim_id in state.get("claim_ids", []):
+        for claim_id in eligible_claim_ids:
             claim = self.deps.store.get_claim(claim_id)
             if claim is None:
                 continue
@@ -476,8 +482,7 @@ class GraphNodes:
         decision = SupervisorDecision.model_validate(state["supervisor_decision"])
         existing = self.deps.store.list_intents(task.id)
         additions = tuple(
-            self._intent_from_draft(task.id, item)
-            for item in decision.new_intents
+            self._intent_from_draft(task.id, item) for item in decision.new_intents
         )
         current = self._intent(state)
         if current.status != IntentStatus.COMPLETED:
@@ -707,7 +712,20 @@ class GraphNodes:
 
     def _review_packet(self, task, intent: Intent, state: TGAState) -> ReviewPacket:
         evidence: list[EvidencePacket] = []
-        for claim_id in state.get("claim_ids", []):
+        claim_ids = list(dict.fromkeys(state.get("claim_ids", [])))
+        artifact_by_id = {
+            item.id: item for item in self.deps.store.list_artifacts(task.id)
+        }
+        for claim in self.deps.store.list_claims(task.id):
+            artifact = artifact_by_id.get(claim.artifact_id)
+            if (
+                claim.status == "confirmed"
+                and artifact is not None
+                and artifact.intent_id == intent.id
+                and claim.id not in claim_ids
+            ):
+                claim_ids.append(claim.id)
+        for claim_id in claim_ids:
             claim = self.deps.store.get_claim(claim_id)
             artifact = (
                 self.deps.store.get_artifact(claim.artifact_id) if claim else None
@@ -744,6 +762,67 @@ class GraphNodes:
             expected_evidence=list(intent.expected_evidence),
             stop_conditions=list(intent.stop_conditions),
         )
+
+    def _retry_context(self, task_id: str, intent_id: str) -> dict[str, Any]:
+        """Carry audited progress into a fresh Worker attempt without chat replay."""
+        artifacts = {
+            item.id: item
+            for item in self.deps.store.list_artifacts(task_id)
+            if item.intent_id == intent_id
+        }
+        confirmed_evidence: list[dict[str, Any]] = []
+        for claim in self.deps.store.list_claims(task_id):
+            artifact = artifacts.get(claim.artifact_id)
+            if claim.status != "confirmed" or artifact is None:
+                continue
+            excerpt, valid = self._evidence_excerpt(artifact.path, claim.locator)
+            if not valid:
+                continue
+            confirmed_evidence.append(
+                {
+                    "claim_id": claim.id,
+                    "artifact_id": artifact.id,
+                    "statement": claim.statement,
+                    "locator": claim.locator.model_dump(mode="json"),
+                    "excerpt": excerpt[:1500],
+                }
+            )
+        reviews = [
+            {
+                "attempt": item.payload.get("attempt"),
+                "verdict": item.payload.get("verdict"),
+                "feedback": item.payload.get("feedback"),
+                "criterion_results": item.payload.get("criterion_results") or [],
+            }
+            for item in self.deps.store.list_events(task_id, limit=1000)
+            if item.type == "REVIEW_COMPLETED" and item.intent_id == intent_id
+        ]
+        commands = []
+        seen_commands: set[str] = set()
+        for action in self.deps.store.list_actions(task_id):
+            if action.intent_id != intent_id or action.tool_name != "run_command":
+                continue
+            command = str(action.arguments.get("command") or "").strip()
+            if not command or command in seen_commands:
+                continue
+            seen_commands.add(command)
+            commands.append(
+                {
+                    "command": command[:1000],
+                    "status": action.status,
+                    "artifact_ids": list(action.artifact_ids),
+                }
+            )
+        return {
+            "confirmed_evidence": confirmed_evidence[-16:],
+            "previous_reviews": reviews[-3:],
+            "executed_commands": commands[-24:],
+            "instructions": (
+                "Treat confirmed evidence as already satisfied. Do not repeat an "
+                "executed command. Use read_artifact when its output needs closer "
+                "inspection, and collect only evidence missing from the latest review."
+            ),
+        }
 
     def _guard_review(
         self, intent: Intent, state: TGAState, review: ReviewDraft
@@ -786,7 +865,9 @@ class GraphNodes:
             update={
                 "verdict": "retry",
                 "reason_codes": reasons,
-                "feedback": " ".join(item for item in (review.feedback, detail) if item),
+                "feedback": " ".join(
+                    item for item in (review.feedback, detail) if item
+                ),
             }
         )
 
@@ -1075,6 +1156,7 @@ class GraphNodes:
         self, task_id: str, intent_id: str, draft: WorkerDraft
     ) -> list[str]:
         claim_ids: list[str] = []
+        claimed_artifacts: set[str] = set()
         for item in draft.claims:
             artifact = self.deps.store.get_artifact(item.artifact_id)
             if artifact is None or artifact.task_id != task_id:
@@ -1090,30 +1172,101 @@ class GraphNodes:
             _, valid = self._evidence_excerpt(artifact.path, locator)
             if not valid:
                 continue
-            claim = EvidenceClaim(
-                task_id=task_id,
-                artifact_id=artifact.id,
-                statement=item.statement,
-                locator=locator,
-                created_by="worker",
-            )
-            self.deps.store.save_claim(claim)
-            claim_ids.append(claim.id)
-            self.deps.store.append_event(
-                AgentEvent(
+            claim_ids.append(
+                self._save_claim_once(
                     task_id=task_id,
-                    type="EVIDENCE_CLAIM_CREATED",
-                    solver_id="worker",
                     intent_id=intent_id,
-                    payload={
-                        "evidence_claim_id": claim.id,
-                        "artifact_id": artifact.id,
-                        "statement_preview": claim.statement[:1000],
-                        "locator": locator.model_dump(mode="json"),
-                    },
+                    artifact_id=artifact.id,
+                    statement=item.statement,
+                    locator=locator,
+                    created_by="worker",
                 )
             )
-        return claim_ids
+            claimed_artifacts.add(artifact.id)
+
+        intent = next(
+            (
+                item
+                for item in self.deps.store.list_intents(task_id)
+                if item.id == intent_id
+            ),
+            None,
+        )
+        for assessment in draft.criterion_assessments:
+            if assessment.status != "met":
+                continue
+            criterion = (
+                intent.success_criteria[assessment.criterion_index]
+                if intent is not None
+                and assessment.criterion_index < len(intent.success_criteria)
+                else f"acceptance criterion {assessment.criterion_index + 1}"
+            )
+            statement = assessment.note.strip() or f"Evidence supports: {criterion}"
+            for artifact_id in assessment.artifact_ids:
+                if artifact_id in claimed_artifacts:
+                    continue
+                artifact = self.deps.store.get_artifact(artifact_id)
+                if (
+                    artifact is None
+                    or artifact.task_id != task_id
+                    or artifact.intent_id != intent_id
+                ):
+                    continue
+                claim_id = self._save_claim_once(
+                    task_id=task_id,
+                    intent_id=intent_id,
+                    artifact_id=artifact.id,
+                    statement=statement,
+                    locator=EvidenceLocator(kind="whole"),
+                    created_by="runtime_from_acceptance_assessment",
+                )
+                if claim_id not in claim_ids:
+                    claim_ids.append(claim_id)
+                claimed_artifacts.add(artifact.id)
+        return list(dict.fromkeys(claim_ids))
+
+    def _save_claim_once(
+        self,
+        *,
+        task_id: str,
+        intent_id: str,
+        artifact_id: str,
+        statement: str,
+        locator: EvidenceLocator,
+        created_by: str,
+    ) -> str:
+        for existing in self.deps.store.list_claims(task_id):
+            if (
+                existing.artifact_id == artifact_id
+                and existing.statement == statement
+                and existing.locator == locator
+                and existing.status != "rejected"
+            ):
+                return existing.id
+        claim = EvidenceClaim(
+            task_id=task_id,
+            artifact_id=artifact_id,
+            statement=statement,
+            locator=locator,
+            created_by=created_by,
+        )
+        self.deps.store.save_claim(claim)
+        self.deps.store.append_event(
+            AgentEvent(
+                task_id=task_id,
+                type="EVIDENCE_CLAIM_CREATED",
+                solver_id="worker",
+                intent_id=intent_id,
+                payload={
+                    "evidence_claim_id": claim.id,
+                    "artifact_id": artifact_id,
+                    "statement_preview": statement[:1000],
+                    "locator": locator.model_dump(mode="json"),
+                    "created_by": created_by,
+                },
+            )
+        )
+        return claim.id
 
     def _evidence_excerpt(
         self, artifact_path: str, locator: EvidenceLocator

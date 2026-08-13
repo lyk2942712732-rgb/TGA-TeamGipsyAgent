@@ -14,9 +14,7 @@ from tga2.integrations.model import ModelRegistry, ModelSettings
 
 ROLES = ("supervisor", "worker", "reviewer", "reporter")
 KALI_PROFILE_ID = "tga2-kali"
-DEFAULT_KALI_IMAGE = (
-    "ghcr.io/lyk2942712732-rgb/tga-kali-universal:sandbox-v0.2.1"
-)
+DEFAULT_KALI_IMAGE = "ghcr.io/lyk2942712732-rgb/tga-kali-universal:sandbox-v0.2.1"
 DEFAULT_KALI_IMAGE_DIGEST = (
     "sha256:300fca8aaf785e6f8a589e595e08b0174657609e0ca1935960b5bbfa28e7970f"
 )
@@ -126,7 +124,7 @@ class FileLimitSettings(BaseModel):
 
 class RuntimeSettings(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    schema_version: int = 4
+    schema_version: int = 5
     common_prompt: str = ""
     roles: dict[str, RoleRuntimeSettings]
     graph: GraphSettings = Field(default_factory=GraphSettings)
@@ -180,7 +178,9 @@ class Configuration:
     save = save_runtime
 
     def save_models(self) -> None:
-        self._write_json(self.models_path, self.model_registry.persisted_payload(), 0o600)
+        self._write_json(
+            self.models_path, self.model_registry.persisted_payload(), 0o600
+        )
 
     # Compatibility name while routes are migrated to the single models.json file.
     save_model_registry = save_models
@@ -299,9 +299,8 @@ class Configuration:
         try:
             provider = self.model_registry.provider(selection.provider_id)
             model = provider.model(selection.model_id)
-            ready = (
-                model.verification_status == "verified"
-                and bool(provider.selected_api_key_id)
+            ready = model.verification_status == "verified" and bool(
+                provider.selected_api_key_id
             )
             return {
                 "provider_id": provider.id,
@@ -342,9 +341,31 @@ class Configuration:
             )
 
     def _load_runtime(self) -> RuntimeSettings:
-        return RuntimeSettings.model_validate_json(
+        runtime = RuntimeSettings.model_validate_json(
             self.runtime_path.read_text(encoding="utf-8")
         )
+        if runtime.schema_version < 5:
+            roles = dict(runtime.roles)
+            worker = roles.get("worker", RoleRuntimeSettings())
+            roles["worker"] = worker.model_copy(
+                update={"tools": list(dict.fromkeys([*worker.tools, "read_artifact"]))}
+            )
+            defaults = runtime.tool_defaults.model_copy(
+                update={
+                    "allowed": list(
+                        dict.fromkeys([*runtime.tool_defaults.allowed, "read_artifact"])
+                    )
+                }
+            )
+            runtime = runtime.model_copy(
+                update={
+                    "schema_version": 5,
+                    "roles": roles,
+                    "tool_defaults": defaults,
+                }
+            )
+            self._write_json(self.runtime_path, runtime.model_dump(mode="json"))
+        return runtime
 
     def _load_scenes(self) -> SceneCatalog:
         value = SceneCatalog.model_validate_json(
@@ -360,7 +381,9 @@ class Configuration:
             self.models_path.read_text(encoding="utf-8")
         )
 
-    def _write_json(self, path: Path, payload: dict[str, Any], mode: int | None = None) -> None:
+    def _write_json(
+        self, path: Path, payload: dict[str, Any], mode: int | None = None
+    ) -> None:
         with self._lock:
             temporary = path.with_suffix(path.suffix + ".tmp")
             temporary.write_text(

@@ -46,6 +46,14 @@ class ToolRegistry:
                 description="Read a task input file and publish the exact output as an immutable artifact.",
             ),
             StructuredTool.from_function(
+                func=self._read_artifact,
+                name="read_artifact",
+                description=(
+                    "Read a bounded line range from an existing Artifact owned by "
+                    "this task. Use this on retries instead of repeating a command."
+                ),
+            ),
+            StructuredTool.from_function(
                 func=self._save_note,
                 name="save_note",
                 description="Publish a textual analysis note as an immutable artifact.",
@@ -147,6 +155,50 @@ class ToolRegistry:
             )
 
         return handler()
+
+    def _read_artifact(
+        self, artifact_id: str, start_line: int = 1, max_lines: int = 200
+    ) -> str:
+        """Read a bounded, task-owned Artifact without creating another Artifact."""
+        artifact = self.store.get_artifact(artifact_id)
+        if artifact is None or artifact.task_id != self.task_id:
+            raise FileNotFoundError(f"artifact not found in this task: {artifact_id}")
+        start = max(1, int(start_line))
+        limit = min(500, max(1, int(max_lines)))
+        text = self.workspace.read_artifact(artifact.path).decode(
+            "utf-8", errors="replace"
+        )
+        lines = text.splitlines()
+        selected = "\n".join(lines[start - 1 : start - 1 + limit])
+        truncated = start - 1 + limit < len(lines)
+        self.store.append_event(
+            AgentEvent(
+                task_id=self.task_id,
+                type="ARTIFACT_READ",
+                solver_id="worker",
+                intent_id=self.intent_id,
+                payload={
+                    "artifact_id": artifact.id,
+                    "start_line": start,
+                    "max_lines": limit,
+                    "returned_lines": len(selected.splitlines()),
+                },
+            )
+        )
+        encoded = selected.encode("utf-8")
+        return json.dumps(
+            {
+                "artifact_id": artifact.id,
+                "sha256": artifact.sha256,
+                "kind": artifact.kind,
+                "start_line": start,
+                "content": encoded[: self.model_read_max_bytes].decode(
+                    "utf-8", errors="replace"
+                ),
+                "truncated": truncated or len(encoded) > self.model_read_max_bytes,
+            },
+            ensure_ascii=False,
+        )
 
     def _save_note(self, content: str) -> str:
         """Save a worker-authored analysis note."""
