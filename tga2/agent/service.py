@@ -620,5 +620,8 @@ __all__ = ["TaskRuntimeService"]
 
 
 def _failed_model_calls(exc: BaseException) -> int:
+    recorded = getattr(exc, "model_calls", None)
+    if recorded is not None:
+        return int(recorded)
     match = re.search(r"run limit \((\d+)/(\d+)\)", str(exc), re.IGNORECASE)
     return int(match.group(1)) if match else 0

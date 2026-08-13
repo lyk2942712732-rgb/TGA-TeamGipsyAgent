@@ -24,7 +24,10 @@ preflight -> initial_plan -> worker -> reviewer -> supervisor_checkpoint
 The checkpoint can also advance to the next Intent, append a bounded Plan
 revision, interrupt for user input, or finish with a report. Supervisor,
 Reviewer and Reporter use one bounded structured model decision; only Worker
-owns a model/tool loop.
+owns a model/tool loop. Each Worker Attempt reserves the last two calls in its
+role budget for a separate, tool-free finalizer. The investigation sub-agent
+therefore cannot spend the entire budget repeatedly calling Kali, and tool-loop
+markup such as DeepSeek DSML is never treated as the final `WorkerDraft`.
 
 There is one application container. API, CLI and tests receive the same Runtime,
 configuration, Skill repository and MCP repository. Settings pages therefore

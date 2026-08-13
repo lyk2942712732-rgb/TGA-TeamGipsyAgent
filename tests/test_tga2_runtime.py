@@ -223,7 +223,7 @@ class _ToolUntilFinalModel(BaseChatModel):
     def _generate(self, messages, stop=None, run_manager=None, **_kwargs):
         self.calls += 1
         final_call = any(
-            "FINAL CALL" in str(getattr(message, "content", ""))
+            "INVESTIGATION COMPLETE" in str(getattr(message, "content", ""))
             for message in messages
         )
         message = (
@@ -240,6 +240,47 @@ class _ToolUntilFinalModel(BaseChatModel):
                 ],
             )
         )
+        return ChatResult(generations=[ChatGeneration(message=message)])
+
+
+class _DeepSeekDsmlFinalizerModel(BaseChatModel):
+    calls: int = 0
+    finalizer_calls: int = 0
+
+    @property
+    def _llm_type(self) -> str:
+        return "deepseek-dsml-finalizer-model"
+
+    def bind_tools(self, tools, *, tool_choice=None, **_kwargs):
+        return self
+
+    def _generate(self, messages, stop=None, run_manager=None, **_kwargs):
+        self.calls += 1
+        is_finalizer = any(
+            "INVESTIGATION COMPLETE" in str(getattr(message, "content", ""))
+            for message in messages
+        )
+        if is_finalizer:
+            self.finalizer_calls += 1
+            content = (
+                '<｜DSML｜tool_calls><｜DSML｜invoke name="budget_probe">'
+                '<｜DSML｜parameter name="value" string="true">7'
+                "</｜DSML｜parameter></｜DSML｜invoke></｜DSML｜tool_calls>"
+                if self.finalizer_calls == 1
+                else '{"summary":"recovered","claims":[],"limitations":[]}'
+            )
+            message = AIMessage(content=content)
+        else:
+            message = AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "budget_probe",
+                        "args": {"value": str(self.calls)},
+                        "id": f"dsml-budget-{self.calls}",
+                    }
+                ],
+            )
         return ChatResult(generations=[ChatGeneration(message=message)])
 
 
@@ -373,7 +414,7 @@ def test_high_impact_classifier_does_not_gate_read_only_shell_setup() -> None:
     ) == "curl --max-time 5 https://target.test/"
 
 
-def test_worker_reserves_last_model_call_for_structured_finalization() -> None:
+def test_worker_uses_a_clean_finalizer_after_bounded_tool_investigation() -> None:
     executed: list[str] = []
 
     @tool
@@ -399,8 +440,40 @@ def test_worker_reserves_last_model_call_for_structured_finalization() -> None:
     )
 
     assert draft.summary == "bounded"
+    assert model.calls == 7
+    assert executed == ["1", "2", "3", "4", "5", "6"]
+
+
+def test_worker_corrects_deepseek_dsml_from_the_clean_finalizer() -> None:
+    executed: list[str] = []
+
+    @tool
+    def budget_probe(value: str) -> str:
+        """Record one bounded investigation step."""
+
+        executed.append(value)
+        return f"observation {value}; TGA artifact_id=artifact-{value}"
+
+    model = _DeepSeekDsmlFinalizerModel()
+    suite = LangChainAgentSuite(
+        model,
+        model_call_limit=8,
+        force_prompt_worker_output=True,
+    )
+    task = Task(name="dsml", spec=TaskSpec(objective="finish after DSML"))
+
+    draft = suite.work(
+        task,
+        {"id": "intent-dsml", "attempt": 1},
+        [budget_probe],
+        "",
+    )
+
+    assert draft.summary == "recovered"
     assert model.calls == 8
-    assert executed == ["1", "2", "3", "4", "5", "6", "7"]
+    assert model.finalizer_calls == 2
+    assert executed == ["1", "2", "3", "4", "5", "6"]
+    assert suite.take_model_calls("worker") == 8
 
 
 def test_failure_marks_active_intent_and_solver_instead_of_leaving_running(

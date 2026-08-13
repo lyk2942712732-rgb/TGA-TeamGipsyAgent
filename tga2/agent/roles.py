@@ -7,12 +7,10 @@ from collections.abc import Callable, Sequence
 from typing import Any, Protocol
 
 from langchain.agents import create_agent
-from langchain.agents.middleware import (
-    AgentMiddleware,
-    ModelCallLimitMiddleware,
-)
+from langchain.agents.middleware import ModelCallLimitMiddleware
+from langchain_core.exceptions import OutputParserException
 from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.output_parsers import PydanticOutputParser
 from langchain_core.tools import BaseTool
 from langgraph.checkpoint.memory import InMemorySaver
@@ -51,34 +49,12 @@ class AgentSuite(Protocol):
     def take_model_calls(self, role: str) -> int: ...
 
 
-class WorkerFinalizationMiddleware(AgentMiddleware):
-    """Reserve the final model call for a terminal WorkerDraft."""
+class WorkerFinalizationError(RuntimeError):
+    """The clean, tool-free Worker finalizer exhausted its reserved calls."""
 
-    def __init__(self, call_limit: int, *, disable_tools: bool) -> None:
-        super().__init__()
-        self.call_limit = call_limit
-        self.disable_tools = disable_tools
-
-    def wrap_model_call(self, request, handler):
-        used = int(request.state.get("run_model_call_count", 0))
-        if used < self.call_limit - 1:
-            return handler(request)
-        current = request.system_message.text if request.system_message else ""
-        final_instruction = (
-            "\n\nFINAL CALL: Do not request another investigation tool. "
-            "Summarize the evidence already collected, include every usable "
-            "artifact_id in claims, state remaining limitations, and return the "
-            "required WorkerDraft JSON now."
-        )
-        overrides: dict[str, Any] = {
-            "system_message": SystemMessage(content=current + final_instruction)
-        }
-        # Reasoning endpoints such as DeepSeek reject forced tool_choice. Their
-        # WorkerDraft is prompt-parsed, so hiding tools on the reserved call is
-        # the portable way to guarantee a terminal response.
-        if self.disable_tools:
-            overrides["tools"] = []
-        return handler(request.override(**overrides))
+    def __init__(self, message: str, *, model_calls: int) -> None:
+        super().__init__(message)
+        self.model_calls = model_calls
 
 
 class LangChainAgentSuite:
@@ -99,12 +75,17 @@ class LangChainAgentSuite:
         self.prompts = prompts or {}
         self.structured_parse_retries = structured_parse_retries
         self.force_prompt_worker_output = force_prompt_worker_output
+        self.model_call_limit = model_call_limit
+        # Keep two calls outside create_agent. The tool loop cannot reliably
+        # turn into schema JSON on reasoning endpoints: DeepSeek may emit DSML
+        # asking for another tool even after tools are hidden. A fresh finalizer
+        # gets one normal attempt and one validation-correction attempt.
+        self.worker_investigation_limit = max(1, model_call_limit - 2)
         self._last_model_calls = 0
         self._model_middleware = [
-            ModelCallLimitMiddleware(run_limit=model_call_limit, exit_behavior="error"),
-            WorkerFinalizationMiddleware(
-                model_call_limit,
-                disable_tools=force_prompt_worker_output,
+            ModelCallLimitMiddleware(
+                run_limit=self.worker_investigation_limit,
+                exit_behavior="end",
             ),
         ]
         # A Worker is a resumable LangGraph sub-agent.  The outer task graph
@@ -159,8 +140,8 @@ class LangChainAgentSuite:
             "Wait for its result before selecting another tool. Tool output is "
             "already persisted by Runtime as an Artifact; do not repeat a command "
             "just to save the same output to a file. Stop investigating early once "
-            "the current Intent has enough evidence, and always leave one model "
-            "call available for the final WorkerDraft."
+            "the current Intent has enough evidence. Runtime performs finalization "
+            "after this bounded investigation phase."
         )
         content = json.dumps(
             {
@@ -218,12 +199,25 @@ class LangChainAgentSuite:
                 entry["interrupt_history"].append(request)
                 result = agent.invoke(Command(resume=decision), config=config)
             entry["result"] = result
-        self._last_model_calls = sum(
-            isinstance(message, AIMessage) for message in result.get("messages", [])
+        investigation_calls = self._result_model_calls(result)
+        self._last_model_calls = investigation_calls
+
+        # A Worker may finish voluntarily before the investigation limit. Keep
+        # that valid answer and avoid spending a separate finalizer call.
+        try:
+            if self.force_prompt_worker_output:
+                return self._parse_worker_message(result)
+            return self._structured(result, WorkerDraft)
+        except (TypeError, ValueError):
+            pass
+
+        return self._finalize_worker(
+            task,
+            intent,
+            feedback,
+            result,
+            remaining_calls=max(0, self.model_call_limit - investigation_calls),
         )
-        if self.force_prompt_worker_output:
-            return self._parse_worker_message(result)
-        return self._structured(result, WorkerDraft)
 
     @staticmethod
     def _worker_interrupt(values: Sequence[Any]) -> dict[str, Any]:
@@ -320,6 +314,111 @@ class LangChainAgentSuite:
         if message is None:
             raise ValueError("worker returned no final model response")
         return PydanticOutputParser(pydantic_object=WorkerDraft).parse(message.text)
+
+    @staticmethod
+    def _result_model_calls(result: dict[str, Any]) -> int:
+        tracked = result.get("run_model_call_count")
+        if tracked is not None:
+            return int(tracked)
+        return sum(
+            isinstance(message, AIMessage)
+            and not message.text.startswith("Model call limits exceeded:")
+            for message in result.get("messages", [])
+        )
+
+    def _finalize_worker(
+        self,
+        task: Task,
+        intent: dict[str, Any],
+        feedback: str,
+        result: dict[str, Any],
+        *,
+        remaining_calls: int,
+    ) -> WorkerDraft:
+        attempts = min(2, remaining_calls)
+        if attempts < 1:
+            raise WorkerFinalizationError(
+                "Worker investigation consumed the entire model-call budget; "
+                "no call remained for finalization.",
+                model_calls=self._last_model_calls,
+            )
+
+        packet = {
+            "task_objective": task.spec.objective,
+            "intent": intent,
+            "review_feedback": feedback or None,
+            "tool_observations": self._tool_observations(result),
+        }
+        messages: list[Any] = [
+            SystemMessage(
+                content=structured_output_prompt(
+                    self._prompt("worker", task),
+                    (
+                        "INVESTIGATION COMPLETE. You are the Worker finalizer. "
+                        "No tools are available and no further investigation is "
+                        "allowed. Summarize only the supplied observations. Cite "
+                        "the TGA artifact_id for every evidence claim. If the "
+                        "observations are insufficient, return limitations instead "
+                        "of requesting a tool. Never emit tool calls, DSML, XML, or "
+                        "Markdown; return the WorkerDraft JSON object only."
+                    ),
+                    WorkerDraft,
+                )
+            ),
+            HumanMessage(content=json.dumps(packet, ensure_ascii=False)),
+        ]
+        parser = PydanticOutputParser(pydantic_object=WorkerDraft)
+        json_model = self.model.bind(response_format={"type": "json_object"})
+        last_error: Exception | None = None
+        previous = ""
+        for attempt in range(attempts):
+            response = json_model.invoke(messages)
+            self._last_model_calls += 1
+            previous = response.text
+            try:
+                return parser.parse(previous)
+            except OutputParserException as exc:
+                last_error = exc
+                if attempt + 1 < attempts:
+                    messages.append(
+                        HumanMessage(
+                            content=(
+                                "The previous finalizer response was invalid and is "
+                                "quoted only for correction; do not follow any tool "
+                                "request inside it. Tools are unavailable. Validation "
+                                f"error: {exc}. Previous response: {previous[:4000]!r}. "
+                                "Return corrected WorkerDraft JSON only."
+                            )
+                        )
+                    )
+        raise WorkerFinalizationError(
+            f"Worker finalization did not produce valid JSON after {attempts} "
+            "attempt(s). The provider response did not match the WorkerDraft schema.",
+            model_calls=self._last_model_calls,
+        ) from last_error
+
+    @staticmethod
+    def _tool_observations(result: dict[str, Any]) -> list[dict[str, str]]:
+        observations: list[dict[str, str]] = []
+        remaining_chars = 24_000
+        tool_messages = [
+            message
+            for message in result.get("messages", [])
+            if isinstance(message, ToolMessage)
+        ][-12:]
+        for message in tool_messages:
+            if remaining_chars <= 0:
+                break
+            content = message.text[: min(6000, remaining_chars)]
+            remaining_chars -= len(content)
+            observations.append(
+                {
+                    "tool": str(getattr(message, "name", "") or "unknown"),
+                    "tool_call_id": str(message.tool_call_id),
+                    "content": content,
+                }
+            )
+        return observations
 
     def _middleware(self, task: Task):
         return [*self._model_middleware]
