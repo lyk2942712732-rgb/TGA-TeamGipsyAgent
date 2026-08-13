@@ -9,11 +9,36 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from apps.api.routes import router
 from tga2.bootstrap import get_container
 
 RUN_ROOT = Path(os.getenv("TGA2_RUN_ROOT", "runs2")).resolve()
+
+
+class SPAStaticFiles(StaticFiles):
+    """Serve React Router locations through the built SPA entry document."""
+
+    async def get_response(self, path, scope):
+        try:
+            response = await super().get_response(path, scope)
+        except StarletteHTTPException as exc:
+            if exc.status_code != 404 or not self._is_spa_route(path, scope):
+                raise
+            return await super().get_response("index.html", scope)
+        if response.status_code == 404 and self._is_spa_route(path, scope):
+            return await super().get_response("index.html", scope)
+        return response
+
+    @staticmethod
+    def _is_spa_route(path: str, scope) -> bool:
+        normalized = str(scope.get("path") or path).lstrip("/")
+        return (
+            scope.get("method") in {"GET", "HEAD"}
+            and not normalized.startswith("api/")
+            and not Path(normalized).suffix
+        )
 
 
 @asynccontextmanager
@@ -45,4 +70,4 @@ web_root = Path(
     os.getenv("TGA2_WEB_ROOT", Path(__file__).parents[1] / "web" / "dist")
 ).resolve()
 if web_root.is_dir():
-    app.mount("/", StaticFiles(directory=web_root, html=True), name="web")
+    app.mount("/", SPAStaticFiles(directory=web_root, html=True), name="web")

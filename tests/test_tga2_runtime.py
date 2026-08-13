@@ -894,6 +894,20 @@ def test_apps_api_is_the_only_http_boundary(tmp_path: Path) -> None:
     assert not (Path(__file__).parents[1] / "tga2" / "api.py").exists()
 
 
+def test_built_spa_supports_direct_history_route_access() -> None:
+    client = TestClient(app)
+
+    solver_page = client.get("/settings/solvers")
+    runtime_page = client.get("/tasks/task_example/runtime?tab=evidence")
+
+    assert solver_page.status_code == 200
+    assert runtime_page.status_code == 200
+    assert '<div id="root"></div>' in solver_page.text
+    assert '<div id="root"></div>' in runtime_page.text
+    assert client.get("/api/v2/does-not-exist").status_code == 404
+    assert client.get("/assets/does-not-exist.js").status_code == 404
+
+
 def test_code_audit_mode_is_not_exposed_or_accepted(tmp_path: Path) -> None:
     reset_containers()
     app.state.container = get_container(tmp_path / "runs")
