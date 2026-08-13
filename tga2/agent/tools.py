@@ -111,6 +111,20 @@ class ToolRegistry:
                 intent_id=self.intent_id,
             )
             self.store.save_artifact(artifact)
+            self.store.append_event(
+                AgentEvent(
+                    task_id=self.task_id,
+                    type="ARTIFACT_CREATED",
+                    solver_id="worker",
+                    intent_id=self.intent_id,
+                    payload={
+                        "artifact_id": artifact.id,
+                        "kind": artifact.kind,
+                        "sha256": artifact.sha256,
+                        "source_tool": "save_note",
+                    },
+                )
+            )
             return json.dumps({"artifact_id": artifact.id, "sha256": artifact.sha256})
 
         return handler()

@@ -50,23 +50,54 @@ def runtime_snapshot_projection(
         (
             item["created_at"]
             for item in reversed(events)
-            if item["type"] in {"TASK_COMPLETED", "TASK_FAILED", "TASK_CANCELLED"}
+            if item["type"]
+            in {
+                "TASK_COMPLETED",
+                "TASK_COMPLETED_WITH_LIMITATIONS",
+                "TASK_FAILED",
+                "TASK_CANCELLED",
+            }
         ),
         None,
     )
+    waiting_for_user = next(
+        (
+            item
+            for item in reversed(events)
+            if item["type"] in {"USER_INPUT_REQUIRED", "USER_INPUT_RECEIVED"}
+        ),
+        None,
+    )
+    awaiting_user = bool(
+        waiting_for_user and waiting_for_user["type"] == "USER_INPUT_REQUIRED"
+    )
+    projected_status = "awaiting_user_input" if awaiting_user else status
+    model_call_event_types = {
+        "PLAN_CREATED",
+        "WORKER_ATTEMPT_COMPLETED",
+        "REVIEW_COMPLETED",
+        "SUPERVISOR_DECIDED",
+        "REPORT_GENERATED",
+    }
+    model_calls = sum(
+        int((item.get("payload") or {}).get("model_calls") or 0)
+        for item in events
+        if item["type"] in model_call_event_types
+    )
     session = {
-        "status": status,
+        "status": projected_status,
         "supervisor_solver_id": "supervisor" if solvers else None,
         "active_solver_count": sum(item["status"] == "running" for item in solvers),
         "max_active_workers": runtime.graph.max_active_workers if runtime else 1,
         "task_budget_usage": {
-            "turns": len(raw.get("solver_runs", [])),
+            "turns": model_calls,
+            "model_calls": model_calls,
             "tool_calls": len(actions),
             "artifacts": len(artifacts),
         },
-        "stop_reason": None,
-        "turn_count": len(raw.get("solver_runs", [])),
-        "max_turns": runtime.graph.max_turns if runtime else 32,
+        "stop_reason": "user_input_required" if awaiting_user else None,
+        "turn_count": model_calls,
+        "max_turns": runtime.budget.task.max_model_calls if runtime else 60,
         "timestamps": {
             "created_at": task["created_at"],
             "started_at": started,
@@ -76,7 +107,7 @@ def runtime_snapshot_projection(
     }
     team = {
         "task_id": task_id,
-        "status": status,
+        "status": projected_status,
         "supervisor_solver_id": session["supervisor_solver_id"],
         "max_active_workers": runtime.graph.max_active_workers if runtime else 1,
         "max_total_solvers": runtime.graph.max_total_solvers if runtime else 4,
@@ -102,9 +133,9 @@ def runtime_snapshot_projection(
     lifecycle = {
         "created_at": task["created_at"],
         "updated_at": task["updated_at"],
-        "status": status,
+        "status": projected_status,
         "turn_count": session["turn_count"],
-        "max_turns": runtime.graph.max_turns if runtime else 32,
+        "max_turns": runtime.budget.task.max_model_calls if runtime else 60,
         "started_at": started,
         "finished_at": finished,
         "stop_reason": None,
@@ -115,7 +146,8 @@ def runtime_snapshot_projection(
         "flags": 0,
         "findings": len(findings),
         "artifacts": len(artifacts),
-        "needs_attention": status == "awaiting_approval",
+        "needs_attention": projected_status
+        in {"awaiting_approval", "awaiting_user_input"},
         "latest_event": (
             {key: projected_events[-1][key] for key in ("seq", "type", "created_at")}
             if projected_events
@@ -141,11 +173,11 @@ def runtime_snapshot_projection(
             "task_entry_url": None,
         },
         "config_snapshot": {
-            "mode_config": task["spec"].get("mode_options")
-            or {"mode": task["mode"]},
+            "mode_config": task["spec"].get("mode_options") or {"mode": task["mode"]},
             "execution_policy": policy,
             "execution_budget": {
-                "max_turns": runtime.graph.max_turns if runtime else 32
+                **(runtime.budget.model_dump(mode="json") if runtime else {}),
+                "max_turns": runtime.budget.task.max_model_calls if runtime else 60,
             },
             "model": {
                 role: settings.model.model_dump(mode="json")
@@ -154,7 +186,9 @@ def runtime_snapshot_projection(
             if runtime
             else None,
             "mcp_capabilities": {
-                "tool_names": sorted((policy.get("tool") or {}).get("allowed_tools") or [])
+                "tool_names": sorted(
+                    (policy.get("tool") or {}).get("allowed_tools") or []
+                )
             },
             "task_common_skills": task["spec"].get("selected_skill_names"),
             "agent_prompt": None,
@@ -183,7 +217,11 @@ def runtime_snapshot_projection(
         "global_plan": {
             "task_id": task_id,
             "intent_ids": [item["intent_id"] for item in intents],
-            "status": "completed" if status == "completed" else "active",
+            "version": (raw.get("plan") or {}).get("version", 0),
+            "summary": (raw.get("plan") or {}).get("summary", ""),
+            "status": "completed"
+            if status in {"completed", "completed_with_limitations"}
+            else "active",
         },
         "challenge": {},
         "flags": [],
@@ -206,7 +244,9 @@ def task_list_projection(snapshot: dict[str, Any]) -> dict[str, Any]:
         "target_count": 1,
         "hint_count": len(task["spec"]["instructions"]),
         "solver_total": len(snapshot.get("solvers", [])),
-        "highest_severity": max(severities, key=severity_order.get) if severities else None,
+        "highest_severity": max(severities, key=severity_order.get)
+        if severities
+        else None,
         **lifecycle,
     }
 

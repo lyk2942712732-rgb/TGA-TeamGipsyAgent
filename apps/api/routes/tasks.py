@@ -99,7 +99,7 @@ def _request(
                 denied_tools=frozenset(
                     (execution.get("tool") or {}).get("denied_tools") or ()
                 ),
-                max_tool_calls=configuration.runtime.tool_defaults.max_calls,
+                max_tool_calls=configuration.runtime.budget.task.max_tool_calls,
             ),
             network_access=network.get("access", "disabled")
             if network.get("access") in {"disabled", "task_sources", "public_internet"}
@@ -355,10 +355,10 @@ def event_stream(
             items = app.runtime.events(task_id, after_seq=cursor, limit=200)
             for item in items:
                 cursor = max(cursor, int(item["seq"]))
-                yield f"id: {cursor}\nevent: {item['type']}\ndata: {json.dumps(item, ensure_ascii=False)}\n\n"
+                yield f"id: {cursor}\nevent: event\ndata: {json.dumps(item, ensure_ascii=False)}\n\n"
             if (
                 app.runtime.snapshot(task_id)["task"]["status"]
-                in {"completed", "failed", "cancelled"}
+                in {"completed", "completed_with_limitations", "failed", "cancelled"}
                 and not items
             ):
                 break
@@ -492,6 +492,17 @@ def intervention(task_id: str, payload: dict, app: Container = Depends(container
     return _call(app.runtime.record_intervention, task_id, payload)
 
 
+@router.post("/tasks/{task_id}/user-input")
+def user_input(task_id: str, payload: dict, app: Container = Depends(container)):
+    content = str(payload.get("content") or "").strip()
+    if not content:
+        raise HTTPException(422, "content is required")
+    current = _call(app.runtime.snapshot, task_id)
+    if current["session"]["status"] != "awaiting_user_input":
+        raise HTTPException(409, "task is not waiting for user input")
+    return _call(app.runtime.resume_task, task_id, {"content": content})
+
+
 @router.post("/tasks/{task_id}/solvers/{solver_id}/control")
 @router.post("/tasks/{task_id}/intents/{solver_id}/retry")
 def graph_managed(task_id: str, solver_id: str):
@@ -501,8 +512,14 @@ def graph_managed(task_id: str, solver_id: str):
 @router.get("/dashboard")
 def dashboard(app: Container = Depends(container)):
     values = app.runtime.list_tasks()
-    active = [x for x in values if x["status"] in {"running", "awaiting_approval"}]
-    completed = [x for x in values if x["status"] == "completed"]
+    active = [
+        x
+        for x in values
+        if x["status"] in {"running", "awaiting_approval", "awaiting_user_input"}
+    ]
+    completed = [
+        x for x in values if x["status"] in {"completed", "completed_with_limitations"}
+    ]
     return {
         "view_version": 1,
         "generated_at": datetime.now(UTC).isoformat(),
@@ -513,7 +530,7 @@ def dashboard(app: Container = Depends(container)):
             ),
             "active_solvers": sum(int(x.get("active_solvers", 0)) for x in values),
         },
-        "needs_attention": [],
+        "needs_attention": [x for x in active if x.get("needs_attention")],
         "active_tasks": active,
         "recent_completed": completed[:10],
         "system_status": [

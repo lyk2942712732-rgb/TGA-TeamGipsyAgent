@@ -103,6 +103,18 @@ class TaskStore:
 
     def save_plan(self, plan: Plan) -> None:
         with self.transaction() as conn:
+            conn.execute(
+                "INSERT INTO plans(task_id,version,payload_json,created_at,updated_at) "
+                "VALUES (?,?,?,?,?) ON CONFLICT(task_id,version) DO UPDATE SET "
+                "payload_json=excluded.payload_json,updated_at=excluded.updated_at",
+                (
+                    plan.task_id,
+                    plan.version,
+                    plan.model_dump_json(),
+                    plan.created_at.isoformat(),
+                    plan.updated_at.isoformat(),
+                ),
+            )
             for intent in plan.intents:
                 if intent.task_id != plan.task_id:
                     raise ValueError("intent belongs to another task")
@@ -119,6 +131,22 @@ class TaskStore:
                         intent.updated_at.isoformat(),
                     ),
                 )
+
+    def get_plan(self, task_id: str) -> Plan | None:
+        row = self._one(
+            "SELECT payload_json FROM plans WHERE task_id=? ORDER BY version DESC LIMIT 1",
+            (task_id,),
+        )
+        return Plan.model_validate_json(row["payload_json"]) if row else None
+
+    def list_plans(self, task_id: str) -> list[Plan]:
+        return [
+            Plan.model_validate_json(row["payload_json"])
+            for row in self._all(
+                "SELECT payload_json FROM plans WHERE task_id=? ORDER BY version",
+                (task_id,),
+            )
+        ]
 
     def list_intents(self, task_id: str) -> list[Intent]:
         return [
@@ -337,10 +365,12 @@ class TaskStore:
         task = self.get_task(task_id)
         if task is None:
             raise KeyError(f"task not found: {task_id}")
+        plan = self.get_plan(task_id)
         return {
             "schema_version": 1,
             "task": task.model_dump(mode="json"),
             "policy": self.get_policy(task_id).model_dump(mode="json"),
+            "plan": plan.model_dump(mode="json") if plan else None,
             "intents": [
                 item.model_dump(mode="json") for item in self.list_intents(task_id)
             ],

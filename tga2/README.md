@@ -39,7 +39,8 @@ Every process reads and writes runtime configuration through the tracked
 - `models.json` owns providers, models, verification state and API keys. API
   keys are intentionally stored as plain JSON for this competition project.
 - `runtime.json` owns the four Solver roles, including each role's provider and
-  model selection, prompts, tools, graph limits, Kali profile and file limits.
+  model selection, prompts, tools, the unified Task/Intent/role budget, graph
+  concurrency, Kali profile and file limits.
 - `scenes.json` owns the five task scenes, their form fields, default policy and
   scene prompt additions.
 - `mcp.json` owns MCP server definitions.
@@ -89,3 +90,15 @@ it does not rename the provider to OpenAI. `selected_api_key_id` selects the
 key used by that provider. The two top-level `active_*` fields are retained for
 the Models-page compatibility endpoint; actual Solver execution chooses models
 from `runtime.json -> roles -> <role> -> model`.
+
+### Plan, Intent, Attempt and Round
+
+A Plan is the Supervisor's versioned task-level strategy: an ordered set of
+Intents plus its summary. An Intent is one executable and independently
+reviewable work item inside that Plan. An Intent can have several Attempts; one
+Attempt (Worker execution, Runtime evidence validation, Reviewer evaluation,
+and Supervisor checkpoint decision) is one overall Round.
+
+All limits are read from `runtime.json -> budget`. Models may propose actions,
+but only Runtime code may consume budgets, revise Plan state, change Intent
+state, or accept task completion.

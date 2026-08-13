@@ -12,16 +12,18 @@ from typing import Any
 from langchain_core.tools import BaseTool
 
 from tga2.agent.graph import RuntimeDeps, TaskGraph
-from tga2.agent.nodes import TaskCancelledError
+from tga2.agent.nodes import BudgetExceededError, TaskCancelledError
 from tga2.agent.roles import (
     AgentSuite,
     LangChainAgentSuite,
     OfflineAgentSuite,
     RoutedAgentSuite,
 )
+from tga2.agent.schemas import ReportDraft
 from tga2.config import Configuration
 from tga2.core.models import AgentEvent, ResourceRef, Task, TaskSpec, TaskStatus
 from tga2.core.policy import ExecutionPolicy, ToolPolicy
+from tga2.core.report import render_markdown
 from tga2.core.store import TaskStore
 from tga2.core.workspace import TaskWorkspace
 from tga2.integrations.model import ModelSettings, build_chat_model
@@ -86,9 +88,18 @@ class TaskRuntimeService:
     def _build_agents(self, fallback: ModelSettings | None = None) -> AgentSuite:
         offline = OfflineAgentSuite()
         roles: dict[str, AgentSuite] = {}
-        built: dict[tuple[str, str, int, int], AgentSuite] = {}
         for role in ("supervisor", "worker", "reviewer", "reporter"):
             role_config = self.configuration.runtime.roles[role]
+            role_budget = getattr(self.configuration.runtime.budget.roles, role)
+            if role == "supervisor":
+                call_limit = role_budget.calls_per_decision
+            elif role == "worker":
+                call_limit = role_budget.calls_per_attempt
+            elif role == "reviewer":
+                call_limit = role_budget.calls_per_review
+            else:
+                call_limit = role_budget.calls_per_report
+            parse_retries = 0 if role == "worker" else role_budget.parse_retries
             provider_id = role_config.model.provider_id
             model_id = role_config.model.model_id
             if (provider_id, model_id) == ("offline", "offline"):
@@ -97,31 +108,26 @@ class TaskRuntimeService:
                         build_chat_model(fallback),
                         self._select_skills,
                         self.configuration.agent_prompts(),
-                        model_call_limit=role_config.model_call_limit,
-                        model_retries=role_config.model_retries,
+                        model_call_limit=call_limit,
+                        structured_parse_retries=parse_retries,
                         skill_prompt_limit=self.configuration.runtime.skill_selection.prompt_injection_limit,
                     )
                 else:
                     roles[role] = offline
                 continue
-            key = (
-                provider_id,
-                model_id,
-                role_config.model_call_limit,
-                role_config.model_retries,
-            )
             try:
                 settings = self.configuration.role_model_settings(role)
-                if key not in built and settings is not None:
-                    built[key] = LangChainAgentSuite(
+                if settings is not None:
+                    roles[role] = LangChainAgentSuite(
                         build_chat_model(settings),
                         self._select_skills,
                         self.configuration.agent_prompts(),
-                        model_call_limit=role_config.model_call_limit,
-                        model_retries=role_config.model_retries,
+                        model_call_limit=call_limit,
+                        structured_parse_retries=parse_retries,
                         skill_prompt_limit=self.configuration.runtime.skill_selection.prompt_injection_limit,
                     )
-                roles[role] = built.get(key, offline)
+                else:
+                    roles[role] = offline
             except (KeyError, ValueError):
                 # Keep the control plane available so the Solver page can repair
                 # a deleted/stale assignment. Preflight reports it as a blocker.
@@ -207,7 +213,7 @@ class TaskRuntimeService:
             tool=ToolPolicy(
                 allowed_tools=frozenset(allowed),
                 approval_required=frozenset(approval_required),
-                max_tool_calls=self.configuration.runtime.tool_defaults.max_calls,
+                max_tool_calls=self.configuration.runtime.budget.task.max_tool_calls,
             ),
             network_access=network.get("access", "disabled"),
             allowed_origins=tuple(
@@ -227,24 +233,27 @@ class TaskRuntimeService:
             task = store.get_task(task_id)
             if task is None:
                 raise KeyError(f"task not found: {task_id}")
-            if task.status == TaskStatus.COMPLETED:
-                return {"task_id": task_id, "status": "completed", "interrupts": []}
+            if task.status in {
+                TaskStatus.COMPLETED,
+                TaskStatus.COMPLETED_WITH_LIMITATIONS,
+            }:
+                return {
+                    "task_id": task_id,
+                    "status": task.status.value,
+                    "interrupts": [],
+                }
             try:
                 result = graph.invoke(task_id)
             except TaskCancelledError:
                 return {"task_id": task_id, "status": "cancelled", "interrupts": []}
+            except BudgetExceededError as exc:
+                preserved = self._preserve_budget_limited_result(store, task, exc)
+                if preserved is not None:
+                    return preserved
+                self._record_failure(store, task_id, exc)
+                raise
             except BaseException as exc:
-                store.set_task_status(task_id, TaskStatus.FAILED)
-                store.append_event(
-                    AgentEvent(
-                        task_id=task_id,
-                        type="TASK_FAILED",
-                        payload={
-                            "error_type": type(exc).__name__,
-                            "message": str(exc)[:2000],
-                        },
-                    )
-                )
+                self._record_failure(store, task_id, exc)
                 raise
             return self._graph_response(task_id, result)
 
@@ -252,10 +261,99 @@ class TaskRuntimeService:
         self, task_id: str, decision: bool | dict[str, Any]
     ) -> dict[str, Any]:
         with self._runtime(task_id) as (store, graph):
-            if store.get_task(task_id) is None:
+            task = store.get_task(task_id)
+            if task is None:
                 raise KeyError(f"task not found: {task_id}")
-            result = graph.resume(task_id, decision)
+            try:
+                result = graph.resume(task_id, decision)
+            except TaskCancelledError:
+                return {"task_id": task_id, "status": "cancelled", "interrupts": []}
+            except BudgetExceededError as exc:
+                preserved = self._preserve_budget_limited_result(store, task, exc)
+                if preserved is not None:
+                    return preserved
+                self._record_failure(store, task_id, exc)
+                raise
+            except BaseException as exc:
+                self._record_failure(store, task_id, exc)
+                raise
             return self._graph_response(task_id, result)
+
+    def _preserve_budget_limited_result(
+        self, store: TaskStore, task: Task, exc: BudgetExceededError
+    ) -> dict[str, Any] | None:
+        snapshot = store.snapshot(task.id)
+        confirmed = [
+            item for item in snapshot["findings"] if item["status"] == "confirmed"
+        ]
+        if not confirmed:
+            return None
+        report_input = {
+            **snapshot,
+            "findings": confirmed,
+            "evidence_claims": [
+                item
+                for item in snapshot["evidence_claims"]
+                if item["status"] == "confirmed"
+            ],
+        }
+        draft = ReportDraft(
+            executive_summary=(
+                "The task reached its configured Runtime budget after producing "
+                f"{len(confirmed)} confirmed finding(s)."
+            ),
+            limitations=[str(exc)],
+        )
+        markdown = render_markdown(report_input, draft)
+        workspace = TaskWorkspace(self.run_root, task.id)
+        path = workspace.reports / "report.md"
+        path.write_text(markdown, encoding="utf-8")
+        relative = path.relative_to(workspace.root).as_posix()
+        store.save_report(task.id, markdown, relative)
+        store.set_task_status(task.id, TaskStatus.COMPLETED_WITH_LIMITATIONS)
+        store.append_event(
+            AgentEvent(
+                task_id=task.id,
+                type="REPORT_GENERATED",
+                solver_id="runtime",
+                payload={
+                    "path": relative,
+                    "partial": True,
+                    "reason": str(exc),
+                    "model_calls": 0,
+                },
+            )
+        )
+        store.append_event(
+            AgentEvent(
+                task_id=task.id,
+                type="TASK_COMPLETED_WITH_LIMITATIONS",
+                payload={
+                    "report_path": relative,
+                    "confirmed_findings": len(confirmed),
+                    "reason": str(exc),
+                },
+            )
+        )
+        return {
+            "task_id": task.id,
+            "status": TaskStatus.COMPLETED_WITH_LIMITATIONS.value,
+            "interrupts": [],
+        }
+
+    @staticmethod
+    def _record_failure(store: TaskStore, task_id: str, exc: BaseException) -> None:
+        store.set_task_status(task_id, TaskStatus.FAILED)
+        store.append_event(
+            AgentEvent(
+                task_id=task_id,
+                type="TASK_FAILED",
+                payload={
+                    "error_type": type(exc).__name__,
+                    "message": str(exc)[:2000],
+                },
+            )
+        )
 
     def cancel_task(self, task_id: str) -> dict[str, Any]:
         with self._store(task_id) as store:
@@ -375,7 +473,16 @@ class TaskRuntimeService:
     def _graph_response(task_id: str, result: dict[str, Any]) -> dict[str, Any]:
         state = result.get("state") or {}
         interrupts = result.get("interrupts") or []
-        status = "awaiting_approval" if interrupts else state.get("status", "running")
+        interrupt_kinds = {
+            item.get("kind") for item in interrupts if isinstance(item, dict)
+        }
+        status = (
+            "awaiting_user_input"
+            if "user_input" in interrupt_kinds
+            else "awaiting_approval"
+            if interrupts
+            else state.get("status", "running")
+        )
         return {
             "task_id": task_id,
             "status": status,

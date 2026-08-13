@@ -55,6 +55,7 @@ export const runtimeApi = {
     return requestJson<{ accepted?: boolean; status?: string; reason?: string }>(`/api/v2/tasks/${encodeURIComponent(taskId)}/control`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action }) });
   },
   intervention: async (taskId: string, payload: { kind: "hint" | "instruction" | "constraint" | "priority_change" | "answer"; content: string; scope: "task" | "solver" | "intent"; target_id?: string }) => requestJson<{ accepted?: boolean; status?: string; intervention?: { id?: string } }>(`/api/v2/tasks/${encodeURIComponent(taskId)}/interventions`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }),
+  userInput: async (taskId: string, content: string) => requestJson<{ status?: string }>(`/api/v2/tasks/${encodeURIComponent(taskId)}/user-input`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ content }) }),
   approvalDecision: async (taskId: string, actionId: string, decision: "approve" | "reject") => requestJson<{ accepted?: boolean; status?: string }>(`/api/v2/tasks/${encodeURIComponent(taskId)}/approvals/${encodeURIComponent(actionId)}/decision`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ decision }) }),
   streamUrl: (taskId: string, afterSeq: number) => url(`/tasks/${encodeURIComponent(taskId)}/events/stream?after_seq=${afterSeq}`),
 };

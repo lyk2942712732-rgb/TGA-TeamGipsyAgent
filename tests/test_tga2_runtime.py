@@ -11,6 +11,14 @@ from fastapi.testclient import TestClient
 
 from apps.api.main import app
 from tga2.agent.roles import LangChainAgentSuite, OfflineAgentSuite, RoutedAgentSuite
+from tga2.agent.schemas import (
+    PlanDraft,
+    PlanIntentDraft,
+    ReportDraft,
+    ReviewDraft,
+    SupervisorDecision,
+    WorkerDraft,
+)
 from tga2.agent.service import TaskRuntimeService
 from tga2.bootstrap import get_container, reset_containers
 from tga2.config import DEFAULT_KALI_IMAGE, DEFAULT_KALI_IMAGE_DIGEST
@@ -23,8 +31,81 @@ class _VerifiedResponse:
 
 
 class _VerificationModel:
-    def invoke(self, _prompt: str) -> _VerifiedResponse:
-        return _VerifiedResponse()
+    def with_structured_output(self, _schema, **_kwargs):
+        return self
+
+    def invoke(self, _prompt):
+        from tga2.agent.schemas import PlanDraft, PlanIntentDraft
+
+        return {
+            "raw": _VerifiedResponse(),
+            "parsed": PlanDraft(
+                summary="Verified",
+                intents=[PlanIntentDraft(title="Inspect", objective="Inspect input")],
+            ),
+            "parsing_error": None,
+        }
+
+
+class _CheckpointSuite(OfflineAgentSuite):
+    def __init__(self) -> None:
+        self.reviews = 0
+        self.worker_attempts: list[int] = []
+
+    def plan(self, _task):
+        return PlanDraft(
+            summary="Two bounded intents",
+            intents=[
+                PlanIntentDraft(title="First", objective="Inspect first"),
+                PlanIntentDraft(title="Second", objective="Inspect second"),
+            ],
+        )
+
+    def work(self, task, intent, tools, feedback, middleware=()):
+        self.worker_attempts.append(int(intent["attempt"]))
+        return WorkerDraft(summary=f"Attempt {intent['attempt']}")
+
+    def review(self, task, packet):
+        self.reviews += 1
+        if self.reviews == 1:
+            return ReviewDraft(
+                verdict="retry",
+                reason_codes=["insufficient_evidence"],
+                feedback="Collect stronger evidence.",
+            )
+        return ReviewDraft(verdict="pass", feedback="Accepted.")
+
+    def decide(self, task, packet):
+        verdict = (packet.review_result or {}).get("verdict")
+        pending = [
+            item for item in packet.plan["intents"] if item["status"] == "pending"
+        ]
+        if verdict == "retry":
+            return SupervisorDecision(
+                action="retry", reason="Retry once.", feedback="Use reviewer feedback."
+            )
+        return SupervisorDecision(
+            action="next_intent" if pending else "finish",
+            reason="Continue the bounded plan.",
+        )
+
+    def report(self, task, snapshot):
+        return ReportDraft(executive_summary="Checkpoint flow completed.")
+
+
+class _AskUserSuite(OfflineAgentSuite):
+    def __init__(self) -> None:
+        self.decisions = 0
+
+    def decide(self, task, packet):
+        self.decisions += 1
+        if self.decisions == 1:
+            return SupervisorDecision(
+                action="ask_user",
+                reason="A target detail is missing.",
+                user_question="Which authorized target should be used?",
+            )
+        return SupervisorDecision(action="finish", reason="User supplied the detail.")
 
 
 @pytest.fixture(autouse=True)
@@ -54,6 +135,78 @@ def test_offline_vertical_slice(tmp_path: Path) -> None:
     assert len(snapshot["findings"]) == 1
 
 
+def test_supervisor_checkpoint_retries_then_advances_plan(tmp_path: Path) -> None:
+    service = TaskRuntimeService(run_root=tmp_path / "runs")
+    suite = _CheckpointSuite()
+    service.agents = suite
+    made = service.create_task(
+        CreateTaskRequest(
+            name="checkpoint",
+            objective="Exercise dynamic supervisor routing",
+            mode="vulnerability_research",
+        )
+    )
+    result = service.run_task(made["task_id"])
+    snapshot = service.snapshot(made["task_id"])
+
+    assert result["status"] == "completed"
+    assert suite.worker_attempts == [1, 2, 1]
+    assert snapshot["global_plan"]["version"] == 1
+    assert len(snapshot["intents"]) == 2
+    assert all(item["status"] == "completed" for item in snapshot["intents"])
+    event_types = [item["type"] for item in snapshot["events"]]
+    assert event_types.count("SUPERVISOR_DECIDED") == 3
+    assert "INTENT_RETRY_REQUESTED" in event_types
+
+
+def test_supervisor_user_input_interrupt_has_distinct_status_and_resumes(
+    tmp_path: Path,
+) -> None:
+    service = TaskRuntimeService(run_root=tmp_path / "runs")
+    suite = _AskUserSuite()
+    service.agents = suite
+    made = service.create_task(
+        CreateTaskRequest(
+            name="user input",
+            objective="Exercise the explicit user-input checkpoint",
+            mode="vulnerability_research",
+        )
+    )
+
+    paused = service.run_task(made["task_id"])
+    assert paused["status"] == "awaiting_user_input"
+    assert paused["interrupts"][0]["kind"] == "user_input"
+    assert service.snapshot(made["task_id"])["session"]["status"] == (
+        "awaiting_user_input"
+    )
+
+    resumed = service.resume_task(
+        made["task_id"], {"content": "Use 192.0.2.10 within the existing scope."}
+    )
+    assert resumed["status"] == "completed"
+    event_types = [item["type"] for item in service.snapshot(made["task_id"])["events"]]
+    assert "USER_INPUT_REQUIRED" in event_types
+    assert "USER_INPUT_RECEIVED" in event_types
+
+
+def test_runtime_json_is_the_single_budget_source(tmp_path: Path) -> None:
+    service = TaskRuntimeService(run_root=tmp_path / "runs")
+    runtime = service.configuration.runtime
+    assert runtime.schema_version == 3
+    assert runtime.budget.task.model_dump() == {
+        "max_intents": 4,
+        "max_model_calls": 60,
+        "max_tool_calls": 80,
+        "max_duration_minutes": 20,
+    }
+    assert runtime.budget.intent.max_attempts == 3
+    assert runtime.budget.roles.worker.calls_per_attempt == 8
+    assert runtime.budget.roles.worker.tool_calls_per_attempt == 15
+    payload = json.loads((tmp_path / "runs" / ".config" / "runtime.json").read_text())
+    assert "model_call_limit" not in payload["roles"]["worker"]
+    assert "max_calls" not in payload["tool_defaults"]
+
+
 def test_apps_api_is_the_only_http_boundary(tmp_path: Path) -> None:
     reset_containers()
     app.state.container = get_container(tmp_path / "runs")
@@ -74,7 +227,10 @@ def test_apps_api_is_the_only_http_boundary(tmp_path: Path) -> None:
     )
     assert created.status_code == 201
     assert client.get(f"/api/v2/tasks/{created.json()['task_id']}").status_code == 200
-    assert client.get(f"/api/v2/tasks/{created.json()['task_id']}/session").status_code == 404
+    assert (
+        client.get(f"/api/v2/tasks/{created.json()['task_id']}/session").status_code
+        == 404
+    )
     assert not (Path(__file__).parents[1] / "tga2" / "api.py").exists()
 
 
@@ -164,13 +320,12 @@ def test_prompt_skill_and_solver_settings_reach_runtime(tmp_path: Path) -> None:
         },
     )
     assert prompt.status_code == 200
-    assert app.state.container.configuration.runtime.common_prompt == "competition prompt"
     assert (
-        app.state.container.configuration.scene("vulnerability_research")["prompts"][
-            "methodology"
-        ]
-        == ["Trace data flow"]
+        app.state.container.configuration.runtime.common_prompt == "competition prompt"
     )
+    assert app.state.container.configuration.scene("vulnerability_research")["prompts"][
+        "methodology"
+    ] == ["Trace data flow"]
     imported = client.post(
         "/api/v2/settings/skills/import",
         content=b"evidence audit",
@@ -272,9 +427,7 @@ def test_kali_health_verifies_the_configured_local_image_digest(
     assert health.json()["image_store"]["expected_digest"] == (
         DEFAULT_KALI_IMAGE_DIGEST
     )
-    assert health.json()["image_store"]["actual_digest"] == (
-        DEFAULT_KALI_IMAGE_DIGEST
-    )
+    assert health.json()["image_store"]["actual_digest"] == (DEFAULT_KALI_IMAGE_DIGEST)
 
 
 def test_mcp_config_translation() -> None:
@@ -303,8 +456,12 @@ def test_provider_registry_verifies_selected_provider_and_persists(
     import apps.api.routes.settings as settings_routes
     import tga2.agent.service as service_module
 
-    monkeypatch.setattr(settings_routes, "build_chat_model", lambda _settings: _VerificationModel())
-    monkeypatch.setattr(service_module, "build_chat_model", lambda _settings: _VerificationModel())
+    monkeypatch.setattr(
+        settings_routes, "build_chat_model", lambda _settings: _VerificationModel()
+    )
+    monkeypatch.setattr(
+        service_module, "build_chat_model", lambda _settings: _VerificationModel()
+    )
     run_root = tmp_path / "runs"
     reset_containers()
     app.state.container = get_container(run_root)
@@ -353,8 +510,12 @@ def test_agent_model_assignments_are_validated_and_routed(
     import apps.api.routes.settings as settings_routes
     import tga2.agent.service as service_module
 
-    monkeypatch.setattr(settings_routes, "build_chat_model", lambda _settings: _VerificationModel())
-    monkeypatch.setattr(service_module, "build_chat_model", lambda _settings: _VerificationModel())
+    monkeypatch.setattr(
+        settings_routes, "build_chat_model", lambda _settings: _VerificationModel()
+    )
+    monkeypatch.setattr(
+        service_module, "build_chat_model", lambda _settings: _VerificationModel()
+    )
     reset_containers()
     app.state.container = get_container(tmp_path / "runs")
     client = TestClient(app)
@@ -369,9 +530,12 @@ def test_agent_model_assignments_are_validated_and_routed(
         },
     ).json()["provider"]
     model_id = provider["models"][0]["id"]
-    assert client.post(
-        f"/api/v2/settings/llm/providers/{provider['id']}/models/{model_id}/verify"
-    ).status_code == 200
+    assert (
+        client.post(
+            f"/api/v2/settings/llm/providers/{provider['id']}/models/{model_id}/verify"
+        ).status_code
+        == 200
+    )
     for role in ("supervisor", "reviewer"):
         changed = client.put(
             f"/api/v2/solvers/{role}/capabilities",

@@ -9,9 +9,9 @@ from typing import Any, Protocol
 from langchain.agents import create_agent
 from langchain.agents.middleware import (
     ModelCallLimitMiddleware,
-    ModelRetryMiddleware,
 )
 from langchain_core.language_models.chat_models import BaseChatModel
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel
 
@@ -22,14 +22,18 @@ from tga2.agent.schemas import (
     PlanIntentDraft,
     ReportDraft,
     ReviewDraft,
+    ReviewPacket,
+    SituationPacket,
+    SupervisorDecision,
     WorkerDraft,
 )
-from tga2.core.models import EvidenceClaim, Task
+from tga2.core.models import Task
 from tga2.skills import Skill
 
 
 class AgentSuite(Protocol):
     def plan(self, task: Task) -> PlanDraft: ...
+    def decide(self, task: Task, packet: SituationPacket) -> SupervisorDecision: ...
     def work(
         self,
         task: Task,
@@ -38,10 +42,9 @@ class AgentSuite(Protocol):
         feedback: str,
         middleware: Sequence[Any] = (),
     ) -> WorkerDraft: ...
-    def review(
-        self, task: Task, claims: Sequence[EvidenceClaim], worker: WorkerDraft
-    ) -> ReviewDraft: ...
+    def review(self, task: Task, packet: ReviewPacket) -> ReviewDraft: ...
     def report(self, task: Task, snapshot: dict[str, Any]) -> ReportDraft: ...
+    def take_model_calls(self, role: str) -> int: ...
 
 
 class LangChainAgentSuite:
@@ -54,31 +57,35 @@ class LangChainAgentSuite:
         prompts: dict[str, Any] | None = None,
         *,
         model_call_limit: int = 8,
-        model_retries: int = 2,
+        structured_parse_retries: int = 1,
         skill_prompt_limit: int = 5,
     ) -> None:
         self.model = model
         self.skill_selector = skill_selector or (lambda _task: ())
         self.prompts = prompts or {}
         self.skill_prompt_limit = skill_prompt_limit
+        self.structured_parse_retries = structured_parse_retries
+        self._last_model_calls = 0
         self._model_middleware = [
-            ModelRetryMiddleware(max_retries=model_retries),
             ModelCallLimitMiddleware(run_limit=model_call_limit, exit_behavior="error"),
         ]
 
     def plan(self, task: Task) -> PlanDraft:
-        agent = create_agent(
-            self.model,
-            system_prompt=self._prompt("supervisor", task),
-            response_format=PlanDraft,
-            middleware=self._middleware(task),
-            name="tga2_supervisor",
-        )
-        return self._structured(
-            agent.invoke(
-                {"messages": [{"role": "user", "content": _task_prompt(task)}]}
-            ),
+        return self._direct_structured(
+            task,
+            "supervisor",
             PlanDraft,
+            _task_prompt(task),
+            "Return the initial task plan as JSON with a summary and one or more bounded intents.",
+        )
+
+    def decide(self, task: Task, packet: SituationPacket) -> SupervisorDecision:
+        return self._direct_structured(
+            task,
+            "supervisor",
+            SupervisorDecision,
+            packet.model_dump_json(),
+            "Return exactly one checkpoint decision as JSON. Stay within the supplied authorization and budget.",
         )
 
     def work(
@@ -105,61 +112,69 @@ class LangChainAgentSuite:
             },
             ensure_ascii=False,
         )
-        return self._structured(
-            agent.invoke({"messages": [{"role": "user", "content": content}]}),
-            WorkerDraft,
+        result = agent.invoke({"messages": [{"role": "user", "content": content}]})
+        self._last_model_calls = sum(
+            isinstance(message, AIMessage) for message in result.get("messages", [])
         )
+        return self._structured(result, WorkerDraft)
 
-    def review(
-        self, task: Task, claims: Sequence[EvidenceClaim], worker: WorkerDraft
-    ) -> ReviewDraft:
-        agent = create_agent(
-            self.model,
-            system_prompt=self._prompt("reviewer", task),
-            response_format=ReviewDraft,
-            middleware=self._middleware(task),
-            name="tga2_reviewer",
-        )
-        payload = {
-            "task": task.model_dump(mode="json"),
-            "worker": worker.model_dump(mode="json"),
-            "persisted_claims": [item.model_dump(mode="json") for item in claims],
-        }
-        return self._structured(
-            agent.invoke(
-                {
-                    "messages": [
-                        {
-                            "role": "user",
-                            "content": json.dumps(payload, ensure_ascii=False),
-                        }
-                    ]
-                }
-            ),
+    def review(self, task: Task, packet: ReviewPacket) -> ReviewDraft:
+        return self._direct_structured(
+            task,
+            "reviewer",
             ReviewDraft,
+            packet.model_dump_json(),
+            "Review only the supplied evidence packet and return the verdict as JSON.",
         )
 
     def report(self, task: Task, snapshot: dict[str, Any]) -> ReportDraft:
-        agent = create_agent(
-            self.model,
-            system_prompt=self._prompt("reporter", task),
-            response_format=ReportDraft,
-            middleware=self._middleware(task),
-            name="tga2_reporter",
-        )
-        return self._structured(
-            agent.invoke(
-                {
-                    "messages": [
-                        {
-                            "role": "user",
-                            "content": json.dumps(snapshot, ensure_ascii=False),
-                        }
-                    ]
-                }
-            ),
+        return self._direct_structured(
+            task,
+            "reporter",
             ReportDraft,
+            json.dumps(snapshot, ensure_ascii=False),
+            "Return the final report draft as JSON using only confirmed findings and persisted evidence.",
         )
+
+    def _direct_structured(
+        self,
+        task: Task,
+        role: str,
+        expected: type[BaseModel],
+        payload: str,
+        instruction: str,
+    ):
+        structured = self.model.with_structured_output(
+            expected, method="json_mode", include_raw=True
+        )
+        messages = [
+            SystemMessage(content=f"{self._prompt(role, task)}\n\n{instruction}"),
+            HumanMessage(content=payload),
+        ]
+        last_error: Exception | None = None
+        self._last_model_calls = 0
+        for attempt in range(self.structured_parse_retries + 1):
+            result = structured.invoke(messages)
+            self._last_model_calls += 1
+            parsed = result.get("parsed") if isinstance(result, dict) else result
+            if isinstance(parsed, expected):
+                return parsed
+            error = result.get("parsing_error") if isinstance(result, dict) else None
+            last_error = error if isinstance(error, Exception) else ValueError(
+                f"{role} returned no valid {expected.__name__}"
+            )
+            if attempt < self.structured_parse_retries:
+                messages.append(
+                    HumanMessage(
+                        content=f"The previous JSON failed validation: {last_error}. Return corrected JSON only."
+                    )
+                )
+        raise last_error
+
+    def take_model_calls(self, role: str) -> int:
+        value = self._last_model_calls
+        self._last_model_calls = 0
+        return value
 
     @staticmethod
     def _structured(result: dict[str, Any], expected: type[BaseModel]):
@@ -212,6 +227,9 @@ class RoutedAgentSuite:
     def plan(self, task: Task) -> PlanDraft:
         return self.roles["supervisor"].plan(task)
 
+    def decide(self, task: Task, packet: SituationPacket) -> SupervisorDecision:
+        return self.roles["supervisor"].decide(task, packet)
+
     def work(
         self,
         task: Task,
@@ -224,13 +242,14 @@ class RoutedAgentSuite:
             task, intent, tools, feedback, middleware
         )
 
-    def review(
-        self, task: Task, claims: Sequence[EvidenceClaim], worker: WorkerDraft
-    ) -> ReviewDraft:
-        return self.roles["reviewer"].review(task, claims, worker)
+    def review(self, task: Task, packet: ReviewPacket) -> ReviewDraft:
+        return self.roles["reviewer"].review(task, packet)
 
     def report(self, task: Task, snapshot: dict[str, Any]) -> ReportDraft:
         return self.roles["reporter"].report(task, snapshot)
+
+    def take_model_calls(self, role: str) -> int:
+        return self.roles[role].take_model_calls(role)
 
 
 class OfflineAgentSuite:
@@ -245,6 +264,38 @@ class OfflineAgentSuite:
                     objective=task.spec.objective,
                 )
             ],
+        )
+
+    def decide(self, task: Task, packet: SituationPacket) -> SupervisorDecision:
+        review = packet.review_result or {}
+        verdict = review.get("verdict")
+        attempts = int(packet.current_intent.get("attempt", 1))
+        if verdict == "pass":
+            pending = [
+                item
+                for item in packet.plan.get("intents", [])
+                if item.get("status") == "pending"
+            ]
+            return SupervisorDecision(
+                action="next_intent" if pending else "finish",
+                reason="Evidence review passed.",
+            )
+        if verdict == "needs_user":
+            return SupervisorDecision(
+                action="ask_user",
+                reason="Reviewer requires operator input.",
+                user_question=review.get("feedback")
+                or "Please provide the missing information.",
+            )
+        if attempts < int(packet.remaining_budget.get("intent_attempt_limit", 3)):
+            return SupervisorDecision(
+                action="retry",
+                reason="The current intent needs another bounded attempt.",
+                feedback=review.get("feedback") or "Collect stronger evidence.",
+            )
+        return SupervisorDecision(
+            action="fail",
+            reason="The current intent exhausted its attempt budget.",
         )
 
     def work(
@@ -289,10 +340,12 @@ class OfflineAgentSuite:
             else ["No inspectable task resource was supplied."],
         )
 
-    def review(
-        self, task: Task, claims: Sequence[EvidenceClaim], worker: WorkerDraft
-    ) -> ReviewDraft:
-        ids = [claim.id for claim in claims if claim.status == "candidate"]
+    def review(self, task: Task, packet: ReviewPacket) -> ReviewDraft:
+        ids = [
+            str(item.claim.get("id"))
+            for item in packet.evidence
+            if item.locator_valid and item.claim.get("status") == "candidate"
+        ]
         findings = []
         if ids:
             findings.append(
@@ -304,7 +357,7 @@ class OfflineAgentSuite:
                 )
             )
         return ReviewDraft(
-            passed=True,
+            verdict="pass",
             feedback="Evidence references are structurally valid."
             if ids
             else "Completed with no evidence-backed finding.",
@@ -324,6 +377,9 @@ class OfflineAgentSuite:
             limitations=[] if count else ["No evidence-backed finding was produced."],
         )
 
+    def take_model_calls(self, role: str) -> int:
+        return 0
+
 
 def _task_prompt(task: Task) -> str:
     return json.dumps(task.model_dump(mode="json"), ensure_ascii=False)
@@ -339,6 +395,9 @@ __all__ = [
     "PlanIntentDraft",
     "ReportDraft",
     "ReviewDraft",
+    "ReviewPacket",
     "RoutedAgentSuite",
+    "SituationPacket",
+    "SupervisorDecision",
     "WorkerDraft",
 ]

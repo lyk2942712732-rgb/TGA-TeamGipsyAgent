@@ -143,6 +143,22 @@ class PolicyAuditMiddleware(AgentMiddleware):
             summary=reason or "",
         )
         self.store.save_action(action)
+        self.store.append_event(
+            AgentEvent(
+                task_id=self.task.id,
+                type="TOOL_ACTION_REQUESTED",
+                solver_id="worker",
+                intent_id=self.intent_id,
+                payload={
+                    "action_id": action.id,
+                    "tool_name": name,
+                    "risk": risk.value,
+                    "arguments": action.arguments,
+                    "allowed": reason is None,
+                    "denial_reason": reason,
+                },
+            )
+        )
         if reason:
             return ToolMessage(
                 content=f"Tool denied by TGA2 policy: {reason}",
@@ -176,6 +192,20 @@ class PolicyAuditMiddleware(AgentMiddleware):
             )
             self.store.save_artifact(artifact)
             artifact_ids = (artifact.id,)
+            self.store.append_event(
+                AgentEvent(
+                    task_id=self.task.id,
+                    type="ARTIFACT_CREATED",
+                    solver_id="worker",
+                    intent_id=self.intent_id,
+                    payload={
+                        "artifact_id": artifact.id,
+                        "kind": artifact.kind,
+                        "sha256": artifact.sha256,
+                        "source_tool": name,
+                    },
+                )
+            )
             if isinstance(result, ToolMessage):
                 result = result.model_copy(
                     update={
@@ -229,6 +259,7 @@ def worker_middleware(
     tools: Sequence[BaseTool],
     sandbox_image: str | None,
     configuration: Any | None = None,
+    attempt_tool_limit: int | None = None,
 ) -> list[Any]:
     tool_retry_count = (
         configuration.runtime.tool_defaults.retry_count if configuration else 1
@@ -237,7 +268,8 @@ def worker_middleware(
         FilesystemFileSearchMiddleware(root_path=str(workspace.root)),
         ToolRetryMiddleware(max_retries=tool_retry_count),
         ToolCallLimitMiddleware(
-            run_limit=store.get_policy(task.id).tool.max_tool_calls,
+            run_limit=attempt_tool_limit
+            or store.get_policy(task.id).tool.max_tool_calls,
             exit_behavior="error",
         ),
         ApprovalAuditMiddleware(

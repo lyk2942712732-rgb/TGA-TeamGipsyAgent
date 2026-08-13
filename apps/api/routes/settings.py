@@ -13,6 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import SecretStr
 
 from apps.api.dependencies import container
+from tga2.agent.schemas import PlanDraft
 from tga2.bootstrap import Container
 from tga2.integrations.model import (
     ModelRegistry,
@@ -232,7 +233,31 @@ def _verify(provider_id: str, model_id: str, app: Container) -> dict:
     model.last_error = None
     app.configuration.save_model_registry()
     try:
-        response = build_chat_model(settings).invoke("Reply with exactly OK.")
+        structured = build_chat_model(settings).with_structured_output(
+            PlanDraft, method="json_mode", include_raw=True
+        )
+        response = structured.invoke(
+            [
+                {
+                    "role": "system",
+                    "content": (
+                        "Return a JSON object matching the requested task-plan schema. "
+                        "It must contain a non-empty summary and one intent with title, "
+                        "objective, and priority."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": "Create a minimal JSON plan for inspecting one authorized input file.",
+                },
+            ]
+        )
+        parsed = response.get("parsed") if isinstance(response, dict) else response
+        parsing_error = response.get("parsing_error") if isinstance(response, dict) else None
+        if not isinstance(parsed, PlanDraft):
+            raise TypeError(
+                f"model did not produce a valid PlanDraft: {parsing_error or 'empty parsed response'}"
+            )
     except Exception as exc:
         model.verification_status = "failed"
         model.last_error = {
@@ -261,13 +286,15 @@ def _verify(provider_id: str, model_id: str, app: Container) -> dict:
         "model_id": model.id,
         "model": model.name,
         "verification_status": "verified",
-        "capabilities": {"tool_calling": None, "structured_output": None},
+        "capabilities": {"tool_calling": None, "structured_output": True},
         "tool_catalog": {
             "tool_count": 5 + len(app.runtime.external_tools),
             "schema_bytes": 0,
             "accepted": True,
         },
-        "response_id": getattr(response, "id", None),
+        "response_id": getattr(
+            response.get("raw") if isinstance(response, dict) else response, "id", None
+        ),
     }
 
 

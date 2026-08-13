@@ -21,7 +21,7 @@ export function GlobalActionDock({ store, mode, onRefresh, onOpenApprovals, onIn
   const readonly = mode === "replay";
   const pending = selectPendingApprovals(store).length;
   const status = store.session.status;
-  const finished = ["completed", "cancelled", "failed"].includes(status);
+  const finished = ["completed", "completed_with_limitations", "cancelled", "failed"].includes(status);
 
   const control = async (action: "cancel") => {
     setBusy(action); setMessage(null);
@@ -32,7 +32,7 @@ export function GlobalActionDock({ store, mode, onRefresh, onOpenApprovals, onIn
 
   return <section className="global-action-dock" aria-label="全局操作">
     <button className="tone-violet" disabled={readonly} onClick={onIntervention}>
-      <MessageSquareText size={15} aria-hidden="true" />添加提示
+      <MessageSquareText size={15} aria-hidden="true" />{status === "awaiting_user_input" ? "回答 Supervisor" : "添加提示"}
     </button>
     <button className="tone-warn" onClick={onOpenApprovals}>
       <ShieldCheck size={15} aria-hidden="true" />审批中心{pending ? ` (${pending})` : ""}

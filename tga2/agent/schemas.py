@@ -1,4 +1,6 @@
-"""Structured outputs produced by role agents."""
+"""Role outputs and bounded Runtime-built intelligence packets."""
+
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -43,11 +45,68 @@ class FindingDraft(BaseModel):
 
 class ReviewDraft(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    passed: bool
+    verdict: Literal["pass", "retry", "reject", "needs_user"]
+    reason_codes: list[
+        Literal[
+            "insufficient_evidence",
+            "invalid_locator",
+            "unsupported_claim",
+            "contradiction",
+            "incomplete_objective",
+            "policy_violation",
+        ]
+    ] = Field(default_factory=list, max_length=16)
     feedback: str = Field(default="", max_length=4000)
     confirmed_claim_ids: list[str] = Field(default_factory=list, max_length=128)
     rejected_claim_ids: list[str] = Field(default_factory=list, max_length=128)
     findings: list[FindingDraft] = Field(default_factory=list, max_length=64)
+
+    @property
+    def passed(self) -> bool:
+        return self.verdict == "pass"
+
+
+class EvidencePacket(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    claim: dict[str, Any]
+    artifact_sha256: str
+    artifact_kind: str
+    source_tool: str | None = None
+    cited_excerpt: str
+    locator_valid: bool
+
+
+class ReviewPacket(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    task_objective: str
+    current_intent: dict[str, Any]
+    worker_result: dict[str, Any]
+    evidence: list[EvidencePacket]
+    success_criteria: list[str]
+
+
+class SituationPacket(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    task_objective: str
+    authorization: dict[str, Any]
+    plan: dict[str, Any]
+    current_intent: dict[str, Any]
+    worker_result: dict[str, Any] | None = None
+    review_result: dict[str, Any] | None = None
+    confirmed_findings: list[dict[str, Any]] = Field(default_factory=list)
+    failed_attempts: list[dict[str, Any]] = Field(default_factory=list)
+    user_interventions: list[dict[str, Any]] = Field(default_factory=list)
+    remaining_budget: dict[str, int | float]
+    tool_health: dict[str, Any]
+
+
+class SupervisorDecision(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    action: Literal["retry", "next_intent", "revise_plan", "ask_user", "finish", "fail"]
+    reason: str = Field(min_length=1, max_length=4000)
+    feedback: str | None = Field(default=None, max_length=4000)
+    new_intents: list[PlanIntentDraft] = Field(default_factory=list, max_length=8)
+    user_question: str | None = Field(default=None, max_length=4000)
 
 
 class ReportDraft(BaseModel):
@@ -64,5 +123,8 @@ __all__ = [
     "PlanIntentDraft",
     "ReportDraft",
     "ReviewDraft",
+    "ReviewPacket",
+    "SituationPacket",
+    "SupervisorDecision",
     "WorkerDraft",
 ]

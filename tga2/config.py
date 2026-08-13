@@ -33,17 +33,64 @@ class RoleRuntimeSettings(BaseModel):
     prompt: str = ""
     model: RoleModelSelection = Field(default_factory=RoleModelSelection)
     tools: list[str] = Field(default_factory=list)
-    model_call_limit: int = Field(default=8, ge=1, le=100)
-    model_retries: int = Field(default=2, ge=0, le=10)
 
 
 class GraphSettings(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    max_review_retries: int = Field(default=2, ge=0, le=20)
-    max_intents: int = Field(default=8, ge=1, le=100)
-    max_turns: int = Field(default=32, ge=1, le=1000)
     max_active_workers: int = Field(default=1, ge=1, le=32)
     max_total_solvers: int = Field(default=4, ge=4, le=128)
+
+
+class TaskBudgetSettings(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    max_intents: int = Field(default=4, ge=1, le=32)
+    max_model_calls: int = Field(default=60, ge=4, le=10_000)
+    max_tool_calls: int = Field(default=80, ge=1, le=10_000)
+    max_duration_minutes: int = Field(default=20, ge=1, le=1440)
+
+
+class IntentBudgetSettings(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    max_attempts: int = Field(default=3, ge=1, le=20)
+
+
+class SupervisorRoleBudget(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    calls_per_decision: int = Field(default=1, ge=1, le=10)
+    parse_retries: int = Field(default=1, ge=0, le=5)
+
+
+class WorkerRoleBudget(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    calls_per_attempt: int = Field(default=8, ge=2, le=100)
+    tool_calls_per_attempt: int = Field(default=15, ge=1, le=1000)
+
+
+class ReviewerRoleBudget(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    calls_per_review: int = Field(default=1, ge=1, le=10)
+    parse_retries: int = Field(default=1, ge=0, le=5)
+
+
+class ReporterRoleBudget(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    calls_per_report: int = Field(default=1, ge=1, le=10)
+    parse_retries: int = Field(default=1, ge=0, le=5)
+
+
+class RoleBudgetSettings(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    supervisor: SupervisorRoleBudget = Field(default_factory=SupervisorRoleBudget)
+    worker: WorkerRoleBudget = Field(default_factory=WorkerRoleBudget)
+    reviewer: ReviewerRoleBudget = Field(default_factory=ReviewerRoleBudget)
+    reporter: ReporterRoleBudget = Field(default_factory=ReporterRoleBudget)
+
+
+class RuntimeBudgetSettings(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    task: TaskBudgetSettings = Field(default_factory=TaskBudgetSettings)
+    intent: IntentBudgetSettings = Field(default_factory=IntentBudgetSettings)
+    roles: RoleBudgetSettings = Field(default_factory=RoleBudgetSettings)
 
 
 class SkillSelectionSettings(BaseModel):
@@ -55,7 +102,6 @@ class SkillSelectionSettings(BaseModel):
 class ToolDefaults(BaseModel):
     model_config = ConfigDict(extra="forbid")
     allowed: list[str] = Field(default_factory=list)
-    max_calls: int = Field(default=30, ge=1, le=1000)
     retry_count: int = Field(default=1, ge=0, le=10)
 
 
@@ -89,6 +135,7 @@ class RuntimeSettings(BaseModel):
     common_prompt: str = ""
     roles: dict[str, RoleRuntimeSettings]
     graph: GraphSettings = Field(default_factory=GraphSettings)
+    budget: RuntimeBudgetSettings = Field(default_factory=RuntimeBudgetSettings)
     skill_selection: SkillSelectionSettings = Field(default_factory=SkillSelectionSettings)
     tool_defaults: ToolDefaults = Field(default_factory=ToolDefaults)
     kali: KaliSandboxSettings = Field(default_factory=KaliSandboxSettings)

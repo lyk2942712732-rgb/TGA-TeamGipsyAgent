@@ -70,6 +70,8 @@ function taskFailure(store: RuntimeStore): { title: string; message: string; ret
   const title = ({
     AuthenticationError: "模型认证失败",
     APITimeoutError: "模型请求超时",
+    ModelCallLimitExceededError: "模型未能生成有效结构化结果",
+    BudgetExceededError: "任务预算已耗尽",
     TaskCancelledError: "任务已取消",
   } as Record<string, string>)[stringValue(failed?.payload.error_type) ?? ""] ?? "任务运行失败";
   return { title, message, retryable, attempts };

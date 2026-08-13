@@ -18,7 +18,9 @@ class TaskStatus(StrEnum):
     CREATED = "created"
     RUNNING = "running"
     AWAITING_APPROVAL = "awaiting_approval"
+    AWAITING_USER_INPUT = "awaiting_user_input"
     COMPLETED = "completed"
+    COMPLETED_WITH_LIMITATIONS = "completed_with_limitations"
     FAILED = "failed"
     CANCELLED = "cancelled"
 
@@ -75,6 +77,7 @@ class IntentStatus(StrEnum):
     RUNNING = "running"
     REVIEW = "review"
     COMPLETED = "completed"
+    BLOCKED = "blocked"
     FAILED = "failed"
 
 
@@ -95,9 +98,11 @@ class Intent(BaseModel):
 class Plan(BaseModel):
     model_config = ConfigDict(extra="forbid")
     task_id: str
+    version: int = Field(default=1, ge=1)
     summary: str
     intents: tuple[Intent, ...]
     created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
 
 
 class SolverRole(StrEnum):

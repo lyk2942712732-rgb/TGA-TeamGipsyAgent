@@ -10,7 +10,7 @@ const api = vi.hoisted(() => ({
 vi.mock("../../runtime/api-v2", () => ({ runtimeApi: api }));
 import { useTaskRuntime } from "./use-task-runtime";
 
-const store = () => normalizeRuntimeSnapshot({ schema_version: 6, task: { id: "task", name: "Task", mode: "ctf" }, session: { status: "running", supervisor_solver_id: null, active_solver_count: 0, max_active_workers: 2, task_budget_usage: {}, stop_reason: null, timestamps: {}, turn_count: 0, max_turns: 20 }, team: { task_id: "task", status: "running", supervisor_solver_id: null, max_active_workers: 2, max_total_solvers: 8, active_solver_count: 0, solver_ids: [], version: 1, timestamps: {} }, solvers: [], intents: [], worker_results: [], global_plan: null, knowledge: [], artifacts: [], evidence_claims: [], findings: [], actions: [], approvals: [], retrieval_runs: [], events: [], events_page: { after_seq: 0, next_after_seq: 0, has_more: false }, latest_seq: 0 });
+const store = (status = "running") => normalizeRuntimeSnapshot({ schema_version: 6, task: { id: "task", name: "Task", mode: "ctf" }, session: { status, supervisor_solver_id: null, active_solver_count: 0, max_active_workers: 2, task_budget_usage: {}, stop_reason: null, timestamps: {}, turn_count: 0, max_turns: 20 }, team: { task_id: "task", status, supervisor_solver_id: null, max_active_workers: 2, max_total_solvers: 8, active_solver_count: 0, solver_ids: [], version: 1, timestamps: {} }, solvers: [], intents: [], worker_results: [], global_plan: null, knowledge: [], artifacts: [], evidence_claims: [], findings: [], actions: [], approvals: [], retrieval_runs: [], events: [], events_page: { after_seq: 0, next_after_seq: 0, has_more: false }, latest_seq: 0 });
 const event = (seq: number): RuntimeEvent => ({ schemaVersion: 6, id: `event-${seq}`, taskId: "task", seq, type: "FUTURE_EVENT", solverId: null, intentId: null, payload: { payload_version: 1 }, createdAt: "" });
 
 class FakeEventSource {
@@ -50,6 +50,15 @@ describe("useTaskRuntime", () => {
     expect(result.current.store?.latestSeq).toBe(0);
     await act(async () => { vi.advanceTimersByTime(16); });
     expect(result.current.store?.latestSeq).toBe(2);
+    unmount();
+  });
+
+  it("does not open or reconnect SSE for a terminal task", async () => {
+    api.taskRuntime.mockResolvedValue(store("failed"));
+    const { result, unmount } = renderHook(() => useTaskRuntime("task"));
+    await flush();
+    expect(result.current.connection).toBe("offline");
+    expect(FakeEventSource.instances).toHaveLength(0);
     unmount();
   });
 });

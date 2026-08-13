@@ -18,6 +18,7 @@ export const STATUS_DICTIONARY: Record<string, StatusDefinition> = {
   paused: { label: "已暂停", tone: "warning" },
   blocked: { label: "已阻塞", tone: "danger" },
   completed: { label: "已完成", tone: "success" },
+  completed_with_limitations: { label: "受限完成", tone: "warning" },
   failed: { label: "失败", tone: "danger" },
   cancelled: { label: "已取消", tone: "danger" },
   archived: { label: "已归档", tone: "neutral" },

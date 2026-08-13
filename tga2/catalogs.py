@@ -115,8 +115,20 @@ def solver_definitions(modes: tuple[str, ...], runtime: RuntimeSettings) -> list
                 "required_fields": ["summary"],
             },
             "default_budget": {
-                "max_turns": runtime.roles[role].model_call_limit,
-                "max_tool_calls": runtime.tool_defaults.max_calls,
+                "max_turns": (
+                    runtime.budget.roles.worker.calls_per_attempt
+                    if role == "worker"
+                    else {
+                        "supervisor": runtime.budget.roles.supervisor.calls_per_decision,
+                        "reviewer": runtime.budget.roles.reviewer.calls_per_review,
+                        "reporter": runtime.budget.roles.reporter.calls_per_report,
+                    }[role]
+                ),
+                "max_tool_calls": (
+                    runtime.budget.roles.worker.tool_calls_per_attempt
+                    if role == "worker"
+                    else 0
+                ),
             },
             "completion_authority": "reviewer" if role == "reviewer" else "none",
             "content_sha256": _hash(

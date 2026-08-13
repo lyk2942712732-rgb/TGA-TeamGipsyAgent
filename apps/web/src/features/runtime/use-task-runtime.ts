@@ -6,6 +6,9 @@ import type { RuntimeEvent, RuntimeStore } from "./models/types";
 
 export type RuntimeConnection = "loading" | "live" | "reconnecting" | "offline";
 
+const TERMINAL_STATUSES = new Set(["completed", "completed_with_limitations", "failed", "cancelled"]);
+const TERMINAL_EVENTS = new Set(["TASK_COMPLETED", "TASK_COMPLETED_WITH_LIMITATIONS", "TASK_FAILED", "TASK_CANCELLED"]);
+
 export function useTaskRuntime(taskId: string | null, options: { live?: boolean } = {}) {
   const live = options.live ?? true;
   const [store, setStore] = useState<RuntimeStore | null>(null);
@@ -108,7 +111,13 @@ export function useTaskRuntime(taskId: string | null, options: { live?: boolean 
             void fillGap(event).catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "事件序列补偿失败"));
             return;
           }
-          enqueueEvent(event); setConnection("live"); reconnectAttempt = 0;
+          enqueueEvent(event);
+          if (TERMINAL_EVENTS.has(event.type)) {
+            flushEventBatch(); close(); setConnection("offline");
+            void authoritativeRefresh();
+            return;
+          }
+          setConnection("live"); reconnectAttempt = 0;
         });
         source.addEventListener("heartbeat", () => { setConnection("live"); reconnectAttempt = 0; });
         source.onerror = () => {
@@ -127,7 +136,8 @@ export function useTaskRuntime(taskId: string | null, options: { live?: boolean 
         const initial = await runtimeApi.taskRuntime(taskId);
         if (!active) return;
         publish(initial); setError(null);
-        if (live) await connect(); else setConnection("offline");
+        if (live && !TERMINAL_STATUSES.has(initial.session.status)) await connect();
+        else setConnection("offline");
       } catch (reason) {
         if (!active) return;
         setError(reason instanceof Error ? reason.message : "无法加载任务快照"); setConnection("offline");

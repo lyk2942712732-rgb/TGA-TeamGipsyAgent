@@ -19,6 +19,16 @@ CREATE TABLE IF NOT EXISTS intents (
 );
 CREATE INDEX IF NOT EXISTS idx_intents_task ON intents(task_id, created_at);
 
+CREATE TABLE IF NOT EXISTS plans (
+    task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    version INTEGER NOT NULL,
+    payload_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY(task_id, version)
+);
+CREATE INDEX IF NOT EXISTS idx_plans_task_version ON plans(task_id, version DESC);
+
 CREATE TABLE IF NOT EXISTS solver_runs (
     id TEXT PRIMARY KEY,
     task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,

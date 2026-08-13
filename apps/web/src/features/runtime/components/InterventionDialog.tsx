@@ -21,7 +21,8 @@ export function InterventionDialog({ store, open, onClose, onSubmitted }: { stor
     event.preventDefault(); if (!content.trim() || (scope !== "task" && !actualTarget)) return;
     setBusy(true); setError(null);
     try {
-      await runtimeApi.intervention(store.task.id, { kind, content: content.trim(), scope: scope === "supervisor" ? "solver" : scope, ...(scope === "task" ? {} : { target_id: actualTarget }) });
+      if (store.session.status === "awaiting_user_input") await runtimeApi.userInput(store.task.id, content.trim());
+      else await runtimeApi.intervention(store.task.id, { kind, content: content.trim(), scope: scope === "supervisor" ? "solver" : scope, ...(scope === "task" ? {} : { target_id: actualTarget }) });
       onSubmitted(); onClose();
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Intervention 提交失败"); }
     finally { setBusy(false); }
