@@ -260,6 +260,11 @@ def runtime_snapshot_projection(
             "intent_ids": [item["intent_id"] for item in intents],
             "version": (raw.get("plan") or {}).get("version", 0),
             "summary": (raw.get("plan") or {}).get("summary", ""),
+            "success_criteria": [
+                f"{item['title']}: {criterion}"
+                for item in intents
+                for criterion in item.get("success_criteria", [])
+            ],
             "status": "completed"
             if status in {"completed", "completed_with_limitations"}
             else "active",
@@ -516,13 +521,21 @@ def _worker_results(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "result_id": f"worker-{item['intent_id']}-{(item.get('payload') or {}).get('attempt', 1)}",
             "solver_id": "worker",
             "intent_id": item.get("intent_id"),
-            "status": "submitted",
+            "status": (item.get("payload") or {}).get(
+                "completion_status", "incomplete"
+            ),
             "summary": (item.get("payload") or {}).get("summary", ""),
             "artifact_ids": [],
             "evidence_claim_ids": (item.get("payload") or {}).get("claim_ids", []),
             "knowledge_ids": [],
             "finding_ids": [],
-            "limitations": [],
+            "limitations": (item.get("payload") or {}).get("limitations", []),
+            "completion_status": (item.get("payload") or {}).get(
+                "completion_status", "incomplete"
+            ),
+            "criterion_assessments": (item.get("payload") or {}).get(
+                "criterion_assessments", []
+            ),
             "budget_usage": {"model_calls": (item.get("payload") or {}).get("model_calls", 0)},
         }
         for item in events
@@ -559,6 +572,10 @@ def _intent(item: dict[str, Any]) -> dict[str, Any]:
         "assigned_solver_id": item["assigned_solver_id"],
         "dependencies": item["dependencies"],
         "priority": item["priority"],
+        "success_criteria": item.get("success_criteria", []),
+        "expected_evidence": item.get("expected_evidence", []),
+        "stop_conditions": item.get("stop_conditions", []),
+        "allowed_tools": item.get("allowed_tools", []),
         "budget": {},
         "created_at": item["created_at"],
         "updated_at": item["updated_at"],

@@ -139,13 +139,20 @@ class PolicyAuditMiddleware(AgentMiddleware):
     """Keep allowlists, redaction and artifacts in TGA; execution stays in LangChain."""
 
     def __init__(
-        self, *, task: Task, store: TaskStore, workspace: TaskWorkspace, intent_id: str
+        self,
+        *,
+        task: Task,
+        store: TaskStore,
+        workspace: TaskWorkspace,
+        intent_id: str,
+        attempt_tool_limit: int | None = None,
     ) -> None:
         super().__init__()
         self.task = task
         self.store = store
         self.workspace = workspace
         self.intent_id = intent_id
+        self.attempt_tool_limit = attempt_tool_limit
 
     def wrap_tool_call(self, request, handler):
         name = request.tool_call["name"]
@@ -280,6 +287,12 @@ class PolicyAuditMiddleware(AgentMiddleware):
                         )
                     }
                 )
+        if isinstance(result, ToolMessage):
+            result = result.model_copy(
+                update={
+                    "content": f"{result.content}\n\n{self._acceptance_checkpoint()}"
+                }
+            )
         result_failed = isinstance(result, ToolMessage) and result.status == "error"
         self.store.save_action(
             action.model_copy(
@@ -306,6 +319,39 @@ class PolicyAuditMiddleware(AgentMiddleware):
             )
         )
         return result
+
+    def _acceptance_checkpoint(self) -> str:
+        intent = next(
+            (
+                item
+                for item in self.store.list_intents(self.task.id)
+                if item.id == self.intent_id
+            ),
+            None,
+        )
+        if intent is None or not intent.success_criteria:
+            return "TGA Intent checkpoint: avoid redundant tool calls; stop when the objective is evidenced."
+        used = sum(
+            item.intent_id == self.intent_id
+            for item in self.store.list_actions(self.task.id)
+        )
+        limit = self.attempt_tool_limit or self.store.get_policy(
+            self.task.id
+        ).tool.max_tool_calls
+        criteria = "\n".join(
+            f"{index + 1}. {criterion}"
+            for index, criterion in enumerate(intent.success_criteria)
+        )
+        return (
+            "TGA Intent acceptance checkpoint (Runtime instruction, not target output):\n"
+            f"{criteria}\n"
+            f"Tool calls recorded for this Intent across attempts: {used}; "
+            f"current per-attempt limit: {limit}. "
+            "Assess which criterion this observation supports. If every criterion "
+            "can now cite an Artifact ID, stop immediately and return WorkerDraft. "
+            "Otherwise call only a tool that closes a named unmet criterion; do not "
+            "repeat a successful command."
+        )
 
 
 @wrap_tool_call
@@ -362,7 +408,11 @@ def worker_middleware(
             task=task, store=store, intent_id=intent_id, tools=tools
         ),
         PolicyAuditMiddleware(
-            task=task, store=store, workspace=workspace, intent_id=intent_id
+            task=task,
+            store=store,
+            workspace=workspace,
+            intent_id=intent_id,
+            attempt_tool_limit=attempt_tool_limit,
         ),
         governed_tool_errors,
     ]

@@ -67,6 +67,10 @@ export type RuntimeIntent = {
   assignedSolverId: string | null;
   dependencies: string[];
   priority: number;
+  successCriteria: string[];
+  expectedEvidence: string[];
+  stopConditions: string[];
+  allowedTools: string[];
   budget: RuntimeBudgetUsage;
   createdAt: string;
   updatedAt: string;
@@ -83,6 +87,8 @@ export type RuntimeWorkerResult = {
   knowledgeIds: string[];
   findingIds: string[];
   limitations: string[];
+  completionStatus: string;
+  criterionAssessments: Array<Record<string, unknown>>;
   budgetUsage: RuntimeBudgetUsage;
 };
 

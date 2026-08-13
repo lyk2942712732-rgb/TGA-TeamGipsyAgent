@@ -3,7 +3,7 @@
 import json
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 def structured_output_prompt(
@@ -43,6 +43,16 @@ class PlanIntentDraft(BaseModel):
     title: str = Field(min_length=1, max_length=500)
     objective: str = Field(min_length=1, max_length=4000)
     priority: int = Field(default=50, ge=0, le=100)
+    success_criteria: list[str] = Field(min_length=1, max_length=8)
+    expected_evidence: list[str] = Field(min_length=1, max_length=8)
+
+    @field_validator("success_criteria", "expected_evidence")
+    @classmethod
+    def reject_blank_acceptance_items(cls, value: list[str]) -> list[str]:
+        cleaned = [item.strip() for item in value]
+        if any(not item for item in cleaned):
+            raise ValueError("Intent acceptance items cannot be blank")
+        return cleaned
 
 
 class PlanDraft(BaseModel):
@@ -60,9 +70,19 @@ class ClaimDraft(BaseModel):
     quote: str | None = Field(default=None, max_length=2000)
 
 
+class CriterionAssessmentDraft(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    criterion_index: int = Field(ge=0, le=7)
+    status: Literal["met", "unmet", "blocked"]
+    artifact_ids: list[str] = Field(default_factory=list, max_length=32)
+    note: str = Field(default="", max_length=2000)
+
+
 class WorkerDraft(BaseModel):
     model_config = ConfigDict(extra="forbid")
     summary: str = Field(min_length=1, max_length=8000)
+    completion_status: Literal["completed", "incomplete", "blocked", "needs_user"]
+    criterion_assessments: list[CriterionAssessmentDraft] = Field(max_length=8)
     claims: list[ClaimDraft] = Field(default_factory=list, max_length=64)
     limitations: list[str] = Field(default_factory=list, max_length=32)
 
@@ -93,6 +113,7 @@ class ReviewDraft(BaseModel):
     confirmed_claim_ids: list[str] = Field(default_factory=list, max_length=128)
     rejected_claim_ids: list[str] = Field(default_factory=list, max_length=128)
     findings: list[FindingDraft] = Field(default_factory=list, max_length=64)
+    criterion_results: list["CriterionReviewDraft"] = Field(max_length=8)
 
     @property
     def passed(self) -> bool:
@@ -109,13 +130,24 @@ class EvidencePacket(BaseModel):
     locator_valid: bool
 
 
+class CriterionReviewDraft(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    criterion_index: int = Field(ge=0, le=7)
+    status: Literal["verified", "not_verified"]
+    evidence_claim_ids: list[str] = Field(default_factory=list, max_length=64)
+    reason: str = Field(default="", max_length=2000)
+
+
 class ReviewPacket(BaseModel):
     model_config = ConfigDict(extra="forbid")
     task_objective: str
     current_intent: dict[str, Any]
     worker_result: dict[str, Any]
     evidence: list[EvidencePacket]
-    success_criteria: list[str]
+    task_success_criteria: list[str]
+    intent_success_criteria: list[str]
+    expected_evidence: list[str]
+    stop_conditions: list[str]
 
 
 class SituationPacket(BaseModel):
@@ -151,6 +183,8 @@ class ReportDraft(BaseModel):
 
 __all__ = [
     "ClaimDraft",
+    "CriterionAssessmentDraft",
+    "CriterionReviewDraft",
     "FindingDraft",
     "PlanDraft",
     "PlanIntentDraft",

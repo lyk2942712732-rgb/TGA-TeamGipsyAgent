@@ -124,7 +124,35 @@ function Transcript({ solver, store }: { solver: RuntimeSolver; store?: RuntimeS
   return <section className="solver-transcript" aria-label={`${solver.solverId} Transcript`}><div className="transcript-toolbar"><button aria-pressed={mode === "concise"} onClick={() => setMode("concise")}>简洁模式</button><button aria-pressed={mode === "protocol"} onClick={() => setMode("protocol")}>协议模式</button><label>回合<select value={turn} onChange={(event) => setTurn(event.target.value)}><option value="">全部</option>{turns.map((value) => <option key={value}>{value}</option>)}</select></label><label>Tool Call<select value={toolCall} onChange={(event) => setToolCall(event.target.value)}><option value="">全部</option>{toolCalls.map((value) => <option key={value}>{value}</option>)}</select></label></div><p>仅显示持久化事件中的模型决策与工具摘要，不展示隐藏思维链。</p>{visible.length ? <ol>{visible.map((event) => <li key={event.seq} id={`event-${event.seq}`}><header><a href={`#event-${event.seq}`}>#{event.seq}</a><b>{event.type}</b><small>{event.intentId ?? "Task"}</small></header>{mode === "protocol" ? <pre>{safePayload(event)}</pre> : <p>{eventSummary(event)}</p>}</li>)}</ol> : <p className="runtime-empty">该 Solver 暂无可回放事件；完整 Transcript 尚未由 API 投影。</p>}{filtered.length > visible.length ? <button onClick={() => setLimit((value) => value + 20)}>加载更早记录</button> : null}</section>;
 }
 
-function LocalPlan({ solver, store }: { solver: RuntimeSolver; store?: RuntimeStore }) { const intent = solver.assignedIntentId && store ? store.intentsById[solver.assignedIntentId] : undefined; return <section><h4>Local Plan</h4>{intent ? <dl className="solver-summary-list"><Item label="Intent" value={intent.title} /><Item label="目标" value={intent.objective} /><Item label="状态" value={intent.status} /><Item label="依赖" value={intent.dependencies.join("、") || "无"} /></dl> : <p className="runtime-empty">后端未投影该 Solver 的 Local Plan 正文</p>}</section>; }
+function LocalPlan({ solver, store }: { solver: RuntimeSolver; store?: RuntimeStore }) {
+  const intent = solver.assignedIntentId && store ? store.intentsById[solver.assignedIntentId] : undefined;
+  const results = intent && store
+    ? Object.values(store.workerResultsById).filter((item) => item.intentId === intent.intentId)
+    : [];
+  const result = results[results.length - 1];
+  if (!intent) return <section><h4>Local Plan</h4><p className="runtime-empty">后端尚未投影该 Solver 的当前 Intent。</p></section>;
+  const assessments = new Map<number, Record<string, unknown>>(
+    (result?.criterionAssessments ?? []).map((item): [number, Record<string, unknown>] => [Number(item.criterion_index), item]),
+  );
+  return <section className="intent-acceptance-contract">
+    <h4>Intent 验收契约</h4>
+    <dl className="solver-summary-list">
+      <Item label="Intent" value={intent.title} />
+      <Item label="目标" value={intent.objective} />
+      <Item label="状态" value={intent.status} />
+      <Item label="依赖" value={intent.dependencies.join("、") || "无"} />
+      {result ? <Item label="Worker 判定" value={result.completionStatus} /> : null}
+    </dl>
+    <AcceptanceList title="成功条件" values={intent.successCriteria} assessments={assessments} />
+    <AcceptanceList title="预期证据" values={intent.expectedEvidence} />
+    <AcceptanceList title="Runtime 允许工具" values={intent.allowedTools} />
+    <AcceptanceList title="停止条件" values={intent.stopConditions} />
+  </section>;
+}
+
+function AcceptanceList({ title, values, assessments }: { title: string; values: string[]; assessments?: Map<number, Record<string, unknown>> }) {
+  return <section className="intent-acceptance-list"><h5>{title}<small>{values.length}</small></h5>{values.length ? <ol>{values.map((value, index) => { const assessment = assessments?.get(index); return <li key={`${index}-${value}`}><span>{value}</span>{assessment ? <small data-status={String(assessment.status ?? "unmet")}>{String(assessment.status ?? "unmet")} · {String(assessment.note ?? "")}</small> : null}</li>; })}</ol> : <p className="runtime-empty">未配置</p>}</section>;
+}
 
 function Skills({ solver, store }: { solver: RuntimeSolver; store?: RuntimeStore }) {
   const reads = (store ? selectEventsBySolver(store, solver.solverId) : []).filter((event) => event.type === "SKILL_DOCUMENT_READ");

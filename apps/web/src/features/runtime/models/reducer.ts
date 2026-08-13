@@ -81,7 +81,7 @@ function reduceV6EntityEvent(state: RuntimeStore, event: RuntimeEvent): RuntimeS
   }
 
   if (event.type === "INTENT_CREATED" && intentId && canUpdate(next, "intentsById", intentId, event)) {
-    next = updateIntent(next, intentId, event, { ...(next.intentsById[intentId] ?? defaultIntent(state.task.id, intentId)), title: text(payload.title) ?? intentId, objective: text(payload.objective) ?? "", kind: text(payload.kind) ?? "task", status: text(payload.status) ?? "pending" });
+    next = updateIntent(next, intentId, event, { ...(next.intentsById[intentId] ?? defaultIntent(state.task.id, intentId)), title: text(payload.title) ?? intentId, objective: text(payload.objective) ?? "", kind: text(payload.kind) ?? "task", status: text(payload.status) ?? "pending", successCriteria: texts(payload.success_criteria), expectedEvidence: texts(payload.expected_evidence), stopConditions: texts(payload.stop_conditions), allowedTools: texts(payload.allowed_tools) });
   }
   if (intentId && ["INTENT_ASSIGNED", "INTENT_CLAIMED", "INTENT_STARTED", "INTENT_COMPLETED", "INTENT_BLOCKED"].includes(event.type) && canUpdate(next, "intentsById", intentId, event)) {
     const current = next.intentsById[intentId] ?? defaultIntent(state.task.id, intentId);
@@ -96,7 +96,7 @@ function reduceV6EntityEvent(state: RuntimeStore, event: RuntimeEvent): RuntimeS
   if (["WORKER_RESULT_SUBMITTED", "WORKER_ATTEMPT_COMPLETED"].includes(event.type)) {
     const resultId = text(payload.worker_result_id) ?? (event.type === "WORKER_ATTEMPT_COMPLETED" && intentId ? `worker-${intentId}-${typeof payload.attempt === "number" ? payload.attempt : 1}` : null);
     if (resultId && canUpdate(next, "workerResultsById", resultId, event)) {
-      const result: RuntimeWorkerResult = { resultId, solverId: solverId ?? "", intentId: intentId ?? "", status: text(payload.status) ?? "submitted", summary: text(payload.summary) ?? "", artifactIds: texts(payload.artifact_ids), evidenceClaimIds: texts(payload.evidence_claim_ids).length ? texts(payload.evidence_claim_ids) : texts(payload.claim_ids), knowledgeIds: texts(payload.knowledge_ids), findingIds: texts(payload.finding_ids), limitations: texts(payload.limitations), budgetUsage: numericRecord(payload.budget_usage) };
+      const result: RuntimeWorkerResult = { resultId, solverId: solverId ?? "", intentId: intentId ?? "", status: text(payload.status) ?? "submitted", summary: text(payload.summary) ?? "", artifactIds: texts(payload.artifact_ids), evidenceClaimIds: texts(payload.evidence_claim_ids).length ? texts(payload.evidence_claim_ids) : texts(payload.claim_ids), knowledgeIds: texts(payload.knowledge_ids), findingIds: texts(payload.finding_ids), limitations: texts(payload.limitations), completionStatus: text(payload.completion_status) ?? "incomplete", criterionAssessments: (Array.isArray(payload.criterion_assessments) ? payload.criterion_assessments : []).map(object), budgetUsage: numericRecord(payload.budget_usage) };
       next = updateMap(next, "workerResultsById", resultId, result, event);
     }
   }
@@ -106,7 +106,7 @@ function reduceV6EntityEvent(state: RuntimeStore, event: RuntimeEvent): RuntimeS
       const current = next.workerResultsById[resultId];
       const result: RuntimeWorkerResult = current
         ? { ...current, status: "merged", summary: text(payload.summary) ?? current.summary }
-        : { resultId, solverId: solverId ?? "", intentId: intentId ?? "", status: "merged", summary: text(payload.summary) ?? "", artifactIds: [], evidenceClaimIds: [], knowledgeIds: [], findingIds: [], limitations: [], budgetUsage: {} };
+        : { resultId, solverId: solverId ?? "", intentId: intentId ?? "", status: "merged", summary: text(payload.summary) ?? "", artifactIds: [], evidenceClaimIds: [], knowledgeIds: [], findingIds: [], limitations: [], completionStatus: "incomplete", criterionAssessments: [], budgetUsage: {} };
       next = updateMap(next, "workerResultsById", resultId, result, event);
     }
   }
@@ -220,7 +220,7 @@ function updateMap<K extends SequencedMap>(state: RuntimeStore, map: K, id: stri
   return { ...state, [map]: { ...state[map], [id]: value }, entitySequence: { ...state.entitySequence, [map]: { ...state.entitySequence[map], [id]: entitySeq(event) } } };
 }
 function defaultSolver(taskId: string, solverId: string): RuntimeSolver { return { taskId, solverId, definitionId: "runtime", orchestrationRole: "worker", specialties: [], parentSolverId: null, assignedIntentId: null, status: "created", currentSummary: "", modelSnapshot: {}, capabilityBinding: {}, budgetUsage: {}, timestamps: {} }; }
-function defaultIntent(taskId: string, intentId: string): RuntimeIntent { return { taskId, intentId, kind: "task", title: intentId, objective: "", status: "pending", assignedSolverId: null, dependencies: [], priority: 0, budget: {}, createdAt: "", updatedAt: "" }; }
+function defaultIntent(taskId: string, intentId: string): RuntimeIntent { return { taskId, intentId, kind: "task", title: intentId, objective: "", status: "pending", assignedSolverId: null, dependencies: [], priority: 0, successCriteria: [], expectedEvidence: [], stopConditions: [], allowedTools: [], budget: {}, createdAt: "", updatedAt: "" }; }
 function hasEmbeddedProjection(event: RuntimeEvent): boolean { return ["global_plan", "knowledge", "conflict", "evidence_claim", "worker_result", "retrieval_run"].some((key) => event.payload[key] && typeof event.payload[key] === "object"); }
 function text(value: unknown): string | null { return typeof value === "string" && value ? value : null; }
 function texts(value: unknown): string[] { return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : []; }

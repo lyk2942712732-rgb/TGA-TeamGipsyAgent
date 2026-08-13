@@ -89,9 +89,25 @@ class Intent(BaseModel):
     assigned_solver_id: str = "worker"
     dependencies: tuple[str, ...] = ()
     priority: int = Field(default=50, ge=0, le=100)
+    success_criteria: tuple[str, ...] = Field(default_factory=tuple, max_length=8)
+    expected_evidence: tuple[str, ...] = Field(default_factory=tuple, max_length=8)
+    stop_conditions: tuple[str, ...] = Field(default_factory=tuple, max_length=8)
+    allowed_tools: tuple[str, ...] = Field(default_factory=tuple, max_length=128)
     status: IntentStatus = IntentStatus.PENDING
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
+
+    @model_validator(mode="after")
+    def validate_acceptance_contract(self) -> Intent:
+        for group in (
+            self.success_criteria,
+            self.expected_evidence,
+            self.stop_conditions,
+            self.allowed_tools,
+        ):
+            if any(not item.strip() for item in group):
+                raise ValueError("Intent acceptance items cannot be blank")
+        return self
 
 
 class Plan(BaseModel):

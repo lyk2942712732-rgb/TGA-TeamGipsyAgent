@@ -64,7 +64,14 @@ class _VerificationModel:
             "raw": _VerifiedResponse(),
             "parsed": PlanDraft(
                 summary="Verified",
-                intents=[PlanIntentDraft(title="Inspect", objective="Inspect input")],
+                intents=[
+                    PlanIntentDraft(
+                        title="Inspect",
+                        objective="Inspect input",
+                        success_criteria=["The input is inspected."],
+                        expected_evidence=["An Artifact-backed input observation."],
+                    )
+                ],
             ),
             "parsing_error": None,
         }
@@ -79,14 +86,35 @@ class _CheckpointSuite(OfflineAgentSuite):
         return PlanDraft(
             summary="Two bounded intents",
             intents=[
-                PlanIntentDraft(title="First", objective="Inspect first"),
-                PlanIntentDraft(title="Second", objective="Inspect second"),
+                PlanIntentDraft(
+                    title="First",
+                    objective="Inspect first",
+                    success_criteria=["The first item is inspected."],
+                    expected_evidence=["A first-item observation."],
+                ),
+                PlanIntentDraft(
+                    title="Second",
+                    objective="Inspect second",
+                    success_criteria=["The second item is inspected."],
+                    expected_evidence=["A second-item observation."],
+                ),
             ],
         )
 
     def work(self, task, intent, tools, feedback, middleware=()):
         self.worker_attempts.append(int(intent["attempt"]))
-        return WorkerDraft(summary=f"Attempt {intent['attempt']}")
+        return WorkerDraft(
+            summary=f"Attempt {intent['attempt']}",
+            completion_status="completed",
+            criterion_assessments=[
+                {
+                    "criterion_index": 0,
+                    "status": "met",
+                    "artifact_ids": [],
+                    "note": "Test criterion completed.",
+                }
+            ],
+        )
 
     def review(self, task, packet):
         self.reviews += 1
@@ -95,8 +123,25 @@ class _CheckpointSuite(OfflineAgentSuite):
                 verdict="retry",
                 reason_codes=["insufficient_evidence"],
                 feedback="Collect stronger evidence.",
+                criterion_results=[
+                    {
+                        "criterion_index": 0,
+                        "status": "not_verified",
+                        "reason": "First review intentionally retries.",
+                    }
+                ],
             )
-        return ReviewDraft(verdict="pass", feedback="Accepted.")
+        return ReviewDraft(
+            verdict="pass",
+            feedback="Accepted.",
+            criterion_results=[
+                {
+                    "criterion_index": 0,
+                    "status": "verified",
+                    "reason": "Acceptance criterion verified.",
+                }
+            ],
+        )
 
     def decide(self, task, packet):
         verdict = (packet.review_result or {}).get("verdict")
@@ -147,6 +192,8 @@ class _RecordingToolModel(BaseChatModel):
                         content=(
                             "```json\n"
                             '{"summary":"Checked with ordinary tools.",'
+                            '"completion_status":"completed",'
+                            '"criterion_assessments":[],'
                             '"claims":[],"limitations":[]}\n'
                             "```"
                         )
@@ -204,7 +251,12 @@ class _ApprovalToolModel(BaseChatModel):
             )
             if self.calls == 1
             else AIMessage(
-                content='{"summary":"approved once","claims":[],"limitations":[]}'
+                content=(
+                    '{"summary":"approved once","completion_status":"completed",'
+                    '"criterion_assessments":[{"criterion_index":0,"status":"met",'
+                    '"artifact_ids":[],"note":"Approved tool ran."}],'
+                    '"claims":[],"limitations":[]}'
+                )
             )
         )
         return ChatResult(generations=[ChatGeneration(message=message)])
@@ -227,7 +279,12 @@ class _ToolUntilFinalModel(BaseChatModel):
             for message in messages
         )
         message = (
-            AIMessage(content='{"summary":"bounded","claims":[],"limitations":[]}')
+            AIMessage(
+                content=(
+                    '{"summary":"bounded","completion_status":"completed",'
+                    '"criterion_assessments":[],"claims":[],"limitations":[]}'
+                )
+            )
             if final_call
             else AIMessage(
                 content="",
@@ -267,7 +324,10 @@ class _DeepSeekDsmlFinalizerModel(BaseChatModel):
                 '<｜DSML｜parameter name="value" string="true">7'
                 "</｜DSML｜parameter></｜DSML｜invoke></｜DSML｜tool_calls>"
                 if self.finalizer_calls == 1
-                else '{"summary":"recovered","claims":[],"limitations":[]}'
+                else (
+                    '{"summary":"recovered","completion_status":"completed",'
+                    '"criterion_assessments":[],"claims":[],"limitations":[]}'
+                )
             )
             message = AIMessage(content=content)
         else:
@@ -287,6 +347,24 @@ class _DeepSeekDsmlFinalizerModel(BaseChatModel):
 class _WorkerLimitFailureSuite(OfflineAgentSuite):
     def work(self, *args, **kwargs):
         raise RuntimeError("Model call limits exceeded: run limit (8/8)")
+
+
+class _UncheckedReviewSuite(OfflineAgentSuite):
+    guarded_verdict: str | None = None
+
+    def review(self, task, packet):
+        return ReviewDraft(
+            verdict="pass",
+            feedback="Passed without checking the Intent criteria.",
+            criterion_results=[],
+        )
+
+    def decide(self, task, packet):
+        self.guarded_verdict = (packet.review_result or {}).get("verdict")
+        return SupervisorDecision(
+            action="fail",
+            reason="Stop after exercising the deterministic review guard.",
+        )
 
 
 def test_worker_hitl_resumes_the_original_nested_tool_call_once() -> None:
@@ -582,6 +660,40 @@ def test_offline_vertical_slice(tmp_path: Path) -> None:
     assert len(snapshot["artifacts"]) == 1
     assert len(snapshot["evidence_claims"]) == 1
     assert len(snapshot["findings"]) == 1
+    intent = snapshot["intents"][0]
+    assert intent["success_criteria"]
+    assert intent["expected_evidence"]
+    assert "read_input" in intent["allowed_tools"]
+    assert any("model calls" in item for item in intent["stop_conditions"])
+    created = next(
+        item for item in snapshot["events"] if item["type"] == "INTENT_CREATED"
+    )
+    assert created["payload"]["success_criteria"] == intent["success_criteria"]
+
+
+def test_runtime_rejects_reviewer_pass_without_criterion_coverage(
+    tmp_path: Path,
+) -> None:
+    suite = _UncheckedReviewSuite()
+    service = TaskRuntimeService(run_root=tmp_path / "runs", agents=suite)
+    made = service.create_task(
+        CreateTaskRequest(
+            name="review guard",
+            objective="Ensure every Intent criterion is explicitly reviewed",
+            mode="vulnerability_research",
+        )
+    )
+
+    service.run_task(made["task_id"])
+    snapshot = service.snapshot(made["task_id"])
+    review = next(
+        item for item in snapshot["events"] if item["type"] == "REVIEW_COMPLETED"
+    )
+
+    assert suite.guarded_verdict == "retry"
+    assert review["payload"]["verdict"] == "retry"
+    assert "incomplete_objective" in review["payload"]["reason_codes"]
+    assert "Unverified Intent criteria: 1" in review["payload"]["feedback"]
 
 
 def test_supervisor_checkpoint_retries_then_advances_plan(tmp_path: Path) -> None:

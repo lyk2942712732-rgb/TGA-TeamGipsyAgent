@@ -66,7 +66,10 @@ function toCard(intent: RuntimeIntent): IntentCardView {
     status: intent.status,
     priority: PRIORITY_LABELS[Math.min(2, Math.max(0, intent.priority))] ?? String(intent.priority),
     solver: intent.assignedSolverId,
-    metrics: [["状态", STATUS_LABELS[intent.status] ?? intent.status]],
+    metrics: [
+      ["状态", STATUS_LABELS[intent.status] ?? intent.status],
+      ["验收条件", `${intent.successCriteria.length} 项`],
+    ],
     percent: null,
     flag: intent.status === "awaiting_approval" ? "approval"
       : intent.status === "completed" ? "done"

@@ -126,6 +126,13 @@ reviewable work item inside that Plan. An Intent can have several Attempts; one
 Attempt (Worker execution, Runtime evidence validation, Reviewer evaluation,
 and Supervisor checkpoint decision) is one overall Round.
 
+Each Intent persists an acceptance contract: concrete success criteria,
+expected evidence, a policy-derived allowed-tool snapshot, and Runtime-owned stop conditions. Worker evaluates every
+criterion before finalization, Reviewer verifies the same numbered checklist,
+and Runtime refuses a passing review with missing checklist coverage. This is
+what lets the tool loop stop on evidence instead of merely stopping at its call
+limit.
+
 All limits are read from `runtime.json -> budget`. Models may propose actions,
 but only Runtime code may consume budgets, revise Plan state, change Intent
 state, or accept task completion.

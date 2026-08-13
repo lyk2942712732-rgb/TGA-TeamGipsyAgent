@@ -19,6 +19,8 @@ from pydantic import BaseModel
 
 from tga2.agent.schemas import (
     ClaimDraft,
+    CriterionAssessmentDraft,
+    CriterionReviewDraft,
     FindingDraft,
     PlanDraft,
     PlanIntentDraft,
@@ -99,7 +101,13 @@ class LangChainAgentSuite:
             "supervisor",
             PlanDraft,
             _task_prompt(task),
-            "Return the initial task plan as JSON with a summary and one or more bounded intents.",
+            (
+                "Return the initial task plan as JSON with a summary and one or "
+                "more bounded intents. Every Intent must define concrete, "
+                "independently verifiable success_criteria and the "
+                "expected_evidence needed to prove them. Do not use vague "
+                "criteria such as 'investigate thoroughly' or 'complete the task'."
+            ),
         )
 
     def decide(self, task: Task, packet: SituationPacket) -> SupervisorDecision:
@@ -141,7 +149,13 @@ class LangChainAgentSuite:
             "already persisted by Runtime as an Artifact; do not repeat a command "
             "just to save the same output to a file. Stop investigating early once "
             "the current Intent has enough evidence. Runtime performs finalization "
-            "after this bounded investigation phase."
+            "after this bounded investigation phase. Treat the Intent's numbered "
+            "success_criteria as an acceptance checklist: after each observation, "
+            "identify the first unmet criterion and call a tool only when it can "
+            "close that specific evidence gap. Once all criteria can be supported "
+            "by Artifact IDs, stop immediately. If a stop_condition is reached, "
+            "stop and report incomplete, blocked, or needs_user instead of "
+            "repeating commands."
         )
         content = json.dumps(
             {
@@ -236,7 +250,13 @@ class LangChainAgentSuite:
             "reviewer",
             ReviewDraft,
             packet.model_dump_json(),
-            "Review only the supplied evidence packet and return the verdict as JSON.",
+            (
+                "Review only the supplied evidence packet. Return one "
+                "criterion_result for every numbered intent_success_criterion. "
+                "Mark a criterion verified only when the supplied, locator-valid "
+                "claims semantically prove it. A pass verdict requires every "
+                "Intent criterion to be verified. Return the verdict as JSON."
+            ),
         )
 
     def report(self, task: Task, snapshot: dict[str, Any]) -> ReportDraft:
@@ -359,8 +379,11 @@ class LangChainAgentSuite:
                         "allowed. Summarize only the supplied observations. Cite "
                         "the TGA artifact_id for every evidence claim. If the "
                         "observations are insufficient, return limitations instead "
-                        "of requesting a tool. Never emit tool calls, DSML, XML, or "
-                        "Markdown; return the WorkerDraft JSON object only."
+                        "of requesting a tool. Return exactly one "
+                        "criterion_assessment for every numbered success criterion "
+                        "and choose completion_status from completed, incomplete, "
+                        "blocked, or needs_user. Never emit tool calls, DSML, XML, "
+                        "or Markdown; return the WorkerDraft JSON object only."
                     ),
                     WorkerDraft,
                 )
@@ -492,6 +515,12 @@ class OfflineAgentSuite:
                 PlanIntentDraft(
                     title="Analyze supplied task resources",
                     objective=task.spec.objective,
+                    success_criteria=[
+                        "The available task resources are inspected and the result is summarized."
+                    ],
+                    expected_evidence=[
+                        "An Artifact-backed observation for each inspectable task resource."
+                    ],
                 )
             ],
         )
@@ -564,6 +593,20 @@ class OfflineAgentSuite:
             )
         return WorkerDraft(
             summary="\n".join(notes),
+            completion_status="completed",
+            criterion_assessments=[
+                CriterionAssessmentDraft(
+                    criterion_index=index,
+                    status="met",
+                    artifact_ids=[item.artifact_id for item in claims],
+                    note=(
+                        "Inspectable resources produced Artifact-backed observations."
+                        if claims
+                        else "No inspectable task resource was supplied."
+                    ),
+                )
+                for index, _criterion in enumerate(intent.get("success_criteria") or [])
+            ],
             claims=claims,
             limitations=[]
             if claims
@@ -593,6 +636,21 @@ class OfflineAgentSuite:
             else "Completed with no evidence-backed finding.",
             confirmed_claim_ids=ids,
             findings=findings,
+            criterion_results=[
+                CriterionReviewDraft(
+                    criterion_index=index,
+                    status="verified",
+                    evidence_claim_ids=ids,
+                    reason=(
+                        "The persisted evidence supports this acceptance criterion."
+                        if ids
+                        else "The deterministic offline run completed without inspectable evidence."
+                    ),
+                )
+                for index, _criterion in enumerate(
+                    packet.intent_success_criteria
+                )
+            ],
         )
 
     def report(self, task: Task, snapshot: dict[str, Any]) -> ReportDraft:

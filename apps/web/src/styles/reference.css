@@ -1282,6 +1282,15 @@ html, body { height: 100%; overflow: hidden; }
 .intent-card-progress em { display: block; height: 100%; border-radius: inherit; background: var(--c-success); }
 .intent-card-progress b { color: var(--c-text-muted); font-size: 10.5px; font-variant-numeric: tabular-nums; }
 .intent-card-done { display: grid; justify-self: end; place-items: center; width: 18px; height: 18px; border-radius: 50%; color: var(--c-success); background: var(--c-success-soft); }
+.intent-acceptance-contract { display: grid; gap: 14px; }
+.intent-acceptance-list { display: grid; gap: 7px; }
+.intent-acceptance-list h5 { display: flex; align-items: center; justify-content: space-between; margin: 0; color: var(--c-text); font-size: 12px; }
+.intent-acceptance-list h5 small { display: grid; place-items: center; min-width: 20px; height: 20px; border-radius: var(--r-pill); color: var(--c-text-muted); background: var(--c-surface-muted); }
+.intent-acceptance-list ol { display: grid; gap: 6px; margin: 0; padding-left: 22px; }
+.intent-acceptance-list li { color: var(--c-text-muted); font-size: 11px; line-height: 1.5; }
+.intent-acceptance-list li > span { display: block; color: var(--c-text); }
+.intent-acceptance-list li > small { display: block; margin-top: 2px; color: var(--c-warning); }
+.intent-acceptance-list li > small[data-status="met"] { color: var(--c-success); }
 .runtime-sync-error { border: 1px solid var(--c-danger-border); border-radius: var(--r-md); color: #991b1b; background: var(--c-danger-soft); }
 .runtime-sync-notice { border: 1px solid var(--c-accent-border); border-radius: var(--r-md); color: var(--c-accent-strong); background: var(--c-accent-soft); }
 .runtime-empty { color: var(--c-text-subtle); font-size: 12.5px; }

@@ -11,7 +11,7 @@ from urllib.parse import urlparse
 from langgraph.types import interrupt
 
 from tga2.agent.graph import RuntimeDeps, TGAState
-from tga2.agent.middleware import worker_middleware
+from tga2.agent.middleware import SAFE_DEFAULT_TOOLS, worker_middleware
 from tga2.agent.schemas import (
     EvidencePacket,
     ReviewDraft,
@@ -103,12 +103,7 @@ class GraphNodes:
         calls = self._take_model_calls("supervisor")
         maximum = self.deps.configuration.runtime.budget.task.max_intents
         intents = tuple(
-            Intent(
-                task_id=task.id,
-                title=item.title,
-                objective=item.objective,
-                priority=item.priority,
-            )
+            self._intent_from_draft(task.id, item)
             for item in draft.intents[:maximum]
         )
         if not intents:
@@ -148,6 +143,10 @@ class GraphNodes:
                     payload={
                         "title": intent.title,
                         "objective": intent.objective,
+                        "success_criteria": list(intent.success_criteria),
+                        "expected_evidence": list(intent.expected_evidence),
+                        "stop_conditions": list(intent.stop_conditions),
+                        "allowed_tools": list(intent.allowed_tools),
                         "status": intent.status.value,
                     },
                 )
@@ -274,6 +273,12 @@ class GraphNodes:
                     "attempt": attempt,
                     "summary": draft.summary[:1000],
                     "claim_ids": claim_ids,
+                    "completion_status": draft.completion_status,
+                    "criterion_assessments": [
+                        item.model_dump(mode="json")
+                        for item in draft.criterion_assessments
+                    ],
+                    "limitations": draft.limitations,
                     "model_calls": calls,
                 },
             )
@@ -296,8 +301,9 @@ class GraphNodes:
             task.id, "reviewer", "running", "正在审查 Worker 的证据包", intent.id
         )
         packet = self._review_packet(task, intent, state)
-        review = self.deps.agents.review(task, packet)
+        proposed_review = self.deps.agents.review(task, packet)
         calls = self._take_model_calls("reviewer")
+        review = self._guard_review(intent, state, proposed_review)
         confirmed = set(review.confirmed_claim_ids).intersection(
             state.get("claim_ids", [])
         )
@@ -367,6 +373,10 @@ class GraphNodes:
                     "feedback": review.feedback,
                     "confirmed_claim_ids": sorted(confirmed),
                     "rejected_claim_ids": sorted(rejected),
+                    "criterion_results": [
+                        item.model_dump(mode="json")
+                        for item in review.criterion_results
+                    ],
                     "model_calls": calls,
                 },
             )
@@ -466,12 +476,7 @@ class GraphNodes:
         decision = SupervisorDecision.model_validate(state["supervisor_decision"])
         existing = self.deps.store.list_intents(task.id)
         additions = tuple(
-            Intent(
-                task_id=task.id,
-                title=item.title,
-                objective=item.objective,
-                priority=item.priority,
-            )
+            self._intent_from_draft(task.id, item)
             for item in decision.new_intents
         )
         current = self._intent(state)
@@ -734,7 +739,55 @@ class GraphNodes:
             current_intent=intent.model_dump(mode="json"),
             worker_result=state.get("worker_draft", {}),
             evidence=evidence,
-            success_criteria=list(task.spec.success_criteria),
+            task_success_criteria=list(task.spec.success_criteria),
+            intent_success_criteria=list(intent.success_criteria),
+            expected_evidence=list(intent.expected_evidence),
+            stop_conditions=list(intent.stop_conditions),
+        )
+
+    def _guard_review(
+        self, intent: Intent, state: TGAState, review: ReviewDraft
+    ) -> ReviewDraft:
+        """A Reviewer may judge evidence, but Runtime enforces checklist coverage."""
+
+        if review.verdict != "pass" or not intent.success_criteria:
+            return review
+        expected = set(range(len(intent.success_criteria)))
+        verified = {
+            item.criterion_index
+            for item in review.criterion_results
+            if item.status == "verified" and item.criterion_index in expected
+        }
+        worker = state.get("worker_draft") or {}
+        worker_completed = worker.get("completion_status") == "completed"
+        worker_met = {
+            item["criterion_index"]
+            for item in worker.get("criterion_assessments") or []
+            if item.get("status") == "met"
+            and isinstance(item.get("criterion_index"), int)
+            and item["criterion_index"] in expected
+        }
+        if verified == expected and worker_met == expected and worker_completed:
+            return review
+        missing = sorted(expected - verified)
+        worker_missing = sorted(expected - worker_met)
+        reasons = list(dict.fromkeys([*review.reason_codes, "incomplete_objective"]))
+        detail = (
+            f"Unverified Intent criteria: {', '.join(str(item + 1) for item in missing)}."
+            if missing
+            else (
+                "Worker did not declare the Intent acceptance contract completed."
+                if not worker_completed
+                else "Worker did not mark criteria "
+                f"{', '.join(str(item + 1) for item in worker_missing)} as met."
+            )
+        )
+        return review.model_copy(
+            update={
+                "verdict": "retry",
+                "reason_codes": reasons,
+                "feedback": " ".join(item for item in (review.feedback, detail) if item),
+            }
         )
 
     def _situation_packet(self, task, state: TGAState) -> SituationPacket:
@@ -882,9 +935,46 @@ class GraphNodes:
         )
         authorized_hosts = self._hosts(authorized_text)
         proposed_hosts = self._hosts(
-            "\n".join(f"{item.title}\n{item.objective}" for item in additions)
+            "\n".join(
+                "\n".join(
+                    [
+                        item.title,
+                        item.objective,
+                        *item.success_criteria,
+                        *item.expected_evidence,
+                    ]
+                )
+                for item in additions
+            )
         )
         return proposed_hosts.issubset(authorized_hosts)
+
+    def _intent_from_draft(self, task_id: str, item) -> Intent:
+        budget = self.deps.configuration.runtime.budget
+        policy_tools = self.deps.store.get_policy(task_id).tool.allowed_tools
+        allowed_tools = policy_tools or SAFE_DEFAULT_TOOLS
+        return Intent(
+            task_id=task_id,
+            title=item.title,
+            objective=item.objective,
+            priority=item.priority,
+            success_criteria=tuple(item.success_criteria),
+            expected_evidence=tuple(item.expected_evidence),
+            allowed_tools=tuple(sorted(allowed_tools)),
+            stop_conditions=(
+                "Stop successfully as soon as every acceptance criterion is supported by cited Artifacts.",
+                (
+                    "Stop this attempt when its budget reaches "
+                    f"{budget.roles.worker.calls_per_attempt} model calls or "
+                    f"{budget.roles.worker.tool_calls_per_attempt} tool calls."
+                ),
+                (
+                    "Stop as blocked or needs_user when authorization, required "
+                    "user-only information, or an unavailable capability prevents progress."
+                ),
+                "Do not repeat a successful command merely to preserve output; Runtime already creates an Artifact.",
+            ),
+        )
 
     @staticmethod
     def _hosts(value: str) -> set[str]:

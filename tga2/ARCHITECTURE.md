@@ -29,6 +29,13 @@ role budget for a separate, tool-free finalizer. The investigation sub-agent
 therefore cannot spend the entire budget repeatedly calling Kali, and tool-loop
 markup such as DeepSeek DSML is never treated as the final `WorkerDraft`.
 
+Every new Intent is an acceptance contract, not just a title and objective. The
+Supervisor must provide numbered `success_criteria` and `expected_evidence`;
+Runtime snapshots the policy-derived `allowed_tools` and adds immutable budget,
+authorization and anti-repetition `stop_conditions`. After each tool result Runtime reminds Worker of the
+checklist. Worker and Reviewer return index-based criterion assessments, and
+Runtime rejects a `pass` that does not cover every criterion.
+
 There is one application container. API, CLI and tests receive the same Runtime,
 configuration, Skill repository and MCP repository. Settings pages therefore
 change the real execution objects instead of maintaining a display-only copy.

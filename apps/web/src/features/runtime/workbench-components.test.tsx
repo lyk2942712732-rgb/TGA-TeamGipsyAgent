@@ -80,5 +80,12 @@ describe("Phase 11 command workbench components", () => {
     fireEvent.click(within(inspector).getByRole("tab", { name: "Tools" }));
     expect(inspector).toHaveTextContent("kali.exec");
     expect(inspector).toHaveTextContent("调用 1 次");
+    fireEvent.click(within(inspector).getByRole("tab", { name: "当前 Intent" }));
+    expect(inspector).toHaveTextContent("Intent 验收契约");
+    expect(inspector).toHaveTextContent("Verify Resolve reviewer conflict");
+    expect(inspector).toHaveTextContent("Artifact-backed observation");
+    expect(inspector).toHaveTextContent("Runtime 允许工具");
+    expect(inspector).toHaveTextContent("run_command");
+    expect(inspector).toHaveTextContent("Stop when the criterion is evidenced");
   });
 });
