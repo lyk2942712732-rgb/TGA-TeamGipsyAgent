@@ -32,8 +32,9 @@ through the same LangGraph, evidence store and report flow.
 
 ## Configuration source of truth
 
-Every process reads and writes runtime configuration through
-`<TGA2_RUN_ROOT>/.config`:
+Every process reads and writes runtime configuration through the tracked
+`runs2/.config` directory (or the equivalent `.config` directory selected by
+`TGA2_RUN_ROOT`):
 
 - `models.json` owns providers, models, verification state and API keys. API
   keys are intentionally stored as plain JSON for this competition project.
@@ -43,10 +44,48 @@ Every process reads and writes runtime configuration through
   scene prompt additions.
 - `mcp.json` owns MCP server definitions.
 
-Files in `tga2/defaults` are installation seeds only. They are copied into a
-new run root on first start and are not an alternative live configuration
-source. Legacy `model.json` and `model-registry.json` are read only once when
-`models.json` does not yet exist.
+There is no second defaults directory and no implicit configuration migration.
+All four JSON files must exist. This makes missing or stale deployment
+configuration visible instead of silently creating another source of truth.
 
 Configure a role's model on the Solver page. Creating a task no longer accepts
 or stores a second per-task model assignment.
+
+### `models.json`
+
+`presets` is only the Models-page shortcut catalog (provider display name and
+default OpenAI-compatible base URL). `providers` contains the providers the
+user actually created. Each provider owns its models and one or more API keys:
+
+```json
+{
+  "schema_version": 1,
+  "presets": [
+    {"id": "deepseek", "name": "DeepSeek", "base_url": "https://api.deepseek.com"}
+  ],
+  "providers": [
+    {
+      "id": "provider_demo",
+      "name": "My DeepSeek",
+      "preset_id": "deepseek",
+      "model_provider": "openai",
+      "base_url": "https://api.deepseek.com",
+      "models": [
+        {"id": "model_chat", "name": "deepseek-chat", "verification_status": "verified"}
+      ],
+      "api_keys": [
+        {"id": "key_main", "label": "Active", "api_key": "sk-plain-text"}
+      ],
+      "selected_api_key_id": "key_main"
+    }
+  ],
+  "active_provider_id": "provider_demo",
+  "active_model_id": "model_chat"
+}
+```
+
+`model_provider: "openai"` means LangChain uses its OpenAI-compatible adapter;
+it does not rename the provider to OpenAI. `selected_api_key_id` selects the
+key used by that provider. The two top-level `active_*` fields are retained for
+the Models-page compatibility endpoint; actual Solver execution chooses models
+from `runtime.json -> roles -> <role> -> model`.

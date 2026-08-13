@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import ast
 import json
+import shutil
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 from fastapi.testclient import TestClient
 
 from apps.api.main import app
@@ -23,6 +25,12 @@ class _VerifiedResponse:
 class _VerificationModel:
     def invoke(self, _prompt: str) -> _VerifiedResponse:
         return _VerifiedResponse()
+
+
+@pytest.fixture(autouse=True)
+def copy_tracked_configuration(tmp_path: Path) -> None:
+    source = Path(__file__).parents[1] / "runs2" / ".config"
+    shutil.copytree(source, tmp_path / "runs" / ".config")
 
 
 def test_offline_vertical_slice(tmp_path: Path) -> None:

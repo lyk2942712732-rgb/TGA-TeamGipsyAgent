@@ -207,7 +207,13 @@ tempCodeRunnerFile.py
 
 # TGA runtime output
 runs/
-runs2/
+runs2/*
+!runs2/.config/
+runs2/.config/*
+!runs2/.config/models.json
+!runs2/.config/runtime.json
+!runs2/.config/scenes.json
+!runs2/.config/mcp.json
 output/
 config/*.v1.bak
 

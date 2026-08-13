@@ -65,12 +65,15 @@ class MCPConfigRepository:
     def __init__(self, path: str | Path) -> None:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        if not self.path.is_file():
+            raise FileNotFoundError(
+                f"missing MCP configuration: {self.path}; "
+                "start from the tracked runs2/.config directory"
+            )
         self._lock = RLock()
 
     def list(self) -> dict[str, dict[str, Any]]:
         with self._lock:
-            if not self.path.is_file():
-                return {}
             payload = json.loads(self.path.read_text(encoding="utf-8"))
             return dict(payload.get("servers") or {})
 

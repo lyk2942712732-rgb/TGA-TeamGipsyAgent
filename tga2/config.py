@@ -1,27 +1,16 @@
-"""Persisted configuration loaded exclusively from ``<run_root>/.config``.
-
-Files under ``tga2/defaults`` are installation seeds only.  They are copied on
-first start and are never consulted again while a runtime config file exists.
-"""
+"""Persisted configuration loaded exclusively from ``<run_root>/.config``."""
 
 from __future__ import annotations
 
 import json
 import os
-import shutil
 from pathlib import Path
 from threading import RLock
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from tga2.integrations.model import (
-    ModelRegistry,
-    ModelSettings,
-    RegisteredAPIKey,
-    RegisteredModel,
-    RegisteredProvider,
-)
+from tga2.integrations.model import ModelRegistry, ModelSettings
 
 ROLES = ("supervisor", "worker", "reviewer", "reporter")
 KALI_PROFILE_ID = "tga2-kali"
@@ -126,7 +115,7 @@ class Configuration:
         self.models_path = self.root / "models.json"
         self.scenes_path = self.root / "scenes.json"
         self._lock = RLock()
-        self._seed_missing_files()
+        self._require_files()
         self.runtime = self._load_runtime()
         self.scenes = self._load_scenes()
         self.model_registry = self._load_models()
@@ -299,21 +288,22 @@ class Configuration:
             selection.provider_id, selection.model_id, require_verified=True
         )
 
-    def _seed_missing_files(self) -> None:
-        defaults = Path(__file__).with_name("defaults")
-        for name in ("runtime.json", "scenes.json"):
-            target = self.root / name
-            if not target.exists():
-                shutil.copyfile(defaults / name, target)
-        if not self.models_path.exists() and not self._migrate_legacy_models():
-            shutil.copyfile(defaults / "models.json", self.models_path)
+    def _require_files(self) -> None:
+        missing = [
+            path.name
+            for path in (self.runtime_path, self.models_path, self.scenes_path)
+            if not path.is_file()
+        ]
+        if missing:
+            raise FileNotFoundError(
+                f"missing configuration in {self.root}: {', '.join(missing)}; "
+                "start from the tracked runs2/.config directory"
+            )
 
     def _load_runtime(self) -> RuntimeSettings:
-        payload = json.loads(self.runtime_path.read_text(encoding="utf-8"))
-        if "roles" not in payload:
-            payload = self._migrate_legacy_runtime(payload)
-            self._write_json(self.runtime_path, payload)
-        return RuntimeSettings.model_validate(payload)
+        return RuntimeSettings.model_validate_json(
+            self.runtime_path.read_text(encoding="utf-8")
+        )
 
     def _load_scenes(self) -> SceneCatalog:
         value = SceneCatalog.model_validate_json(
@@ -325,89 +315,9 @@ class Configuration:
         return value
 
     def _load_models(self) -> ModelRegistry:
-        registry = ModelRegistry.model_validate_json(
+        return ModelRegistry.model_validate_json(
             self.models_path.read_text(encoding="utf-8")
         )
-        if not registry.presets:
-            seed = ModelRegistry.model_validate_json(
-                (Path(__file__).with_name("defaults") / "models.json").read_text(
-                    encoding="utf-8"
-                )
-            )
-            registry.presets = seed.presets
-            self.model_registry = registry
-            self.save_models()
-        return registry
-
-    def _migrate_legacy_runtime(self, payload: dict[str, Any]) -> dict[str, Any]:
-        default = json.loads(
-            (Path(__file__).with_name("defaults") / "runtime.json").read_text(
-                encoding="utf-8"
-            )
-        )
-        prompts = payload.get("prompts") or {}
-        tools = payload.get("solver_tools") or {}
-        for role in ROLES:
-            if prompts.get(role):
-                default["roles"][role]["prompt"] = prompts[role]
-            if role in tools:
-                default["roles"][role]["tools"] = tools[role]
-        if prompts.get("common"):
-            default["common_prompt"] = prompts["common"]
-        old_kali = payload.get("kali") or {}
-        legacy_image = payload.get("sandbox_image")
-        if legacy_image and legacy_image != "kalilinux/kali-rolling:latest":
-            old_kali.setdefault("image", legacy_image)
-        for key in ("enabled", "profile_id", "image", "expected_digest"):
-            if key in old_kali:
-                default["kali"][key] = old_kali[key]
-        return default
-
-    def _migrate_legacy_models(self) -> bool:
-        registry_path = self.root / "model-registry.json"
-        single_path = self.root / "model.json"
-        if registry_path.is_file():
-            shutil.copyfile(registry_path, self.models_path)
-            return True
-        current: ModelSettings | None = None
-        if single_path.is_file():
-            current = ModelSettings.model_validate_json(
-                single_path.read_text(encoding="utf-8")
-            )
-        else:
-            env = ModelSettings.from_env()
-            if env.api_key and env.api_key.get_secret_value():
-                current = env
-        if current is None or not current.api_key:
-            return False
-        host = (current.base_url or "").casefold()
-        if "deepseek" in host:
-            name, preset = "DeepSeek", "deepseek"
-        elif "openrouter" in host:
-            name, preset = "OpenRouter", "openrouter"
-        else:
-            name, preset = "OpenAI", "openai"
-        model = RegisteredModel(
-            name=current.model,
-            verification_status="verified" if current.verified else "unverified",
-        )
-        key = RegisteredAPIKey(label="Migrated key", api_key=current.api_key)
-        provider = RegisteredProvider(
-            name=name,
-            preset_id=preset,
-            model_provider="openai",
-            base_url=current.base_url,
-            models=[model],
-            api_keys=[key],
-            selected_api_key_id=key.id,
-        )
-        registry = ModelRegistry(
-            providers=[provider],
-            active_provider_id=provider.id if current.verified else None,
-            active_model_id=model.id if current.verified else None,
-        )
-        self._write_json(self.models_path, registry.persisted_payload(), 0o600)
-        return True
 
     def _write_json(self, path: Path, payload: dict[str, Any], mode: int | None = None) -> None:
         with self._lock:

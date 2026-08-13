@@ -25,9 +25,6 @@ tga = "tga2.cli:main"
 include = ["tga2*", "apps*"]
 exclude = ["tests*", "examples*", "resources*", "runs*"]
 
-[tool.setuptools.package-data]
-tga2 = ["defaults/*.json"]
-
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
