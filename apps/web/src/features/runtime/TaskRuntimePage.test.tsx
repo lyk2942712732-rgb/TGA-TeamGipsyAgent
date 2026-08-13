@@ -35,6 +35,8 @@ describe("TaskRuntimePage skeleton", () => {
 
   it("allows keyboard-native Solver selection and keeps state in the URL", () => {
     render(<MemoryRouter initialEntries={["/tasks/task/runtime"]}><TaskRuntimePage taskId="task" mode="runtime" /></MemoryRouter>);
+    expect(screen.getByRole("treeitem", { name: /worker/ })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("complementary", { name: "Solver 检查器" })).toHaveTextContent("Inspect");
     fireEvent.click(screen.getByRole("treeitem", { name: /worker/ }));
     expect(screen.getByRole("treeitem", { name: /worker/ })).toHaveAttribute("aria-selected", "true");
   });

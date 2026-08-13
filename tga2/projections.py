@@ -32,6 +32,13 @@ def runtime_snapshot_projection(
     task_id = task["id"]
     status = task["status"]
     intents = [_intent(item) for item in raw.get("intents", [])]
+    if status == "failed":
+        intents = [
+            {**item, "status": "failed"}
+            if item["status"] in {"running", "review", "reviewing"}
+            else item
+            for item in intents
+        ]
     artifacts = [_artifact(item) for item in raw.get("artifacts", [])]
     claims = [_claim(item) for item in raw.get("evidence_claims", [])]
     findings = [_finding(item) for item in raw.get("findings", [])]
@@ -102,6 +109,16 @@ def runtime_snapshot_projection(
         for item in events
         if item["type"] in model_call_event_types
     )
+    failed_calls = next(
+        (
+            int((item.get("payload") or {}).get("model_calls") or 0)
+            or _model_limit_from_message((item.get("payload") or {}).get("message"))
+            for item in reversed(events)
+            if item["type"] == "TASK_FAILED"
+        ),
+        0,
+    )
+    model_calls += failed_calls
     session = {
         "status": projected_status,
         "supervisor_solver_id": "supervisor" if solvers else None,
@@ -116,7 +133,7 @@ def runtime_snapshot_projection(
             "tool_calls": len(actions),
             "artifacts": len(artifacts),
         },
-        "stop_reason": "user_input_required" if awaiting_user else None,
+        "stop_reason": _stop_reason(events, awaiting_user),
         "user_input_request": (
             {
                 "question": (waiting_for_user.get("payload") or {}).get("question"),
@@ -169,7 +186,7 @@ def runtime_snapshot_projection(
         "max_turns": runtime.budget.task.max_model_calls if runtime else 60,
         "started_at": started,
         "finished_at": finished,
-        "stop_reason": None,
+        "stop_reason": session["stop_reason"],
         "active_solvers": session["active_solver_count"],
         "pending_approvals": len(approvals),
         "intent_total": len(intents),
@@ -288,6 +305,28 @@ def _directives(task_id: str, kind: str, values: list[str]) -> list[dict[str, An
     ]
 
 
+def _stop_reason(events: list[dict[str, Any]], awaiting_user: bool) -> str | None:
+    if awaiting_user:
+        return "user_input_required"
+    terminal = next(
+        (
+            item
+            for item in reversed(events)
+            if item["type"] in {"TASK_FAILED", "TASK_CANCELLED"}
+        ),
+        None,
+    )
+    if terminal is None:
+        return None
+    payload = terminal.get("payload") or {}
+    return str(payload.get("message") or payload.get("reason") or terminal["type"])
+
+
+def _model_limit_from_message(value: Any) -> int:
+    match = re.search(r"run limit \((\d+)/(\d+)\)", str(value or ""), re.IGNORECASE)
+    return int(match.group(1)) if match else 0
+
+
 def _first_url(task: dict[str, Any]) -> str | None:
     spec = task.get("spec") or {}
     text = "\n".join(
@@ -316,7 +355,12 @@ def _solvers(
         if item.get("solver_id") in roles
     } | set(latest_run)
     current_intent = next(
-        (item for item in intents if item["status"] in {"running", "review"}), None
+        (
+            item
+            for item in intents
+            if item["status"] in {"running", "review", "reviewing", "failed"}
+        ),
+        None,
     )
     terminal = task_status in {
         "completed",
@@ -340,12 +384,10 @@ def _solvers(
         run = latest_run.get(role) or {}
         assigned_intent = (
             (activity or {}).get("intent_id")
-            or next(
-                (item.get("intent_id") for item in reversed(role_events) if item.get("intent_id")),
-                None,
-            )
             or run.get("intent_id")
         )
+        if role == "supervisor":
+            assigned_intent = (activity or {}).get("intent_id")
         status_value, summary = _solver_state(
             role,
             role_events,
@@ -412,7 +454,25 @@ def _solver_state(
     fallback_summary: str,
 ) -> tuple[str, str]:
     if terminal:
-        return ("failed" if task_status == "failed" else "completed", fallback_summary)
+        activity_status = str((activity or {}).get("payload", {}).get("status") or "")
+        if task_status == "failed":
+            owns_failed_intent = bool(
+                current_intent
+                and current_intent.get("status") == "failed"
+                and current_intent.get("assigned_solver_id") == role
+            )
+            return (
+                "failed"
+                if activity_status == "failed" or owns_failed_intent
+                else "stopped",
+                _event_summary(activity)
+                or (
+                    "执行阶段失败"
+                    if activity_status == "failed" or owns_failed_intent
+                    else "任务已终止"
+                ),
+            )
+        return ("completed", _event_summary(activity) or fallback_summary)
     if task_status == "awaiting_user_input":
         return (
             "awaiting_user_input" if role == "supervisor" else "waiting",

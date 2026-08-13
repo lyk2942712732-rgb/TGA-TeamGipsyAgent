@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import shlex
 from collections.abc import Sequence
 from typing import Any
 
@@ -149,6 +150,13 @@ class PolicyAuditMiddleware(AgentMiddleware):
     def wrap_tool_call(self, request, handler):
         name = request.tool_call["name"]
         arguments = request.tool_call.get("args") or {}
+        if name == "run_command":
+            bounded = _bounded_network_command(str(arguments.get("command") or ""))
+            if bounded != arguments.get("command"):
+                arguments = {**arguments, "command": bounded}
+                request = request.override(
+                    tool_call={**request.tool_call, "args": arguments}
+                )
         action_id = str(request.tool_call.get("id") or "")
         execution_policy = self.store.get_policy(self.task.id)
         policy = execution_policy.tool
@@ -272,10 +280,11 @@ class PolicyAuditMiddleware(AgentMiddleware):
                         )
                     }
                 )
+        result_failed = isinstance(result, ToolMessage) and result.status == "error"
         self.store.save_action(
             action.model_copy(
                 update={
-                    "status": "succeeded",
+                    "status": "failed" if result_failed else "succeeded",
                     "summary": str(result)[:1000],
                     "artifact_ids": artifact_ids,
                     "updated_at": utc_now(),
@@ -288,7 +297,12 @@ class PolicyAuditMiddleware(AgentMiddleware):
                 type="TOOL_COMPLETED",
                 solver_id="worker",
                 intent_id=self.intent_id,
-                payload={"action_id": action.id, "tool_name": name, "risk": risk.value},
+                payload={
+                    "action_id": action.id,
+                    "tool_name": name,
+                    "risk": risk.value,
+                    "status": "failed" if result_failed else "succeeded",
+                },
             )
         )
         return result
@@ -355,10 +369,24 @@ def worker_middleware(
     policy = store.get_policy(task.id)
     if policy.local_compute == "isolated" and sandbox_image:
         kali = configuration.runtime.kali if configuration else None
+        sandbox_inputs = workspace.prepare_sandbox_inputs()
         middleware.append(
             ShellToolMiddleware(
-                workspace_root=workspace.inputs,
+                workspace_root=workspace.scratch,
                 tool_name="run_command",
+                tool_description=(
+                    "Run one bounded command in the isolated Kali sandbox. "
+                    "The current directory is writable task scratch; copied task "
+                    "inputs are in ./inputs and /tmp is writable. Command output is "
+                    "automatically persisted as an Artifact, so do not save HTTP "
+                    "responses merely to preserve evidence. Add curl --max-time 15 "
+                    "or an equivalent timeout to every network command."
+                ),
+                env={
+                    "TGA_SCRATCH": str(workspace.scratch),
+                    "TGA_INPUTS": str(sandbox_inputs),
+                    "TMPDIR": "/tmp",
+                },
                 execution_policy=DockerExecutionPolicy(
                     image=sandbox_image,
                     network_enabled=policy.network_access != "disabled",
@@ -366,6 +394,12 @@ def worker_middleware(
                     read_only_rootfs=kali.read_only_rootfs if kali else True,
                     memory_bytes=(kali.memory_mb if kali else 1024) * 1024 * 1024,
                     cpus=str(kali.cpu_cores if kali else 1),
+                    extra_run_args=(
+                        "--tmpfs",
+                        "/tmp:rw,nosuid,nodev,exec,size=268435456",
+                        "--pids-limit",
+                        str(kali.max_processes if kali else 256),
+                    ),
                 ),
             )
         )
@@ -459,6 +493,15 @@ def _high_impact_action(command: str) -> str | None:
         ("encoded_execution", r"\bpowershell\b[^\n]*-enc(?:odedcommand)?\b"),
     )
     return next((name for name, pattern in patterns if re.search(pattern, value)), None)
+
+
+def _bounded_network_command(command: str) -> str:
+    value = command.casefold()
+    if not re.search(r"(^|[;&|]\s*|\s)(?:curl|wget)\s", value):
+        return command
+    if re.search(r"\btimeout\s+\d|--max-time\b|--timeout(?:=|\s)", value):
+        return command
+    return f"timeout 20s bash -lc {shlex.quote(command)}"
 
 
 def _redact(value: Any, key: str = "") -> Any:

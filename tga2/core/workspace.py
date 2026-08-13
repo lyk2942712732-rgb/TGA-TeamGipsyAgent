@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import mimetypes
+import shutil
 from pathlib import Path, PurePath
 
 from tga2.core.models import Artifact
@@ -21,10 +22,15 @@ class TaskWorkspace:
         self.root = (root / task_id).resolve()
         self.root.relative_to(root)
         self.inputs = self.root / "workspace" / "inputs"
+        self.scratch = self.root / "workspace" / "scratch"
         self.artifacts = self.root / "workspace" / "artifacts"
         self.reports = self.root / "reports"
-        for path in (self.inputs, self.artifacts, self.reports):
+        for path in (self.inputs, self.scratch, self.artifacts, self.reports):
             path.mkdir(parents=True, exist_ok=True)
+        # The Kali image runs as an unprivileged, remapped UID. Scratch is the
+        # deliberately writable exchange directory; inputs/artifacts remain
+        # governed by their dedicated repositories.
+        self.scratch.chmod(0o777)
 
     @property
     def database_path(self) -> Path:
@@ -81,6 +87,24 @@ class TaskWorkspace:
         destination = self.inputs / source_path.name
         destination.write_bytes(source_path.read_bytes())
         return destination
+
+    def prepare_sandbox_inputs(self) -> Path:
+        """Expose writable task-scoped copies of inputs to the Kali session."""
+
+        destination_root = self.scratch / "inputs"
+        destination_root.mkdir(parents=True, exist_ok=True)
+        destination_root.chmod(0o777)
+        for source in self.inputs.rglob("*"):
+            relative = source.relative_to(self.inputs)
+            destination = destination_root / relative
+            if source.is_dir():
+                destination.mkdir(parents=True, exist_ok=True)
+                destination.chmod(0o777)
+            elif not destination.exists():
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(source, destination)
+                destination.chmod(0o666)
+        return destination_root
 
     def read_artifact(self, relative: str) -> bytes:
         candidate = (self.root / relative).resolve()

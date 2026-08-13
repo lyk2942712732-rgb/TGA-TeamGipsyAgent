@@ -30,9 +30,16 @@ export function TaskRuntimePage({ taskId, mode = "runtime" }: { taskId: string; 
 
   if (!store) return <section className="task-runtime-loading" aria-live="polite"><h1>正在加载任务运行时</h1><p>{error ?? "正在读取 Snapshot 并连接事件流。"}</p>{error ? <button onClick={refresh}>重试</button> : null}</section>;
   const viewStore = mode === "replay" && replaySeq !== null ? replayStoreAtSeq(store, replaySeq) : store;
-  const intentSolver = selection.intentId ? viewStore.intentsById[selection.intentId]?.assignedSolverId : null;
+  const currentIntent = selection.intentId
+    ? viewStore.intentsById[selection.intentId]
+    : Object.values(viewStore.intentsById).find((intent) => ["running", "reviewing", "awaiting_approval", "failed", "blocked"].includes(intent.status));
+  const intentSolver = currentIntent?.assignedSolverId ?? null;
   const supervisor = selectSupervisor(viewStore);
-  const selectedSolver = (selection.solverId ? viewStore.solversById[selection.solverId] : undefined) ?? (intentSolver ? viewStore.solversById[intentSolver] : undefined) ?? supervisor;
+  const activeSolver = Object.values(viewStore.solversById).find((solver) => ["running", "awaiting_approval", "awaiting_user_input", "failed"].includes(solver.status));
+  const selectedSolver = (selection.solverId ? viewStore.solversById[selection.solverId] : undefined)
+    ?? (intentSolver ? viewStore.solversById[intentSolver] : undefined)
+    ?? activeSolver
+    ?? supervisor;
   const selectedSolverId = selectedSolver?.solverId ?? null;
   const terminalFailure = taskFailure(viewStore);
   const control = async (action: "cancel") => { setBusy(true); setNotice(null); try { const result = await runtimeApi.control(taskId, action); setNotice(result.accepted === false ? (result.reason ?? "当前 Runtime 不支持该控制操作") : "Task 控制请求已提交"); refresh(); } catch (reason) { setNotice(reason instanceof Error ? reason.message : "Task 控制失败"); } finally { setBusy(false); } };

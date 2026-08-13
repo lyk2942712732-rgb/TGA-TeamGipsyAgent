@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 import shutil
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
@@ -23,6 +24,7 @@ from tga2.agent.schemas import ReportDraft
 from tga2.config import Configuration
 from tga2.core.models import (
     AgentEvent,
+    IntentStatus,
     ResourceRef,
     Task,
     TaskSpec,
@@ -413,6 +415,53 @@ class TaskRuntimeService:
 
     @staticmethod
     def _record_failure(store: TaskStore, task_id: str, exc: BaseException) -> None:
+        active_intents = [
+            intent
+            for intent in store.list_intents(task_id)
+            if intent.status in {IntentStatus.RUNNING, IntentStatus.REVIEW}
+        ]
+        for intent in active_intents:
+            store.update_intent(
+                intent.model_copy(
+                    update={"status": IntentStatus.FAILED, "updated_at": utc_now()}
+                )
+            )
+            store.append_event(
+                AgentEvent(
+                    task_id=task_id,
+                    type="INTENT_BLOCKED",
+                    solver_id=intent.assigned_solver_id,
+                    intent_id=intent.id,
+                    payload={
+                        "status": "failed",
+                        "reason": str(exc)[:2000],
+                        "error_type": type(exc).__name__,
+                    },
+                )
+            )
+        latest_active = next(
+            (
+                event
+                for event in reversed(store.list_events(task_id, limit=1000))
+                if event.type == "SOLVER_STATUS_CHANGED"
+                and event.payload.get("status") == "running"
+            ),
+            None,
+        )
+        if latest_active and latest_active.solver_id:
+            store.append_event(
+                AgentEvent(
+                    task_id=task_id,
+                    type="SOLVER_STATUS_CHANGED",
+                    solver_id=latest_active.solver_id,
+                    intent_id=latest_active.intent_id,
+                    payload={
+                        "status": "failed",
+                        "summary": str(exc)[:1000],
+                        "stage": latest_active.solver_id,
+                    },
+                )
+            )
         store.set_task_status(task_id, TaskStatus.FAILED)
         store.append_event(
             AgentEvent(
@@ -421,6 +470,11 @@ class TaskRuntimeService:
                 payload={
                     "error_type": type(exc).__name__,
                     "message": str(exc)[:2000],
+                    "current_intent_id": active_intents[0].id
+                    if active_intents
+                    else None,
+                    "solver_id": latest_active.solver_id if latest_active else None,
+                    "model_calls": _failed_model_calls(exc),
                 },
             )
         )
@@ -563,3 +617,8 @@ class TaskRuntimeService:
 
 
 __all__ = ["TaskRuntimeService"]
+
+
+def _failed_model_calls(exc: BaseException) -> int:
+    match = re.search(r"run limit \((\d+)/(\d+)\)", str(exc), re.IGNORECASE)
+    return int(match.group(1)) if match else 0

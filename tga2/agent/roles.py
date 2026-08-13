@@ -8,6 +8,7 @@ from typing import Any, Protocol
 
 from langchain.agents import create_agent
 from langchain.agents.middleware import (
+    AgentMiddleware,
     ModelCallLimitMiddleware,
 )
 from langchain_core.language_models.chat_models import BaseChatModel
@@ -50,6 +51,36 @@ class AgentSuite(Protocol):
     def take_model_calls(self, role: str) -> int: ...
 
 
+class WorkerFinalizationMiddleware(AgentMiddleware):
+    """Reserve the final model call for a terminal WorkerDraft."""
+
+    def __init__(self, call_limit: int, *, disable_tools: bool) -> None:
+        super().__init__()
+        self.call_limit = call_limit
+        self.disable_tools = disable_tools
+
+    def wrap_model_call(self, request, handler):
+        used = int(request.state.get("run_model_call_count", 0))
+        if used < self.call_limit - 1:
+            return handler(request)
+        current = request.system_message.text if request.system_message else ""
+        final_instruction = (
+            "\n\nFINAL CALL: Do not request another investigation tool. "
+            "Summarize the evidence already collected, include every usable "
+            "artifact_id in claims, state remaining limitations, and return the "
+            "required WorkerDraft JSON now."
+        )
+        overrides: dict[str, Any] = {
+            "system_message": SystemMessage(content=current + final_instruction)
+        }
+        # Reasoning endpoints such as DeepSeek reject forced tool_choice. Their
+        # WorkerDraft is prompt-parsed, so hiding tools on the reserved call is
+        # the portable way to guarantee a terminal response.
+        if self.disable_tools:
+            overrides["tools"] = []
+        return handler(request.override(**overrides))
+
+
 class LangChainAgentSuite:
     """Standard LangChain agents embedded as nodes in the outer LangGraph."""
 
@@ -71,6 +102,10 @@ class LangChainAgentSuite:
         self._last_model_calls = 0
         self._model_middleware = [
             ModelCallLimitMiddleware(run_limit=model_call_limit, exit_behavior="error"),
+            WorkerFinalizationMiddleware(
+                model_call_limit,
+                disable_tools=force_prompt_worker_output,
+            ),
         ]
         # A Worker is a resumable LangGraph sub-agent.  The outer task graph
         # persists the business workflow; this cache preserves the nested
@@ -121,7 +156,11 @@ class LangChainAgentSuite:
             response_format = None
         worker_prompt = (
             f"{worker_prompt}\n\nCall at most one tool in each assistant message. "
-            "Wait for its result before selecting another tool."
+            "Wait for its result before selecting another tool. Tool output is "
+            "already persisted by Runtime as an Artifact; do not repeat a command "
+            "just to save the same output to a file. Stop investigating early once "
+            "the current Intent has enough evidence, and always leave one model "
+            "call available for the final WorkerDraft."
         )
         content = json.dumps(
             {

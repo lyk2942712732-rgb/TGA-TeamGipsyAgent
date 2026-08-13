@@ -21,7 +21,7 @@ from langgraph.types import Command
 from pydantic import Field
 
 from apps.api.main import app
-from tga2.agent.middleware import _high_impact_action
+from tga2.agent.middleware import _bounded_network_command, _high_impact_action
 from tga2.agent.roles import LangChainAgentSuite, OfflineAgentSuite, RoutedAgentSuite
 from tga2.agent.schemas import (
     PlanDraft,
@@ -210,6 +210,44 @@ class _ApprovalToolModel(BaseChatModel):
         return ChatResult(generations=[ChatGeneration(message=message)])
 
 
+class _ToolUntilFinalModel(BaseChatModel):
+    calls: int = 0
+
+    @property
+    def _llm_type(self) -> str:
+        return "tool-until-final-model"
+
+    def bind_tools(self, tools, *, tool_choice=None, **_kwargs):
+        return self
+
+    def _generate(self, messages, stop=None, run_manager=None, **_kwargs):
+        self.calls += 1
+        final_call = any(
+            "FINAL CALL" in str(getattr(message, "content", ""))
+            for message in messages
+        )
+        message = (
+            AIMessage(content='{"summary":"bounded","claims":[],"limitations":[]}')
+            if final_call
+            else AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "budget_probe",
+                        "args": {"value": str(self.calls)},
+                        "id": f"budget-{self.calls}",
+                    }
+                ],
+            )
+        )
+        return ChatResult(generations=[ChatGeneration(message=message)])
+
+
+class _WorkerLimitFailureSuite(OfflineAgentSuite):
+    def work(self, *args, **kwargs):
+        raise RuntimeError("Model call limits exceeded: run limit (8/8)")
+
+
 def test_worker_hitl_resumes_the_original_nested_tool_call_once() -> None:
     executed: list[str] = []
 
@@ -327,6 +365,89 @@ def test_high_impact_classifier_does_not_gate_read_only_shell_setup() -> None:
     assert _high_impact_action("hydra -l admin -P passwords.txt ssh://target") == (
         "credential_attack"
     )
+    assert _bounded_network_command("curl -s https://target.test/").startswith(
+        "timeout 20s bash -lc "
+    )
+    assert _bounded_network_command(
+        "curl --max-time 5 https://target.test/"
+    ) == "curl --max-time 5 https://target.test/"
+
+
+def test_worker_reserves_last_model_call_for_structured_finalization() -> None:
+    executed: list[str] = []
+
+    @tool
+    def budget_probe(value: str) -> str:
+        """Record one bounded investigation step."""
+
+        executed.append(value)
+        return value
+
+    model = _ToolUntilFinalModel()
+    suite = LangChainAgentSuite(
+        model,
+        model_call_limit=8,
+        force_prompt_worker_output=True,
+    )
+    task = Task(name="budget", spec=TaskSpec(objective="finish within budget"))
+
+    draft = suite.work(
+        task,
+        {"id": "intent-budget", "attempt": 1},
+        [budget_probe],
+        "",
+    )
+
+    assert draft.summary == "bounded"
+    assert model.calls == 8
+    assert executed == ["1", "2", "3", "4", "5", "6", "7"]
+
+
+def test_failure_marks_active_intent_and_solver_instead_of_leaving_running(
+    tmp_path: Path,
+) -> None:
+    service = TaskRuntimeService(
+        run_root=tmp_path / "runs", agents=_WorkerLimitFailureSuite()
+    )
+    made = service.create_task(
+        CreateTaskRequest(
+            name="worker limit",
+            objective="exercise terminal failure projection",
+            mode="vulnerability_research",
+        )
+    )
+
+    with pytest.raises(RuntimeError, match="run limit"):
+        service.run_task(made["task_id"])
+    snapshot = service.snapshot(made["task_id"])
+
+    assert snapshot["session"]["status"] == "failed"
+    assert snapshot["session"]["task_budget_usage"]["model_calls"] == 8
+    assert snapshot["intents"][0]["status"] == "failed"
+    worker = next(item for item in snapshot["solvers"] if item["solver_id"] == "worker")
+    supervisor = next(
+        item for item in snapshot["solvers"] if item["solver_id"] == "supervisor"
+    )
+    assert worker["status"] == "failed"
+    assert worker["assigned_intent_id"] == snapshot["intents"][0]["intent_id"]
+    assert supervisor["status"] == "stopped"
+    assert supervisor["assigned_intent_id"] is None
+
+
+def test_workspace_gives_kali_a_writable_scratch_copy_of_inputs(
+    tmp_path: Path,
+) -> None:
+    from tga2.core.workspace import TaskWorkspace
+
+    source = tmp_path / "sample.bin"
+    source.write_bytes(b"sample")
+    workspace = TaskWorkspace(tmp_path / "runs", "task-scratch")
+    workspace.ingest_input(source)
+
+    sandbox_inputs = workspace.prepare_sandbox_inputs()
+
+    assert (sandbox_inputs / "sample.bin").read_bytes() == b"sample"
+    assert workspace.scratch.stat().st_mode & 0o777 == 0o777
 
 
 def test_deepseek_thinking_capability_disables_forced_tool_choice() -> None:

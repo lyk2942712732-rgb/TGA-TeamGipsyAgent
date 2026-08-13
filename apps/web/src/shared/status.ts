@@ -14,6 +14,7 @@ export const STATUS_DICTIONARY: Record<string, StatusDefinition> = {
   assigned: { label: "已分配", tone: "info" },
   running: { label: "运行中", tone: "info" },
   waiting: { label: "等待中", tone: "neutral" },
+  stopped: { label: "已停止", tone: "neutral" },
   awaiting_approval: { label: "等待审批", tone: "warning" },
   awaiting_user_input: { label: "等待用户输入", tone: "warning" },
   paused: { label: "已暂停", tone: "warning" },
