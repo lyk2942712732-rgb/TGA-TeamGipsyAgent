@@ -26,6 +26,7 @@ from tga2.agent.schemas import (
     SituationPacket,
     SupervisorDecision,
     WorkerDraft,
+    structured_output_prompt,
 )
 from tga2.core.models import Task
 from tga2.skills import Skill
@@ -148,7 +149,11 @@ class LangChainAgentSuite:
             expected, method="json_mode", include_raw=True
         )
         messages = [
-            SystemMessage(content=f"{self._prompt(role, task)}\n\n{instruction}"),
+            SystemMessage(
+                content=structured_output_prompt(
+                    self._prompt(role, task), instruction, expected
+                )
+            ),
             HumanMessage(content=payload),
         ]
         last_error: Exception | None = None
@@ -160,8 +165,10 @@ class LangChainAgentSuite:
             if isinstance(parsed, expected):
                 return parsed
             error = result.get("parsing_error") if isinstance(result, dict) else None
-            last_error = error if isinstance(error, Exception) else ValueError(
-                f"{role} returned no valid {expected.__name__}"
+            last_error = (
+                error
+                if isinstance(error, Exception)
+                else ValueError(f"{role} returned no valid {expected.__name__}")
             )
             if attempt < self.structured_parse_retries:
                 messages.append(
@@ -213,9 +220,7 @@ class LangChainAgentSuite:
                         str(configured.get(focus_key) or ""),
                     ]
                 ).strip()
-        return "\n\n".join(
-            item for item in (common, role_prompt, mode_prompt) if item
-        )
+        return "\n\n".join(item for item in (common, role_prompt, mode_prompt) if item)
 
 
 class RoutedAgentSuite:
@@ -238,9 +243,7 @@ class RoutedAgentSuite:
         feedback: str,
         middleware: Sequence[Any] = (),
     ) -> WorkerDraft:
-        return self.roles["worker"].work(
-            task, intent, tools, feedback, middleware
-        )
+        return self.roles["worker"].work(task, intent, tools, feedback, middleware)
 
     def review(self, task: Task, packet: ReviewPacket) -> ReviewDraft:
         return self.roles["reviewer"].review(task, packet)

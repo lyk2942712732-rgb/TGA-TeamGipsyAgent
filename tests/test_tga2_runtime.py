@@ -22,7 +22,7 @@ from tga2.agent.schemas import (
 from tga2.agent.service import TaskRuntimeService
 from tga2.bootstrap import get_container, reset_containers
 from tga2.config import DEFAULT_KALI_IMAGE, DEFAULT_KALI_IMAGE_DIGEST
-from tga2.core.models import CreateTaskRequest
+from tga2.core.models import CreateTaskRequest, Task, TaskSpec
 from tga2.integrations.mcp import MCPConfig, MCPServer
 
 
@@ -37,6 +37,15 @@ class _VerificationModel:
     def invoke(self, _prompt):
         from tga2.agent.schemas import PlanDraft, PlanIntentDraft
 
+        rendered = "\n".join(
+            str(item.get("content", ""))
+            if isinstance(item, dict)
+            else str(getattr(item, "content", item))
+            for item in _prompt
+        )
+        assert '"intents"' in rendered
+        assert '"priority"' in rendered
+        assert "do not rename fields" in rendered
         return {
             "raw": _VerifiedResponse(),
             "parsed": PlanDraft(
@@ -91,6 +100,18 @@ class _CheckpointSuite(OfflineAgentSuite):
 
     def report(self, task, snapshot):
         return ReportDraft(executive_summary="Checkpoint flow completed.")
+
+
+def test_langchain_json_mode_receives_the_full_pydantic_schema() -> None:
+    suite = LangChainAgentSuite(_VerificationModel())
+    draft = suite.plan(
+        Task(
+            name="schema",
+            mode="ctf",
+            spec=TaskSpec(objective="Verify schema delivery"),
+        )
+    )
+    assert draft.intents[0].priority == 50
 
 
 class _AskUserSuite(OfflineAgentSuite):

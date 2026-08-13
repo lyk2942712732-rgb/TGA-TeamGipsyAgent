@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import SecretStr
 
 from apps.api.dependencies import container
-from tga2.agent.schemas import PlanDraft
+from tga2.agent.schemas import PlanDraft, structured_output_prompt
 from tga2.bootstrap import Container
 from tga2.integrations.model import (
     ModelRegistry,
@@ -27,6 +27,11 @@ from tga2.integrations.model import (
 from tga2.skills import Skill
 
 router = APIRouter(tags=["settings"])
+
+
+class _StructuredOutputInvalidError(ValueError):
+    """The endpoint was reachable but did not satisfy the supplied JSON schema."""
+
 
 def _active(app: Container) -> tuple[RegisteredProvider, RegisteredModel] | None:
     registry = app.configuration.model_registry
@@ -51,7 +56,9 @@ def _llm(app: Container) -> dict:
     active = _active(app)
     provider, model = active if active else (None, None)
     configured = _has_configured_model(registry)
-    status = model.verification_status if model else "unverified" if configured else "failed"
+    status = (
+        model.verification_status if model else "unverified" if configured else "failed"
+    )
     return {
         "configured": configured,
         "active": active is not None and status == "verified",
@@ -84,13 +91,19 @@ def llm(app: Container = Depends(container)):
 @router.post("/settings/llm")
 def update_llm(payload: dict, app: Container = Depends(container)):
     """Compatibility write for older clients; it creates one real provider."""
-    current = app.configuration.model_registry.active_settings() or ModelSettings.from_env()
+    current = (
+        app.configuration.model_registry.active_settings() or ModelSettings.from_env()
+    )
     secret = payload.get("api_key")
     key = SecretStr(str(secret)) if secret else current.api_key
     if key is None or not key.get_secret_value():
         raise HTTPException(422, "api_key is required")
     provider = RegisteredProvider(
-        name=str(payload.get("provider_name") or payload.get("provider") or "OpenAI-compatible"),
+        name=str(
+            payload.get("provider_name")
+            or payload.get("provider")
+            or "OpenAI-compatible"
+        ),
         preset_id=str(payload.get("preset_id") or "custom"),
         model_provider="openai",
         base_url=str(payload.get("base_url") or current.base_url or "") or None,
@@ -198,9 +211,7 @@ def add_key(provider_id: str, payload: dict, app: Container = Depends(container)
 
 
 @router.put("/settings/llm/providers/{provider_id}/api-keys/{key_id}/selection")
-def select_key(
-    provider_id: str, key_id: str, app: Container = Depends(container)
-):
+def select_key(provider_id: str, key_id: str, app: Container = Depends(container)):
     provider = _get_provider(provider_id, app)
     if not any(item.id == key_id for item in provider.api_keys):
         raise HTTPException(404, "API key not found")
@@ -216,9 +227,7 @@ def select_key(
 
 
 @router.post("/settings/llm/providers/{provider_id}/models/{model_id}/verify")
-def verify_model(
-    provider_id: str, model_id: str, app: Container = Depends(container)
-):
+def verify_model(provider_id: str, model_id: str, app: Container = Depends(container)):
     return _verify(provider_id, model_id, app)
 
 
@@ -236,33 +245,65 @@ def _verify(provider_id: str, model_id: str, app: Container) -> dict:
         structured = build_chat_model(settings).with_structured_output(
             PlanDraft, method="json_mode", include_raw=True
         )
-        response = structured.invoke(
-            [
-                {
-                    "role": "system",
-                    "content": (
-                        "Return a JSON object matching the requested task-plan schema. "
-                        "It must contain a non-empty summary and one intent with title, "
-                        "objective, and priority."
+        messages = [
+            {
+                "role": "system",
+                "content": structured_output_prompt(
+                    "You are checking whether this model can produce reliable "
+                    "structured output.",
+                    (
+                        "Create a minimal task plan containing exactly one item in "
+                        "the `intents` array. Use the integer 50 for its priority."
                     ),
-                },
-                {
-                    "role": "user",
-                    "content": "Create a minimal JSON plan for inspecting one authorized input file.",
-                },
-            ]
-        )
-        parsed = response.get("parsed") if isinstance(response, dict) else response
-        parsing_error = response.get("parsing_error") if isinstance(response, dict) else None
-        if not isinstance(parsed, PlanDraft):
-            raise TypeError(
+                    PlanDraft,
+                ),
+            },
+            {
+                "role": "user",
+                "content": "Create a minimal JSON plan for inspecting one authorized input file.",
+            },
+        ]
+        response = None
+        parsing_error = None
+        for attempt in range(2):
+            response = structured.invoke(messages)
+            parsed = response.get("parsed") if isinstance(response, dict) else response
+            parsing_error = (
+                response.get("parsing_error") if isinstance(response, dict) else None
+            )
+            if isinstance(parsed, PlanDraft):
+                break
+            if attempt == 0:
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": (
+                            "Your previous JSON did not match the supplied schema. "
+                            "Correct it: use the top-level `intents` array (not "
+                            "`intent`) and an integer priority. Return JSON only."
+                        ),
+                    }
+                )
+        else:
+            raise _StructuredOutputInvalidError(
                 f"model did not produce a valid PlanDraft: {parsing_error or 'empty parsed response'}"
             )
+    except _StructuredOutputInvalidError as exc:
+        model.verification_status = "failed"
+        model.last_error = {
+            "code": "MODEL_STRUCTURED_OUTPUT_INVALID",
+            "message": "模型已连接，但连续两次返回的 JSON 都不符合运行时结构。",
+            "reason": str(exc)[:300],
+        }
+        app.configuration.save_model_registry()
+        if app.configuration.model_registry.active_provider_id == provider.id:
+            app.runtime.configure_model(settings.model_copy(update={"verified": False}))
+        raise HTTPException(502, model.last_error) from exc
     except Exception as exc:
         model.verification_status = "failed"
         model.last_error = {
             "code": "MODEL_VERIFICATION_FAILED",
-            "message": str(exc)[:2000],
+            "message": str(exc)[:600],
         }
         app.configuration.save_model_registry()
         if app.configuration.model_registry.active_provider_id == provider.id:
@@ -383,9 +424,7 @@ async def import_skill(request: Request, app: Container = Depends(container)):
     body = (await request.body()).decode("utf-8")
     byte_limit = app.configuration.runtime.files.skill_import_max_bytes
     if len(body.encode()) > byte_limit:
-        raise HTTPException(
-            413, f"skill exceeds configured limit ({byte_limit} bytes)"
-        )
+        raise HTTPException(413, f"skill exceeds configured limit ({byte_limit} bytes)")
     name = _identifier(Path(filename).stem)
     scene = request.headers.get("x-tga-scene")
     item = Skill(

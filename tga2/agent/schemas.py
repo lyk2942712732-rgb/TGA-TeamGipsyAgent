@@ -1,8 +1,41 @@
 """Role outputs and bounded Runtime-built intelligence packets."""
 
+import json
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
+
+
+def structured_output_prompt(
+    base_prompt: str,
+    instruction: str,
+    expected: type[BaseModel],
+) -> str:
+    """Build the explicit schema prompt required by OpenAI-compatible JSON mode.
+
+    ``with_structured_output(..., method="json_mode")`` validates the response,
+    but compatible providers do not necessarily receive the Pydantic schema
+    automatically. Supplying it here prevents models from guessing field names
+    such as ``intent`` instead of the required ``intents`` array.
+    """
+
+    schema = json.dumps(
+        expected.model_json_schema(),
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    return "\n\n".join(
+        part
+        for part in (
+            base_prompt.strip(),
+            instruction.strip(),
+            (
+                "Return exactly one JSON object and no Markdown. Follow this JSON "
+                f"Schema exactly; do not rename fields or add fields:\n{schema}"
+            ),
+        )
+        if part
+    )
 
 
 class PlanIntentDraft(BaseModel):
@@ -127,4 +160,5 @@ __all__ = [
     "SituationPacket",
     "SupervisorDecision",
     "WorkerDraft",
+    "structured_output_prompt",
 ]
