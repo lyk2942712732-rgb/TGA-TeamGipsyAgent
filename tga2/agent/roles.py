@@ -12,6 +12,7 @@ from langchain.agents.middleware import (
 )
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.output_parsers import PydanticOutputParser
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel
 
@@ -58,11 +59,13 @@ class LangChainAgentSuite:
         *,
         model_call_limit: int = 8,
         structured_parse_retries: int = 1,
+        force_prompt_worker_output: bool = False,
     ) -> None:
         self.model = model
         self.skill_catalog = skill_catalog or (lambda _task: "")
         self.prompts = prompts or {}
         self.structured_parse_retries = structured_parse_retries
+        self.force_prompt_worker_output = force_prompt_worker_output
         self._last_model_calls = 0
         self._model_middleware = [
             ModelCallLimitMiddleware(run_limit=model_call_limit, exit_behavior="error"),
@@ -94,11 +97,27 @@ class LangChainAgentSuite:
         feedback: str,
         middleware: Sequence[Any] = (),
     ) -> WorkerDraft:
+        worker_prompt = self._prompt("worker", task)
+        response_format: type[WorkerDraft] | None = WorkerDraft
+        if self.force_prompt_worker_output:
+            # Keep normal tool auto-selection for reasoning endpoints that
+            # reject LangChain ToolStrategy's forced tool_choice.  LangChain
+            # still owns the full model/tool loop; only the terminal response
+            # is parsed from JSON instead of represented as a synthetic tool.
+            worker_prompt = structured_output_prompt(
+                worker_prompt,
+                (
+                    "Use the available tools as needed. When the investigation "
+                    "is complete, return the final WorkerDraft as JSON."
+                ),
+                WorkerDraft,
+            )
+            response_format = None
         agent = create_agent(
             self.model,
             tools=tools,
-            system_prompt=self._prompt("worker", task),
-            response_format=WorkerDraft,
+            system_prompt=worker_prompt,
+            response_format=response_format,
             middleware=[*self._middleware(task), *middleware],
             name="tga2_worker",
         )
@@ -114,6 +133,8 @@ class LangChainAgentSuite:
         self._last_model_calls = sum(
             isinstance(message, AIMessage) for message in result.get("messages", [])
         )
+        if self.force_prompt_worker_output:
+            return self._parse_worker_message(result)
         return self._structured(result, WorkerDraft)
 
     def review(self, task: Task, packet: ReviewPacket) -> ReviewDraft:
@@ -186,6 +207,20 @@ class LangChainAgentSuite:
         if isinstance(value, expected):
             return value
         return expected.model_validate(value)
+
+    @staticmethod
+    def _parse_worker_message(result: dict[str, Any]) -> WorkerDraft:
+        message = next(
+            (
+                item
+                for item in reversed(result.get("messages", []))
+                if isinstance(item, AIMessage) and not item.tool_calls
+            ),
+            None,
+        )
+        if message is None:
+            raise ValueError("worker returned no final model response")
+        return PydanticOutputParser(pydantic_object=WorkerDraft).parse(message.text)
 
     def _middleware(self, task: Task):
         return [*self._model_middleware]

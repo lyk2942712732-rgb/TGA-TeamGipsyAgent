@@ -20,6 +20,7 @@ class ModelSettings(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     provider: str = "openai"
+    preset_id: str = "custom"
     model: str = "gpt-5-mini"
     api_key: SecretStr | None = None
     base_url: str | None = None
@@ -27,6 +28,7 @@ class ModelSettings(BaseModel):
     max_retries: int = Field(default=2, ge=0, le=10)
     offline: bool = True
     verified: bool = False
+    reasoning_mode: str = "auto"
 
     @classmethod
     def from_env(cls) -> ModelSettings:
@@ -49,6 +51,29 @@ class ModelSettings(BaseModel):
             and self.api_key is not None
             and bool(self.api_key.get_secret_value())
         )
+
+    @property
+    def supports_forced_tool_choice(self) -> bool:
+        """Whether Agent structured-output tools may force ``tool_choice``.
+
+        LangChain's ToolStrategy uses ``tool_choice=required`` to obtain the
+        final Pydantic response.  DeepSeek thinking endpoints reject that
+        parameter even though they support ordinary, model-selected tools.
+        Explicit reasoning mode receives the same conservative treatment for
+        OpenAI-compatible gateways whose exact capability cannot be inferred.
+        """
+
+        if self.reasoning_mode.casefold() == "disabled":
+            return True
+        identity = " ".join(
+            (
+                self.preset_id,
+                self.provider,
+                self.model,
+                self.base_url or "",
+            )
+        ).casefold()
+        return self.reasoning_mode.casefold() != "enabled" and "deepseek" not in identity
 
 
 class RegisteredModel(BaseModel):
@@ -113,12 +138,14 @@ class RegisteredProvider(BaseModel):
             raise ValueError(f"model is not verified: {self.id}/{model.id}")
         return ModelSettings(
             provider=self.model_provider,
+            preset_id=self.preset_id,
             model=model.name,
             api_key=key.api_key,
             base_url=self.base_url,
             temperature=model.temperature,
             offline=False,
             verified=model.verification_status == "verified",
+            reasoning_mode=model.reasoning_mode,
         )
 
 

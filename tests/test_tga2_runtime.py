@@ -10,6 +10,11 @@ from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
+from langchain_core.language_models.chat_models import BaseChatModel
+from langchain_core.messages import AIMessage
+from langchain_core.outputs import ChatGeneration, ChatResult
+from langchain_core.tools import tool
+from pydantic import Field
 
 from apps.api.main import app
 from tga2.agent.roles import LangChainAgentSuite, OfflineAgentSuite, RoutedAgentSuite
@@ -26,6 +31,7 @@ from tga2.bootstrap import get_container, reset_containers
 from tga2.config import DEFAULT_KALI_IMAGE, DEFAULT_KALI_IMAGE_DIGEST
 from tga2.core.models import CreateTaskRequest, Task, TaskSpec
 from tga2.integrations.mcp import MCPConfig, MCPServer
+from tga2.integrations.model import ModelSettings
 
 
 class _VerifiedResponse:
@@ -114,6 +120,80 @@ def test_langchain_json_mode_receives_the_full_pydantic_schema() -> None:
         )
     )
     assert draft.intents[0].priority == 50
+
+
+class _RecordingToolModel(BaseChatModel):
+    tool_choices: list[object | None] = Field(default_factory=list)
+
+    @property
+    def _llm_type(self) -> str:
+        return "recording-tool-model"
+
+    def bind_tools(self, tools, *, tool_choice=None, **_kwargs):
+        self.tool_choices.append(tool_choice)
+        return self
+
+    def _generate(self, _messages, stop=None, run_manager=None, **_kwargs):
+        return ChatResult(
+            generations=[
+                ChatGeneration(
+                    message=AIMessage(
+                        content=(
+                            "```json\n"
+                            '{"summary":"Checked with ordinary tools.",'
+                            '"claims":[],"limitations":[]}\n'
+                            "```"
+                        )
+                    )
+                )
+            ]
+        )
+
+
+@tool
+def _inspect_authorized_value(value: str) -> str:
+    """Inspect an authorized test value."""
+
+    return value
+
+
+def test_deepseek_thinking_worker_does_not_force_tool_choice() -> None:
+    model = _RecordingToolModel()
+    suite = LangChainAgentSuite(
+        model, force_prompt_worker_output=True
+    )
+    draft = suite.work(
+        Task(
+            name="deepseek tools",
+            mode="ctf",
+            spec=TaskSpec(objective="Use tools without forced tool_choice"),
+        ),
+        {"id": "intent-1", "objective": "Inspect target"},
+        [_inspect_authorized_value],
+        "",
+    )
+
+    assert model.tool_choices == [None]
+    assert draft.summary == "Checked with ordinary tools."
+
+
+def test_deepseek_thinking_capability_disables_forced_tool_choice() -> None:
+    deepseek = ModelSettings(
+        preset_id="deepseek",
+        provider="openai",
+        model="deepseek-v4-pro",
+        base_url="https://api.deepseek.com",
+        reasoning_mode="auto",
+    )
+    standard = ModelSettings(
+        preset_id="openai",
+        provider="openai",
+        model="gpt-4.1-mini",
+        reasoning_mode="disabled",
+    )
+
+    assert deepseek.supports_forced_tool_choice is False
+    assert standard.supports_forced_tool_choice is True
 
 
 class _AskUserSuite(OfflineAgentSuite):

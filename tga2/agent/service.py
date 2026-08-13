@@ -109,6 +109,7 @@ class TaskRuntimeService:
                         self.configuration.agent_prompts(),
                         model_call_limit=call_limit,
                         structured_parse_retries=parse_retries,
+                        force_prompt_worker_output=not fallback.supports_forced_tool_choice,
                     )
                 else:
                     roles[role] = offline
@@ -122,6 +123,7 @@ class TaskRuntimeService:
                         self.configuration.agent_prompts(),
                         model_call_limit=call_limit,
                         structured_parse_retries=parse_retries,
+                        force_prompt_worker_output=not settings.supports_forced_tool_choice,
                     )
                 else:
                     roles[role] = offline
