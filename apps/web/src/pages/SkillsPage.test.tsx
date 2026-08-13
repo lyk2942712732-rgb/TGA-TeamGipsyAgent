@@ -36,7 +36,7 @@ describe("SkillsPage", () => {
     const { container } = renderPage();
     await screen.findByText("ctf-crypto");
     expect(screen.getByText("runs2/.config/skills")).toBeInTheDocument();
-    expect(container.querySelector(".catalog-table")).toHaveTextContent("web-recon");
+    expect(container.querySelector(".skill-package-list")).toHaveTextContent("web-recon");
     const detail = await screen.findByLabelText("ctf-crypto 详情");
     expect(detail).toHaveTextContent("2 份 / 120 B");
   });

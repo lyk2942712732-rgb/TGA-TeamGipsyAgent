@@ -6,19 +6,16 @@
  * so shell overrides win. */
 
 /* --- shell ---------------------------------------------------------------
-   The shell is a fixed-height app frame, not a tall document.  The old rules
-   let the body grow past the viewport while the sidebar was pinned at
-   `height:100vh; overflow:hidden`, which clipped the lower nav items on short
-   windows and left the page with only a sliver of body scroll.  Here the frame
-   is locked to the viewport and the two columns scroll independently. */
+   The shell owns the viewport.  Navigation and main content scroll
+   independently, so a long settings page remains reachable without moving the
+   sidebar or creating two competing document scrollbars. */
 html, body { height: 100%; overflow: hidden; }
-.app-shell { height: 100vh; min-height: 0; overflow: hidden; }
-.app-content { height: 100vh; min-height: 0; overflow: hidden; }
+.app-shell { height: 100vh; height: 100dvh; min-height: 0; overflow: hidden; }
+.app-content { height: 100vh; height: 100dvh; min-height: 0; overflow: hidden; }
 .app-topbar { position: static; flex: 0 0 auto; }
-/* Nothing scrolls the document.  Every reference page is drawn as one screen,
-   so `.app-main` is a fixed-height viewport and the page inside it distributes
-   that height (see the page-frame block below). */
-.app-main { flex: 1 1 auto; min-height: 0; padding: 0; overflow: hidden; }
+.app-main { flex: 1 1 auto; min-height: 0; padding: 0; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
+/* Mission Control is a genuine workbench and keeps its own pane scrollers. */
+.app-main.runtime-main { overflow: hidden; scrollbar-gutter: auto; }
 
 .app-sidebar { position: static; height: 100%; min-height: 0; padding: 14px 12px; border-right: 1px solid var(--c-border); overflow: hidden; }
 .app-brand { flex: 0 0 auto; }
@@ -46,20 +43,17 @@ html, body { height: 100%; overflow: hidden; }
 .topbar-user b { font-size: 13px; font-weight: 600; }
 
 /* --- page frame ----------------------------------------------------------
-   Each page is a column that fills `.app-main` exactly.  Everything in the
-   column keeps its natural height except the one block marked `.ref-fill`,
-   which absorbs the leftover space and scrolls its own overflow internally.
-   That is what makes a card stretch to the bottom edge the way the reference
-   images draw it; with a scrolling document instead, a short page leaves a
-   pool of empty space and the cards read as shoved into the corner. */
+   Regular pages may grow beyond one screen; `.app-main` is their single
+   vertical scroll owner.  Fill blocks still absorb spare room on short pages,
+   but never clip content on a short display or at browser zoom. */
 .ref-page {
   display: flex; flex-direction: column; gap: 16px;
-  height: 100%; min-height: 0;
+  min-height: 100%;
   /* No max-width: the reference screens run edge to edge.  Capping the page and
      centring it left a wide gutter on either side of the content on a large
      monitor, which is the "留白太大" the designs never show. */
   padding: 20px var(--sp-6) 22px;
-  overflow: hidden;
+  overflow: visible;
 }
 .ref-page > * { flex: 0 0 auto; min-width: 0; }
 /* `.ref-search` declares its own `flex` further down the sheet and would
@@ -68,6 +62,7 @@ html, body { height: 100%; overflow: hidden; }
 /* Declared after `.ref-page > *` so it wins for direct children, and it also
    applies one level down (a table inside a flex column, say). */
 .ref-fill { flex: 1 1 auto; min-height: 0; }
+.runtime-main .ref-page { height: 100%; min-height: 0; overflow: hidden; }
 
 /* --- one type stack ------------------------------------------------------
    The legacy skin set `Georgia, "Noto Serif SC", serif` on headings across a
@@ -93,6 +88,10 @@ html, body { height: 100%; overflow: hidden; }
 .ref-fill.approval-list, .ref-fill.task-detail-panel, .ref-fill.task-card-grid,
 .ref-fill.solver-grid, .ref-fill.ref-detail-panel { align-content: start; }
 .ref-fill.task-detail-panel > *, .ref-fill.ref-detail-panel > * { min-height: auto; }
+/* On ordinary routes the main pane is the only vertical scroll owner.  Let a
+   direct fill section grow to its content instead of silently clipping it in
+   the remaining viewport height. */
+.app-main:not(.runtime-main) .ref-page > .ref-fill { flex: 1 0 auto; min-height: min-content; overflow: visible; }
 /* `.ref-detail-body`'s 120px floor is a placeholder minimum for a short tab; in
    a height-constrained grid it also licenses the row to shrink below its
    content, so inside a scroller the floor becomes the content itself. */
@@ -1239,36 +1238,83 @@ html, body { height: 100%; overflow: hidden; }
 .runtime-empty { color: var(--c-text-subtle); font-size: 12.5px; }
 
 /* --- skill editor ------------------------------------------------------- */
+.skills-page { width: 100%; max-width: none; }
+.skills-page-head { align-items: center; }
+.skills-page-head .ref-eyebrow { display: block; margin-bottom: 5px; color: var(--c-accent); font-size: 10px; font-weight: 800; letter-spacing: .13em; }
 .skill-editor { display: grid; gap: var(--sp-3); }
 .skill-editor label { display: grid; gap: 6px; color: var(--c-text-muted); font-size: 12.5px; font-weight: 600; }
 .skill-editor input, .skill-editor textarea { border: 1px solid var(--c-border); border-radius: var(--r-md); color: var(--c-text); font-weight: 400; }
 .skill-editor textarea { font: 12.5px/1.7 ui-monospace, SFMono-Regular, Consolas, monospace; }
 
 .skill-runtime-note { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 14px; border: 1px solid var(--c-border); border-radius: var(--r-md); color: var(--c-text-muted); background: var(--c-surface-muted); font-size: 12px; }
-.skill-runtime-note code { color: var(--c-accent-strong); }
-.skill-runtime-note span { margin-left: auto; }
+.skill-runtime-note code { min-width: 0; color: var(--c-accent-strong); overflow-wrap: anywhere; }
+.skill-runtime-note span { margin-left: auto; text-align: right; }
 .ref-filter-summary { margin-left: auto; color: var(--c-text-muted); font-size: 12px; }
-.skill-package-layout { display: grid; grid-template-columns: minmax(460px, .85fr) minmax(560px, 1.15fr); gap: var(--sp-4); min-height: 0; }
-.skill-package-panel { min-width: 0; overflow: auto; }
-.skill-package-body { display: grid; grid-template-columns: minmax(180px, 230px) minmax(0, 1fr); gap: var(--sp-3); min-height: 380px; margin-top: var(--sp-4); }
-.skill-package-body nav { display: flex; flex-direction: column; gap: 4px; min-width: 0; padding: 5px; border: 1px solid var(--c-border); border-radius: var(--r-md); background: var(--c-surface-muted); }
-.skill-package-body nav > button { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; padding: 9px; border: 0; border-radius: 7px; color: var(--c-text-muted); background: transparent; text-align: left; }
+.skill-package-layout { display: grid; flex: 0 0 auto; grid-template-columns: minmax(290px, 340px) minmax(0, 1fr); align-items: start; gap: var(--sp-4); min-height: 620px; }
+.skill-package-list-panel { position: sticky; top: 16px; display: grid; grid-template-rows: auto minmax(0, 1fr); min-width: 0; max-height: calc(100dvh - 112px); overflow: hidden; border: 1px solid var(--c-border); border-radius: var(--r-lg); background: var(--c-surface); box-shadow: var(--shadow-card); }
+.skill-package-list-panel > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 13px 14px; border-bottom: 1px solid var(--c-border); }
+.skill-package-list-panel > header > div { display: flex; align-items: center; gap: 8px; color: var(--c-text); }
+.skill-package-list-panel > header > div svg { color: var(--c-accent); }
+.skill-package-list-panel > header strong { font-size: 13.5px; }
+.skill-package-list-panel > header > span { display: grid; place-items: center; min-width: 25px; height: 22px; padding: 0 7px; border-radius: var(--r-pill); color: var(--c-accent-strong); background: var(--c-accent-soft); font-size: 11px; font-weight: 700; }
+.skill-package-list { display: grid; align-content: start; gap: 8px; min-height: 0; padding: 10px; overflow-y: auto; overscroll-behavior: contain; }
+.skill-package-card { display: grid; gap: 9px; width: 100%; min-width: 0; padding: 12px; border: 1px solid var(--c-border); border-radius: var(--r-md); color: var(--c-text); background: var(--c-surface); text-align: left; transition: border-color .15s ease, background .15s ease, box-shadow .15s ease; }
+.skill-package-card:hover { border-color: var(--c-accent-border); background: var(--c-surface-muted); }
+.skill-package-card.active { border-color: var(--c-accent); background: var(--c-accent-soft); box-shadow: inset 3px 0 0 var(--c-accent); }
+.skill-package-card-title { display: grid; grid-template-columns: 32px minmax(0, 1fr) auto; align-items: center; gap: 9px; min-width: 0; }
+.skill-package-icon { display: grid; place-items: center; width: 32px; height: 32px; border-radius: var(--r-sm); color: var(--c-accent); background: var(--c-accent-soft); }
+.skill-package-card-title > span:nth-child(2) { display: grid; min-width: 0; gap: 2px; }
+.skill-package-card-title strong { overflow: hidden; font-size: 13.5px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+.skill-package-card-title small { color: var(--c-text-subtle); font-size: 10.5px; }
+.skill-package-card-title i { padding: 2px 7px; border-radius: var(--r-pill); color: var(--c-text-muted); background: var(--c-surface-muted); font-size: 9.5px; font-style: normal; font-weight: 700; white-space: nowrap; }
+.skill-package-card-title i.online { color: var(--c-success); background: var(--c-success-soft); }
+.skill-package-card > p { display: -webkit-box; min-height: 38px; overflow: hidden; color: var(--c-text-muted); font-size: 11.5px; line-height: 1.6; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow-wrap: anywhere; }
+.skill-package-card-tags { display: flex; flex-wrap: wrap; gap: 5px; min-height: 20px; }
+.skill-package-card-tags em { padding: 2px 6px; border: 1px solid var(--c-border); border-radius: var(--r-sm); color: var(--c-text-muted); background: var(--c-surface); font-size: 9.5px; font-style: normal; }
+.skill-package-card-meta { display: flex; align-items: center; gap: 14px; padding-top: 8px; border-top: 1px solid var(--c-border); color: var(--c-text-subtle); font-size: 10.5px; }
+.skill-package-card-meta span { display: inline-flex; align-items: center; gap: 5px; }
+.skill-package-panel { min-width: 0; overflow: visible; }
+.skill-package-panel > .field-grid { padding: 12px 14px; border: 1px solid var(--c-border); border-radius: var(--r-md); background: var(--c-surface-muted); }
+.skill-package-body { display: grid; grid-template-columns: minmax(220px, 270px) minmax(0, 1fr); align-items: start; gap: var(--sp-4); min-height: 440px; margin-top: var(--sp-2); }
+.skill-package-body nav { display: flex; flex-direction: column; gap: 4px; min-width: 0; max-height: 560px; padding: 6px; overflow-y: auto; border: 1px solid var(--c-border); border-radius: var(--r-md); background: var(--c-surface-muted); }
+.skill-package-body nav > button { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; padding: 10px; border: 0; border-radius: 7px; color: var(--c-text-muted); background: transparent; text-align: left; }
 .skill-package-body nav > button:hover, .skill-package-body nav > button.active { color: var(--c-accent-strong); background: var(--c-surface); }
 .skill-package-body nav > button > span:first-child { display: grid; min-width: 0; gap: 3px; }
 .skill-package-body nav strong, .skill-package-body nav small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .skill-package-body nav small { color: var(--c-text-subtle); font-size: 10px; }
-.skill-document-view { min-width: 0; }
+.skill-document-view { min-width: 0; padding: 2px; }
 .skill-document-view > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
 .skill-document-view > header > div { display: grid; gap: 4px; }
+.skill-document-view .ref-prompt { max-height: none; min-height: 420px; }
 .skill-package-dialog { display: grid; gap: 16px; width: min(680px, calc(100vw - 36px)); max-height: calc(100vh - 40px); padding: 20px; overflow: auto; border-radius: var(--r-lg); background: var(--c-surface); box-shadow: 0 30px 90px rgba(27,33,28,.28); }
 .skill-package-dialog > header, .skill-package-dialog > footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .skill-package-dialog > header span { color: var(--c-accent); font-size: 9px; font-weight: 800; letter-spacing: .12em; }
 .skill-package-dialog > header p { margin-top: 4px; color: var(--c-text-muted); font-size: 12px; }
 .skill-package-dialog > footer { justify-content: flex-end; }
 
-@media (max-width: 1100px) {
-  .skill-package-layout, .skill-package-body { grid-template-columns: 1fr; }
-  .skill-package-body nav { max-height: 220px; overflow: auto; }
+@media (max-width: 1180px) {
+  .skill-package-layout { grid-template-columns: minmax(260px, 310px) minmax(0, 1fr); }
+  .skill-package-body { grid-template-columns: 1fr; }
+  .skill-package-body nav { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); max-height: 220px; }
+}
+
+@media (max-width: 900px) {
+  .skills-page-head { align-items: stretch; flex-direction: column; }
+  .skills-page-head .ref-head-actions { width: 100%; }
+  .skill-runtime-note span { width: 100%; margin-left: 0; text-align: left; }
+  .skill-package-layout { grid-template-columns: 1fr; min-height: 0; }
+  .skill-package-list-panel { position: static; max-height: 420px; }
+}
+
+@media (max-width: 620px) {
+  .skills-page-head .ref-head-actions { align-items: stretch; flex-direction: column; }
+  .skills-page-head .ref-head-actions button { justify-content: center; width: 100%; }
+  .ref-filter-summary { width: 100%; margin-left: 0; }
+  .skill-package-panel { padding: 14px; }
+  .skill-package-panel .ref-detail-head { align-items: stretch; flex-direction: column; }
+  .skill-package-panel .ref-head-actions { display: grid; grid-template-columns: 1fr 1fr; }
+  .skill-package-panel .ref-head-actions button { justify-content: center; }
+  .skill-package-body nav { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 1500px) {
