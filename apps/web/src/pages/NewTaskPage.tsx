@@ -1,15 +1,15 @@
 ﻿import { ChangeEvent, ClipboardEvent, DragEvent, useEffect, useMemo, useRef, useState } from "react";
 import {
   createTask, deleteStagedInput, fetchModeProfiles, preflightTask, stageInput,
-  fetchSkillSettings, previewTaskSkills, fetchAgentModelOptions,
+  fetchSkillSettings, fetchAgentModelOptions,
   type CreateTaskRequest, type ExecutionPolicy, type ModeConfig,
-  type AgentModelOptions, type ModeProfileContract, type SkillPreview, type SkillSetting, type StagedAsset, type TaskPreflight,
+  type AgentModelOptions, type ModeProfileContract, type SkillSetting, type StagedAsset, type TaskPreflight,
 } from "../api/tasks";
 import { AlertTriangle, Check, Code2, Cpu, Crosshair, Search, ShieldCheck, ShieldPlus, Sparkles, Users } from "lucide-react";
 import type { ReactNode } from "react";
 import { runtimeApi } from "../runtime/api-v2";
 import type { MCPHealth } from "../runtime/event-types";
-import { MODE_PROFILES, TASK_MODES, type TaskMode } from "../modes";
+import { TASK_MODES, type TaskMode } from "../modes";
 import { NewTaskGuide, NewTaskHeader, NewTaskProgress } from "../features/tasks/create/NewTaskProgress";
 
 export function newTaskId(): string {
@@ -60,16 +60,12 @@ export function NewTaskPage({ onCreated }: { onCreated: (id: string) => void }) 
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [health, setHealth] = useState<MCPHealth | null>(null);
-  const [skillPreview, setSkillPreview] = useState<SkillPreview | null>(null);
-  const [skillPreviewLoading, setSkillPreviewLoading] = useState(false);
-  const [skillPreviewError, setSkillPreviewError] = useState("");
   const [preflight, setPreflight] = useState<TaskPreflight | null>(null);
   const [preflightLoading, setPreflightLoading] = useState(false);
   const [preflightError, setPreflightError] = useState("");
-  const [selectedSkills, setSelectedSkills] = useState<string[] | null>(null);
-  const [skillDialogOpen, setSkillDialogOpen] = useState(false);
   const [skillCatalog, setSkillCatalog] = useState<SkillSetting[]>([]);
   const [skillCatalogLoading, setSkillCatalogLoading] = useState(false);
+  const [skillCatalogError, setSkillCatalogError] = useState("");
   const [agentModelOptions, setAgentModelOptions] = useState<AgentModelOptions | null>(null);
   const [agentModelsError, setAgentModelsError] = useState("");
   const draftTouched = useRef(false);
@@ -152,6 +148,10 @@ export function NewTaskPage({ onCreated }: { onCreated: (id: string) => void }) 
       if (mapped.penetration_test && !draftTouched.current) setDraft((value) => ({ ...value, goal: value.goal || mapped.penetration_test.default_goal, modeOptions: structuredClone(mapped.penetration_test.default_mode_config), executionPolicy: copyPolicy(mapped.penetration_test.default_execution_policy) }));
     }).catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "无法读取后端模式契约"));
     void runtimeApi.toolHealth().then(setHealth).catch(() => undefined);
+    setSkillCatalogLoading(true);
+    void fetchSkillSettings().then((value) => setSkillCatalog(value.skills)).catch((reason: unknown) => {
+      setSkillCatalogError(reason instanceof Error ? reason.message : "无法读取 Skill 包列表");
+    }).finally(() => setSkillCatalogLoading(false));
   }, []);
 
   useEffect(() => {
@@ -174,29 +174,6 @@ export function NewTaskPage({ onCreated }: { onCreated: (id: string) => void }) 
   }, []);
 
   useEffect(() => {
-    if (![4, 5].includes(step) || !draft.goal.trim()) return;
-    let current = true;
-    setSkillPreviewLoading(true);
-    setSkillPreviewError("");
-    void previewTaskSkills({
-      mode: draft.mode,
-      goal: draft.goal.trim(),
-      modeOptions: draft.modeOptions,
-      prompt: taskPrompt,
-      fileNames: inputFiles.filter((item) => item.status === "uploaded").map((item) => item.originalName),
-      executionPolicy: draft.executionPolicy,
-      selectedSkills,
-    }).then((value) => {
-      if (current) setSkillPreview(value);
-    }).catch((reason: unknown) => {
-      if (!current) return;
-      setSkillPreview(null);
-      setSkillPreviewError(reason instanceof Error ? reason.message : "无法预览自动装配的 Skills");
-    }).finally(() => { if (current) setSkillPreviewLoading(false); });
-    return () => { current = false; };
-  }, [step, draft.mode, draft.goal, draft.modeOptions, draft.executionPolicy, taskPrompt, inputFiles, selectedSkills]);
-
-  useEffect(() => {
     setPreflight(null);
     setPreflightError("");
     if (step !== 5 || preflightBlockers.length) return;
@@ -206,7 +183,6 @@ export function NewTaskPage({ onCreated }: { onCreated: (id: string) => void }) 
       name: draft.name.trim(),
       goal: draft.goal.trim(),
       input: { text: taskPrompt, fileIds: inputFiles.map((item) => item.id) },
-      selectedSkills,
     };
     setPreflightLoading(true);
     void preflightTask(request).then((value) => {
@@ -215,7 +191,7 @@ export function NewTaskPage({ onCreated }: { onCreated: (id: string) => void }) 
       if (current) setPreflightError(reason instanceof Error ? reason.message : "启动前检查失败");
     }).finally(() => { if (current) setPreflightLoading(false); });
     return () => { current = false; };
-  }, [step, draft, taskPrompt, inputFiles, selectedSkills, agentModelOptions, preflightBlockers]);
+  }, [step, draft, taskPrompt, inputFiles, agentModelOptions, preflightBlockers]);
 
   const availableMcp = useMemo(() => (
     health?.records ?? []
@@ -233,7 +209,6 @@ export function NewTaskPage({ onCreated }: { onCreated: (id: string) => void }) 
     const next = profiles[mode];
     if (!next) return;
     draftTouched.current = true;
-    setSelectedSkills(null);
     setDraft((current) => ({ ...current, mode, modeOptions: structuredClone(next.default_mode_config), executionPolicy: copyPolicy(next.default_execution_policy) }));
   }
 
@@ -281,7 +256,7 @@ export function NewTaskPage({ onCreated }: { onCreated: (id: string) => void }) 
     draftTouched.current = false;
     const defaultProfile = profiles.penetration_test;
     setDraft(defaultProfile ? { ...defaultDraft(), goal: defaultProfile.default_goal, modeOptions: structuredClone(defaultProfile.default_mode_config), executionPolicy: copyPolicy(defaultProfile.default_execution_policy) } : defaultDraft());
-    setInputFiles([]); setPrompt(""); setInstructions(""); setConstraints(""); setSuccessCriteria(""); setDraftSaved(false); setSelectedSkills(null); setSkillDialogOpen(false); setPreflight(null); setPreflightError(""); setError(null); setStep(1);
+    setInputFiles([]); setPrompt(""); setInstructions(""); setConstraints(""); setSuccessCriteria(""); setDraftSaved(false); setPreflight(null); setPreflightError(""); setError(null); setStep(1);
   }
 
   async function submit() {
@@ -292,7 +267,7 @@ export function NewTaskPage({ onCreated }: { onCreated: (id: string) => void }) 
       return;
     }
     if (!preflight || preflightLoading || preflightError) { setError("启动前检查尚未通过，请修复问题后重试。"); setStep(5); return; }
-    const request: CreateTaskRequest = { ...draft, name: draft.name.trim(), goal: draft.goal.trim(), input: { text: taskPrompt, fileIds: inputFiles.map((item) => item.id) }, selectedSkills, preflightFingerprint: preflight.fingerprint };
+    const request: CreateTaskRequest = { ...draft, name: draft.name.trim(), goal: draft.goal.trim(), input: { text: taskPrompt, fileIds: inputFiles.map((item) => item.id) }, preflightFingerprint: preflight.fingerprint };
     setBusy(true); setError(null);
     try { const result = await createTask(request); localStorage.removeItem("tga-new-task-draft"); onCreated(result.task_id); }
     catch (reason) { setError(reason instanceof Error ? reason.message : "创建任务失败"); }
@@ -309,26 +284,14 @@ export function NewTaskPage({ onCreated }: { onCreated: (id: string) => void }) 
       {step === 1 ? <TaskGoalStep draft={draft} profiles={profiles} instructions={instructions} constraints={constraints} successCriteria={successCriteria} onDraft={(patch) => { draftTouched.current = true; setDraft((current) => ({ ...current, ...patch })); }} onMode={selectMode} onInstructions={setInstructions} onConstraints={setConstraints} onSuccessCriteria={setSuccessCriteria} /> : null}
       {step === 2 ? <div className="wizard-step-stack"><ModeFields profile={profile} config={draft.modeOptions} setConfig={setConfig} /><fieldset className="span-2 multimodal-step"><legend>任务提示与材料</legend><p className="field-help">补充目标网址、代码片段或附件。附件会归档到独立 Workspace，图片可直接参与多模态分析。</p><MultimodalComposer text={prompt} assets={inputFiles} busy={busy} onText={setPrompt} onFiles={upload} onRemove={removeAsset} /></fieldset></div> : null}
       {step === 3 ? <PolicyFields draft={draft} setPolicy={setPolicy} selectPreset={selectPolicyPreset} /> : null}
-      {step === 4 ? <TeamModelStep modeLabel={profile.label} availableMcp={availableMcp.map((item) => item.server).filter((server): server is string => Boolean(server))} skillPreview={skillPreview} skillPreviewLoading={skillPreviewLoading} skillPreviewError={skillPreviewError} selectedSkills={selectedSkills} onSkills={() => void openSkillDialog()} onAutomatic={() => setSelectedSkills(null)} modelOptions={agentModelOptions} modelError={agentModelsError} /> : null}
-      {step === 5 ? <fieldset className="span-2 preflight-summary"><legend>第五步：启动前检查</legend><dl className="creation-summary"><dt>场景</dt><dd>{profile.label}</dd><dt>任务</dt><dd>{draft.name || "尚未填写"}</dd><dt>任务目标</dt><dd>{draft.goal || "尚未填写"}</dd><dt>任务说明</dt><dd>{taskPrompt || "无文字说明"}</dd><dt>附件（{inputFiles.length}）</dt><dd>{inputFiles.map((item) => item.originalName).join("；") || "无"}</dd><dt>执行边界</dt><dd>preset={draft.executionPolicy.preset}；network={draft.executionPolicy.network.access}/{draft.executionPolicy.network.interaction}；compute={draft.executionPolicy.local_compute.mode}；high_impact={draft.executionPolicy.high_impact.mode}</dd><dt>Agent 模型</dt><dd>{agentModelOptions?.agents.map((agent) => `${agent.id} → ${agent.model.provider_name} / ${agent.model.model_name}`).join("；") || "正在读取 Solver 配置"}</dd><dt>预计装配 Skills</dt><dd><SkillPreviewSummary value={skillPreview} loading={skillPreviewLoading} error={skillPreviewError} manual={selectedSkills !== null} onAutomatic={() => setSelectedSkills(null)} /></dd><dt>自动可用 MCP（{availableMcp.length}）</dt><dd>{availableMcp.map((item) => item.server).join(", ") || "当前无已启用且可达/已发现的 MCP 服务"}</dd><dt>完成条件</dt><dd>{successCriteria || `${profile.completion_validator}：${profile.report_sections.join("、") || "证据支持的模式专属验证"}`}</dd><dt>启动前检查</dt><dd><PreflightSummary value={preflight} loading={preflightLoading} error={preflightError} blockers={preflightBlockers} /></dd></dl></fieldset> : null}
+      {step === 4 ? <TeamModelStep modeLabel={profile.label} availableMcp={availableMcp.map((item) => item.server).filter((server): server is string => Boolean(server))} skills={skillCatalog} skillsLoading={skillCatalogLoading} skillsError={skillCatalogError} modelOptions={agentModelOptions} modelError={agentModelsError} /> : null}
+      {step === 5 ? <fieldset className="span-2 preflight-summary"><legend>第五步：启动前检查</legend><dl className="creation-summary"><dt>场景</dt><dd>{profile.label}</dd><dt>任务</dt><dd>{draft.name || "尚未填写"}</dd><dt>任务目标</dt><dd>{draft.goal || "尚未填写"}</dd><dt>任务说明</dt><dd>{taskPrompt || "无文字说明"}</dd><dt>附件（{inputFiles.length}）</dt><dd>{inputFiles.map((item) => item.originalName).join("；") || "无"}</dd><dt>执行边界</dt><dd>preset={draft.executionPolicy.preset}；network={draft.executionPolicy.network.access}/{draft.executionPolicy.network.interaction}；compute={draft.executionPolicy.local_compute.mode}；high_impact={draft.executionPolicy.high_impact.mode}</dd><dt>Agent 模型</dt><dd>{agentModelOptions?.agents.map((agent) => `${agent.id} → ${agent.model.provider_name} / ${agent.model.model_name}`).join("；") || "正在读取 Solver 配置"}</dd><dt>共享 Skill 包</dt><dd>{skillCatalog.length} 个可供 Worker 按需检索；如需指定，请在任务说明中写明包名和用途。</dd><dt>自动可用 MCP（{availableMcp.length}）</dt><dd>{availableMcp.map((item) => item.server).join(", ") || "当前无已启用且可达/已发现的 MCP 服务"}</dd><dt>完成条件</dt><dd>{successCriteria || `${profile.completion_validator}：${profile.report_sections.join("、") || "证据支持的模式专属验证"}`}</dd><dt>启动前检查</dt><dd><PreflightSummary value={preflight} loading={preflightLoading} error={preflightError} blockers={preflightBlockers} /></dd></dl></fieldset> : null}
       {error ? <p role="alert" className="inline-error span-2">{error}</p> : null}
     </section>
     <NewTaskGuide modeLabel={profile.label} modeDescription={profile.description} />
     <footer className="wizard-actions"><button type="button" className="secondary-button" disabled={busy} onClick={reset}>重置</button><span className="wizard-save-state" aria-live="polite">{draftSaved ? <><Check size={14} />草稿已保存并会自动恢复</> : null}</span><div>{step > 1 ? <button type="button" disabled={busy} onClick={() => setStep((value) => Math.max(1, value - 1))}>上一步</button> : null}<button type="button" className="save-draft-button" disabled={busy} onClick={() => { localStorage.setItem("tga-new-task-draft", JSON.stringify({ draft, instructions, constraints, successCriteria, prompt })); setDraftSaved(true); }}>保存草稿</button>{step < 5 ? <button type="button" disabled={busy} onClick={() => setStep((value) => Math.min(5, value + 1))}>下一步</button> : <button type="button" disabled={busy || preflightLoading || Boolean(preflightError) || (!preflight && !preflightBlockers.length)} onClick={() => void submit()}>{busy ? "处理中..." : preflightLoading ? "正在检查..." : "创建任务并开始"}</button>}</div></footer>
     </div>
-    {skillDialogOpen ? <SkillSelectionDialog catalog={skillCatalog} loading={skillCatalogLoading} mode={draft.mode} selected={selectedSkills ?? skillPreview?.skills.map((item) => item.name) ?? []} draft={draft} prompt={taskPrompt} files={inputFiles} onClose={() => setSkillDialogOpen(false)} onApply={(names) => { setSelectedSkills(names); setSkillDialogOpen(false); }} /> : null}
   </section>;
-
-  async function openSkillDialog() {
-    setSkillDialogOpen(true);
-    if (skillCatalog.length || skillCatalogLoading) return;
-    setSkillCatalogLoading(true);
-    try {
-      setSkillCatalog((await fetchSkillSettings()).skills);
-    } catch (reason) {
-      setSkillPreviewError(reason instanceof Error ? reason.message : "无法读取 Skill 列表");
-    } finally { setSkillCatalogLoading(false); }
-  }
 }
 
 function TaskGoalStep({ draft, profiles, instructions, constraints, successCriteria, onDraft, onMode, onInstructions, onConstraints, onSuccessCriteria }: { draft: Draft; profiles: Partial<Record<TaskMode, ModeProfileContract>>; instructions: string; constraints: string; successCriteria: string; onDraft: (patch: Partial<Draft>) => void; onMode: (mode: TaskMode) => void; onInstructions: (value: string) => void; onConstraints: (value: string) => void; onSuccessCriteria: (value: string) => void }) {
@@ -346,12 +309,12 @@ function FieldWithCount({ label, required = false, info, value, max, children }:
   return <label className="wizard-counted-field"><span><b>{label}{required ? <sup>*</sup> : null}</b>{info ? <small title={info}>i</small> : null}</span>{children}<em>{value.length}/{max}</em></label>;
 }
 
-function TeamModelStep({ modeLabel, availableMcp, skillPreview, skillPreviewLoading, skillPreviewError, selectedSkills, onSkills, onAutomatic, modelOptions, modelError }: { modeLabel: string; availableMcp: string[]; skillPreview: SkillPreview | null; skillPreviewLoading: boolean; skillPreviewError: string; selectedSkills: string[] | null; onSkills: () => void; onAutomatic: () => void; modelOptions: AgentModelOptions | null; modelError: string }) {
+function TeamModelStep({ modeLabel, availableMcp, skills, skillsLoading, skillsError, modelOptions, modelError }: { modeLabel: string; availableMcp: string[]; skills: SkillSetting[]; skillsLoading: boolean; skillsError: string; modelOptions: AgentModelOptions | null; modelError: string }) {
   return <div className="team-model-step">
-    <header><span><Users size={18} /></span><div><h2>团队与模型装配</h2><p>系统会根据「{modeLabel}」自动推荐团队、Solver、Skills 与可用工具。</p></div></header>
+    <header><span><Users size={18} /></span><div><h2>团队与模型装配</h2><p>「{modeLabel}」任务使用固定角色拓扑；Worker 会从共享知识库按需检索 Skill。</p></div></header>
     <div className="team-model-grid"><article><span>团队模板</span><strong>{modeLabel}标准团队</strong><small>Supervisor 按任务复杂度动态创建 Solver</small></article><article><span>模型策略</span><strong>Solver 统一配置</strong><small>角色模型来自 .config/runtime.json</small></article><article><span>编排方式</span><strong>自动匹配</strong><small>支持在运行工作台继续干预和审批</small></article></div>
     <section className="agent-model-assignment"><header><div><Cpu size={17} /><h3>Agent 模型（只读）</h3></div><a href="/settings/solvers">前往 Solver 配置</a></header>{modelError ? <p className="team-model-empty"><AlertTriangle size={15} />{modelError}</p> : <div className="agent-model-grid">{modelOptions?.agents.map((agent) => <div className="agent-model-readonly" key={agent.id}><span><strong>{agent.id}</strong><small>{roleLabel(agent.role)}{agent.required ? " · 必需" : " · 按需创建"}</small></span><span><strong>{agent.model.provider_name} / {agent.model.model_name}</strong><small>{agent.model.ready ? "可用" : agent.model.verification_status}</small></span></div>)}</div>}</section>
-    <section><header><div><Sparkles size={17} /><h3>Skills</h3></div><button type="button" className="ref-secondary-button" onClick={onSkills}>手动选择</button></header><SkillPreviewSummary value={skillPreview} loading={skillPreviewLoading} error={skillPreviewError} manual={selectedSkills !== null} onAutomatic={onAutomatic} /></section>
+    <section><header><div><Sparkles size={17} /><h3>共享 Skill 包</h3></div><a href="/settings/skills">管理 Skill</a></header>{skillsLoading ? <p className="team-model-empty">正在读取 .config/skills…</p> : skillsError ? <p className="team-model-empty"><AlertTriangle size={15} />{skillsError}</p> : skills.length ? <><div className="team-model-chips">{skills.slice(0, 12).map((skill) => <span key={skill.name}>{skill.name}</span>)}</div><p className="field-help">不再绑定场景或角色。Worker 会搜索这些包；你也可以在任务说明中明确写“worker 使用某个 Skill 包”。</p></> : <p className="team-model-empty">尚未安装 Skill 包，任务仍可运行。</p>}</section>
     <section><header><div><ShieldCheck size={17} /><h3>自动可用 MCP</h3></div><b>{availableMcp.length}</b></header>{availableMcp.length ? <div className="team-model-chips">{availableMcp.map((server) => <span key={server}>{server}</span>)}</div> : <p className="team-model-empty"><AlertTriangle size={15} />当前没有已启用且可达的 MCP 服务</p>}</section>
   </div>;
 }
@@ -366,49 +329,6 @@ function PreflightSummary({ value, loading, error, blockers }: { value: TaskPref
   if (!value && blockers.length) return <div className="preflight-blockers" role="status"><strong>启动前还需完成</strong>{blockers.map((blocker) => <span key={blocker.id}>{blocker.message}</span>)}</div>;
   if (!value) return <div className="creation-skill-status">等待启动前检查结果。</div>;
   return <div className="preflight-checks" data-testid="preflight-passed"><strong>全部检查通过</strong>{value.checks.map((check) => <span key={check.id}>{check.detail}</span>)}</div>;
-}
-
-function SkillPreviewSummary({ value, loading, error, manual, onAutomatic }: { value: SkillPreview | null; loading: boolean; error: string; manual: boolean; onAutomatic: () => void }) {
-  if (loading) return <div className="creation-skill-status">正在根据任务内容和可用能力匹配 Skills…</div>;
-  if (error) return <div className="creation-skill-status error">预览失败：{error}</div>;
-  if (!value?.skills.length && !manual) return <div className="creation-skill-status">当前没有同时满足任务特征和能力要求的 Skill。</div>;
-  if (!value?.skills.length) return <div className="creation-skill-preview">
-    <div className="creation-skill-mode"><b>手动选择</b><button type="button" className="text-button" onClick={onAutomatic}>恢复自动匹配</button></div>
-    <div className="creation-skill-status">已明确选择不装配任何 Skill。</div>
-  </div>;
-  return <div className="creation-skill-preview">{manual ? <div className="creation-skill-mode"><b>手动选择</b><button type="button" className="text-button" onClick={onAutomatic}>恢复自动匹配</button></div> : <div className="creation-skill-mode"><b>自动匹配</b></div>}{value.skills.map((skill) => <article key={skill.name}>
-    <header><b>{skill.name}</b><span>{skill.origin === "custom" ? "用户自定义" : "内置"} · v{skill.version}</span></header>
-    <p>{skill.selection_reasons.join("；")}</p>
-    <small>{skill.capabilities.length ? `所需能力：${skill.capabilities.join(" · ")}` : "无需额外能力"}</small>
-  </article>)}<small>正式创建时会使用同一选择器重新确认并冻结快照。</small></div>;
-}
-
-function SkillSelectionDialog({ catalog, loading, mode, selected, draft, prompt, files, onClose, onApply }: { catalog: SkillSetting[]; loading: boolean; mode: TaskMode; selected: string[]; draft: Draft; prompt: string; files: StagedAsset[]; onClose: () => void; onApply: (names: string[]) => void }) {
-  const [names, setNames] = useState<string[]>(selected.slice(0, 3));
-  const [checking, setChecking] = useState(false);
-  const [error, setError] = useState("");
-  const toggle = (name: string) => setNames((current) => current.includes(name) ? current.filter((item) => item !== name) : current.length < 3 ? [...current, name] : current);
-  const apply = async () => {
-    setChecking(true); setError("");
-    try {
-      await previewTaskSkills({ mode, goal: draft.goal.trim(), modeOptions: draft.modeOptions, prompt: prompt.trim(), fileNames: files.filter((item) => item.status === "uploaded").map((item) => item.originalName), executionPolicy: draft.executionPolicy, selectedSkills: names });
-      onApply(names);
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "所选 Skills 无法用于当前任务");
-    } finally { setChecking(false); }
-  };
-  return <div className="dialog-backdrop skill-picker-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section className="skill-picker-dialog" role="dialog" aria-modal="true" aria-labelledby="skill-picker-title">
-    <header><div><span>任务级装配</span><h2 id="skill-picker-title">手动选择 Skills</h2><p>按场景浏览方法手册。当前任务最多装配 3 个，后端会再次校验场景、能力和上下文预算。</p></div><button type="button" className="icon-button" aria-label="关闭 Skill 选择" onClick={onClose}>×</button></header>
-    <div className="skill-picker-count"><b>已选择 {names.length}/3</b><small>{names.length ? names.join(" · ") : "明确不装配任何 Skill"}</small></div>
-    {error ? <div className="inline-error" role="alert">{error}</div> : null}
-    <div className="skill-picker-scenes">{loading ? <div className="skill-loading">正在读取 Skill 注册表…</div> : TASK_MODES.map((scene) => { const skills = catalog.filter((skill) => skill.modes.includes(scene)); return <section key={scene}>
-      <header><div><b>{MODE_PROFILES[scene].label}</b><small>{scene}</small></div><span>{skills.length} 个</span></header>
-      {skills.length ? <div className="skill-picker-grid">{skills.map((skill) => { const compatible = skill.modes.includes(mode); const checked = names.includes(skill.name); const atLimit = names.length >= 3 && !checked; return <label className={`${checked ? "selected" : ""} ${!compatible ? "incompatible" : ""}`} key={`${scene}:${skill.name}`}>
-        <input type="checkbox" aria-label={`${skill.name}（${MODE_PROFILES[scene].label}）`} checked={checked} disabled={!compatible || atLimit || checking} onChange={() => toggle(skill.name)} /><span><strong>{skill.name}</strong><small>{skill.source === "custom" ? "用户自定义" : "内置"} · v{skill.version}</small><p>{skill.summary}</p><em>{compatible ? skill.capabilities.join(" · ") || "无需额外能力" : `不适用于当前${MODE_PROFILES[mode].label}任务`}</em></span>
-      </label>; })}</div> : <small>暂无 Skill</small>}
-    </section>; })}</div>
-    <footer><button type="button" className="secondary-button" disabled={checking} onClick={onClose}>取消</button><button type="button" disabled={checking} onClick={() => void apply()}>{checking ? "正在校验…" : "应用选择"}</button></footer>
-  </section></div>;
 }
 
 function MultimodalComposer({ text, assets, busy, onText, onFiles, onRemove }: { text: string; assets: StagedAsset[]; busy: boolean; onText: (value: string) => void; onFiles: (files: File[]) => void; onRemove: (asset: StagedAsset) => void }) {

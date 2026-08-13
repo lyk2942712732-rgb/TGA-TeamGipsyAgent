@@ -190,14 +190,7 @@ def runtime_snapshot_projection(
                     (policy.get("tool") or {}).get("allowed_tools") or []
                 )
             },
-            "task_common_skills": task["spec"].get("selected_skill_names"),
             "agent_prompt": None,
-        },
-        "task_common_skill_snapshot": {
-            "selected": task["spec"].get("selected_skill_names"),
-            "selection": "explicit"
-            if task["spec"].get("selected_skill_names") is not None
-            else "automatic",
         },
         "session": session,
         "team": team,
@@ -280,7 +273,6 @@ def _solvers(runs: list[dict[str, Any]], task_id: str) -> list[dict[str, Any]]:
             "status": run["status"],
             "current_summary": run["summary"],
             "model_snapshot": {},
-            "skill_snapshot": {},
             "capability_binding": {},
             "budget_usage": {
                 "input_tokens": run["input_tokens"],

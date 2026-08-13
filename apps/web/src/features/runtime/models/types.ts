@@ -46,7 +46,6 @@ export type RuntimeSolver = {
   status: string;
   currentSummary: string;
   modelSnapshot: Record<string, unknown>;
-  skillSnapshot: Record<string, unknown>;
   capabilityBinding: Record<string, unknown>;
   budgetUsage: RuntimeBudgetUsage;
   timestamps: RuntimeTimestamps;
@@ -203,7 +202,6 @@ type EntitySequence = {
 export type RuntimeStore = {
   schemaVersion: 6;
   task: RuntimeTask;
-  taskCommonSkillSnapshot?: Record<string, unknown>;
   session: RuntimeSession;
   team: RuntimeTeam;
   solversById: Record<string, RuntimeSolver>;

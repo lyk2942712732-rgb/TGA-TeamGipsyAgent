@@ -15,7 +15,7 @@ const detail = {
   task_spec: { task_id: "task_one", objective: "Recover evidence", instructions: [{ id: "one", content: "Inspect input" }], constraints: [], success_criteria: [], resources: [] },
   lifecycle: { created_at: "2026-07-30T00:00:00Z", updated_at: "2026-07-30T00:01:00Z", status: "running", turn_count: 2, max_turns: 20, active_solvers: 1, pending_approvals: 0, intent_total: 2, intent_completed: 1, flags: 0, findings: 1, artifacts: 2, needs_attention: false, latest_event: { seq: 4, type: "SOLVER_STARTED", created_at: "2026-07-30T00:01:00Z" } },
   input_summary: { prompt_present: true, prompt_preview: "Inspect input", file_count: 1, files: [], task_entry_url: null },
-  config_snapshot: { mode_config: { mode: "ctf" }, execution_policy: { preset: "autonomous_ctf", network: { access: "public_internet" }, high_impact: { mode: "approval_required" } }, execution_budget: {}, model: null, mcp_capabilities: {}, task_common_skills: null, agent_prompt: null },
+  config_snapshot: { mode_config: { mode: "ctf" }, execution_policy: { preset: "autonomous_ctf", network: { access: "public_internet" }, high_impact: { mode: "approval_required" } }, execution_budget: {}, model: null, mcp_capabilities: {}, agent_prompt: null },
 };
 
 function renderPage() { const client = new QueryClient({ defaultOptions: { queries: { retry: false } } }); return render(<QueryClientProvider client={client}><MemoryRouter><TaskDetailPage taskId="task_one" /></MemoryRouter></QueryClientProvider>); }

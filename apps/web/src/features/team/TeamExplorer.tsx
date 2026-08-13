@@ -46,7 +46,7 @@ function SolverNode({ store, node, level, selectedSolverId, onSelect }: { store:
   const latest = selectLatestEventBySolver(store, solver.solverId);
   const solverApprovals = selectPendingApprovalsBySolver(store, solver.solverId);
   const approvals = solverApprovals.length;
-  const skillCount = Number(solver.skillSnapshot.count ?? 0);
+  const skillCount = Object.values(store.eventsBySeq).filter((event) => event.solverId === solver.solverId && event.type === "SKILL_DOCUMENT_READ").length;
   const status = statusDefinition(solver.status);
   return <div className="solver-tree-branch">
     <button
@@ -68,7 +68,7 @@ function SolverNode({ store, node, level, selectedSolverId, onSelect }: { store:
         <small className="solver-card-meta">
           {solver.orchestrationRole} · {solver.specialties.join(" / ") || "通用"}
           {" · "}Intent：{solver.assignedIntentId ?? "未分配"}
-          {" · "}{skillCount} Skills · {solver.budgetUsage.input_tokens ?? 0} Token
+          {" · "}{skillCount} Skill docs · {solver.budgetUsage.input_tokens ?? 0} Token
           {" · "}{solver.budgetUsage.tool_calls ?? 0} Tools · 最近：{latest?.type ?? "暂无活动"}
         </small>
         <span className={`solver-card-status tone-${status.tone}`}><i aria-hidden="true" />{status.label}</span>

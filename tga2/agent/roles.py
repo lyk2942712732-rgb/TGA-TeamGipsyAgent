@@ -29,7 +29,6 @@ from tga2.agent.schemas import (
     structured_output_prompt,
 )
 from tga2.core.models import Task
-from tga2.skills import Skill
 
 
 class AgentSuite(Protocol):
@@ -54,17 +53,15 @@ class LangChainAgentSuite:
     def __init__(
         self,
         model: BaseChatModel,
-        skill_selector: Callable[[Task], Sequence[Skill]] | None = None,
+        skill_catalog: Callable[[Task], str] | None = None,
         prompts: dict[str, Any] | None = None,
         *,
         model_call_limit: int = 8,
         structured_parse_retries: int = 1,
-        skill_prompt_limit: int = 5,
     ) -> None:
         self.model = model
-        self.skill_selector = skill_selector or (lambda _task: ())
+        self.skill_catalog = skill_catalog or (lambda _task: "")
         self.prompts = prompts or {}
-        self.skill_prompt_limit = skill_prompt_limit
         self.structured_parse_retries = structured_parse_retries
         self._last_model_calls = 0
         self._model_middleware = [
@@ -191,13 +188,7 @@ class LangChainAgentSuite:
         return expected.model_validate(value)
 
     def _middleware(self, task: Task):
-        skills = list(self.skill_selector(task))
-        from tga2.agent.middleware import skill_prompt_middleware
-
-        return [
-            *self._model_middleware,
-            skill_prompt_middleware(skills, limit=self.skill_prompt_limit),
-        ]
+        return [*self._model_middleware]
 
     def _prompt(self, role: str, task: Task) -> str:
         common = str(self.prompts.get("common", "")).strip()
@@ -220,7 +211,10 @@ class LangChainAgentSuite:
                         str(configured.get(focus_key) or ""),
                     ]
                 ).strip()
-        return "\n\n".join(item for item in (common, role_prompt, mode_prompt) if item)
+        catalog = self.skill_catalog(task).strip() if role == "worker" else ""
+        return "\n\n".join(
+            item for item in (common, role_prompt, mode_prompt, catalog) if item
+        )
 
 
 class RoutedAgentSuite:

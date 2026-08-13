@@ -35,8 +35,6 @@ export type SolverDefinitionRecord = {
   supported_modes: string[];
   supported_subtypes: string[];
   system_prompt_template: string;
-  default_skill_tags: string[];
-  required_skill_names: string[];
   host_capability_profile_id: string;
   host_capability_overrides: { add: string[]; remove: string[] };
   host_capabilities: HostCapabilityAssignment[];

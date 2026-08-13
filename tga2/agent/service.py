@@ -48,7 +48,11 @@ class TaskRuntimeService:
         self.run_root = Path(run_root).resolve()
         self.run_root.mkdir(parents=True, exist_ok=True)
         self.configuration = configuration or Configuration(self.run_root / ".config")
-        self.skills = SkillRepository(self.run_root / ".config" / "skills")
+        self.skills = SkillRepository(
+            self.run_root / ".config" / "skills",
+            document_max_bytes=self.configuration.runtime.files.skill_document_max_bytes,
+            package_max_bytes=self.configuration.runtime.files.skill_package_max_bytes,
+        )
         self._agents_overridden = agents is not None
         self.agents = agents or self._build_agents(model_settings)
         self.external_tools = list(external_tools)
@@ -74,13 +78,8 @@ class TaskRuntimeService:
     def set_external_tools(self, tools: Sequence[BaseTool]) -> None:
         self.external_tools = list(tools)
 
-    def _select_skills(self, task: Task):
-        selected = task.spec.selected_skill_names
-        return self.skills.select(
-            task.spec.objective,
-            selected_names=list(selected) if selected is not None else None,
-            limit=self.configuration.runtime.skill_selection.automatic_limit,
-        )
+    def _skill_catalog(self, _task: Task) -> str:
+        return self.skills.catalog_prompt()
 
     def _agents_for_task(self, task: Task) -> AgentSuite:
         return self.agents
@@ -106,11 +105,10 @@ class TaskRuntimeService:
                 if fallback and fallback.can_call_model and fallback.verified:
                     roles[role] = LangChainAgentSuite(
                         build_chat_model(fallback),
-                        self._select_skills,
+                        self._skill_catalog,
                         self.configuration.agent_prompts(),
                         model_call_limit=call_limit,
                         structured_parse_retries=parse_retries,
-                        skill_prompt_limit=self.configuration.runtime.skill_selection.prompt_injection_limit,
                     )
                 else:
                     roles[role] = offline
@@ -120,11 +118,10 @@ class TaskRuntimeService:
                 if settings is not None:
                     roles[role] = LangChainAgentSuite(
                         build_chat_model(settings),
-                        self._select_skills,
+                        self._skill_catalog,
                         self.configuration.agent_prompts(),
                         model_call_limit=call_limit,
                         structured_parse_retries=parse_retries,
-                        skill_prompt_limit=self.configuration.runtime.skill_selection.prompt_injection_limit,
                     )
                 else:
                     roles[role] = offline
@@ -146,9 +143,6 @@ class TaskRuntimeService:
                 instructions=tuple(request.instructions),
                 constraints=tuple(request.constraints),
                 success_criteria=tuple(request.success_criteria),
-                selected_skill_names=tuple(request.selected_skills)
-                if request.selected_skills is not None
-                else None,
                 mode_options=dict(getattr(request, "mode_options", {}) or {}),
             ),
         )
@@ -449,6 +443,7 @@ class TaskRuntimeService:
                 agents=self._agents_for_task(task),
                 sandbox_image=self.configuration.runtime.sandbox_image,
                 configuration=self.configuration,
+                skills=self.skills,
                 external_tools=self.external_tools,
             )
         )

@@ -91,7 +91,6 @@ def _request(
         constraints=list(payload.get("constraints") or []),
         success_criteria=list(payload.get("success_criteria") or []),
         input_paths=paths,
-        selected_skills=payload.get("selectedSkills"),
         execution_policy=ExecutionPolicy(
             tool=ToolPolicy(
                 allowed_tools=frozenset(allowed),
@@ -168,11 +167,7 @@ def preflight(payload: dict, app: Container = Depends(container)):
         {tool.name for tool in app.runtime.external_tools},
     )
     _validate_role_models(app)
-    selected = app.runtime.skills.select(
-        request.objective,
-        selected_names=request.selected_skills,
-        limit=app.configuration.runtime.skill_selection.automatic_limit,
-    )
+    packages = app.runtime.skills.list()
     fingerprint = hashlib.sha256(
         json.dumps(payload, sort_keys=True, default=str).encode()
     ).hexdigest()
@@ -192,11 +187,11 @@ def preflight(payload: dict, app: Container = Depends(container)):
                 "detail": "Configured model or offline demo is available.",
             },
         ],
-        "skill_snapshot": {
-            "selector": "tga2.skills",
-            "count": len(selected),
+        "skill_catalog": {
+            "strategy": "worker_on_demand",
+            "package_count": len(packages),
             "content_sha256": hashlib.sha256(
-                "".join(item.content for item in selected).encode()
+                "".join(item.content_sha256 for item in packages).encode()
             ).hexdigest(),
         },
         "mcp_catalog_version": "langchain-mcp-adapters",
@@ -209,38 +204,6 @@ def preflight(payload: dict, app: Container = Depends(container)):
                 sort_keys=True,
             ).encode()
         ).hexdigest(),
-    }
-
-
-@router.post("/tasks/skill-preview")
-def skill_preview(payload: dict, app: Container = Depends(container)):
-    selected = app.runtime.skills.select(
-        str(payload.get("goal") or ""),
-        selected_names=payload.get("selectedSkills"),
-        limit=app.configuration.runtime.skill_selection.automatic_limit,
-    )
-    return {
-        "selector": "tga2.skills",
-        "fingerprint": hashlib.sha256(
-            json.dumps(payload, sort_keys=True, default=str).encode()
-        ).hexdigest(),
-        "count": len(selected),
-        "skills": [
-            {
-                "name": item.name,
-                "version": "1",
-                "capabilities": [],
-                "tags": list(item.tags),
-                "origin": "custom",
-                "content_sha256": hashlib.sha256(item.content.encode()).hexdigest(),
-                "selection_reasons": [
-                    "explicit"
-                    if payload.get("selectedSkills")
-                    else "objective_tag_match"
-                ],
-            }
-            for item in selected
-        ],
     }
 
 

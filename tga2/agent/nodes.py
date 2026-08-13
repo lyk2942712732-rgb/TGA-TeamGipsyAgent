@@ -222,6 +222,7 @@ class GraphNodes:
                 if "run_command" in role_tools
                 else None,
                 configuration=self.deps.configuration,
+                skill_root=str(self.deps.skills.root) if self.deps.skills else None,
                 attempt_tool_limit=self.deps.configuration.runtime.budget.roles.worker.tool_calls_per_attempt,
             ),
         )
@@ -628,6 +629,7 @@ class GraphNodes:
             task_id=task_id,
             intent_id=intent_id,
             model_read_max_bytes=self.deps.configuration.runtime.files.model_read_max_bytes,
+            skills=self.deps.skills,
             external_tools=self.deps.external_tools,
         ).tools()
         configured = set(self.deps.store.get_policy(task_id).tool.allowed_tools)

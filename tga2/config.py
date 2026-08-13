@@ -93,12 +93,6 @@ class RuntimeBudgetSettings(BaseModel):
     roles: RoleBudgetSettings = Field(default_factory=RoleBudgetSettings)
 
 
-class SkillSelectionSettings(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    automatic_limit: int = Field(default=3, ge=0, le=50)
-    prompt_injection_limit: int = Field(default=5, ge=0, le=50)
-
-
 class ToolDefaults(BaseModel):
     model_config = ConfigDict(extra="forbid")
     allowed: list[str] = Field(default_factory=list)
@@ -126,17 +120,17 @@ class FileLimitSettings(BaseModel):
     upload_max_bytes: int = Field(default=25_000_000, ge=1)
     model_read_max_bytes: int = Field(default=2_000_000, ge=1)
     artifact_preview_max_bytes: int = Field(default=200_000, ge=1)
-    skill_import_max_bytes: int = Field(default=512_000, ge=1)
+    skill_document_max_bytes: int = Field(default=1_000_000, ge=1)
+    skill_package_max_bytes: int = Field(default=10_000_000, ge=1)
 
 
 class RuntimeSettings(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    schema_version: int = 2
+    schema_version: int = 4
     common_prompt: str = ""
     roles: dict[str, RoleRuntimeSettings]
     graph: GraphSettings = Field(default_factory=GraphSettings)
     budget: RuntimeBudgetSettings = Field(default_factory=RuntimeBudgetSettings)
-    skill_selection: SkillSelectionSettings = Field(default_factory=SkillSelectionSettings)
     tool_defaults: ToolDefaults = Field(default_factory=ToolDefaults)
     kali: KaliSandboxSettings = Field(default_factory=KaliSandboxSettings)
     files: FileLimitSettings = Field(default_factory=FileLimitSettings)

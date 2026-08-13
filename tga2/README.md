@@ -44,13 +44,40 @@ Every process reads and writes runtime configuration through the tracked
 - `scenes.json` owns the five task scenes, their form fields, default policy and
   scene prompt additions.
 - `mcp.json` owns MCP server definitions.
+- `skills/<package>/` owns shared Skill packages. Every package requires a
+  `SKILL.md` entrypoint and may contain nested Markdown references.
 
 There is no second defaults directory and no implicit configuration migration.
-All four JSON files must exist. This makes missing or stale deployment
+All four JSON files must exist; `skills` may be empty. This makes missing or stale deployment
 configuration visible instead of silently creating another source of truth.
 
 Configure a role's model on the Solver page. Creating a task no longer accepts
 or stores a second per-task model assignment.
+
+### Skill packages
+
+Skills are shared knowledge packages, not task/scene/role assignments:
+
+```text
+.config/skills/
+└── ctf-crypto/
+    ├── SKILL.md
+    ├── rsa-attacks.md
+    └── references/
+        └── ecc.md
+```
+
+`SKILL.md` uses a small frontmatter header (`name`, `description`, `tags`,
+`version`) followed by operating instructions. The Skills page can create a
+package, import a ZIP, edit its entrypoint and add/delete Markdown references.
+
+At runtime, only Worker discovers Skill files. LangChain's
+`FilesystemFileSearchMiddleware` provides `glob_search` and `grep_search`
+rooted at `.config/skills`; the governed `read_skill` tool loads one selected
+document and emits `SKILL_DOCUMENT_READ`. Skill text is advice only and cannot
+expand task authorization or tool permissions. Supervisor, Reviewer and
+Reporter receive Runtime-curated task intelligence instead of reading Skills
+directly.
 
 ### `models.json`
 

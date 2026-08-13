@@ -39,7 +39,7 @@ uvicorn apps.api.main:app --reload
 
 LangChain/LangGraph 接管 Agent 循环、结构化输出、重试、工具调用、HITL interrupt/resume、checkpoint，以及 Shell/Docker 执行策略。TGA 保留任务授权、工具 allowlist、风险与脱敏、Artifact hash、EvidenceClaim/Finding 约束、业务事件和报告可信性。
 
-MCP 使用 `langchain-mcp-adapters`。前端保存 MCP、Prompt、Skill、Solver 能力后，修改的是 Runtime 实际读取的同一份配置，不存在仅供页面展示的第二套状态。
+MCP 使用 `langchain-mcp-adapters`。Skill 以 `.config/skills/<包名>/SKILL.md` 和同包 Markdown 为唯一源，由 LangChain 文件搜索中间件供 Worker 按需发现。前端保存 MCP、Prompt、Skill、Solver 能力后，修改的是 Runtime 实际读取的同一份配置，不存在仅供页面展示的第二套状态。
 
 ## 验证
 

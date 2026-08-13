@@ -2,7 +2,6 @@ import { useMemo, useState } from "react";
 import { ScrollText, Users } from "lucide-react";
 import { selectEventsBySolver } from "../models/selectors";
 import type { RuntimeEvent, RuntimeSolver, RuntimeStore } from "../models/types";
-import { SkillSummary } from "../../skills/SkillSummary";
 import { StatusBadge } from "../../../shared/StatusBadge";
 import { statusDefinition } from "../../../shared/status";
 
@@ -127,7 +126,10 @@ function Transcript({ solver, store }: { solver: RuntimeSolver; store?: RuntimeS
 
 function LocalPlan({ solver, store }: { solver: RuntimeSolver; store?: RuntimeStore }) { const intent = solver.assignedIntentId && store ? store.intentsById[solver.assignedIntentId] : undefined; return <section><h4>Local Plan</h4>{intent ? <dl className="solver-summary-list"><Item label="Intent" value={intent.title} /><Item label="目标" value={intent.objective} /><Item label="状态" value={intent.status} /><Item label="依赖" value={intent.dependencies.join("、") || "无"} /></dl> : <p className="runtime-empty">后端未投影该 Solver 的 Local Plan 正文</p>}</section>; }
 
-function Skills({ solver, store }: { solver: RuntimeSolver; store?: RuntimeStore }) { const taskBundle = record(store?.taskCommonSkillSnapshot); const common = list(taskBundle.skills); const names = list(solver.skillSnapshot.names); return <div className="inspector-skills"><section><h4>Task Common Skills</h4>{common.length ? common.map((item, index) => <pre key={index}>{JSON.stringify(item, null, 2)}</pre>) : <small>未投影版本/hash/选择原因</small>}</section><section><h4>Solver Specialized Skills</h4>{names.length ? names.map(String).map((name) => <p key={name}>{name}</p>) : <small>未选择</small>}<dl className="solver-summary-list"><Item label="selector" value={String(solver.skillSnapshot.selector ?? "未投影")} /><Item label="count" value={String(solver.skillSnapshot.count ?? 0)} /></dl></section></div>; }
+function Skills({ solver, store }: { solver: RuntimeSolver; store?: RuntimeStore }) {
+  const reads = (store ? selectEventsBySolver(store, solver.solverId) : []).filter((event) => event.type === "SKILL_DOCUMENT_READ");
+  return <div className="inspector-skills"><section><h4>按需读取的 Skill 文档</h4><p>Skill 不再预先绑定任务或 Solver。这里仅显示该 Solver 实际读取过的文档。</p>{reads.length ? reads.map((event) => <article key={event.seq}><b>{String(event.payload.skill_name ?? "unknown")}</b><small>{String(event.payload.path ?? "SKILL.md")}</small><code>{String(event.payload.sha256 ?? "").slice(0, 16)}…</code></article>) : <small>尚未读取 Skill 文档</small>}</section></div>;
+}
 
 function Tools({ solver, store }: { solver: RuntimeSolver; store?: RuntimeStore }) {
   const kali = record(solver.capabilityBinding.kali);
@@ -139,7 +141,7 @@ function Tools({ solver, store }: { solver: RuntimeSolver; store?: RuntimeStore 
 }
 
 function Artifacts({ solver, store }: { solver: RuntimeSolver; store?: RuntimeStore }) { const values = store ? Object.values(store.artifactsById).filter((item) => item.intentId === solver.assignedIntentId) : []; return <section><h4>已发布 Artifacts</h4>{values.length ? values.map((item) => <article key={item.artifactId}><b>{item.artifactId}</b><small>{item.kind} · {item.sha256}</small></article>) : <p className="runtime-empty">没有已发布产物</p>}</section>; }
-function Config({ solver }: { solver: RuntimeSolver }) { return <section><h4>冻结配置</h4><pre>{JSON.stringify({ definition_id: solver.definitionId, model_snapshot: solver.modelSnapshot, skill_snapshot: solver.skillSnapshot, capability_binding: solver.capabilityBinding, timestamps: solver.timestamps }, null, 2)}</pre></section>; }
+function Config({ solver }: { solver: RuntimeSolver }) { return <section><h4>冻结配置</h4><pre>{JSON.stringify({ definition_id: solver.definitionId, model_snapshot: solver.modelSnapshot, capability_binding: solver.capabilityBinding, timestamps: solver.timestamps }, null, 2)}</pre></section>; }
 function Item({ label, value }: { label: string; value: string }) { return <div><dt>{label}</dt><dd>{value}</dd></div>; }
 function eventSummary(event: RuntimeEvent): string { return String(event.payload.summary ?? event.payload.reason ?? event.payload.status ?? event.payload.tool_name ?? "事件已记录"); }
 function safePayload(event: RuntimeEvent): string { return JSON.stringify(sanitizeProtocolValue(event.payload), null, 2).slice(0, 8000); }

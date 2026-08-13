@@ -16,6 +16,7 @@ from tga2.agent.roles import AgentSuite
 from tga2.config import Configuration
 from tga2.core.store import TaskStore
 from tga2.core.workspace import TaskWorkspace
+from tga2.skills import SkillRepository
 
 
 class TGAState(TypedDict, total=False):
@@ -47,6 +48,7 @@ class RuntimeDeps:
     agents: AgentSuite
     sandbox_image: str | None = None
     configuration: Configuration | None = None
+    skills: SkillRepository | None = None
     external_tools: Sequence[BaseTool] = ()
 
 

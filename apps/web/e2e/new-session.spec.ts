@@ -7,7 +7,7 @@ const policy = {
   high_impact: { mode: "approval_required", allowed_actions: [] },
 };
 
-test("new task selects a scene and stages task files plus Hint without task-level MCP grants", async ({ page }) => {
+test("new task stages files and uses shared Skills without task-level grants", async ({ page }) => {
   const browserErrors: string[] = [];
   page.on("pageerror", (error) => browserErrors.push(error.message));
   page.on("console", (message) => { if (message.type() === "error") browserErrors.push(message.text()); });
@@ -32,11 +32,10 @@ test("new task selects a scene and stages task files plus Hint without task-leve
       { server: "disabled", configured: true, enabled: false, discovered: true },
     ],
   } }));
-  await page.route("**/api/v2/tasks/skill-preview", (route) => route.fulfill({ json: {
-    selector: "fixture",
-    fingerprint: "s".repeat(64),
-    count: 0,
-    skills: [],
+  await page.route("**/api/v2/settings/skills", (route) => route.fulfill({ json: {
+    schema_version: 2,
+    root: "runs2/.config/skills",
+    skills: [{ name: "ctf-crypto", tags: ["ctf"], version: "1", summary: "Crypto methods", entrypoint: "SKILL.md", file_count: 2, total_bytes: 128, content_sha256: "a".repeat(64), enabled: true }],
   } }));
   await page.route("**/api/v2/tasks/preflight", (route) => route.fulfill({ json: {
     fingerprint: "f".repeat(64),
@@ -45,7 +44,7 @@ test("new task selects a scene and stages task files plus Hint without task-leve
       { id: "inputs", status: "passed", detail: "Inputs verified" },
       { id: "model", status: "passed", detail: "Model verified" },
     ],
-    skill_snapshot: { selector: "fixture", count: 0, content_sha256: "a".repeat(64) },
+    skill_catalog: { strategy: "worker_on_demand", package_count: 0, content_sha256: "a".repeat(64) },
     mcp_catalog_version: "fixture-v1",
     model_verification_id: "model-verification-fixture",
   } }));

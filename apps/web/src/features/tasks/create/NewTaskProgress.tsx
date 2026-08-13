@@ -26,7 +26,7 @@ export function NewTaskHeader() {
   return <header className="ref-page-head">
     <div>
       <h1>创建任务 · 五步向导</h1>
-      <p>定义任务目标、输入与授权边界；匹配场景的 Skills 和已启用能力将在创建时冻结。</p>
+      <p>定义任务目标、输入与授权边界；Worker 可在运行时按需检索共享 Skill 知识库。</p>
     </div>
   </header>;
 }
@@ -71,8 +71,7 @@ export function NewTaskGuide({ modeLabel, modeDescription }: { modeLabel: string
       {/* The rail is narrow, so the mode's full description stays in the title
           attribute rather than pushing the card past the card below it. */}
       <p className="wizard-guide-copy" title={modeDescription}>
-        当前场景「{modeLabel}」。系统会据此推荐最合适的团队、Solver、Skills
-        与工具链，你也可以在后续步骤中自定义。
+        当前场景「{modeLabel}」。系统会据此推荐团队和 Solver；Worker 会在运行中按需检索共享 Skill，并受当前工具策略约束。
       </p>
       <div className="wizard-match-preview" aria-hidden="true">
         <i />

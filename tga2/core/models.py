@@ -42,7 +42,6 @@ class TaskSpec(BaseModel):
     constraints: tuple[str, ...] = Field(default_factory=tuple, max_length=128)
     success_criteria: tuple[str, ...] = Field(default_factory=tuple, max_length=128)
     resources: tuple[ResourceRef, ...] = Field(default_factory=tuple, max_length=256)
-    selected_skill_names: tuple[str, ...] | None = None
     mode_options: dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="before")
@@ -229,7 +228,6 @@ class CreateTaskRequest(BaseModel):
     constraints: list[str] = Field(default_factory=list, max_length=128)
     success_criteria: list[str] = Field(default_factory=list, max_length=128)
     input_paths: list[str] = Field(default_factory=list, max_length=256)
-    selected_skills: list[str] | None = None
     execution_policy: Any = None  # ExecutionPolicy; Any avoids a core module cycle.
 
 

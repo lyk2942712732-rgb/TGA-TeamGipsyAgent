@@ -1,6 +1,5 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -8,19 +7,15 @@ const mocks = vi.hoisted(() => ({
   preflightTask: vi.fn(async () => ({
     fingerprint: "f".repeat(64), task_id: "task_draft",
     checks: [{ id: "model", status: "passed", detail: "verified model snapshot" }],
-    skill_snapshot: { selector: "test", count: 1, content_sha256: "a".repeat(64) },
+    skill_catalog: { strategy: "worker_on_demand", package_count: 1, content_sha256: "a".repeat(64) },
     mcp_catalog_version: "catalog-test", model_verification_id: "verify-test",
   })),
   stageInput: vi.fn(async (file: File) => ({ id: `asset_${(file.type.startsWith("image/") ? "b" : "a").repeat(32)}`, originalName: file.name, mimeType: file.type || "text/plain", mediaKind: file.type.startsWith("image/") ? "image" : "text", size: file.size, sha256: "b".repeat(64), status: "uploaded" as const })),
   deleteStagedInput: vi.fn(async () => ({ asset_id: `asset_${"a".repeat(32)}`, deleted: true })),
   fetchModeProfiles: vi.fn(),
-  previewTaskSkills: vi.fn(async () => ({
-    selector: "task-skill-selector-v1:test", fingerprint: "abc", count: 1,
-    skills: [{ name: "web-recon", version: "1", origin: "builtin", capabilities: ["http.request"], tags: ["web"], content_sha256: "a".repeat(64), selection_reasons: ["任务特征匹配：web"] }],
-  })),
-  fetchSkillSettings: vi.fn(async () => ({ schema_version: 3, skills: [
-    { name: "web-recon", modes: ["ctf", "penetration_test"], capabilities: ["http.request"], tags: ["web"], version: "1", source: "builtin", summary: "Map web endpoints", editable: true },
-    { name: "binary-triage", modes: ["reverse_analysis"], capabilities: ["input.read"], tags: ["binary"], version: "1", source: "builtin", summary: "Inspect binary metadata", editable: true },
+  fetchSkillSettings: vi.fn(async () => ({ schema_version: 2, root: "runs2/.config/skills", skills: [
+    { name: "web-recon", tags: ["web"], version: "1", summary: "Map web endpoints", entrypoint: "SKILL.md", file_count: 2, total_bytes: 100, content_sha256: "a".repeat(64), enabled: true },
+    { name: "binary-triage", tags: ["binary"], version: "1", summary: "Inspect binary metadata", entrypoint: "SKILL.md", file_count: 1, total_bytes: 50, content_sha256: "b".repeat(64), enabled: true },
   ] })),
   fetchAgentModelOptions: vi.fn(async (mode: string) => ({
     mode,
@@ -138,12 +133,8 @@ describe("NewTaskPage multimodal input flow", () => {
     await user.type(screen.getByLabelText("任务提示词"), "Analyze carefully");
     await user.click(screen.getByRole("button", { name: /创建摘要/ }));
     expect(await screen.findByText("binwalk")).toBeInTheDocument();
-    expect(await screen.findByText("web-recon")).toBeInTheDocument();
-    expect(screen.getByText("任务特征匹配：web")).toBeInTheDocument();
+    expect(await screen.findByText(/2 个可供 Worker 按需检索/)).toBeInTheDocument();
     expect(await screen.findByTestId("preflight-passed")).toHaveTextContent("全部检查通过");
-    expect(mocks.previewTaskSkills).toHaveBeenCalledWith(expect.objectContaining({
-      mode: "penetration_test", prompt: "Analyze carefully", fileNames: ["task.txt"], executionPolicy: expect.any(Object),
-    }));
     expect(screen.queryByText("disabled")).toBeNull();
     await user.click(screen.getByRole("button", { name: "创建任务并开始" }));
     await waitFor(() => expect(mocks.createTask).toHaveBeenCalledWith(expect.objectContaining({
@@ -157,7 +148,7 @@ describe("NewTaskPage multimodal input flow", () => {
     expect(onCreated).toHaveBeenCalledWith("task_created");
   });
 
-  it("manually selects Skills from scene groups and sends the selection to the backend", async () => {
+  it("shows shared Skills without binding them to the task request", async () => {
     const user = userEvent.setup();
     await renderPage();
     await fillRequiredGoalFields(user);
@@ -165,22 +156,14 @@ describe("NewTaskPage multimodal input flow", () => {
     await user.type(screen.getByLabelText("任务提示词"), "Inspect the web target");
     await user.click(screen.getByRole("button", { name: "团队和模型" }));
     await screen.findByText("web-recon");
-    await user.click(screen.getByRole("button", { name: "手动选择" }));
-    const dialog = await screen.findByRole("dialog", { name: "手动选择 Skills" });
-    expect(within(dialog).getByText("CTF 解题")).toBeInTheDocument();
-    expect(within(dialog).getByText("逆向分析")).toBeInTheDocument();
-    expect(within(dialog).getByText("binary-triage")).toBeInTheDocument();
-    const web = within(dialog).getByRole("checkbox", { name: "web-recon（渗透测试）" });
-    if (web.checked) await user.click(web);
-    await user.click(web);
-    expect(within(dialog).getByRole("checkbox", { name: "binary-triage（逆向分析）" })).toBeDisabled();
-    await user.click(within(dialog).getByRole("button", { name: "应用选择" }));
-    await waitFor(() => expect(mocks.previewTaskSkills).toHaveBeenCalledWith(expect.objectContaining({ selectedSkills: ["web-recon"] })));
-    expect(await screen.findByRole("button", { name: "恢复自动匹配" })).toBeInTheDocument();
+    expect(screen.getByText("binary-triage")).toBeInTheDocument();
+    expect(screen.getByText(/不再绑定场景或角色/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "管理 Skill" })).toHaveAttribute("href", "/settings/skills");
 
     await user.click(screen.getByRole("button", { name: /创建摘要/ }));
     await user.click(screen.getByRole("button", { name: "创建任务并开始" }));
-    await waitFor(() => expect(mocks.createTask).toHaveBeenCalledWith(expect.objectContaining({ selectedSkills: ["web-recon"] })));
+    await waitFor(() => expect(mocks.createTask).toHaveBeenCalled());
+    expect(mocks.createTask.mock.calls[0][0]).not.toHaveProperty("selectedSkills");
   });
 
   it("allows a prompt without requiring an attachment", async () => {

@@ -5,10 +5,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-from urllib.parse import unquote
-from uuid import uuid4
-
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import SecretStr
 
@@ -24,7 +20,7 @@ from tga2.integrations.model import (
     build_chat_model,
     utc_now,
 )
-from tga2.skills import Skill
+from tga2.skills import SkillDocument, SkillPackage
 
 router = APIRouter(tags=["settings"])
 
@@ -397,82 +393,117 @@ def update_prompts(payload: dict, app: Container = Depends(container)):
 @router.get("/settings/skills")
 def skills(app: Container = Depends(container)):
     return {
-        "schema_version": 1,
-        "skills": [
-            _skill(item, app.configuration.supported_modes)
-            for item in app.runtime.skills.list()
-        ],
+        "schema_version": 2,
+        "root": str(app.runtime.skills.root),
+        "skills": [_skill(item) for item in app.runtime.skills.list()],
     }
+
+
+@router.post("/settings/skills", status_code=201)
+def create_skill(payload: dict, app: Container = Depends(container)):
+    try:
+        item = app.runtime.skills.create(
+            name=str(payload.get("name") or ""),
+            description=str(payload.get("description") or ""),
+            tags=list(payload.get("tags") or []),
+            version=str(payload.get("version") or "1"),
+            instructions=str(
+                payload.get("instructions")
+                or "# Instructions\n\nDescribe when and how Worker should use this Skill."
+            ),
+        )
+    except FileExistsError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return {"skill": _skill_detail(item)}
+
+
+@router.post("/settings/skills/import", status_code=201)
+async def import_skill(request: Request, app: Container = Depends(container)):
+    try:
+        item = app.runtime.skills.install_zip(await request.body())
+    except FileExistsError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except ValueError as exc:
+        status = 413 if "limit" in str(exc) or "too large" in str(exc) else 422
+        raise HTTPException(status, str(exc)) from exc
+    return {"skill": _skill_detail(item)}
 
 
 @router.get("/settings/skills/{name}")
 def skill(name: str, app: Container = Depends(container)):
     item = app.runtime.skills.get(name)
     if item is None:
-        raise HTTPException(404, "skill not found")
-    return {
-        "skill": {
-            **_skill(item, app.configuration.supported_modes),
-            "body": item.content,
-        }
-    }
-
-
-@router.post("/settings/skills/import", status_code=201)
-async def import_skill(request: Request, app: Container = Depends(container)):
-    filename = unquote(request.headers.get("x-tga-filename") or "custom-skill.md")
-    body = (await request.body()).decode("utf-8")
-    byte_limit = app.configuration.runtime.files.skill_import_max_bytes
-    if len(body.encode()) > byte_limit:
-        raise HTTPException(413, f"skill exceeds configured limit ({byte_limit} bytes)")
-    name = _identifier(Path(filename).stem)
-    scene = request.headers.get("x-tga-scene")
-    item = Skill(
-        name=name,
-        description=f"Imported skill for {scene or 'all modes'}",
-        tags=(scene,) if scene else (),
-        content=body,
-    )
-    try:
-        app.runtime.skills.save(item)
-    except ValueError as exc:
-        raise HTTPException(409, str(exc)) from exc
-    return {
-        "skill": {
-            **_skill(item, app.configuration.supported_modes),
-            "body": item.content,
-        }
-    }
+        raise HTTPException(404, "skill package not found")
+    return {"skill": _skill_detail(item)}
 
 
 @router.put("/settings/skills/{name}")
 def update_skill(name: str, payload: dict, app: Container = Depends(container)):
     current = app.runtime.skills.get(name)
     if current is None:
-        raise HTTPException(404, "skill not found")
-    if current.source == "builtin":
-        raise HTTPException(409, "builtin skills are read-only")
-    item = Skill(
-        name=name,
-        description=str(payload.get("summary") or current.description),
-        tags=tuple(payload.get("tags") or current.tags),
-        content=str(payload.get("body") or current.content),
-        enabled=True,
-    )
-    app.runtime.skills.save(item)
-    return {
-        "skill": {
-            **_skill(item, app.configuration.supported_modes),
-            "body": item.content,
-        }
-    }
+        raise HTTPException(404, "skill package not found")
+    try:
+        item = app.runtime.skills.update(
+            name,
+            description=str(payload.get("description", current.description)),
+            tags=list(payload.get("tags", current.tags)),
+            version=str(payload.get("version", current.version)),
+            instructions=str(payload.get("instructions", current.instructions)),
+        )
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return {"skill": _skill_detail(item)}
+
+
+@router.put("/settings/skills/{name}/documents")
+def put_skill_document(
+    name: str, payload: dict, app: Container = Depends(container)
+):
+    try:
+        item = app.runtime.skills.add_document(
+            name,
+            str(payload.get("path") or ""),
+            str(payload.get("content") or ""),
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except ValueError as exc:
+        status = 413 if "limit" in str(exc) else 422
+        raise HTTPException(status, str(exc)) from exc
+    return {"skill": _skill_detail(item)}
+
+
+@router.get("/settings/skills/{name}/documents/{path:path}")
+def skill_document(name: str, path: str, app: Container = Depends(container)):
+    try:
+        package = app.runtime.skills.get_required(name)
+        content = app.runtime.skills.read_document(name, path)
+        normalized = path.replace("\\", "/").strip("/")
+        document = next(item for item in package.documents if item.path == normalized)
+    except (FileNotFoundError, StopIteration) as exc:
+        raise HTTPException(404, "skill document not found") from exc
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return {"document": {**_skill_document(document), "content": content}}
+
+
+@router.delete("/settings/skills/{name}/documents/{path:path}")
+def delete_skill_document(
+    name: str, path: str, app: Container = Depends(container)
+):
+    try:
+        deleted = app.runtime.skills.delete_document(name, path)
+    except FileNotFoundError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return {"name": name, "path": path, "deleted": deleted}
 
 
 @router.delete("/settings/skills/{name}")
 def delete_skill(name: str, app: Container = Depends(container)):
-    item = app.runtime.skills.get(name)
-    if item is not None and item.source == "builtin":
-        raise HTTPException(409, "builtin skills are read-only")
     return {"name": name, "deleted": app.runtime.skills.delete(name)}
 
 
@@ -493,15 +524,6 @@ def _deactivate_if_active(provider: RegisteredProvider, app: Container) -> None:
         app.runtime.configure_model(provider.settings(registry.active_model_id))
     except KeyError:
         app.runtime.configure_model(ModelSettings())
-
-
-def _identifier(value: str) -> str:
-    return (
-        "-".join(
-            "".join(ch if ch.isalnum() else "-" for ch in value.casefold()).split()
-        )[:64]
-        or uuid4().hex[:8]
-    )
 
 
 def _model(model: RegisteredModel):
@@ -587,16 +609,32 @@ def _offline_provider():
     }
 
 
-def _skill(item: Skill, modes: tuple[str, ...] | None = None):
-    available_modes = modes or ()
-    mode_tags = [tag for tag in item.tags if tag in available_modes]
+def _skill(item: SkillPackage):
     return {
         "name": item.name,
-        "modes": mode_tags or list(available_modes),
-        "capabilities": [],
         "tags": list(item.tags),
-        "version": "1",
-        "source": item.source,
+        "version": item.version,
         "summary": item.description,
-        "editable": item.source == "custom",
+        "entrypoint": "SKILL.md",
+        "file_count": len(item.documents),
+        "total_bytes": item.total_bytes,
+        "content_sha256": item.content_sha256,
+        "enabled": item.enabled,
+    }
+
+
+def _skill_detail(item: SkillPackage):
+    return {
+        **_skill(item),
+        "instructions": item.instructions,
+        "documents": [_skill_document(document) for document in item.documents],
+    }
+
+
+def _skill_document(item: SkillDocument):
+    return {
+        "path": item.path,
+        "title": item.title,
+        "size": item.size,
+        "sha256": item.sha256,
     }

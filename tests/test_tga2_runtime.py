@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import ast
+import io
 import json
 import shutil
+import zipfile
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -213,7 +215,7 @@ def test_supervisor_user_input_interrupt_has_distinct_status_and_resumes(
 def test_runtime_json_is_the_single_budget_source(tmp_path: Path) -> None:
     service = TaskRuntimeService(run_root=tmp_path / "runs")
     runtime = service.configuration.runtime
-    assert runtime.schema_version == 3
+    assert runtime.schema_version == 4
     assert runtime.budget.task.model_dump() == {
         "max_intents": 4,
         "max_model_calls": 60,
@@ -347,17 +349,31 @@ def test_prompt_skill_and_solver_settings_reach_runtime(tmp_path: Path) -> None:
     assert app.state.container.configuration.scene("vulnerability_research")["prompts"][
         "methodology"
     ] == ["Trace data flow"]
-    imported = client.post(
-        "/api/v2/settings/skills/import",
-        content=b"evidence audit",
-        headers={"x-tga-filename": "evidence.md"},
+    created = client.post(
+        "/api/v2/settings/skills",
+        json={
+            "name": "evidence",
+            "description": "Evidence handling",
+            "tags": ["evidence"],
+            "version": "1",
+            "instructions": "# Evidence\n\nRead the locator guide when needed.",
+        },
     )
-    assert imported.status_code == 201
-    assert app.state.container.runtime.skills.get("evidence") is not None
-    selected = app.state.container.runtime.skills.select(
-        "unrelated objective", selected_names=["evidence"]
+    assert created.status_code == 201
+    added = client.put(
+        "/api/v2/settings/skills/evidence/documents",
+        json={"path": "references/locators.md", "content": "# Locators\nUse lines."},
     )
-    assert [item.name for item in selected] == ["evidence"]
+    assert added.status_code == 200
+    package = app.state.container.runtime.skills.get_required("evidence")
+    assert [item.path for item in package.documents] == [
+        "SKILL.md",
+        "references/locators.md",
+    ]
+    read = client.get(
+        "/api/v2/settings/skills/evidence/documents/references/locators.md"
+    )
+    assert read.json()["document"]["content"] == "# Locators\nUse lines."
     solver = client.put(
         "/api/v2/solvers/worker/capabilities",
         json={
@@ -462,13 +478,34 @@ def test_mcp_config_translation() -> None:
     }
 
 
-def test_builtin_skills_are_real_and_read_only(tmp_path: Path) -> None:
+def test_skill_zip_installs_one_directory_package_and_rejects_unsafe_paths(
+    tmp_path: Path,
+) -> None:
     reset_containers()
     app.state.container = get_container(tmp_path / "runs")
     client = TestClient(app)
-    catalog = client.get("/api/v2/settings/skills").json()["skills"]
-    assert any(item["name"] == "code-audit" for item in catalog)
-    assert client.delete("/api/v2/settings/skills/code-audit").status_code == 409
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr(
+            "ctf-crypto/SKILL.md",
+            "---\nname: ctf-crypto\ndescription: Crypto methods\n"
+            "tags: [ctf, crypto]\nversion: 2\n---\n\n# Crypto\nRoute by topic.",
+        )
+        archive.writestr("ctf-crypto/rsa.md", "# RSA\nCheck key material.")
+    imported = client.post(
+        "/api/v2/settings/skills/import",
+        content=buffer.getvalue(),
+        headers={"content-type": "application/zip"},
+    )
+    assert imported.status_code == 201
+    assert imported.json()["skill"]["file_count"] == 2
+    assert (tmp_path / "runs" / ".config" / "skills" / "ctf-crypto" / "rsa.md").is_file()
+
+    unsafe = io.BytesIO()
+    with zipfile.ZipFile(unsafe, "w") as archive:
+        archive.writestr("../SKILL.md", "# unsafe")
+    rejected = client.post("/api/v2/settings/skills/import", content=unsafe.getvalue())
+    assert rejected.status_code == 422
 
 
 def test_provider_registry_verifies_selected_provider_and_persists(

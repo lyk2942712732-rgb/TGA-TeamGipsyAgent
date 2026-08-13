@@ -4,121 +4,73 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
-  fetchSkillSettings: vi.fn(),
-  fetchSkillDetail: vi.fn(),
-  importSkill: vi.fn(),
-  updateSkill: vi.fn(),
-  deleteSkill: vi.fn(),
+  fetchSkillSettings: vi.fn(), fetchSkillDetail: vi.fn(), fetchSkillDocument: vi.fn(),
+  createSkill: vi.fn(), importSkill: vi.fn(), updateSkill: vi.fn(), putSkillDocument: vi.fn(),
+  deleteSkillDocument: vi.fn(), deleteSkill: vi.fn(),
 }));
-
 vi.mock("../api/tasks", async (original) => ({ ...await original<typeof import("../api/tasks")>(), ...mocks }));
-
 import { SkillsPage } from "./SkillsPage";
 
-const custom = {
-  name: "custom-proof", modes: ["penetration_test"], capabilities: ["http.request"], tags: ["web"],
-  version: "1", source: "custom", summary: "Custom proof workflow", editable: true, body: "# Workflow\nPreserve evidence.",
+const crypto = {
+  name: "ctf-crypto", tags: ["ctf", "crypto"], version: "2", summary: "Crypto methods", entrypoint: "SKILL.md" as const,
+  file_count: 2, total_bytes: 120, content_sha256: "a".repeat(64), enabled: true,
+  instructions: "# Crypto\nRoute by topic.",
+  documents: [
+    { path: "SKILL.md", title: "Crypto", size: 60, sha256: "b".repeat(64) },
+    { path: "rsa.md", title: "RSA", size: 60, sha256: "c".repeat(64) },
+  ],
 };
-const builtin = {
-  name: "binary-triage", modes: ["reverse_analysis", "ctf"], capabilities: ["input.read"], tags: ["binary"],
-  version: "1", source: "builtin", summary: "Inspect binary metadata", editable: true, body: "# Workflow\nInspect metadata.",
-};
+const web = { ...crypto, name: "web-recon", version: "1", summary: "Web recon", tags: ["web"], file_count: 1, documents: [crypto.documents[0]] };
 
-function renderPage() {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(<QueryClientProvider client={client}><SkillsPage /></QueryClientProvider>);
-}
+function renderPage() { const client = new QueryClient({ defaultOptions: { queries: { retry: false } } }); return render(<QueryClientProvider client={client}><SkillsPage /></QueryClientProvider>); }
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mocks.fetchSkillSettings.mockResolvedValue({ schema_version: 3, skills: [custom, builtin] });
-  mocks.fetchSkillDetail.mockImplementation((name: string) => Promise.resolve({
-    skill: name === custom.name ? custom : builtin,
-  }));
+  mocks.fetchSkillSettings.mockResolvedValue({ schema_version: 2, root: "runs2/.config/skills", skills: [crypto, web] });
+  mocks.fetchSkillDetail.mockImplementation((name: string) => Promise.resolve({ skill: name === crypto.name ? crypto : web }));
+  mocks.fetchSkillDocument.mockResolvedValue({ document: { ...crypto.documents[1], content: "# RSA\nCheck key material." } });
 });
 
-/** The skill name also appears in the detail heading, so table assertions must be scoped. */
-async function findTable(container: HTMLElement): Promise<HTMLElement> {
-  await waitFor(() => expect(container.querySelector(".catalog-table")).toBeTruthy());
-  return container.querySelector(".catalog-table") as HTMLElement;
-}
-
 describe("SkillsPage", () => {
-  it("lists real skills from the settings API", async () => {
+  it("lists directory packages from the single config source", async () => {
     const { container } = renderPage();
-    const table = await findTable(container);
-    expect(within(table).getByText("custom-proof")).toBeInTheDocument();
-    expect(within(table).getByText("binary-triage")).toBeInTheDocument();
-    expect(mocks.fetchSkillSettings).toHaveBeenCalled();
+    await screen.findByText("ctf-crypto");
+    expect(screen.getByText("runs2/.config/skills")).toBeInTheDocument();
+    expect(container.querySelector(".catalog-table")).toHaveTextContent("web-recon");
+    const detail = await screen.findByLabelText("ctf-crypto 详情");
+    expect(detail).toHaveTextContent("2 份 / 120 B");
   });
 
-  it("files real tags into the reference's fixed category taxonomy", async () => {
-    const { container } = renderPage();
-    await findTable(container);
-    const categories = container.querySelector(".skills-categories") as HTMLElement;
-    expect(categories).toHaveTextContent("全部技能");
-    // `binary` maps to 逆向工程; `web` maps to nothing, so it falls to 通用技能.
-    expect(within(categories).getByRole("button", { name: /逆向工程/ })).toHaveTextContent("1");
-    expect(within(categories).getByRole("button", { name: /通用技能/ })).toHaveTextContent("1");
-    // A category with nothing filed under it stays listed but is not clickable.
-    expect(within(categories).getByRole("button", { name: /报告与总结/ })).toBeDisabled();
+  it("creates a package with SKILL.md instructions", async () => {
+    const user = userEvent.setup(); mocks.createSkill.mockResolvedValue({ skill: crypto }); renderPage();
+    await user.click(await screen.findByRole("button", { name: /新建 Skill 包/ }));
+    await user.type(screen.getByLabelText("Skill 包名"), "ctf-crypto");
+    await user.type(screen.getByLabelText("Skill 简介"), "Crypto methods");
+    await user.click(screen.getByRole("button", { name: "创建包" }));
+    await waitFor(() => expect(mocks.createSkill).toHaveBeenCalledWith(expect.objectContaining({ name: "ctf-crypto", description: "Crypto methods" })));
   });
 
-  it("filters the table by category", async () => {
-    const user = userEvent.setup();
-    const { container } = renderPage();
-    await findTable(container);
-
-    const categories = container.querySelector(".skills-categories") as HTMLElement;
-    await user.click(within(categories).getByRole("button", { name: /逆向工程/ }));
-
-    await waitFor(() => {
-      const table = container.querySelector(".catalog-table") as HTMLElement;
-      expect(within(table).queryByText("custom-proof")).not.toBeInTheDocument();
-    });
-    const table = await findTable(container);
-    expect(within(table).getByText("binary-triage")).toBeInTheDocument();
+  it("edits the package entrypoint", async () => {
+    const user = userEvent.setup(); mocks.updateSkill.mockResolvedValue({ skill: crypto }); renderPage();
+    const instructions = await screen.findByLabelText("编辑 Skill Instructions");
+    await user.clear(instructions); await user.type(instructions, "# Updated");
+    await user.click(screen.getByRole("button", { name: /保存 SKILL.md/ }));
+    await waitFor(() => expect(mocks.updateSkill).toHaveBeenCalledWith("ctf-crypto", expect.objectContaining({ instructions: "# Updated" })));
   });
 
-  it("saves an edited skill body through the real update endpoint", async () => {
-    const user = userEvent.setup();
-    mocks.updateSkill.mockResolvedValue({ skill: custom });
-    const { container } = renderPage();
-    await findTable(container);
-
-    await user.click(await screen.findByRole("button", { name: "编辑" }));
-    await user.click(screen.getByRole("tab", { name: "Instructions" }));
-
-    const body = await screen.findByLabelText(/Instructions 正文/);
-    await user.clear(body);
-    await user.type(body, "# Updated");
-    await user.click(screen.getByRole("button", { name: /保存/ }));
-
-    await waitFor(() => expect(mocks.updateSkill).toHaveBeenCalledWith(
-      "custom-proof",
-      expect.objectContaining({ body: "# Updated" }),
-    ));
+  it("opens a package document on demand", async () => {
+    const user = userEvent.setup(); renderPage();
+    await user.click(await screen.findByRole("button", { name: /RSA/ }));
+    await waitFor(() => expect(document.querySelector(".skill-document-view pre")).toHaveTextContent("# RSA Check key material."));
+    expect(mocks.fetchSkillDocument).toHaveBeenCalledWith("ctf-crypto", "rsa.md");
   });
 
-  it("deletes a custom skill only after confirmation", async () => {
-    const user = userEvent.setup();
-    mocks.deleteSkill.mockResolvedValue({ name: custom.name, deleted: true });
-    const { container } = renderPage();
-    await findTable(container);
-
-    await user.click(await screen.findByRole("button", { name: /删除/ }));
+  it("deletes a whole package only after confirmation", async () => {
+    const user = userEvent.setup(); mocks.deleteSkill.mockResolvedValue({ name: "ctf-crypto", deleted: true }); renderPage();
+    await user.click(await screen.findByRole("button", { name: "删除包" }));
     expect(mocks.deleteSkill).not.toHaveBeenCalled();
-
     const dialog = await screen.findByRole("dialog");
-    await user.click(within(dialog).getByRole("button", { name: "删除" }));
-    await waitFor(() => expect(mocks.deleteSkill).toHaveBeenCalledWith("custom-proof"));
-  });
-
-  it("does not render fake missing-data fields", async () => {
-    const { container } = renderPage();
-    const table = await findTable(container);
-    expect(within(table).queryByText("—")).not.toBeInTheDocument();
-    expect(container.querySelectorAll(".not-implemented-inline")).toHaveLength(0);
-    expect(container.textContent).not.toContain("项目没有实现");
+    await user.click(within(dialog).getByRole("button", { name: "删除整个包" }));
+    await waitFor(() => expect(mocks.deleteSkill).toHaveBeenCalledWith("ctf-crypto"));
   });
 });

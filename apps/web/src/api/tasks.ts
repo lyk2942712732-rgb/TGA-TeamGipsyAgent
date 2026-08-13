@@ -61,7 +61,6 @@ export type CreateTaskRequest = {
   modeOptions: ModeConfig;
   input: { text: string; fileIds: string[] };
   executionPolicy: ExecutionPolicy;
-  selectedSkills?: string[] | null;
   preflightFingerprint?: string | null;
 };
 
@@ -69,7 +68,7 @@ export type TaskPreflight = {
   fingerprint: string;
   task_id: string;
   checks: Array<{ id: string; status: "passed"; detail: string }>;
-  skill_snapshot: { selector: string; count: number; content_sha256: string };
+  skill_catalog: { strategy: "worker_on_demand"; package_count: number; content_sha256: string };
   mcp_catalog_version: string;
   model_verification_id: string;
 };
@@ -161,42 +160,38 @@ export const addProviderAPIKey = (providerId: string, payload: { api_key: string
 export const selectProviderAPIKey = (providerId: string, keyId: string) => requestJson<{ provider: ModelProvider }>(`/api/v2/settings/llm/providers/${encodeURIComponent(providerId)}/api-keys/${encodeURIComponent(keyId)}/selection`, { method: "PUT" });
 export const verifyProviderModel = (providerId: string, modelId: string) => requestJson<{ reachable: boolean; action_tools: boolean; model: string; verification_status: LLMVerification["status"] }>(`/api/v2/settings/llm/providers/${encodeURIComponent(providerId)}/models/${encodeURIComponent(modelId)}/verify`, { method: "POST" });
 export const fetchAgentModelOptions = (mode: TaskMode) => requestJson<AgentModelOptions>(`/api/v2/settings/llm/agent-options?mode=${encodeURIComponent(mode)}`);
-export type SkillSetting = { name: string; modes: TaskMode[]; capabilities: string[]; tags: string[]; version: string; source: "builtin" | "custom"; summary: string; editable: boolean };
-export type SkillDetail = SkillSetting & { body: string };
-export type SkillPreview = {
-  selector: string;
-  fingerprint: string;
-  count: number;
-  skills: Array<Pick<SkillSetting, "name" | "version" | "capabilities" | "tags"> & {
-    origin: "builtin" | "custom";
-    content_sha256: string;
-    selection_reasons: string[];
-  }>;
+export type SkillDocument = { path: string; title: string; size: number; sha256: string };
+export type SkillSetting = {
+  name: string; tags: string[]; version: string; summary: string; entrypoint: "SKILL.md";
+  file_count: number; total_bytes: number; content_sha256: string; enabled: boolean;
 };
+export type SkillDetail = SkillSetting & { instructions: string; documents: SkillDocument[] };
+export type SkillDocumentDetail = SkillDocument & { content: string };
 export type ModePromptSettings = { id: TaskMode; label: string; methodology: string[]; completion_focus: string; observer_focus: string };
 export type AgentPromptSettings = { schema_version: 1; common_system_prompt: string; modes: ModePromptSettings[] };
-export const fetchSkillSettings = () => requestJson<{ schema_version: number; skills: SkillSetting[] }>("/api/v2/settings/skills");
-export const previewTaskSkills = (payload: { mode: TaskMode; goal: string; modeOptions: ModeConfig; prompt: string; fileNames: string[]; executionPolicy: ExecutionPolicy; selectedSkills?: string[] | null }) => requestJson<SkillPreview>("/api/v2/tasks/skill-preview", {
+export const fetchSkillSettings = () => requestJson<{ schema_version: number; root: string; skills: SkillSetting[] }>("/api/v2/settings/skills");
+export const fetchSkillDetail = (name: string) => requestJson<{ skill: SkillDetail }>(`/api/v2/settings/skills/${encodeURIComponent(name)}`);
+export const createSkill = (payload: { name: string; description: string; tags: string[]; version: string; instructions: string }) => requestJson<{ skill: SkillDetail }>("/api/v2/settings/skills", {
   method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
 });
-export const fetchSkillDetail = (name: string) => requestJson<{ skill: SkillDetail }>(`/api/v2/settings/skills/${encodeURIComponent(name)}`);
-export async function importSkill(file: File, scene?: TaskMode): Promise<{ skill: SkillDetail }> {
+export async function importSkill(file: File): Promise<{ skill: SkillDetail }> {
   const response = await fetch(`${apiBase}/api/v2/settings/skills/import`, {
     method: "POST",
-    headers: {
-      "Content-Type": "text/markdown; charset=utf-8",
-      "X-TGA-Filename": encodeURIComponent(file.name),
-      ...(scene ? { "X-TGA-Scene": scene } : {}),
-    },
+    headers: { "Content-Type": "application/zip", "X-TGA-Filename": encodeURIComponent(file.name) },
     body: file,
   });
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(uploadError(payload, response.status));
   return payload as { skill: SkillDetail };
 }
-export const updateSkill = (name: string, payload: Pick<SkillDetail, "summary" | "tags" | "body">) => requestJson<{ skill: SkillDetail }>(`/api/v2/settings/skills/${encodeURIComponent(name)}`, {
+export const updateSkill = (name: string, payload: Pick<SkillDetail, "tags" | "version" | "instructions"> & { description: string }) => requestJson<{ skill: SkillDetail }>(`/api/v2/settings/skills/${encodeURIComponent(name)}`, {
   method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
 });
+export const putSkillDocument = (name: string, payload: { path: string; content: string }) => requestJson<{ skill: SkillDetail }>(`/api/v2/settings/skills/${encodeURIComponent(name)}/documents`, {
+  method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
+});
+export const fetchSkillDocument = (name: string, path: string) => requestJson<{ document: SkillDocumentDetail }>(`/api/v2/settings/skills/${encodeURIComponent(name)}/documents/${path.split("/").map(encodeURIComponent).join("/")}`);
+export const deleteSkillDocument = (name: string, path: string) => requestJson<{ name: string; path: string; deleted: boolean }>(`/api/v2/settings/skills/${encodeURIComponent(name)}/documents/${path.split("/").map(encodeURIComponent).join("/")}`, { method: "DELETE" });
 export const deleteSkill = (name: string) => requestJson<{ name: string; deleted: boolean }>(`/api/v2/settings/skills/${encodeURIComponent(name)}`, { method: "DELETE" });
 export const fetchAgentPromptSettings = () => requestJson<AgentPromptSettings>("/api/v2/settings/agent-prompts");
 export const updateAgentPromptSettings = (payload: AgentPromptSettings) => requestJson<AgentPromptSettings>("/api/v2/settings/agent-prompts", {

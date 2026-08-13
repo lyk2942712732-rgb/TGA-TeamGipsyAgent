@@ -1244,6 +1244,33 @@ html, body { height: 100%; overflow: hidden; }
 .skill-editor input, .skill-editor textarea { border: 1px solid var(--c-border); border-radius: var(--r-md); color: var(--c-text); font-weight: 400; }
 .skill-editor textarea { font: 12.5px/1.7 ui-monospace, SFMono-Regular, Consolas, monospace; }
 
+.skill-runtime-note { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 14px; border: 1px solid var(--c-border); border-radius: var(--r-md); color: var(--c-text-muted); background: var(--c-surface-muted); font-size: 12px; }
+.skill-runtime-note code { color: var(--c-accent-strong); }
+.skill-runtime-note span { margin-left: auto; }
+.ref-filter-summary { margin-left: auto; color: var(--c-text-muted); font-size: 12px; }
+.skill-package-layout { display: grid; grid-template-columns: minmax(460px, .85fr) minmax(560px, 1.15fr); gap: var(--sp-4); min-height: 0; }
+.skill-package-panel { min-width: 0; overflow: auto; }
+.skill-package-body { display: grid; grid-template-columns: minmax(180px, 230px) minmax(0, 1fr); gap: var(--sp-3); min-height: 380px; margin-top: var(--sp-4); }
+.skill-package-body nav { display: flex; flex-direction: column; gap: 4px; min-width: 0; padding: 5px; border: 1px solid var(--c-border); border-radius: var(--r-md); background: var(--c-surface-muted); }
+.skill-package-body nav > button { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; padding: 9px; border: 0; border-radius: 7px; color: var(--c-text-muted); background: transparent; text-align: left; }
+.skill-package-body nav > button:hover, .skill-package-body nav > button.active { color: var(--c-accent-strong); background: var(--c-surface); }
+.skill-package-body nav > button > span:first-child { display: grid; min-width: 0; gap: 3px; }
+.skill-package-body nav strong, .skill-package-body nav small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.skill-package-body nav small { color: var(--c-text-subtle); font-size: 10px; }
+.skill-document-view { min-width: 0; }
+.skill-document-view > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+.skill-document-view > header > div { display: grid; gap: 4px; }
+.skill-package-dialog { display: grid; gap: 16px; width: min(680px, calc(100vw - 36px)); max-height: calc(100vh - 40px); padding: 20px; overflow: auto; border-radius: var(--r-lg); background: var(--c-surface); box-shadow: 0 30px 90px rgba(27,33,28,.28); }
+.skill-package-dialog > header, .skill-package-dialog > footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.skill-package-dialog > header span { color: var(--c-accent); font-size: 9px; font-weight: 800; letter-spacing: .12em; }
+.skill-package-dialog > header p { margin-top: 4px; color: var(--c-text-muted); font-size: 12px; }
+.skill-package-dialog > footer { justify-content: flex-end; }
+
+@media (max-width: 1100px) {
+  .skill-package-layout, .skill-package-body { grid-template-columns: 1fr; }
+  .skill-package-body nav { max-height: 220px; overflow: auto; }
+}
+
 @media (max-width: 1500px) {
   /* Below the reference width the four stat columns and the progress bar stop
      fitting beside the task name.  Tighten the row and let the mode line clip

@@ -30,8 +30,6 @@ const solver = {
   supported_modes: ["ctf"],
   supported_subtypes: ["pwn"],
   system_prompt_template: "Solve the challenge.",
-  default_skill_tags: [],
-  required_skill_names: [],
   host_capability_profile_id: "worker-default",
   host_capability_overrides: { add: [], remove: [] },
   host_capabilities: [{
@@ -242,7 +240,7 @@ describe("SolversPage capability editor", () => {
 
     const tabs = await screen.findAllByRole("tab");
     expect(tabs.map((tab) => tab.textContent)).toEqual([
-      "基础配置", "Instructions 模板", "能力（Tools）", "默认 Skills", "输出合约", "版本", "Kali 信息",
+      "基础配置", "Instructions 模板", "能力（Tools）", "Skill 使用策略", "输出合约", "版本", "Kali 信息",
     ]);
     await user.click(screen.getByRole("tab", { name: "能力（Tools）" }));
     expect(screen.getByText("Host 能力")).toBeInTheDocument();

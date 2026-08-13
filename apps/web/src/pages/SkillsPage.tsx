@@ -1,326 +1,93 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Save, Search, Trash2, Upload, X } from "lucide-react";
-import { useRef, useMemo, useState, type ChangeEvent } from "react";
+import { FilePlus2, FolderPlus, Save, Search, Trash2, Upload } from "lucide-react";
+import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import {
-  deleteSkill, fetchSkillDetail, fetchSkillSettings, importSkill, updateSkill,
+  createSkill, deleteSkill, deleteSkillDocument, fetchSkillDetail, fetchSkillDocument,
+  fetchSkillSettings, importSkill, putSkillDocument, updateSkill,
   type SkillDetail, type SkillSetting,
 } from "../api/tasks";
 import { ConfirmDialog } from "../components/ui/ConfirmDialog";
 import { CatalogTable, type Column } from "../components/ui/CatalogTable";
-import { DetailTabs, type DetailTab } from "../components/ui/DetailTabs";
 import { ChipList, FieldGrid } from "../components/ui/FieldGrid";
 import { EmptyState } from "../components/ui/EmptyState";
 import { ErrorState } from "../components/ui/ErrorState";
 import { LoadingSkeleton } from "../components/ui/LoadingSkeleton";
-import { SKILL_CATEGORIES, skillCategory, skillLabel, skillSummary, termLabel } from "../i18n/catalog";
-import { MODE_PROFILES, type TaskMode } from "../modes";
 
-const TABS: DetailTab[] = [
-  { id: "overview", label: "概览" },
-  { id: "instructions", label: "Instructions" },
-];
+const byteLabel = (value: number) => value < 1024 ? `${value} B` : value < 1024 ** 2 ? `${(value / 1024).toFixed(1)} KB` : `${(value / 1024 ** 2).toFixed(1)} MB`;
+const tagsFrom = (value: string) => value.split(/[,，\n]/).map((item) => item.trim().toLowerCase()).filter(Boolean);
 
 export function SkillsPage() {
   const client = useQueryClient();
   const [search, setSearch] = useState("");
-  const [tag, setTag] = useState("");
-  const [mode, setMode] = useState("");
   const [selectedName, setSelectedName] = useState<string | null>(null);
-  const [tab, setTab] = useState("overview");
+  const [creating, setCreating] = useState(false);
   const [message, setMessage] = useState("");
   const [importing, setImporting] = useState(false);
-  const fileRef = useRef<HTMLInputElement>(null);
-
+  const zipRef = useRef<HTMLInputElement>(null);
   const query = useQuery({ queryKey: ["settings", "skills"], queryFn: fetchSkillSettings });
+  const skills = useMemo(() => {
+    const needle = search.trim().toLowerCase();
+    return (query.data?.skills ?? []).filter((item) => !needle || `${item.name} ${item.summary} ${item.tags.join(" ")}`.toLowerCase().includes(needle));
+  }, [query.data, search]);
 
-  const onImport = async (event: ChangeEvent<HTMLInputElement>) => {
+  useEffect(() => {
+    if (selectedName && !skills.some((item) => item.name === selectedName)) setSelectedName(skills[0]?.name ?? null);
+    else if (!selectedName && skills.length) setSelectedName(skills[0].name);
+  }, [skills, selectedName]);
+
+  const columns: Array<Column<SkillSetting>> = [
+    { id: "name", header: "Skill 包", render: (row) => <span className="cell-title"><strong>{row.name}</strong><small>{row.summary || "暂无说明"}</small></span> },
+    { id: "version", header: "版本", width: "90px", render: (row) => <span>v{row.version}</span> },
+    { id: "files", header: "文档", width: "90px", render: (row) => <span>{row.file_count}</span> },
+    { id: "size", header: "大小", width: "110px", render: (row) => <span>{byteLabel(row.total_bytes)}</span> },
+    { id: "status", header: "Runtime", width: "110px", render: (row) => <span className="ref-chip tone-success">{row.enabled ? "可检索" : "停用"}</span> },
+  ];
+
+  async function onImport(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     event.target.value = "";
     if (!file) return;
-    setImporting(true);
-    setMessage("");
+    setImporting(true); setMessage("");
     try {
       const result = await importSkill(file);
       await client.invalidateQueries({ queryKey: ["settings", "skills"] });
       setSelectedName(result.skill.name);
-      setMessage(`已导入 Skill：${result.skill.name}`);
-    } catch (reason) {
-      setMessage(reason instanceof Error ? reason.message : "导入失败");
-    } finally {
-      setImporting(false);
-    }
-  };
-  const all = useMemo(() => query.data?.skills ?? [], [query.data]);
+      setMessage(`已安装 Skill 包：${result.skill.name}`);
+    } catch (reason) { setMessage(reason instanceof Error ? reason.message : "Skill ZIP 导入失败"); }
+    finally { setImporting(false); }
+  }
 
-  const items = useMemo(() => {
-    const needle = search.trim().toLocaleLowerCase();
-    return all.filter((item) => (!needle
-      || item.name.toLocaleLowerCase().includes(needle)
-      || skillLabel(item.name, item.summary).toLocaleLowerCase().includes(needle)
-      || item.tags.some((value) => value.toLocaleLowerCase().includes(needle)))
-      && (!tag || skillCategory(item.tags) === tag)
-      && (!mode || item.modes.includes(mode as TaskMode)));
-  }, [all, search, tag, mode]);
-
-  const selected = items.find((item) => item.name === selectedName) ?? items[0] ?? null;
-
-  /**
-   * Reference 12's rail is a fixed seven-category taxonomy, not the raw tag
-   * list.  `SkillDocument` has no category field, so each Skill is filed by its
-   * first tag that maps to one and the counts stay real.
-   */
-  const categories = useMemo(() => {
-    const counts = new Map<string, number>();
-    for (const skill of all) {
-      const category = skillCategory(skill.tags);
-      counts.set(category, (counts.get(category) ?? 0) + 1);
-    }
-    return SKILL_CATEGORIES.map((value) => [value, counts.get(value) ?? 0] as const);
-  }, [all]);
-
-  const columns: Array<Column<SkillSetting>> = [
-    {
-      id: "name", header: "Skill 名称",
-      // A Skill whose Markdown has no heading falls back to its id, so the id is
-      // not printed twice.
-      render: (row) => <span className="task-name-cell">
-        <strong>{skillLabel(row.name, row.summary)}</strong>
-        {skillLabel(row.name, row.summary) === row.name ? null : <small>{row.name}</small>}
-      </span>,
-    },
-    { id: "category", header: "类别", render: (row) => <span className="cell-muted">{skillCategory(row.tags)}</span> },
-    { id: "tags", header: "标签", render: (row) => <ChipList values={row.tags.slice(0, 3).map(termLabel)} tone="neutral" /> },
-    { id: "version", header: "版本", render: (row) => `v${row.version}` },
-    { id: "modes", header: "支持模式", render: (row) => <span className="cell-muted">{row.modes.map(modeLabel).join("、")}</span> },
-    // Every skill the settings endpoint returns is loaded and selectable.
-    { id: "status", header: "状态", render: () => <span className="ref-chip tone-ok">启用</span> },
-  ];
-
-  return <div className="ref-page">
-    <header className="ref-page-head">
-      <div>
-        <h1>Skills 管理</h1>
-        <p>管理 TGA2 Runtime 实际装配的 Skill 内容与标签</p>
-      </div>
-    </header>
-
-    {message ? <p className="settings-message" role="status">{message}</p> : null}
-
-    <section className="ref-filter-row" aria-label="筛选 Skill">
-      <label className="ref-search">
-        <Search size={16} aria-hidden="true" />
-        <input
-          aria-label="搜索 Skill 名称或关键词"
-          placeholder="搜索 Skill 名称或关键词..."
-          value={search}
-          onChange={(event) => setSearch(event.target.value)}
-        />
-      </label>
-      <select aria-label="类别筛选" value={tag} onChange={(event) => setTag(event.target.value)}>
-        <option value="">所有类别</option>
-        {categories.map(([value]) => <option key={value} value={value}>{value}</option>)}
-      </select>
-      <select aria-label="模式筛选" value={mode} onChange={(event) => setMode(event.target.value)}>
-        <option value="">支持模式: 全部</option>
-        {[...new Set(all.flatMap((item) => item.modes))].map((value) => (
-          <option key={value} value={value}>{modeLabel(value)}</option>
-        ))}
-      </select>
-      {/* The reference puts 新建 Skill here; the backend's real write path is
-          Markdown import, so that is what the slot carries. */}
-      <input
-        ref={fileRef}
-        type="file"
-        accept=".md,text/markdown"
-        hidden
-        aria-label="选择 Skill Markdown 文件"
-        onChange={(event) => void onImport(event)}
-      />
-      <button className="ref-primary-button push-end" disabled={importing} onClick={() => fileRef.current?.click()}>
-        <Upload size={16} />{importing ? "导入中…" : "导入 Skill"}
-      </button>
-    </section>
-
-    {query.isLoading ? <LoadingSkeleton label="正在读取 Skills" rows={6} />
-      : query.isError ? <ErrorState
-        description={query.error instanceof Error ? query.error.message : "无法读取 Skill 设置"}
-        actionLabel="重试"
-        onAction={() => void query.refetch()}
-      />
-      : <div className="skills-layout ref-fill">
-        <aside className="skills-categories" aria-label="Skill 类别">
-          <button className={tag === "" ? "active" : ""} onClick={() => setTag("")}>
-            <span>全部技能</span><b>{all.length}</b>
-          </button>
-          {/* The taxonomy is fixed by the design, so every category stays listed;
-              one with nothing filed under it is dimmed rather than hidden. */}
-          {categories.map(([value, count]) => <button
-            key={value}
-            className={tag === value ? "active" : ""}
-            disabled={count === 0}
-            onClick={() => setTag(value)}
-          ><span>{value}</span><b>{count}</b></button>)}
-        </aside>
-
-        <div className="skills-main">
-          {!items.length
-            ? <EmptyState title="没有匹配的 Skill" description="调整搜索或筛选条件后重试。" />
-            : <CatalogTable
-              fill
-              columns={columns}
-              rows={items}
-              rowKey={(row) => row.name}
-              selectedKey={selected?.name}
-              onSelect={(row) => { setSelectedName(row.name); setTab("overview"); }}
-            />}
-        </div>
-      </div>}
-
-    {selected ? <SkillDetailPanel
-      key={selected.name}
-      skill={selected}
-      tab={tab}
-      onTab={setTab}
-      onRemoved={() => setSelectedName(null)}
-    /> : null}
-  </div>;
-}
-
-/**
- * 使用情况 in the reference is "N 个 Solver".  There is no usage-statistics
- * endpoint, but the Solver catalog declares which skills each definition pulls
- * in, so the count is derived from the real wiring rather than sampled.
- */
-function splitList(value: string): string[] {
-  return value.split(/[,，]/).map((item) => item.trim()).filter(Boolean);
-}
-
-function SkillDetailPanel({ skill, tab, onTab, onRemoved }: {
-  skill: SkillSetting;
-  tab: string;
-  onTab: (id: string) => void;
-  onRemoved: () => void;
-}) {
-  const client = useQueryClient();
-  const [draft, setDraft] = useState<SkillDetail | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [confirming, setConfirming] = useState(false);
-  const [error, setError] = useState("");
-
-  const detail = useQuery({
-    queryKey: ["settings", "skills", skill.name],
-    queryFn: () => fetchSkillDetail(skill.name),
-  });
-
-  const startEdit = () => {
-    if (detail.data) setDraft({ ...detail.data.skill });
-  };
-
-  const save = async () => {
-    if (!draft) return;
-    setBusy(true);
-    setError("");
-    try {
-      await updateSkill(draft.name, {
-        summary: draft.summary, tags: draft.tags, body: draft.body,
-      });
-      await client.invalidateQueries({ queryKey: ["settings", "skills"] });
-      setDraft(null);
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "保存失败");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const remove = async () => {
-    setBusy(true);
-    setError("");
-    try {
-      await deleteSkill(skill.name);
-      await client.invalidateQueries({ queryKey: ["settings", "skills"] });
-      setConfirming(false);
-      onRemoved();
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "删除失败");
-      setConfirming(false);
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return <section className="ref-detail-panel" aria-label={`${skill.name} 详情`}>
-    <header className="ref-detail-head">
-      <div className="ref-detail-title">
-        <h2>{skillLabel(skill.name, skill.summary)}</h2>
-        <span className="ref-version-chip">v{skill.version}</span>
-        <span className="ref-chip tone-info">{skillCategory(skill.tags)}</span>
-        <span className="ref-chip tone-muted">{skill.source === "builtin" ? "内置" : "自定义"}</span>
-        <span className="ref-chip tone-ok">启用</span>
-      </div>
-      <div className="policy-actions">
-        {draft
-          ? <>
-            <button className="ref-secondary-button" disabled={busy} onClick={() => setDraft(null)}><X size={14} />取消</button>
-            <button className="ref-primary-button" disabled={busy} onClick={() => void save()}><Save size={15} />{busy ? "保存中…" : "保存"}</button>
-          </>
-          : <>
-            <button className="ref-secondary-button" disabled={!detail.data} onClick={startEdit}>编辑</button>
-            {skill.editable && skill.source !== "builtin"
-              ? <button className="ref-secondary-button" onClick={() => setConfirming(true)}><Trash2 size={14} />删除</button>
-              : null}
-          </>}
-      </div>
-    </header>
-
-    {error ? <p className="inline-error" role="alert">{error}</p> : null}
-
-    <ConfirmDialog
-      open={confirming}
-      title={`删除 Skill ${skillLabel(skill.name)}`}
-      description="删除后该 Skill 不再参与任务选择。已创建任务的 Skill 快照不受影响。"
-      confirmLabel="删除"
-      danger
-      busy={busy}
-      onConfirm={() => void remove()}
-      onCancel={() => setConfirming(false)}
-    />
-
-    <p className="skill-summary">{skillSummary(skill.name, skill.summary)}</p>
-
-    <FieldGrid columns={2} fields={[
-      { label: "适用模式", value: <ChipList values={skill.modes.map(modeLabel)} tone="neutral" /> },
-      { label: "标签", value: <ChipList values={skill.tags.map(termLabel)} tone="neutral" /> },
-      { label: "可编辑", value: skill.editable ? "是" : "否" },
-    ]} />
-
-    <DetailTabs tabs={TABS} active={tab} onSelect={onTab} />
-
-    <div className="ref-detail-body">
-      {tab === "overview" ? <p className="skill-summary">{skillSummary(skill.name, skill.summary)}</p> : null}
-      {tab === "instructions" ? (
-        draft
-          ? <div className="skill-editor">
-            <label>摘要
-              <input value={draft.summary} onChange={(event) => setDraft({ ...draft, summary: event.target.value })} />
-            </label>
-            <label>标签（逗号分隔）
-              <input value={draft.tags.join(", ")}
-                onChange={(event) => setDraft({ ...draft, tags: splitList(event.target.value) })} />
-            </label>
-            <label className="skill-editor-body">Instructions 正文
-              <textarea rows={16} value={draft.body}
-                onChange={(event) => setDraft({ ...draft, body: event.target.value })} />
-            </label>
-          </div>
-          : detail.isLoading ? <LoadingSkeleton label="正在读取 Skill 正文" rows={4} />
-            : detail.isError ? <ErrorState description="无法读取 Skill 正文" />
-              : <pre className="ref-prompt">{detail.data?.skill.body}</pre>
-      ) : null}
-    </div>
+  return <section className="ref-page skills-page">
+    <header className="ref-page-header"><div><span className="ref-eyebrow">SHARED KNOWLEDGE</span><h1>Skills 管理</h1><p>每个目录是一个 Skill 包；Worker 通过 LangChain 文件搜索按需发现，再读取所需 Markdown。</p></div><div className="ref-page-actions"><button className="ref-secondary-button" onClick={() => zipRef.current?.click()} disabled={importing}><Upload size={16} />{importing ? "导入中…" : "导入 ZIP"}</button><button className="ref-primary-button" onClick={() => setCreating(true)}><FolderPlus size={16} />新建 Skill 包</button><input ref={zipRef} hidden type="file" accept=".zip,application/zip" onChange={(event) => void onImport(event)} /></div></header>
+    <div className="skill-runtime-note"><strong>唯一数据源：</strong><code>{query.data?.root ?? "runs2/.config/skills"}</code><span>不与场景或角色强绑定；任务提示词可以点名希望 Worker 使用的包。</span></div>
+    {message ? <p className="skill-message" role="status">{message}</p> : null}
+    <section className="ref-filter-row"><label className="ref-search"><Search size={16} /><input aria-label="搜索 Skill 包" placeholder="搜索包名、说明或标签…" value={search} onChange={(event) => setSearch(event.target.value)} /></label><span className="ref-filter-summary">{skills.length} 个包 · {skills.reduce((sum, item) => sum + item.file_count, 0)} 份文档</span></section>
+    {query.isLoading ? <LoadingSkeleton label="正在读取 Skill 包" rows={6} /> : query.isError ? <ErrorState description={query.error instanceof Error ? query.error.message : "无法读取 Skill 包"} actionLabel="重试" onAction={() => void query.refetch()} /> : !skills.length ? <EmptyState title="还没有 Skill 包" description="新建一个包，或导入包含 SKILL.md 的 ZIP。" /> : <div className="skill-package-layout ref-fill"><div className="skills-main"><CatalogTable fill label="Skill 包列表" columns={columns} rows={skills} rowKey={(row) => row.name} selectedKey={selectedName ?? undefined} onSelect={(row) => setSelectedName(row.name)} /></div>{selectedName ? <SkillPackagePanel key={selectedName} name={selectedName} onMessage={setMessage} onRemoved={() => setSelectedName(null)} /> : null}</div>}
+    {creating ? <CreateSkillDialog onClose={() => setCreating(false)} onCreated={async (skill) => { await client.invalidateQueries({ queryKey: ["settings", "skills"] }); setSelectedName(skill.name); setCreating(false); setMessage(`已创建 Skill 包：${skill.name}`); }} /> : null}
   </section>;
 }
 
-function modeLabel(mode: string): string {
-  return MODE_PROFILES[mode as keyof typeof MODE_PROFILES]?.label ?? mode;
+function CreateSkillDialog({ onClose, onCreated }: { onClose: () => void; onCreated: (skill: SkillDetail) => void }) {
+  const [name, setName] = useState(""); const [description, setDescription] = useState(""); const [tags, setTags] = useState(""); const [instructions, setInstructions] = useState("# Instructions\n\n说明这个 Skill 适用的问题、操作步骤，以及何时读取包内参考文档。"); const [busy, setBusy] = useState(false); const [error, setError] = useState("");
+  async function save() { setBusy(true); setError(""); try { onCreated((await createSkill({ name, description, tags: tagsFrom(tags), version: "1", instructions })).skill); } catch (reason) { setError(reason instanceof Error ? reason.message : "创建失败"); } finally { setBusy(false); } }
+  return <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section className="skill-package-dialog" role="dialog" aria-modal="true" aria-labelledby="create-skill-title"><header><div><span>PACKAGE</span><h2 id="create-skill-title">新建 Skill 包</h2><p>系统会在 .config/skills 下创建目录和必需的 SKILL.md。</p></div><button className="icon-button" aria-label="关闭" onClick={onClose}>×</button></header><div className="skill-editor"><label>包名<input aria-label="Skill 包名" value={name} onChange={(event) => setName(event.target.value.toLowerCase())} placeholder="例如 ctf-crypto" /><small>仅小写字母、数字、- 和 _</small></label><label>简介<input aria-label="Skill 简介" value={description} onChange={(event) => setDescription(event.target.value)} /></label><label>标签<input aria-label="Skill 标签" value={tags} onChange={(event) => setTags(event.target.value)} placeholder="ctf, crypto, rsa" /></label><label>SKILL.md Instructions<textarea aria-label="Skill Instructions" rows={10} value={instructions} onChange={(event) => setInstructions(event.target.value)} /></label></div>{error ? <p className="inline-error" role="alert">{error}</p> : null}<footer><button className="secondary-button" disabled={busy} onClick={onClose}>取消</button><button disabled={busy || !name.trim() || !instructions.trim()} onClick={() => void save()}>{busy ? "创建中…" : "创建包"}</button></footer></section></div>;
+}
+
+function SkillPackagePanel({ name, onMessage, onRemoved }: { name: string; onMessage: (value: string) => void; onRemoved: () => void }) {
+  const client = useQueryClient();
+  const detail = useQuery({ queryKey: ["settings", "skills", name], queryFn: () => fetchSkillDetail(name) });
+  const [draft, setDraft] = useState<SkillDetail | null>(null); const [selectedPath, setSelectedPath] = useState("SKILL.md"); const [saving, setSaving] = useState(false); const [deletePackageOpen, setDeletePackageOpen] = useState(false); const [deletePath, setDeletePath] = useState<string | null>(null); const documentRef = useRef<HTMLInputElement>(null);
+  useEffect(() => { if (detail.data) { setDraft(detail.data.skill); setSelectedPath((current) => detail.data.skill.documents.some((item) => item.path === current) ? current : "SKILL.md"); } }, [detail.data]);
+  const document = useQuery({ queryKey: ["settings", "skills", name, "document", selectedPath], queryFn: () => fetchSkillDocument(name, selectedPath), enabled: Boolean(selectedPath && selectedPath !== "SKILL.md") });
+  if (detail.isError) return <section className="ref-detail-panel"><ErrorState description="无法读取 Skill 包详情" /></section>;
+  if (detail.isLoading || !draft) return <section className="ref-detail-panel"><LoadingSkeleton label="正在读取 Skill 包" rows={5} /></section>;
+  const currentDraft = draft;
+
+  async function refresh(next?: SkillDetail) { await client.invalidateQueries({ queryKey: ["settings", "skills"] }); await client.invalidateQueries({ queryKey: ["settings", "skills", name] }); if (next) setDraft(next); }
+  async function save() { setSaving(true); try { const result = await updateSkill(name, { description: currentDraft.summary, tags: currentDraft.tags, version: currentDraft.version, instructions: currentDraft.instructions }); await refresh(result.skill); onMessage(`已保存 ${name}/SKILL.md`); } catch (reason) { onMessage(reason instanceof Error ? reason.message : "保存失败"); } finally { setSaving(false); } }
+  async function addDocument(event: ChangeEvent<HTMLInputElement>) { const file = event.target.files?.[0]; event.target.value = ""; if (!file) return; try { const result = await putSkillDocument(name, { path: file.name, content: await file.text() }); await refresh(result.skill); setSelectedPath(file.name); onMessage(`已写入 ${name}/${file.name}`); } catch (reason) { onMessage(reason instanceof Error ? reason.message : "文档写入失败"); } }
+  async function removePackage() { setSaving(true); try { await deleteSkill(name); await refresh(); setDeletePackageOpen(false); onRemoved(); onMessage(`已删除 Skill 包：${name}`); } catch (reason) { onMessage(reason instanceof Error ? reason.message : "删除失败"); } finally { setSaving(false); } }
+  async function removeDocument() { if (!deletePath) return; setSaving(true); try { await deleteSkillDocument(name, deletePath); setSelectedPath("SKILL.md"); await refresh(); setDeletePath(null); onMessage(`已删除 ${name}/${deletePath}`); } catch (reason) { onMessage(reason instanceof Error ? reason.message : "删除文档失败"); } finally { setSaving(false); } }
+
+  return <section className="ref-detail-panel skill-package-panel" aria-label={`${name} 详情`}><header className="ref-detail-head"><div><h2>{name}</h2><span className="ref-version-chip">v{draft.version}</span></div><div className="ref-page-actions"><button className="ref-secondary-button" onClick={() => documentRef.current?.click()}><FilePlus2 size={15} />添加 Markdown</button><button className="danger-button" onClick={() => setDeletePackageOpen(true)}><Trash2 size={15} />删除包</button><input ref={documentRef} hidden type="file" accept=".md,text/markdown,text/plain" onChange={(event) => void addDocument(event)} /></div></header><FieldGrid columns={2} fields={[{ label: "入口文件", value: <code>SKILL.md</code> }, { label: "文档", value: `${draft.file_count} 份 / ${byteLabel(draft.total_bytes)}` }, { label: "内容摘要", value: <code>{draft.content_sha256.slice(0, 16)}…</code> }, { label: "标签", value: <ChipList values={draft.tags} tone="neutral" /> }]} /><div className="skill-package-body"><nav aria-label="Skill 文档">{draft.documents.map((item) => <button key={item.path} className={selectedPath === item.path ? "active" : ""} onClick={() => setSelectedPath(item.path)}><span><strong>{item.title}</strong><small>{item.path} · {byteLabel(item.size)}</small></span>{item.path !== "SKILL.md" ? <span role="button" tabIndex={0} aria-label={`删除 ${item.path}`} onClick={(event) => { event.stopPropagation(); setDeletePath(item.path); }}><Trash2 size={13} /></span> : null}</button>)}</nav><div className="skill-document-view">{selectedPath === "SKILL.md" ? <div className="skill-editor"><label>简介<input aria-label="编辑 Skill 简介" value={draft.summary} onChange={(event) => setDraft({ ...draft, summary: event.target.value })} /></label><label>标签<input aria-label="编辑 Skill 标签" value={draft.tags.join(", ")} onChange={(event) => setDraft({ ...draft, tags: tagsFrom(event.target.value) })} /></label><label>版本<input aria-label="编辑 Skill 版本" value={draft.version} onChange={(event) => setDraft({ ...draft, version: event.target.value })} /></label><label>Instructions<textarea aria-label="编辑 Skill Instructions" rows={16} value={draft.instructions} onChange={(event) => setDraft({ ...draft, instructions: event.target.value })} /></label><button className="ref-primary-button" disabled={saving} onClick={() => void save()}><Save size={15} />{saving ? "保存中…" : "保存 SKILL.md"}</button></div> : document.isLoading ? <LoadingSkeleton label="正在读取文档" rows={6} /> : document.isError ? <ErrorState description="无法读取文档" /> : <><header><div><h3>{document.data?.document.title}</h3><code>{selectedPath}</code></div><span>{byteLabel(document.data?.document.size ?? 0)}</span></header><pre className="ref-prompt">{document.data?.document.content}</pre></>}</div></div><ConfirmDialog open={deletePackageOpen} title={`删除 Skill 包 ${name}`} description="该目录及其全部 Markdown 会被删除，正在运行的 Agent 将无法再读取它。" danger busy={saving} confirmLabel="删除整个包" onCancel={() => setDeletePackageOpen(false)} onConfirm={() => void removePackage()} /><ConfirmDialog open={Boolean(deletePath)} title={`删除文档 ${deletePath ?? ""}`} description="该文件会从 Skill 包中永久删除。SKILL.md 不能删除。" danger busy={saving} confirmLabel="删除文档" onCancel={() => setDeletePath(null)} onConfirm={() => void removeDocument()} /></section>;
 }

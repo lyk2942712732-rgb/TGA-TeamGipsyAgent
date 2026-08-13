@@ -36,7 +36,7 @@ const TABS: DetailTab[] = [
   { id: "basic", label: "基础配置" },
   { id: "instructions", label: "Instructions 模板" },
   { id: "tools", label: "能力（Tools）" },
-  { id: "skills", label: "默认 Skills" },
+  { id: "skills", label: "Skill 使用策略" },
   { id: "contract", label: "输出合约" },
   { id: "versions", label: "版本" },
   { id: "kali", label: "Kali 信息" },
@@ -265,7 +265,7 @@ function SolverDetail({ record, tab, onTab }: {
       { label: "专长", value: <ChipList values={record.specialties} /> },
       { label: "支持模式", value: <ChipList values={record.supported_modes.map(modeLabel)} tone="neutral" /> },
       { label: "Host Profile", value: record.host_capability_profile_id },
-      { label: "默认 Skills", value: <ChipList values={record.required_skill_names} tone="neutral" /> },
+      { label: "Skill 策略", value: "Worker 按需检索共享 Skill 库" },
       { label: "Manifest", value: manifest.isLoading ? "加载中" : manifest.isError ? "不可用" : "已验证" },
       { label: "描述", value: describe(record) },
     ]} />
@@ -284,10 +284,7 @@ function SolverDetail({ record, tab, onTab }: {
         capabilities={hostCapabilities.data?.items ?? []}
         onEdit={() => setEditing(true)}
       /> : null}
-      {tab === "skills" ? <FieldGrid fields={[
-        { label: "默认 Skill 标签", value: <ChipList values={record.default_skill_tags} tone="neutral" /> },
-        { label: "必需 Skills", value: <ChipList values={record.required_skill_names} /> },
-      ]} /> : null}
+      {tab === "skills" ? <section><p className="skill-summary">Skill 不再与场景或角色强绑定。Worker 使用 LangChain 文件搜索在 .config/skills 中发现相关文档，并通过受治理的 read_skill 工具按需读取；其他角色只消费 Runtime 整理后的情报。</p><a className="ref-secondary-button" href="/settings/skills">管理共享 Skill 包</a></section> : null}
       {tab === "contract" ? <FieldGrid fields={[
         { label: "合约名称", value: <code className="cell-mono">{record.output_contract.name}</code> },
         { label: "必填字段", value: <ChipList values={record.output_contract.required_fields} tone="neutral" /> },

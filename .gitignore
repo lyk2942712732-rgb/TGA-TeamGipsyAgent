@@ -214,6 +214,8 @@ runs2/.config/*
 !runs2/.config/runtime.json
 !runs2/.config/scenes.json
 !runs2/.config/mcp.json
+!runs2/.config/skills/
+!runs2/.config/skills/**
 output/
 config/*.v1.bak
 

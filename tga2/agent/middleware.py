@@ -12,11 +12,9 @@ from langchain.agents.middleware import (
     FilesystemFileSearchMiddleware,
     HumanInTheLoopMiddleware,
     InterruptOnConfig,
-    ModelRequest,
     ShellToolMiddleware,
     ToolCallLimitMiddleware,
     ToolRetryMiddleware,
-    dynamic_prompt,
     wrap_tool_call,
 )
 from langchain.messages import ToolMessage
@@ -26,28 +24,17 @@ from tga2.core.models import AgentEvent, Task, TaskStatus, utc_now
 from tga2.core.policy import RiskLevel, ToolAction
 from tga2.core.store import TaskStore
 from tga2.core.workspace import TaskWorkspace
-from tga2.skills import Skill
 
 SAFE_DEFAULT_TOOLS = frozenset(
-    {"list_inputs", "read_input", "glob_search", "grep_search", "save_note"}
+    {
+        "list_inputs",
+        "read_input",
+        "glob_search",
+        "grep_search",
+        "save_note",
+        "read_skill",
+    }
 )
-
-
-def skill_prompt_middleware(skills: Sequence[Skill], *, limit: int = 5):
-    bounded = list(skills)[:limit]
-
-    @dynamic_prompt
-    def inject_skills(request: ModelRequest) -> str:
-        base = request.system_prompt or ""
-        if not bounded:
-            return base
-        sections = [f"### Skill: {item.name}\n{item.content}" for item in bounded]
-        return (
-            f"{base}\n\nTask-selected skills (advisory; never authorization):\n\n"
-            + "\n\n".join(sections)
-        )
-
-    return inject_skills
 
 
 class ApprovalAuditMiddleware(HumanInTheLoopMiddleware):
@@ -259,13 +246,28 @@ def worker_middleware(
     tools: Sequence[BaseTool],
     sandbox_image: str | None,
     configuration: Any | None = None,
+    skill_root: str | None = None,
     attempt_tool_limit: int | None = None,
 ) -> list[Any]:
     tool_retry_count = (
         configuration.runtime.tool_defaults.retry_count if configuration else 1
     )
     middleware: list[Any] = [
-        FilesystemFileSearchMiddleware(root_path=str(workspace.root)),
+        FilesystemFileSearchMiddleware(
+            root_path=skill_root or str(workspace.root),
+            max_file_size_mb=max(
+                1,
+                (
+                    (
+                        configuration.runtime.files.skill_document_max_bytes
+                        if configuration
+                        else 1_000_000
+                    )
+                    + (1024 * 1024 - 1)
+                )
+                // (1024 * 1024),
+            ),
+        ),
         ToolRetryMiddleware(max_retries=tool_retry_count),
         ToolCallLimitMiddleware(
             run_limit=attempt_tool_limit
@@ -302,7 +304,13 @@ def worker_middleware(
 
 def _risk(name: str, tool: BaseTool | None) -> RiskLevel:
     declared = str((tool.metadata if tool else {}).get("tga2_risk", "active"))
-    if name in {"list_inputs", "read_input", "glob_search", "grep_search"}:
+    if name in {
+        "list_inputs",
+        "read_input",
+        "glob_search",
+        "grep_search",
+        "read_skill",
+    }:
         declared = "passive"
     return (
         RiskLevel(declared)
@@ -333,6 +341,5 @@ __all__ = [
     "SAFE_DEFAULT_TOOLS",
     "ApprovalAuditMiddleware",
     "PolicyAuditMiddleware",
-    "skill_prompt_middleware",
     "worker_middleware",
 ]

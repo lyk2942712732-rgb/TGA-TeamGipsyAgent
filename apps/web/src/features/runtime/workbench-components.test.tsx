@@ -37,7 +37,7 @@ describe("Phase 11 command workbench components", () => {
     expect(running).toHaveTextContent("intent-running");
     expect(running).toHaveTextContent("35 Token");
     expect(approval).toHaveTextContent("等待审批");
-    expect(approval).toHaveTextContent("2 Skills");
+    expect(approval).toHaveTextContent("0 Skill docs");
     expect(screen.getByRole("treeitem", { name: /reviewer/ })).toHaveTextContent("evidence-review");
     expect(screen.getByRole("treeitem", { name: /reporter/ })).toHaveTextContent("已完成");
   });
@@ -76,7 +76,7 @@ describe("Phase 11 command workbench components", () => {
     expect(inspector).not.toHaveTextContent("nested-secret-thought");
     fireEvent.click(within(inspector).getByRole("tab", { name: "Skills" }));
     expect(inspector).toHaveTextContent("evidence-method");
-    expect(inspector).toHaveTextContent("task common guidance");
+    expect(inspector).toHaveTextContent("task-common-guidance.md");
     fireEvent.click(within(inspector).getByRole("tab", { name: "Tools" }));
     expect(inspector).toHaveTextContent("kali.exec");
     expect(inspector).toHaveTextContent("调用 1 次");

@@ -4,7 +4,6 @@ import type { RuntimeStore } from "./models/types";
 export function workbenchStore(mode = "ctf"): RuntimeStore {
   return normalizeRuntimeSnapshot({
     schema_version: 6,
-    task_common_skill_snapshot: { selector: "task-common-v1", skills: [{ name: "evidence-method", version: "1", content_sha256: "abc", selection_reasons: ["task common guidance"] }] },
     task: {
       id: "task", name: `${mode} task`, mode, goal: "verify the target",
       session_input: { prompt: "inspect supplied evidence", files: [{ id: "input-a", original_name: "sample.bin", kind: "task_input", size: 12 }] },
@@ -55,13 +54,14 @@ export function workbenchStore(mode = "ctf"): RuntimeStore {
       runtimeEvent(4, "APPROVAL_REQUESTED", "worker-approval", "intent-approval", { approval_id: "approval-write", action_id: "action-write", reason: "Persistent shared write", turn: 2 }),
       runtimeEvent(5, "KNOWLEDGE_CONFLICT_DETECTED", "reviewer", "intent-review", { conflict_id: "knowledge-conflict", summary: "Conflicting version evidence", turn: 1 }),
       runtimeEvent(6, "SOLVER_COMPLETED", "reporter", "intent-report", { summary: "Report draft prepared", turn: 1 }),
+      runtimeEvent(7, "SKILL_DOCUMENT_READ", "reviewer", "intent-review", { skill_name: "evidence-method", path: "task-common-guidance.md", sha256: "abc", turn: 2 }),
     ],
-    events_page: { after_seq: 0, next_after_seq: 6, has_more: false }, latest_seq: 6,
+    events_page: { after_seq: 0, next_after_seq: 7, has_more: false }, latest_seq: 7,
   });
 }
 
 function solver(id: string, role: string, status: string, parent: string | null, assigned: string | null, specialties: string[], usage: Record<string, number>) {
-  return { task_id: "task", solver_id: id, definition_id: `${role}-v1`, orchestration_role: role, specialties, parent_solver_id: parent, assigned_intent_id: assigned, status, current_summary: `${id} current activity`, model_snapshot: { model: "test-model" }, skill_snapshot: { count: 2, names: [`${role}-method`, "task-common"], selector: "v1", total_chars: 100 }, capability_binding: { host_capability_ids: ["input.read", "artifact.inspect"], kali: { profile_id: "ctf-base", capabilities: ["kali.exec"] }, content_sha256: "hash" }, budget_usage: usage, timestamps: { started_at: "2026-07-30T00:00:00Z" } };
+  return { task_id: "task", solver_id: id, definition_id: `${role}-v1`, orchestration_role: role, specialties, parent_solver_id: parent, assigned_intent_id: assigned, status, current_summary: `${id} current activity`, model_snapshot: { model: "test-model" }, capability_binding: { host_capability_ids: ["input.read", "artifact.inspect"], kali: { profile_id: "ctf-base", capabilities: ["kali.exec"] }, content_sha256: "hash" }, budget_usage: usage, timestamps: { started_at: "2026-07-30T00:00:00Z" } };
 }
 function intent(id: string, title: string, status: string, assigned: string | null, dependencies: string[]) { return { task_id: "task", intent_id: id, kind: "investigate", title, objective: title, status, assigned_solver_id: assigned, dependencies, priority: 1, budget: {}, created_at: "", updated_at: "" }; }
 function runtimeEvent(seq: number, type: string, solverId: string | null, intentId: string | null, payload: Record<string, unknown>) { return { schema_version: 6, id: `event-${seq}`, task_id: "task", seq, type, solver_id: solverId, intent_id: intentId, payload: { payload_version: 1, ...payload }, created_at: `2026-07-30T00:00:0${seq}Z` }; }
