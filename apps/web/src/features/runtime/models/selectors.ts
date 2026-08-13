@@ -1,6 +1,6 @@
 import type { RuntimeEvent, RuntimeFinding, RuntimeIntent, RuntimeKnowledgeItem, RuntimeSolver, RuntimeStore, SolverTreeNode } from "./types";
 
-const ACTIVE = new Set(["created", "queued", "ready", "running", "waiting", "awaiting_approval"]);
+const ACTIVE = new Set(["created", "queued", "ready", "running", "waiting", "awaiting_approval", "awaiting_user_input"]);
 
 export const selectSupervisor = (store: RuntimeStore): RuntimeSolver | null =>
   (store.session.supervisorSolverId ? store.solversById[store.session.supervisorSolverId] : undefined)

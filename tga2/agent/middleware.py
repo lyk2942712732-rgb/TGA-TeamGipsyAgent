@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Sequence
 from typing import Any
 
@@ -47,16 +48,46 @@ class ApprovalAuditMiddleware(HumanInTheLoopMiddleware):
         self.store = store
         self.intent_id = intent_id
         policy = store.get_policy(task.id).tool
+        self.execution_policy = store.get_policy(task.id)
+        self.explicit_approval_tools = frozenset(policy.approval_required)
         known = {tool.name for tool in tools} | {"run_command"}
+        governed = set(policy.approval_required)
+        if self.execution_policy.high_impact_mode == "approval_required":
+            governed.add("run_command")
         super().__init__(
             {
                 name: InterruptOnConfig(allowed_decisions=["approve", "reject"])
-                for name in policy.approval_required
+                for name in governed
                 if name in known
             }
         )
 
+    def after_model(self, state, runtime):
+        messages = state.get("messages") or []
+        last_ai = next(
+            (item for item in reversed(messages) if hasattr(item, "tool_calls")), None
+        )
+        calls = list(getattr(last_ai, "tool_calls", []) or [])
+        if not calls:
+            return None
+        if not any(self._requires_approval(item) for item in calls):
+            return None
+        # Worker prompts require one tool call per assistant message.  If a
+        # provider ignores that instruction, review the whole batch rather
+        # than silently executing a sibling call beside an approved one.
+        return super().after_model(state, runtime)
+
+    def _requires_approval(self, tool_call: dict[str, Any]) -> bool:
+        name = str(tool_call.get("name") or "")
+        if name in self.explicit_approval_tools:
+            return True
+        if name != "run_command" or self.execution_policy.high_impact_mode != "approval_required":
+            return False
+        command = str((tool_call.get("args") or {}).get("command") or "")
+        return _high_impact_command(command)
+
     def _create_action_and_config(self, tool_call, config, state, runtime):
+        existing = self.store.get_action(str(tool_call["id"]))
         action = ToolAction(
             id=str(tool_call["id"]),
             task_id=self.task.id,
@@ -66,23 +97,40 @@ class ApprovalAuditMiddleware(HumanInTheLoopMiddleware):
             risk=_risk(tool_call["name"], None),
             arguments=_redact(tool_call.get("args") or {}),
             status="awaiting_approval",
+            created_at=existing.created_at if existing else utc_now(),
         )
-        self.store.save_action(action)
-        self.store.set_task_status(self.task.id, TaskStatus.AWAITING_APPROVAL)
-        self.store.append_event(
-            AgentEvent(
-                task_id=self.task.id,
-                type="APPROVAL_REQUESTED",
-                solver_id="worker",
-                intent_id=self.intent_id,
-                payload={
-                    "action_id": action.id,
-                    "tool_name": action.tool_name,
-                    "risk": action.risk.value,
-                    "arguments": action.arguments,
-                },
+        # LangGraph restarts the middleware node when an interrupt resumes.
+        # The approved/rejected row is the durable decision; never overwrite
+        # it with a second pending row or publish a duplicate approval event.
+        if existing is None:
+            self.store.save_action(action)
+            self.store.set_task_status(self.task.id, TaskStatus.AWAITING_APPROVAL)
+            target = _action_target(action.tool_name, action.arguments)
+            self.store.append_event(
+                AgentEvent(
+                    task_id=self.task.id,
+                    type="APPROVAL_REQUESTED",
+                    solver_id="worker",
+                    intent_id=self.intent_id,
+                    payload={
+                        "approval_id": action.id,
+                        "action_id": action.id,
+                        "tool_name": action.tool_name,
+                        "action": {
+                            "id": action.id,
+                            "capability": action.tool_name,
+                            "target": target,
+                            "arguments": action.arguments,
+                            "expected_outcome": _expected_outcome(action.tool_name),
+                        },
+                        "risk": action.risk.value,
+                        "effect": _effect(action.tool_name, action.risk),
+                        "reason": _approval_reason(action.tool_name, target),
+                        "alternatives": _alternatives(action.tool_name),
+                        "status": "pending",
+                    },
+                )
             )
-        )
         return super()._create_action_and_config(tool_call, config, state, runtime)
 
 
@@ -102,7 +150,8 @@ class PolicyAuditMiddleware(AgentMiddleware):
         name = request.tool_call["name"]
         arguments = request.tool_call.get("args") or {}
         action_id = str(request.tool_call.get("id") or "")
-        policy = self.store.get_policy(self.task.id).tool
+        execution_policy = self.store.get_policy(self.task.id)
+        policy = execution_policy.tool
         allowed = policy.allowed_tools or SAFE_DEFAULT_TOOLS
         risk = _risk(name, request.tool)
         reason = None
@@ -112,12 +161,32 @@ class PolicyAuditMiddleware(AgentMiddleware):
             reason = "tool is outside the task allowlist"
         elif risk == RiskLevel.DESTRUCTIVE:
             reason = "destructive tools are not supported"
+        elif name == "run_command" and (
+            high_impact_action := _high_impact_action(
+                str(arguments.get("command") or "")
+            )
+        ):
+            if execution_policy.high_impact_mode == "forbidden":
+                reason = f"high-impact action is forbidden: {high_impact_action}"
+            elif (
+                execution_policy.high_impact_mode == "allowlisted"
+                and high_impact_action
+                not in execution_policy.high_impact_allowed_actions
+                and str(arguments.get("command") or "")
+                not in execution_policy.high_impact_allowed_actions
+                and "*" not in execution_policy.high_impact_allowed_actions
+            ):
+                reason = (
+                    "high-impact action is outside the configured allowlist: "
+                    f"{high_impact_action}"
+                )
         elif len(
             self.store.list_actions(self.task.id)
         ) >= policy.max_tool_calls and not any(
             item.id == action_id for item in self.store.list_actions(self.task.id)
         ):
             reason = "task tool-call budget exhausted"
+        existing = self.store.get_action(action_id)
         action = ToolAction(
             id=action_id,
             task_id=self.task.id,
@@ -128,6 +197,7 @@ class PolicyAuditMiddleware(AgentMiddleware):
             arguments=_redact(arguments),
             status="denied" if reason else "running",
             summary=reason or "",
+            created_at=existing.created_at if existing else utc_now(),
         )
         self.store.save_action(action)
         self.store.append_event(
@@ -303,7 +373,10 @@ def worker_middleware(
 
 
 def _risk(name: str, tool: BaseTool | None) -> RiskLevel:
-    declared = str((tool.metadata if tool else {}).get("tga2_risk", "active"))
+    # BaseTool.metadata is optional.  Calling .get() on its default None value
+    # used to make every real Worker tool fail before execution.
+    metadata = (tool.metadata or {}) if tool else {}
+    declared = str(metadata.get("tga2_risk", "active"))
     if name in {
         "list_inputs",
         "read_input",
@@ -317,6 +390,75 @@ def _risk(name: str, tool: BaseTool | None) -> RiskLevel:
         if declared in {item.value for item in RiskLevel}
         else RiskLevel.ACTIVE
     )
+
+
+def _action_target(name: str, arguments: dict[str, Any]) -> str:
+    if name == "run_command":
+        return str(arguments.get("command") or "sandbox shell")[:1000]
+    for key in ("target", "url", "path", "name", "query"):
+        value = arguments.get(key)
+        if value not in (None, ""):
+            return str(value)[:1000]
+    return "task-scoped capability"
+
+
+def _expected_outcome(name: str) -> str:
+    return {
+        "run_command": "Execute the displayed command once in the isolated Kali sandbox and capture its output as an Artifact.",
+        "read_input": "Read the selected authorized task input and preserve the result as evidence.",
+        "save_note": "Persist the displayed analysis note as a task Artifact.",
+    }.get(name, f"Execute {name} once and return its governed result to the Worker.")
+
+
+def _effect(name: str, risk: RiskLevel) -> dict[str, str]:
+    if name == "run_command":
+        return {
+            "persistence": "sandbox_lifetime",
+            "reversibility": "sandbox_disposable",
+            "description": "Changes are confined to the disposable task sandbox; network effects may reach the authorized target.",
+        }
+    return {
+        "persistence": "task_workspace" if name == "save_note" else "none",
+        "reversibility": "reversible" if name == "save_note" else "not_applicable",
+        "description": "Task-scoped operation." if risk != RiskLevel.DESTRUCTIVE else "Potentially destructive operation.",
+    }
+
+
+def _approval_reason(name: str, target: str) -> str:
+    return f"ExecutionPolicy requires one-time operator approval for {name}: {target}"
+
+
+def _alternatives(name: str) -> list[str]:
+    if name == "run_command":
+        return ["Reject this command and provide a safer hint", "Use existing task inputs or Artifacts instead"]
+    return ["Reject this operation and let the Worker choose another allowed capability"]
+
+
+def _high_impact_command(command: str) -> bool:
+    """Conservative deterministic gate for commands with external side effects.
+
+    Read-only shell setup (`pwd`, `ls`, `id`, `echo`) and ordinary GET requests
+    must not flood the operator with approvals. Destructive commands are still
+    denied separately by policy; this gate covers credential, brute-force,
+    exploit-framework and state-changing network activity.
+    """
+
+    return _high_impact_action(command) is not None
+
+
+def _high_impact_action(command: str) -> str | None:
+    value = command.casefold()
+    patterns = (
+        ("credential_attack", r"\b(?:hydra|medusa|patator|sshpass|crackmapexec|netexec)\b"),
+        ("exploit_framework", r"\b(?:msfconsole|metasploit|sqlmap)\b"),
+        (
+            "state_changing_http",
+            r"\bcurl\b[^\n]*(?:\s-x\s*(?:post|put|patch|delete)\b|--data(?:-binary|-raw)?\b|-d\s)",
+        ),
+        ("remote_shell", r"\b(?:nc|ncat|netcat)\b[^\n]*\s-e\s|/dev/tcp/|\bbash\s+-i\b"),
+        ("encoded_execution", r"\bpowershell\b[^\n]*-enc(?:odedcommand)?\b"),
+    )
+    return next((name for name, pattern in patterns if re.search(pattern, value)), None)
 
 
 def _redact(value: Any, key: str = "") -> Any:

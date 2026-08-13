@@ -10,13 +10,18 @@ from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
+from langchain.agents.middleware import HumanInTheLoopMiddleware
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 from langchain_core.tools import tool
+from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.graph import END, START, StateGraph
+from langgraph.types import Command
 from pydantic import Field
 
 from apps.api.main import app
+from tga2.agent.middleware import _high_impact_action
 from tga2.agent.roles import LangChainAgentSuite, OfflineAgentSuite, RoutedAgentSuite
 from tga2.agent.schemas import (
     PlanDraft,
@@ -30,6 +35,7 @@ from tga2.agent.service import TaskRuntimeService
 from tga2.bootstrap import get_container, reset_containers
 from tga2.config import DEFAULT_KALI_IMAGE, DEFAULT_KALI_IMAGE_DIGEST
 from tga2.core.models import CreateTaskRequest, Task, TaskSpec
+from tga2.core.policy import ExecutionPolicy, ToolPolicy
 from tga2.integrations.mcp import MCPConfig, MCPServer
 from tga2.integrations.model import ModelSettings
 
@@ -177,6 +183,152 @@ def test_deepseek_thinking_worker_does_not_force_tool_choice() -> None:
     assert draft.summary == "Checked with ordinary tools."
 
 
+class _ApprovalToolModel(BaseChatModel):
+    calls: int = 0
+
+    @property
+    def _llm_type(self) -> str:
+        return "approval-tool-model"
+
+    def bind_tools(self, tools, *, tool_choice=None, **_kwargs):
+        return self
+
+    def _generate(self, _messages, stop=None, run_manager=None, **_kwargs):
+        self.calls += 1
+        message = (
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {"name": "approval_probe", "args": {"value": "ok"}, "id": "call-1"}
+                ],
+            )
+            if self.calls == 1
+            else AIMessage(
+                content='{"summary":"approved once","claims":[],"limitations":[]}'
+            )
+        )
+        return ChatResult(generations=[ChatGeneration(message=message)])
+
+
+def test_worker_hitl_resumes_the_original_nested_tool_call_once() -> None:
+    executed: list[str] = []
+
+    @tool
+    def approval_probe(value: str) -> str:
+        """Record an approved test value."""
+
+        executed.append(value)
+        return value
+
+    model = _ApprovalToolModel()
+    suite = LangChainAgentSuite(model, force_prompt_worker_output=True)
+    task = Task(name="approval", spec=TaskSpec(objective="approve one tool call"))
+
+    def worker_node(_state: dict):
+        draft = suite.work(
+            task,
+            {"id": "intent-1", "attempt": 1},
+            [approval_probe],
+            "",
+            [HumanInTheLoopMiddleware({"approval_probe": True})],
+        )
+        return {"summary": draft.summary}
+
+    builder = StateGraph(dict)
+    builder.add_node("worker", worker_node)
+    builder.add_edge(START, "worker")
+    builder.add_edge("worker", END)
+    graph = builder.compile(checkpointer=InMemorySaver())
+    config = {"configurable": {"thread_id": "outer-task"}}
+
+    paused = graph.invoke({}, config=config)
+    assert paused["__interrupt__"][0].value["kind"] == "tool_approval"
+    assert model.calls == 1
+    assert executed == []
+
+    resumed = graph.invoke(
+        Command(resume={"decisions": [{"type": "approve"}]}), config=config
+    )
+    assert resumed["summary"] == "approved once"
+    assert model.calls == 2
+    assert executed == ["ok"]
+
+
+def test_runtime_approval_resume_does_not_duplicate_or_replay_tool(
+    tmp_path: Path,
+) -> None:
+    executed: list[str] = []
+
+    @tool
+    def approval_probe(value: str) -> str:
+        """Record an approved integration-test value."""
+
+        executed.append(value)
+        return value
+
+    worker = LangChainAgentSuite(
+        _ApprovalToolModel(), force_prompt_worker_output=True
+    )
+    offline = OfflineAgentSuite()
+    service = TaskRuntimeService(
+        run_root=tmp_path / "runs",
+        agents=RoutedAgentSuite(
+            {
+                "supervisor": offline,
+                "worker": worker,
+                "reviewer": offline,
+                "reporter": offline,
+            }
+        ),
+        external_tools=[approval_probe],
+    )
+    made = service.create_task(
+        CreateTaskRequest(
+            name="approval integration",
+            objective="Execute one governed tool",
+            mode="vulnerability_research",
+            execution_policy=ExecutionPolicy(
+                tool=ToolPolicy(
+                    allowed_tools=frozenset({"approval_probe"}),
+                    approval_required=frozenset({"approval_probe"}),
+                )
+            ),
+        )
+    )
+
+    paused = service.run_task(made["task_id"])
+    snapshot = service.snapshot(made["task_id"])
+    assert paused["status"] == "awaiting_approval"
+    assert len(snapshot["approvals"]) == 1
+    assert snapshot["approvals"][0]["action"]["arguments"] == {"value": "ok"}
+    assert executed == []
+
+    resumed = service.decide_tool_action(
+        made["task_id"], "call-1", approved=True
+    )
+    snapshot = service.snapshot(made["task_id"])
+    assert resumed["status"] == "completed"
+    assert executed == ["ok"]
+    assert snapshot["approvals"] == []
+    assert [event["type"] for event in snapshot["events"]].count(
+        "APPROVAL_REQUESTED"
+    ) == 1
+    assert next(
+        item for item in snapshot["actions"] if item["action_id"] == "call-1"
+    )["status"] == "succeeded"
+
+
+def test_high_impact_classifier_does_not_gate_read_only_shell_setup() -> None:
+    assert _high_impact_action("pwd") is None
+    assert _high_impact_action("id && curl -s http://target.test/") is None
+    assert _high_impact_action("curl -X POST -d x=1 http://target.test/") == (
+        "state_changing_http"
+    )
+    assert _high_impact_action("hydra -l admin -P passwords.txt ssh://target") == (
+        "credential_attack"
+    )
+
+
 def test_deepseek_thinking_capability_disables_forced_tool_choice() -> None:
     deepseek = ModelSettings(
         preset_id="deepseek",
@@ -279,9 +431,16 @@ def test_supervisor_user_input_interrupt_has_distinct_status_and_resumes(
     paused = service.run_task(made["task_id"])
     assert paused["status"] == "awaiting_user_input"
     assert paused["interrupts"][0]["kind"] == "user_input"
-    assert service.snapshot(made["task_id"])["session"]["status"] == (
-        "awaiting_user_input"
+    paused_snapshot = service.snapshot(made["task_id"])
+    assert paused_snapshot["session"]["status"] == "awaiting_user_input"
+    assert paused_snapshot["session"]["user_input_request"]["question"] == (
+        "Which authorized target should be used?"
     )
+    supervisor = next(
+        item for item in paused_snapshot["solvers"] if item["solver_id"] == "supervisor"
+    )
+    assert supervisor["status"] == "awaiting_user_input"
+    assert supervisor["current_summary"] == "Which authorized target should be used?"
 
     resumed = service.resume_task(
         made["task_id"], {"content": "Use 192.0.2.10 within the existing scope."}

@@ -98,6 +98,7 @@ class GraphNodes:
         task = self._task(state)
         self._ensure_task_time(task.id)
         self._ensure_model_budget(state, "supervisor")
+        self._solver_activity(task.id, "supervisor", "running", "正在拆解任务并生成初始 Plan")
         draft = self.deps.agents.plan(task)
         calls = self._take_model_calls("supervisor")
         maximum = self.deps.configuration.runtime.budget.task.max_intents
@@ -136,6 +137,7 @@ class GraphNodes:
                 },
             )
         )
+        self._solver_activity(task.id, "supervisor", "waiting", "初始 Plan 已生成，等待 Worker 执行")
         for intent in intents:
             self.deps.store.append_event(
                 AgentEvent(
@@ -171,7 +173,11 @@ class GraphNodes:
             update={"status": IntentStatus.RUNNING, "updated_at": utc_now()}
         )
         self.deps.store.update_intent(started)
-        if attempt == 1:
+        existing_events = self.deps.store.list_events(task.id, limit=1000)
+        if not any(
+            item.type == "INTENT_STARTED" and item.intent_id == intent.id
+            for item in existing_events
+        ):
             self.deps.store.append_event(
                 AgentEvent(
                     task_id=task.id,
@@ -181,14 +187,27 @@ class GraphNodes:
                     payload={"title": intent.title, "objective": intent.objective},
                 )
             )
-        self.deps.store.append_event(
-            AgentEvent(
-                task_id=task.id,
-                type="WORKER_ATTEMPT_STARTED",
-                solver_id="worker",
-                intent_id=intent.id,
-                payload={"attempt": attempt},
+        if not any(
+            item.type == "WORKER_ATTEMPT_STARTED"
+            and item.intent_id == intent.id
+            and item.payload.get("attempt") == attempt
+            for item in existing_events
+        ):
+            self.deps.store.append_event(
+                AgentEvent(
+                    task_id=task.id,
+                    type="WORKER_ATTEMPT_STARTED",
+                    solver_id="worker",
+                    intent_id=intent.id,
+                    payload={"attempt": attempt},
+                )
             )
+        self._solver_activity(
+            task.id,
+            "worker",
+            "running",
+            f"正在执行 Intent：{intent.title}（第 {attempt} 次尝试）",
+            intent.id,
         )
         tools = self._worker_tools(task.id, intent.id)
         role_tools = set(self.deps.configuration.runtime.roles["worker"].tools)
@@ -259,6 +278,9 @@ class GraphNodes:
                 },
             )
         )
+        self._solver_activity(
+            task.id, "worker", "waiting", "调查结果已提交 Reviewer", intent.id
+        )
         return {
             "worker_draft": draft.model_dump(mode="json"),
             "claim_ids": claim_ids,
@@ -270,6 +292,9 @@ class GraphNodes:
         intent = self._intent(state)
         self._ensure_task_time(task.id)
         self._ensure_model_budget(state, "reviewer")
+        self._solver_activity(
+            task.id, "reviewer", "running", "正在审查 Worker 的证据包", intent.id
+        )
         packet = self._review_packet(task, intent, state)
         review = self.deps.agents.review(task, packet)
         calls = self._take_model_calls("reviewer")
@@ -346,6 +371,13 @@ class GraphNodes:
                 },
             )
         )
+        self._solver_activity(
+            task.id,
+            "reviewer",
+            "waiting",
+            f"审查完成：{review.verdict}",
+            intent.id,
+        )
         return {
             "review_result": review.model_dump(mode="json"),
             "review_feedback": review.feedback,
@@ -356,6 +388,13 @@ class GraphNodes:
         task = self._task(state)
         self._ensure_task_time(task.id)
         self._ensure_model_budget(state, "supervisor")
+        self._solver_activity(
+            task.id,
+            "supervisor",
+            "running",
+            "正在根据 Worker 结果与 Reviewer 意见决定下一步",
+            state.get("current_intent_id"),
+        )
         packet = self._situation_packet(task, state)
         proposed = self.deps.agents.decide(task, packet)
         calls = self._take_model_calls("supervisor")
@@ -373,6 +412,13 @@ class GraphNodes:
                     "model_calls": calls,
                 },
             )
+        )
+        self._solver_activity(
+            task.id,
+            "supervisor",
+            "waiting",
+            f"检查点决策：{decision.action}",
+            state.get("current_intent_id"),
         )
         return {
             "supervisor_decision": decision.model_dump(mode="json"),
@@ -474,6 +520,13 @@ class GraphNodes:
                 payload={"question": question, "reason": decision.reason},
             )
         )
+        self._solver_activity(
+            task.id,
+            "supervisor",
+            "awaiting_user_input",
+            question,
+            state.get("current_intent_id"),
+        )
         return {"user_question": question}
 
     def wait_for_user(self, state: TGAState) -> TGAState:
@@ -500,6 +553,13 @@ class GraphNodes:
                 intent_id=state.get("current_intent_id"),
                 payload={"content": content[:2000]},
             )
+        )
+        self._solver_activity(
+            state["task_id"],
+            "supervisor",
+            "running",
+            "已收到用户回答，正在重新决策",
+            state.get("current_intent_id"),
         )
         return {"user_response": content}
 
@@ -529,6 +589,7 @@ class GraphNodes:
         task = self._task(state)
         self._ensure_task_time(task.id)
         self._ensure_model_budget(state, "reporter")
+        self._solver_activity(task.id, "reporter", "running", "正在生成最终证据报告")
         snapshot = self.deps.store.snapshot(task.id)
         report_input = {
             **snapshot,
@@ -565,6 +626,7 @@ class GraphNodes:
                 payload={"path": relative, "model_calls": calls},
             )
         )
+        self._solver_activity(task.id, "reporter", "completed", "最终报告已生成")
         return {
             "report_path": relative,
             "model_calls": state.get("model_calls", 0) + calls,
@@ -869,6 +931,28 @@ class GraphNodes:
 
     def _take_model_calls(self, role: str) -> int:
         return self.deps.agents.take_model_calls(role)
+
+    def _solver_activity(
+        self,
+        task_id: str,
+        solver_id: str,
+        status: str,
+        summary: str,
+        intent_id: str | None = None,
+    ) -> None:
+        self.deps.store.append_event(
+            AgentEvent(
+                task_id=task_id,
+                type="SOLVER_STATUS_CHANGED",
+                solver_id=solver_id,
+                intent_id=intent_id,
+                payload={
+                    "status": status,
+                    "summary": summary[:1000],
+                    "stage": solver_id,
+                },
+            )
+        )
 
     def _interventions(self, task_id: str, intent_id: str) -> list[dict[str, Any]]:
         return [

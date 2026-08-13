@@ -75,10 +75,7 @@ def _request(
     approval_required = set(
         (execution.get("tool") or {}).get("approval_required") or ()
     )
-    if (execution.get("high_impact") or {}).get("mode") == "approval_required":
-        approval_required.update(external_tool_names or ())
-        if compute.get("mode") == "isolated":
-            approval_required.add("run_command")
+    high_impact = execution.get("high_impact") or {}
     return CreateTaskRequest(
         id=payload.get("id"),
         name=str(payload.get("name") or "Untitled task"),
@@ -107,6 +104,11 @@ def _request(
                 network.get("custom_origins") or network.get("seed_origins") or ()
             ),
             local_compute=compute.get("mode", "disabled"),
+            high_impact_mode=high_impact.get("mode", "forbidden")
+            if high_impact.get("mode")
+            in {"forbidden", "approval_required", "allowlisted"}
+            else "forbidden",
+            high_impact_allowed_actions=tuple(high_impact.get("allowed_actions") or ()),
             command_timeout_seconds=int(
                 compute.get(
                     "timeout_seconds",
@@ -419,23 +421,18 @@ def delete_input(asset_id: str, app: Container = Depends(container)):
 def approval(
     task_id: str, action_id: str, payload: dict, app: Container = Depends(container)
 ):
-    current = _call(app.runtime.snapshot, task_id)
-    if not any(item["action_id"] == action_id for item in current["approvals"]):
-        raise HTTPException(404, "pending approval not found")
     approved = (
         payload.get("approved")
         if "approved" in payload
         else payload.get("decision") == "approve"
     )
-    decision = {
-        "decisions": [
-            {
-                "type": "approve" if approved else "reject",
-                "message": str(payload.get("reason") or ""),
-            }
-        ]
-    }
-    return _call(app.runtime.resume_task, task_id, decision)
+    return _call(
+        app.runtime.decide_tool_action,
+        task_id,
+        action_id,
+        approved=bool(approved),
+        message=str(payload.get("reason") or ""),
+    )
 
 
 @router.post("/tasks/{task_id}/control")

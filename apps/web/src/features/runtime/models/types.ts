@@ -18,6 +18,12 @@ export type RuntimeSession = {
   maxActiveWorkers: number;
   taskBudgetUsage: RuntimeBudgetUsage;
   stopReason: string | null;
+  userInputRequest?: {
+    question: string;
+    reason: string;
+    intentId: string | null;
+    requestedAt: string;
+  } | null;
   timestamps: RuntimeTimestamps;
   turnCount: number;
   maxTurns: number;

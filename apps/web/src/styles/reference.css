@@ -1181,6 +1181,55 @@ html, body { height: 100%; overflow: hidden; }
 .global-action-dock button.danger { border-color: var(--c-danger-border); color: var(--c-danger); background: var(--c-danger-soft); }
 .global-action-dock .dock-message { grid-column: 1 / -1; color: var(--c-text-muted); font-size: 12px; }
 
+/* --- runtime topology --------------------------------------------------- */
+.runtime-topology { display: grid; grid-template-rows: auto auto minmax(430px, 1fr) auto; gap: var(--sp-3); min-height: 560px; }
+.topology-current-event { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 10px; min-height: 42px; padding: 9px 12px; border: 1px solid var(--c-accent-border); border-radius: var(--r-md); color: var(--c-accent-strong); background: var(--c-accent-soft); }
+.topology-current-event b { font-size: 11px; }
+.topology-current-event span { overflow: hidden; color: var(--c-text); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.topology-current-event code { color: var(--c-text-muted); font-size: 10px; }
+.runtime-topology-canvas { min-height: 430px; overflow: hidden; border: 1px solid var(--c-border); border-radius: var(--r-lg); background: var(--c-surface-muted); }
+.runtime-topology-canvas .react-flow__node { width: 210px; }
+.runtime-topology-canvas .react-flow__edge-path { stroke: var(--c-border-strong); transition: stroke .18s ease, stroke-width .18s ease; }
+.runtime-topology-canvas .react-flow__edge.topology-edge-active .react-flow__edge-path { stroke: var(--c-accent); filter: drop-shadow(0 0 4px rgba(37,99,235,.45)); }
+.runtime-topology-canvas .react-flow__edge.topology-edge-active .react-flow__edge-text { fill: var(--c-accent-strong); }
+.runtime-topology-canvas .react-flow__edge-textbg { fill: rgba(255,255,255,.92); }
+.runtime-topology-canvas .react-flow__controls { overflow: hidden; border: 1px solid var(--c-border); border-radius: var(--r-md); box-shadow: var(--shadow-card); }
+.runtime-topology-canvas .react-flow__controls button { color: var(--c-text-muted); background: var(--c-surface); }
+.runtime-topology-node { display: grid; gap: 9px; padding: 12px; border: 1px solid var(--c-border-strong); border-radius: var(--r-lg); color: var(--c-text); background: rgba(255,255,255,.97); box-shadow: var(--shadow-raised); transition: border-color .2s ease, box-shadow .2s ease, opacity .2s ease; }
+.runtime-topology-node > header { display: grid; grid-template-columns: 34px minmax(0,1fr) auto; align-items: center; gap: 8px; }
+.runtime-topology-node > header > span { display: grid; place-items: center; width: 34px; height: 34px; border-radius: var(--r-md); color: var(--c-accent); background: var(--c-accent-soft); }
+.runtime-topology-node > header > div { display: grid; min-width: 0; }
+.runtime-topology-node > header b { font-size: 12.5px; }
+.runtime-topology-node > header small { color: var(--c-text-subtle); font-size: 9.5px; }
+.runtime-topology-node > header em { padding: 2px 6px; border-radius: var(--r-pill); font-size: 9px; font-style: normal; font-weight: 700; white-space: nowrap; }
+.runtime-topology-node > header em.tone-info { color: var(--c-accent); background: var(--c-accent-soft); }
+.runtime-topology-node > header em.tone-success { color: var(--c-success); background: var(--c-success-soft); }
+.runtime-topology-node > header em.tone-warning { color: var(--c-warning); background: var(--c-warning-soft); }
+.runtime-topology-node > header em.tone-danger { color: var(--c-danger); background: var(--c-danger-soft); }
+.runtime-topology-node > header em.tone-neutral { color: var(--c-text-muted); background: var(--c-surface-muted); }
+.runtime-topology-node > p { display: -webkit-box; min-height: 34px; overflow: hidden; color: var(--c-text-muted); font-size: 10.5px; line-height: 1.55; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.runtime-topology-node > strong { color: var(--c-warning); font-size: 9.5px; }
+.runtime-topology-node.status-running { border-color: var(--c-accent); box-shadow: 0 0 0 2px var(--c-accent-soft), var(--shadow-raised); }
+.runtime-topology-node.status-awaiting_approval, .runtime-topology-node.status-awaiting_user_input { border-color: var(--c-warning); box-shadow: 0 0 0 2px var(--c-warning-soft), var(--shadow-raised); }
+.runtime-topology-node.status-not_started { opacity: .62; box-shadow: none; }
+.runtime-topology-node.role-operator > header > span { color: #7c3aed; background: #f5f0ff; }
+.runtime-topology-node.role-reviewer > header > span { color: #7c3aed; background: #f5f0ff; }
+.runtime-topology-node.role-reporter > header > span { color: var(--c-danger); background: var(--c-danger-soft); }
+.topology-legend { display: flex; flex-wrap: wrap; gap: 15px; color: var(--c-text-muted); font-size: 10.5px; }
+.topology-legend span { display: inline-flex; align-items: center; gap: 5px; }
+.topology-legend i { width: 8px; height: 8px; border-radius: 50%; background: var(--c-border-strong); }
+.topology-legend i.running { background: var(--c-accent); }
+.topology-legend i.attention { background: var(--c-warning); }
+.topology-legend i.complete { background: var(--c-success); }
+
+.approval-arguments { display: grid; gap: 6px; }
+.approval-arguments > b { color: var(--c-text-muted); font-size: 10px; }
+.approval-arguments pre { max-height: 180px; margin: 0; padding: 10px; overflow: auto; border: 1px solid var(--c-border); border-radius: var(--r-sm); color: var(--c-text); background: var(--c-surface); font: 10.5px/1.55 ui-monospace, SFMono-Regular, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+.supervisor-question { display: grid; gap: 7px; padding: 13px; border: 1px solid var(--c-accent-border); border-radius: var(--r-md); background: var(--c-accent-soft); }
+.supervisor-question b { color: var(--c-accent-strong); font-size: 12px; }
+.supervisor-question p { color: var(--c-text); font-size: 13px; line-height: 1.65; white-space: pre-wrap; }
+.supervisor-question small { color: var(--c-text-muted); font-size: 10.5px; line-height: 1.55; }
+
 /* The legacy status/risk badges shipped their own sage-and-clay palette, which
    reads as a different product beside the token-driven pages. */
 .status-badge-v2.tone-info, .risk-badge-v2.tone-info { border-color: var(--c-accent-border); color: var(--c-accent-strong); background: var(--c-accent-soft); }
@@ -1340,4 +1389,10 @@ html, body { height: 100%; overflow: hidden; }
   .ref-page-head, .dashboard-greeting { align-items: stretch; flex-direction: column; }
   .attention-items li { grid-template-columns: 34px minmax(0, 1fr); }
   .attention-items time { display: none; }
+}
+
+@media (max-width: 760px) {
+  .runtime-topology { min-width: 680px; }
+  .topology-current-event { grid-template-columns: 1fr; }
+  .runtime-topology-canvas { min-height: 520px; }
 }

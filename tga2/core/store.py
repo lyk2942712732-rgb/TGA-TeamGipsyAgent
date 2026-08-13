@@ -311,6 +311,12 @@ class TaskStore:
             )
         ]
 
+    def get_action(self, action_id: str) -> ToolAction | None:
+        row = self._one(
+            "SELECT payload_json FROM tool_actions WHERE id=?", (action_id,)
+        )
+        return ToolAction.model_validate_json(row["payload_json"]) if row else None
+
     def append_event(self, event: AgentEvent) -> AgentEvent:
         with self.transaction() as conn:
             cursor = conn.execute(

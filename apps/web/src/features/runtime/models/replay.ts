@@ -9,7 +9,7 @@ export function replayStoreAtSeq(source: RuntimeStore, targetSeq: number): Runti
   const cursor = Math.max(firstSeq - 1, Math.min(Math.floor(targetSeq), source.latestSeq));
   const baseline: RuntimeStore = {
     ...source,
-    session: { ...source.session, status: "created", activeSolverCount: 0, stopReason: null },
+    session: { ...source.session, status: "created", activeSolverCount: 0, stopReason: null, userInputRequest: null },
     team: { ...source.team, status: "created", activeSolverCount: 0 },
     solversById: Object.fromEntries(Object.entries(source.solversById).map(([id, solver]) => [id, { ...solver, status: "created", assignedIntentId: null, currentSummary: "" }])),
     intentsById: Object.fromEntries(Object.entries(source.intentsById).map(([id, intent]) => [id, { ...intent, status: "pending", assignedSolverId: null }])),

@@ -32,6 +32,10 @@ class ExecutionPolicy(BaseModel):
     network_access: Literal["disabled", "task_sources", "public_internet"] = "disabled"
     allowed_origins: tuple[str, ...] = ()
     local_compute: Literal["disabled", "isolated"] = "disabled"
+    high_impact_mode: Literal["forbidden", "approval_required", "allowlisted"] = (
+        "forbidden"
+    )
+    high_impact_allowed_actions: tuple[str, ...] = ()
     command_timeout_seconds: int = Field(default=120, ge=1, le=3600)
 
 

@@ -71,6 +71,7 @@ function normalizeV6(snapshot: Record<string, unknown>): RuntimeStore {
       maxActiveWorkers: Math.max(1, number(session.max_active_workers, 1)),
       taskBudgetUsage: budget(session.task_budget_usage),
       stopReason: nullableString(session.stop_reason),
+      userInputRequest: userInputRequest(session.user_input_request),
       timestamps: timestamps(session.timestamps),
       turnCount: number(session.turn_count), maxTurns: number(session.max_turns),
     },
@@ -123,3 +124,4 @@ function number(value: unknown, fallback = 0): number { return typeof value === 
 function strings(value: unknown): string[] { return array(value).filter((item): item is string => typeof item === "string"); }
 function budget(value: unknown): RuntimeBudgetUsage { return Object.fromEntries(Object.entries(record(value)).filter((entry): entry is [string, number] => typeof entry[1] === "number" && Number.isFinite(entry[1]))); }
 function timestamps(value: unknown): Record<string, string | null> { return Object.fromEntries(Object.entries(record(value)).filter(([, item]) => item == null || typeof item === "string")) as Record<string, string | null>; }
+function userInputRequest(value: unknown): RuntimeStore["session"]["userInputRequest"] { const item = record(value); const question = string(item.question); return question ? { question, reason: string(item.reason), intentId: nullableString(item.intent_id), requestedAt: string(item.requested_at) } : null; }

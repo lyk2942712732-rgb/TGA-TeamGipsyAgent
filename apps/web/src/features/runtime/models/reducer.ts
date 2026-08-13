@@ -19,6 +19,9 @@ const REFRESH_EVENTS = new Set([
   "TASK_ORCHESTRATOR_BLOCKED", "TASK_ORCHESTRATOR_FAILED",
   "TASK_ORCHESTRATOR_CANCELLED", "SESSION_STOPPED",
   "SUPERVISOR_DECIDED", "USER_INPUT_REQUIRED", "USER_INPUT_RECEIVED",
+  "INTENT_STARTED", "WORKER_ATTEMPT_STARTED", "WORKER_ATTEMPT_COMPLETED",
+  "REVIEW_COMPLETED", "SOLVER_STATUS_CHANGED", "APPROVAL_REQUESTED",
+  "ACTION_APPROVED", "ACTION_REJECTED", "ARTIFACT_CREATED", "REPORT_GENERATED",
   "TASK_COMPLETED", "TASK_COMPLETED_WITH_LIMITATIONS", "TASK_FAILED", "TASK_CANCELLED",
 ]);
 
@@ -80,20 +83,20 @@ function reduceV6EntityEvent(state: RuntimeStore, event: RuntimeEvent): RuntimeS
   if (event.type === "INTENT_CREATED" && intentId && canUpdate(next, "intentsById", intentId, event)) {
     next = updateIntent(next, intentId, event, { ...(next.intentsById[intentId] ?? defaultIntent(state.task.id, intentId)), title: text(payload.title) ?? intentId, objective: text(payload.objective) ?? "", kind: text(payload.kind) ?? "task", status: text(payload.status) ?? "pending" });
   }
-  if (intentId && ["INTENT_ASSIGNED", "INTENT_CLAIMED", "INTENT_COMPLETED", "INTENT_BLOCKED"].includes(event.type) && canUpdate(next, "intentsById", intentId, event)) {
+  if (intentId && ["INTENT_ASSIGNED", "INTENT_CLAIMED", "INTENT_STARTED", "INTENT_COMPLETED", "INTENT_BLOCKED"].includes(event.type) && canUpdate(next, "intentsById", intentId, event)) {
     const current = next.intentsById[intentId] ?? defaultIntent(state.task.id, intentId);
-    const status = event.type === "INTENT_ASSIGNED" ? "assigned" : event.type === "INTENT_CLAIMED" ? "running" : event.type === "INTENT_BLOCKED" ? "blocked" : text(payload.status) ?? "completed";
-    const assignmentEvent = ["INTENT_ASSIGNED", "INTENT_CLAIMED"].includes(event.type);
+    const status = event.type === "INTENT_ASSIGNED" ? "assigned" : ["INTENT_CLAIMED", "INTENT_STARTED"].includes(event.type) ? "running" : event.type === "INTENT_BLOCKED" ? "blocked" : text(payload.status) ?? "completed";
+    const assignmentEvent = ["INTENT_ASSIGNED", "INTENT_CLAIMED", "INTENT_STARTED"].includes(event.type);
     next = updateIntent(next, intentId, event, { ...current, status, assignedSolverId: assignmentEvent ? solverId ?? current.assignedSolverId : current.assignedSolverId });
     if (assignmentEvent && solverId && next.solversById[solverId] && canUpdate(next, "solversById", solverId, event)) {
-      next = updateSolver(next, solverId, event, { ...next.solversById[solverId], assignedIntentId: intentId, status: event.type === "INTENT_CLAIMED" ? "running" : next.solversById[solverId].status });
+      next = updateSolver(next, solverId, event, { ...next.solversById[solverId], assignedIntentId: intentId, status: ["INTENT_CLAIMED", "INTENT_STARTED"].includes(event.type) ? "running" : next.solversById[solverId].status });
     }
   }
 
-  if (event.type === "WORKER_RESULT_SUBMITTED") {
-    const resultId = text(payload.worker_result_id);
+  if (["WORKER_RESULT_SUBMITTED", "WORKER_ATTEMPT_COMPLETED"].includes(event.type)) {
+    const resultId = text(payload.worker_result_id) ?? (event.type === "WORKER_ATTEMPT_COMPLETED" && intentId ? `worker-${intentId}-${typeof payload.attempt === "number" ? payload.attempt : 1}` : null);
     if (resultId && canUpdate(next, "workerResultsById", resultId, event)) {
-      const result: RuntimeWorkerResult = { resultId, solverId: solverId ?? "", intentId: intentId ?? "", status: text(payload.status) ?? "submitted", summary: text(payload.summary) ?? "", artifactIds: texts(payload.artifact_ids), evidenceClaimIds: texts(payload.evidence_claim_ids), knowledgeIds: texts(payload.knowledge_ids), findingIds: texts(payload.finding_ids), limitations: texts(payload.limitations), budgetUsage: numericRecord(payload.budget_usage) };
+      const result: RuntimeWorkerResult = { resultId, solverId: solverId ?? "", intentId: intentId ?? "", status: text(payload.status) ?? "submitted", summary: text(payload.summary) ?? "", artifactIds: texts(payload.artifact_ids), evidenceClaimIds: texts(payload.evidence_claim_ids).length ? texts(payload.evidence_claim_ids) : texts(payload.claim_ids), knowledgeIds: texts(payload.knowledge_ids), findingIds: texts(payload.finding_ids), limitations: texts(payload.limitations), budgetUsage: numericRecord(payload.budget_usage) };
       next = updateMap(next, "workerResultsById", resultId, result, event);
     }
   }
@@ -163,6 +166,7 @@ function reduceV6EntityEvent(state: RuntimeStore, event: RuntimeEvent): RuntimeS
       const item: RuntimeApproval = { approvalId, solverId: solverId ?? current?.solverId ?? "", intentId: intentId ?? current?.intentId ?? null, actionId, action: object(payload.action), risk: text(payload.risk) ?? "active", effect: object(payload.effect), reason: text(payload.reason) ?? "", alternatives: texts(payload.alternatives), deadline: text(payload.deadline) ?? text(payload.approval_expires_at) ?? "", status: text(payload.status) ?? "pending", createdAt: current?.createdAt ?? event.createdAt, updatedAt: event.createdAt };
       next = updateMap(next, "approvalsById", approvalId, item, event);
       if (item.solverId && next.solversById[item.solverId] && canUpdate(next, "solversById", item.solverId, event)) next = updateSolver(next, item.solverId, event, { ...next.solversById[item.solverId], status: "awaiting_approval" });
+      next = { ...next, session: { ...next.session, status: "awaiting_approval" }, team: { ...next.team, status: "awaiting_approval" } };
     }
   }
   if (["ACTION_APPROVED", "ACTION_REJECTED", "ACTION_APPROVAL_EXPIRED"].includes(event.type)) {
@@ -172,6 +176,14 @@ function reduceV6EntityEvent(state: RuntimeStore, event: RuntimeEvent): RuntimeS
     next = { ...next, approvalsById };
     const resolved = Object.values(approvalsById).find((approval) => approval.actionId === actionId);
     if (resolved?.solverId && next.solversById[resolved.solverId] && !Object.values(approvalsById).some((approval) => approval.solverId === resolved.solverId && approval.status === "pending")) next = { ...next, solversById: { ...next.solversById, [resolved.solverId]: { ...next.solversById[resolved.solverId], status: "queued" } } };
+    if (!Object.values(approvalsById).some((approval) => approval.status === "pending")) next = { ...next, session: { ...next.session, status: "running" }, team: { ...next.team, status: "running" } };
+  }
+
+  if (event.type === "USER_INPUT_REQUIRED") next = { ...next, session: { ...next.session, status: "awaiting_user_input", stopReason: "user_input_required", userInputRequest: { question: text(payload.question) ?? "Supervisor 需要额外信息。", reason: text(payload.reason) ?? "", intentId, requestedAt: event.createdAt } }, team: { ...next.team, status: "awaiting_user_input" } };
+  if (event.type === "USER_INPUT_RECEIVED") next = { ...next, session: { ...next.session, status: "running", stopReason: null, userInputRequest: null }, team: { ...next.team, status: "running" } };
+  if (["TASK_COMPLETED", "TASK_COMPLETED_WITH_LIMITATIONS", "TASK_FAILED", "TASK_CANCELLED"].includes(event.type)) {
+    const status = ({ TASK_COMPLETED: "completed", TASK_COMPLETED_WITH_LIMITATIONS: "completed_with_limitations", TASK_FAILED: "failed", TASK_CANCELLED: "cancelled" } as Record<string, string>)[event.type];
+    next = { ...next, session: { ...next.session, status }, team: { ...next.team, status } };
   }
 
   if (event.type === "PLAN_UPDATED") {
@@ -190,7 +202,7 @@ function reduceV6EntityEvent(state: RuntimeStore, event: RuntimeEvent): RuntimeS
   }
 
   if (next === state) return state;
-  const activeSolverCount = Object.values(next.solversById).filter((solver) => ["created", "queued", "ready", "running", "waiting", "awaiting_approval"].includes(solver.status)).length;
+  const activeSolverCount = Object.values(next.solversById).filter((solver) => ["created", "queued", "ready", "running", "waiting", "awaiting_approval", "awaiting_user_input"].includes(solver.status)).length;
   return { ...next, session: { ...next.session, activeSolverCount }, team: { ...next.team, activeSolverCount, solverIds: Object.keys(next.solversById) } };
 }
 

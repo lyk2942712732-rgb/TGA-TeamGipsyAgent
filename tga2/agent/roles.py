@@ -14,6 +14,8 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_core.output_parsers import PydanticOutputParser
 from langchain_core.tools import BaseTool
+from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.types import Command, interrupt
 from pydantic import BaseModel
 
 from tga2.agent.schemas import (
@@ -70,6 +72,10 @@ class LangChainAgentSuite:
         self._model_middleware = [
             ModelCallLimitMiddleware(run_limit=model_call_limit, exit_behavior="error"),
         ]
+        # A Worker is a resumable LangGraph sub-agent.  The outer task graph
+        # persists the business workflow; this cache preserves the nested
+        # LangChain tool loop while an operator reviews a tool call.
+        self._worker_runs: dict[str, dict[str, Any]] = {}
 
     def plan(self, task: Task) -> PlanDraft:
         return self._direct_structured(
@@ -113,13 +119,9 @@ class LangChainAgentSuite:
                 WorkerDraft,
             )
             response_format = None
-        agent = create_agent(
-            self.model,
-            tools=tools,
-            system_prompt=worker_prompt,
-            response_format=response_format,
-            middleware=[*self._middleware(task), *middleware],
-            name="tga2_worker",
+        worker_prompt = (
+            f"{worker_prompt}\n\nCall at most one tool in each assistant message. "
+            "Wait for its result before selecting another tool."
         )
         content = json.dumps(
             {
@@ -129,13 +131,71 @@ class LangChainAgentSuite:
             },
             ensure_ascii=False,
         )
-        result = agent.invoke({"messages": [{"role": "user", "content": content}]})
+        run_key = f"{task.id}:{intent.get('id')}:{intent.get('attempt', 1)}"
+        entry = self._worker_runs.get(run_key)
+        if entry is None:
+            entry = {
+                "checkpointer": InMemorySaver(),
+                "config": {"configurable": {"thread_id": run_key}},
+                "interrupt_history": [],
+                "result": None,
+            }
+            self._worker_runs[run_key] = entry
+        # Recompile around the same checkpoint on every outer graph request.
+        # Middleware owns request-scoped TaskStore connections, so caching the
+        # compiled agent would retain a closed database after the first pause.
+        agent = create_agent(
+            self.model,
+            tools=tools,
+            system_prompt=worker_prompt,
+            response_format=response_format,
+            middleware=[*self._middleware(task), *middleware],
+            checkpointer=entry["checkpointer"],
+            name="tga2_worker",
+        )
+        config = entry["config"]
+
+        # LangGraph resumes a node from its beginning. Replay earlier outer
+        # interrupt calls so a later approval keeps the same interrupt index,
+        # then forward the current decision into the nested Worker graph.
+        for prior in entry["interrupt_history"]:
+            interrupt(prior)
+        result = entry.get("result")
+        if result is None:
+            inner_state = agent.get_state(config)
+            if inner_state.interrupts:
+                request = self._worker_interrupt(inner_state.interrupts)
+                decision = interrupt(request)
+                entry["interrupt_history"].append(request)
+                result = agent.invoke(Command(resume=decision), config=config)
+            else:
+                result = agent.invoke(
+                    {"messages": [{"role": "user", "content": content}]},
+                    config=config,
+                )
+            while result.get("__interrupt__"):
+                request = self._worker_interrupt(result["__interrupt__"])
+                decision = interrupt(request)
+                entry["interrupt_history"].append(request)
+                result = agent.invoke(Command(resume=decision), config=config)
+            entry["result"] = result
         self._last_model_calls = sum(
             isinstance(message, AIMessage) for message in result.get("messages", [])
         )
         if self.force_prompt_worker_output:
             return self._parse_worker_message(result)
         return self._structured(result, WorkerDraft)
+
+    @staticmethod
+    def _worker_interrupt(values: Sequence[Any]) -> dict[str, Any]:
+        first = values[0] if values else None
+        value = getattr(first, "value", first)
+        request = dict(value) if isinstance(value, dict) else {}
+        return {
+            "kind": "tool_approval",
+            "action_requests": list(request.get("action_requests") or []),
+            "review_configs": list(request.get("review_configs") or []),
+        }
 
     def review(self, task: Task, packet: ReviewPacket) -> ReviewDraft:
         return self._direct_structured(

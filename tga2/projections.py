@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -31,7 +32,6 @@ def runtime_snapshot_projection(
     task_id = task["id"]
     status = task["status"]
     intents = [_intent(item) for item in raw.get("intents", [])]
-    solvers = _solvers(raw.get("solver_runs", []), task_id)
     artifacts = [_artifact(item) for item in raw.get("artifacts", [])]
     claims = [_claim(item) for item in raw.get("evidence_claims", [])]
     findings = [_finding(item) for item in raw.get("findings", [])]
@@ -71,7 +71,25 @@ def runtime_snapshot_projection(
     awaiting_user = bool(
         waiting_for_user and waiting_for_user["type"] == "USER_INPUT_REQUIRED"
     )
-    projected_status = "awaiting_user_input" if awaiting_user else status
+    # A user-input checkpoint supersedes old approval rows left by versions
+    # that did not correctly resume the nested Worker graph.
+    if awaiting_user:
+        approvals = []
+    projected_status = (
+        "awaiting_user_input"
+        if awaiting_user
+        else "awaiting_approval"
+        if approvals
+        else status
+    )
+    solvers = _solvers(
+        raw.get("solver_runs", []),
+        task_id,
+        events,
+        projected_status,
+        intents,
+        approvals,
+    )
     model_call_event_types = {
         "PLAN_CREATED",
         "WORKER_ATTEMPT_COMPLETED",
@@ -87,7 +105,10 @@ def runtime_snapshot_projection(
     session = {
         "status": projected_status,
         "supervisor_solver_id": "supervisor" if solvers else None,
-        "active_solver_count": sum(item["status"] == "running" for item in solvers),
+        "active_solver_count": sum(
+            item["status"] in {"running", "awaiting_approval", "awaiting_user_input"}
+            for item in solvers
+        ),
         "max_active_workers": runtime.graph.max_active_workers if runtime else 1,
         "task_budget_usage": {
             "turns": model_calls,
@@ -96,6 +117,16 @@ def runtime_snapshot_projection(
             "artifacts": len(artifacts),
         },
         "stop_reason": "user_input_required" if awaiting_user else None,
+        "user_input_request": (
+            {
+                "question": (waiting_for_user.get("payload") or {}).get("question"),
+                "reason": (waiting_for_user.get("payload") or {}).get("reason"),
+                "intent_id": waiting_for_user.get("intent_id"),
+                "requested_at": waiting_for_user.get("created_at"),
+            }
+            if awaiting_user and waiting_for_user
+            else None
+        ),
         "turn_count": model_calls,
         "max_turns": runtime.budget.task.max_model_calls if runtime else 60,
         "timestamps": {
@@ -170,7 +201,7 @@ def runtime_snapshot_projection(
             "prompt_preview": "\n".join(task["spec"]["instructions"])[:1000],
             "file_count": len(task["spec"]["resources"]),
             "files": task["spec"]["resources"],
-            "task_entry_url": None,
+            "task_entry_url": _first_url(task),
         },
         "config_snapshot": {
             "mode_config": task["spec"].get("mode_options") or {"mode": task["mode"]},
@@ -196,8 +227,8 @@ def runtime_snapshot_projection(
         "team": team,
         "solvers": solvers,
         "intents": intents,
-        "worker_results": [],
-        "knowledge": [],
+        "worker_results": _worker_results(events),
+        "knowledge": _knowledge(events),
         "artifacts": artifacts,
         "evidence_claims": claims,
         "findings": findings,
@@ -257,34 +288,203 @@ def _directives(task_id: str, kind: str, values: list[str]) -> list[dict[str, An
     ]
 
 
-def _solvers(runs: list[dict[str, Any]], task_id: str) -> list[dict[str, Any]]:
-    latest: dict[str, dict[str, Any]] = {}
-    for run in runs:
-        latest[run["solver_id"]] = run
+def _first_url(task: dict[str, Any]) -> str | None:
+    spec = task.get("spec") or {}
+    text = "\n".join(
+        [
+            str(spec.get("objective") or ""),
+            *(str(item) for item in spec.get("instructions") or []),
+        ]
+    )
+    match = re.search(r"https?://[^\s<>'\"]+", text, flags=re.IGNORECASE)
+    return match.group(0).rstrip(".,);]") if match else None
+
+
+def _solvers(
+    runs: list[dict[str, Any]],
+    task_id: str,
+    events: list[dict[str, Any]],
+    task_status: str,
+    intents: list[dict[str, Any]],
+    approvals: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    roles = ("supervisor", "worker", "reviewer", "reporter")
+    latest_run = {run["solver_id"]: run for run in runs}
+    observed = {
+        str(item.get("solver_id"))
+        for item in events
+        if item.get("solver_id") in roles
+    } | set(latest_run)
+    current_intent = next(
+        (item for item in intents if item["status"] in {"running", "review"}), None
+    )
+    terminal = task_status in {
+        "completed",
+        "completed_with_limitations",
+        "failed",
+        "cancelled",
+    }
+    result: list[dict[str, Any]] = []
+    for role in roles:
+        if role not in observed:
+            continue
+        role_events = [item for item in events if item.get("solver_id") == role]
+        activity = next(
+            (
+                item
+                for item in reversed(role_events)
+                if item["type"] == "SOLVER_STATUS_CHANGED"
+            ),
+            None,
+        )
+        run = latest_run.get(role) or {}
+        assigned_intent = (
+            (activity or {}).get("intent_id")
+            or next(
+                (item.get("intent_id") for item in reversed(role_events) if item.get("intent_id")),
+                None,
+            )
+            or run.get("intent_id")
+        )
+        status_value, summary = _solver_state(
+            role,
+            role_events,
+            activity,
+            task_status,
+            bool(approvals),
+            terminal,
+            current_intent,
+            str(run.get("summary") or ""),
+        )
+        model_calls = sum(
+            int((item.get("payload") or {}).get("model_calls") or 0)
+            for item in role_events
+        )
+        tool_calls = sum(
+            item["type"] == "TOOL_ACTION_REQUESTED" for item in role_events
+        )
+        created_at = (
+            role_events[0]["created_at"]
+            if role_events
+            else run.get("created_at")
+        )
+        updated_at = (
+            role_events[-1]["created_at"]
+            if role_events
+            else run.get("updated_at")
+        )
+        result.append(
+            {
+                "task_id": task_id,
+                "solver_id": role,
+                "definition_id": role,
+                "orchestration_role": role,
+                "specialties": [],
+                "parent_solver_id": None if role == "supervisor" else "supervisor",
+                "assigned_intent_id": assigned_intent,
+                "status": status_value,
+                "current_summary": summary,
+                "model_snapshot": {},
+                "capability_binding": {},
+                "budget_usage": {
+                    "input_tokens": int(run.get("input_tokens") or 0),
+                    "output_tokens": int(run.get("output_tokens") or 0),
+                    "model_calls": model_calls,
+                    "tool_calls": tool_calls,
+                },
+                "timestamps": {
+                    "created_at": created_at,
+                    "updated_at": updated_at,
+                },
+            }
+        )
+    return result
+
+
+def _solver_state(
+    role: str,
+    role_events: list[dict[str, Any]],
+    activity: dict[str, Any] | None,
+    task_status: str,
+    has_approvals: bool,
+    terminal: bool,
+    current_intent: dict[str, Any] | None,
+    fallback_summary: str,
+) -> tuple[str, str]:
+    if terminal:
+        return ("failed" if task_status == "failed" else "completed", fallback_summary)
+    if task_status == "awaiting_user_input":
+        return (
+            "awaiting_user_input" if role == "supervisor" else "waiting",
+            _event_summary(activity) or ("等待用户回答" if role == "supervisor" else "等待 Supervisor"),
+        )
+    if has_approvals:
+        return (
+            "awaiting_approval" if role == "worker" else "waiting",
+            _event_summary(activity) or ("等待操作审批" if role == "worker" else "等待 Worker"),
+        )
+    if activity:
+        return str((activity.get("payload") or {}).get("status") or "waiting"), _event_summary(activity) or fallback_summary
+    latest_type = role_events[-1]["type"] if role_events else ""
+    if role == "worker" and latest_type in {"INTENT_STARTED", "WORKER_ATTEMPT_STARTED", "TOOL_ACTION_REQUESTED", "TOOL_COMPLETED"}:
+        return "running", _event_summary(role_events[-1]) or "正在执行当前 Intent"
+    if role == "reviewer" and latest_type == "REVIEW_COMPLETED":
+        return "waiting", _event_summary(role_events[-1]) or "证据审查已完成"
+    if role == "reporter" and latest_type == "REPORT_GENERATED":
+        return "completed", "最终报告已生成"
+    if current_intent and role == "worker":
+        return "running", fallback_summary or f"正在处理 {current_intent['title']}"
+    return "waiting", fallback_summary or "等待上游结果"
+
+
+def _event_summary(event: dict[str, Any] | None) -> str:
+    if not event:
+        return ""
+    payload = event.get("payload") or {}
+    return str(
+        payload.get("summary")
+        or payload.get("reason")
+        or payload.get("feedback")
+        or payload.get("question")
+        or ""
+    )[:1000]
+
+
+def _worker_results(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [
         {
-            "task_id": task_id,
-            "solver_id": run["solver_id"],
-            "definition_id": run["solver_id"],
-            "orchestration_role": run["role"],
-            "specialties": [],
-            "parent_solver_id": None,
-            "assigned_intent_id": run.get("intent_id"),
-            "status": run["status"],
-            "current_summary": run["summary"],
-            "model_snapshot": {},
-            "capability_binding": {},
-            "budget_usage": {
-                "input_tokens": run["input_tokens"],
-                "output_tokens": run["output_tokens"],
-                "tool_calls": run["tool_calls"],
-            },
-            "timestamps": {
-                "created_at": run["created_at"],
-                "updated_at": run["updated_at"],
-            },
+            "result_id": f"worker-{item['intent_id']}-{(item.get('payload') or {}).get('attempt', 1)}",
+            "solver_id": "worker",
+            "intent_id": item.get("intent_id"),
+            "status": "submitted",
+            "summary": (item.get("payload") or {}).get("summary", ""),
+            "artifact_ids": [],
+            "evidence_claim_ids": (item.get("payload") or {}).get("claim_ids", []),
+            "knowledge_ids": [],
+            "finding_ids": [],
+            "limitations": [],
+            "budget_usage": {"model_calls": (item.get("payload") or {}).get("model_calls", 0)},
         }
-        for run in latest.values()
+        for item in events
+        if item["type"] == "WORKER_ATTEMPT_COMPLETED"
+    ]
+
+
+def _knowledge(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        {
+            "knowledge_id": f"skill-{item['seq']}",
+            "scope": "intent",
+            "target_id": item.get("intent_id"),
+            "status": "read",
+            "kind": "skill_document",
+            "content_preview": f"{(item.get('payload') or {}).get('skill_name', '')}/{(item.get('payload') or {}).get('path', '')}",
+            "content_sha256": (item.get("payload") or {}).get("sha256", ""),
+            "created_by_solver_id": item.get("solver_id"),
+            "created_at": item.get("created_at"),
+        }
+        for item in events
+        if item["type"] == "SKILL_DOCUMENT_READ"
     ]
 
 
@@ -349,15 +549,16 @@ def _finding(item: dict[str, Any]) -> dict[str, Any]:
 
 
 def _action(item: dict[str, Any]) -> dict[str, Any]:
+    target = _projected_action_target(item)
     return {
         "id": item["id"],
         "action_id": item["id"],
         "solver_id": item["solver_id"],
         "intent_id": item.get("intent_id"),
         "capability": item["tool_name"],
-        "target": "",
+        "target": target,
         "risk": item["risk"],
-        "effect": {},
+        "effect": _projected_effect(item),
         "arguments": item["arguments"],
         "status": item["status"],
         "summary": item["summary"],
@@ -368,6 +569,7 @@ def _action(item: dict[str, Any]) -> dict[str, Any]:
 
 
 def _approval(item: dict[str, Any]) -> dict[str, Any]:
+    target = _projected_action_target(item)
     return {
         "approval_id": item["id"],
         "solver_id": item["solver_id"],
@@ -376,17 +578,50 @@ def _approval(item: dict[str, Any]) -> dict[str, Any]:
         "action": {
             "id": item["id"],
             "capability": item["tool_name"],
+            "target": target,
+            "arguments": item["arguments"],
+            "expected_outcome": _expected_outcome(item["tool_name"]),
             "status": "pending",
         },
         "risk": item["risk"],
-        "effect": {},
-        "reason": "Tool requires operator approval.",
-        "alternatives": [],
+        "effect": _projected_effect(item),
+        "reason": f"ExecutionPolicy requires one-time approval for {item['tool_name']}.",
+        "alternatives": ["拒绝本次操作并向 Worker 提供更安全的提示", "改用已有输入、Artifact 或只读能力"],
         "deadline": "",
         "status": "pending",
         "created_at": item["created_at"],
         "updated_at": item["updated_at"],
     }
+
+
+def _projected_action_target(item: dict[str, Any]) -> str:
+    arguments = item.get("arguments") or {}
+    if item.get("tool_name") == "run_command":
+        return str(arguments.get("command") or "Kali sandbox")[:1000]
+    for key in ("target", "url", "path", "name", "query"):
+        if arguments.get(key) not in (None, ""):
+            return str(arguments[key])[:1000]
+    return "task-scoped capability"
+
+
+def _projected_effect(item: dict[str, Any]) -> dict[str, str]:
+    if item.get("tool_name") == "run_command":
+        return {
+            "persistence": "sandbox_lifetime",
+            "reversibility": "sandbox_disposable",
+            "description": "命令在一次性 Kali 沙箱中执行；网络影响仅限任务授权目标。",
+        }
+    return {
+        "persistence": "task_workspace" if item.get("tool_name") == "save_note" else "none",
+        "reversibility": "reversible" if item.get("tool_name") == "save_note" else "not_applicable",
+        "description": "任务范围内的受治理操作。",
+    }
+
+
+def _expected_outcome(tool_name: str) -> str:
+    if tool_name == "run_command":
+        return "在隔离 Kali 沙箱中执行一次命令，并将输出保存为可追溯 Artifact。"
+    return f"执行一次 {tool_name} 并将结果返回当前 Worker。"
 
 
 __all__ = ["event_projection", "runtime_snapshot_projection", "task_list_projection"]

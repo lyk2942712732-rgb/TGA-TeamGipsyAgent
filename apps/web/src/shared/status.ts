@@ -8,6 +8,7 @@ export type StatusDefinition = {
 
 export const STATUS_DICTIONARY: Record<string, StatusDefinition> = {
   created: { label: "已创建", tone: "neutral" },
+  not_started: { label: "未开始", tone: "neutral" },
   queued: { label: "排队中", tone: "info" },
   ready: { label: "可运行", tone: "info" },
   assigned: { label: "已分配", tone: "info" },

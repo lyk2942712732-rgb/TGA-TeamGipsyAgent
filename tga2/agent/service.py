@@ -21,7 +21,14 @@ from tga2.agent.roles import (
 )
 from tga2.agent.schemas import ReportDraft
 from tga2.config import Configuration
-from tga2.core.models import AgentEvent, ResourceRef, Task, TaskSpec, TaskStatus
+from tga2.core.models import (
+    AgentEvent,
+    ResourceRef,
+    Task,
+    TaskSpec,
+    TaskStatus,
+    utc_now,
+)
 from tga2.core.policy import ExecutionPolicy, ToolPolicy
 from tga2.core.report import render_markdown
 from tga2.core.store import TaskStore
@@ -203,8 +210,6 @@ class TaskRuntimeService:
         approval_required: set[str] = set()
         if compute.get("mode") == "isolated":
             allowed.add("run_command")
-            if high_impact.get("mode") == "approval_required":
-                approval_required.add("run_command")
         return ExecutionPolicy(
             tool=ToolPolicy(
                 allowed_tools=frozenset(allowed),
@@ -216,6 +221,10 @@ class TaskRuntimeService:
                 network.get("custom_origins") or network.get("seed_origins") or ()
             ),
             local_compute=compute.get("mode", "disabled"),
+            high_impact_mode=high_impact.get("mode", "forbidden"),
+            high_impact_allowed_actions=tuple(
+                high_impact.get("allowed_actions") or ()
+            ),
             command_timeout_seconds=int(
                 compute.get(
                     "timeout_seconds",
@@ -265,6 +274,71 @@ class TaskRuntimeService:
             except TaskCancelledError:
                 return {"task_id": task_id, "status": "cancelled", "interrupts": []}
             except BudgetExceededError as exc:
+                preserved = self._preserve_budget_limited_result(store, task, exc)
+                if preserved is not None:
+                    return preserved
+                self._record_failure(store, task_id, exc)
+                raise
+            except BaseException as exc:
+                self._record_failure(store, task_id, exc)
+                raise
+            return self._graph_response(task_id, result)
+
+    def decide_tool_action(
+        self,
+        task_id: str,
+        action_id: str,
+        *,
+        approved: bool,
+        message: str = "",
+    ) -> dict[str, Any]:
+        """Persist one HITL decision and resume the exact nested Worker call."""
+
+        with self._runtime(task_id) as (store, graph):
+            action = store.get_action(action_id)
+            if action is None or action.task_id != task_id:
+                raise KeyError(f"pending approval not found: {action_id}")
+            if action.status != "awaiting_approval":
+                raise ValueError(f"tool action is not awaiting approval: {action_id}")
+            status = "approved" if approved else "rejected"
+            store.save_action(
+                action.model_copy(
+                    update={
+                        "status": status,
+                        "summary": message or ("Approved once." if approved else "Rejected by operator."),
+                        "updated_at": utc_now(),
+                    }
+                )
+            )
+            store.set_task_status(task_id, TaskStatus.RUNNING)
+            store.append_event(
+                AgentEvent(
+                    task_id=task_id,
+                    type="ACTION_APPROVED" if approved else "ACTION_REJECTED",
+                    solver_id=action.solver_id,
+                    intent_id=action.intent_id,
+                    payload={
+                        "action_id": action.id,
+                        "tool_name": action.tool_name,
+                        "message": message,
+                    },
+                )
+            )
+            decision = {
+                "decisions": [
+                    {
+                        "type": "approve" if approved else "reject",
+                        "message": message,
+                    }
+                ]
+            }
+            try:
+                result = graph.resume(task_id, decision)
+            except TaskCancelledError:
+                return {"task_id": task_id, "status": "cancelled", "interrupts": []}
+            except BudgetExceededError as exc:
+                task = store.get_task(task_id)
+                assert task is not None
                 preserved = self._preserve_budget_limited_result(store, task, exc)
                 if preserved is not None:
                     return preserved
