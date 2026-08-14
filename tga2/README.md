@@ -133,6 +133,16 @@ and Runtime refuses a passing review with missing checklist coverage. This is
 what lets the tool loop stop on evidence instead of merely stopping at its call
 limit.
 
+Runtime also owns cross-Intent continuity. Supervisor expresses dependencies as
+indexes of earlier planned Intents; Runtime resolves them to persisted Intent IDs,
+schedules only dependency-ready work, and blocks downstream work when a required
+Intent fails. Every fresh Worker receives a bounded `handoff_context` assembled
+from persisted Intent summaries, confirmed claims, findings, Artifact metadata and
+the task command ledger. `list_artifacts` discovers task-owned outputs and
+`read_artifact` reads only the selected content, so continuity never depends on
+chat-history replay. Reused evidence produces a new Claim owned by the current
+Intent while retaining its source Intent for audit.
+
 All limits are read from `runtime.json -> budget`. Models may propose actions,
 but only Runtime code may consume budgets, revise Plan state, change Intent
 state, or accept task completion.

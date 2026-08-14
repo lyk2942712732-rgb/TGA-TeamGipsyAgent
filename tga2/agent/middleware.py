@@ -34,6 +34,7 @@ SAFE_DEFAULT_TOOLS = frozenset(
     {
         "list_inputs",
         "read_input",
+        "list_artifacts",
         "read_artifact",
         "glob_search",
         "grep_search",
@@ -381,7 +382,7 @@ class PolicyAuditMiddleware(AgentMiddleware):
             return None
         matching: list[ToolAction] = []
         for action in self.store.list_actions(self.task.id):
-            if action.intent_id != self.intent_id or action.tool_name != "run_command":
+            if action.tool_name != "run_command":
                 continue
             prior = str(action.arguments.get("command") or "")
             if _network_observation_key(prior) == key:
@@ -397,7 +398,7 @@ class PolicyAuditMiddleware(AgentMiddleware):
         )
         references = ", ".join(artifact_ids[-4:]) or "the earlier Tool results"
         return (
-            "redundant network observation blocked: this Intent already executed "
+            "redundant network observation blocked: this Task already executed "
             f"four {key[0]} observations for {key[1]}. Reuse Artifact(s) "
             f"{references} with read_artifact, or choose an action that tests a "
             "different acceptance criterion."
@@ -555,6 +556,7 @@ def _risk(name: str, tool: BaseTool | None) -> RiskLevel:
     if name in {
         "list_inputs",
         "read_input",
+        "list_artifacts",
         "read_artifact",
         "glob_search",
         "grep_search",
@@ -625,6 +627,7 @@ def _expected_outcome(name: str) -> str:
     return {
         "run_command": "Execute the displayed command once in the isolated Kali sandbox and capture its output as an Artifact.",
         "read_input": "Read the selected authorized task input and preserve the result as evidence.",
+        "list_artifacts": "List reusable Artifact metadata already persisted for this task.",
         "read_artifact": "Read an already persisted task Artifact without repeating the originating action.",
         "save_note": "Persist the displayed analysis note as a task Artifact.",
     }.get(name, f"Execute {name} once and return its governed result to the Worker.")

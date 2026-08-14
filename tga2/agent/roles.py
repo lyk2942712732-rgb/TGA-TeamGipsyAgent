@@ -106,7 +106,9 @@ class LangChainAgentSuite:
                 "more bounded intents. Every Intent must define concrete, "
                 "independently verifiable success_criteria and the "
                 "expected_evidence needed to prove them. Do not use vague "
-                "criteria such as 'investigate thoroughly' or 'complete the task'."
+                "criteria such as 'investigate thoroughly' or 'complete the task'. "
+                "Express dependencies as zero-based indexes of earlier Intents in "
+                "the same array. Runtime will own dependency resolution and scheduling."
             ),
         )
 
@@ -157,6 +159,9 @@ class LangChainAgentSuite:
             "authoritative Runtime ledger: preserve its confirmed evidence, never "
             "repeat an executed command, and investigate only criteria the latest "
             "review did not verify. Use read_artifact to inspect an existing output. "
+            "For a new Intent, handoff_context is the authoritative Runtime-curated "
+            "record of prior Intent progress. Reuse its Artifact IDs and confirmed "
+            "evidence. Use list_artifacts when more task-owned outputs must be discovered. "
             "Every Artifact ID used by a met criterion_assessment must also appear "
             "in at least one ClaimDraft so Reviewer receives that evidence. "
             "If a stop_condition is reached, "

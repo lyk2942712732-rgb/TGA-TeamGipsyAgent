@@ -599,6 +599,8 @@ def _artifact(item: dict[str, Any]) -> dict[str, Any]:
 def _claim(item: dict[str, Any]) -> dict[str, Any]:
     return {
         "claim_id": item["id"],
+        "intent_id": item.get("intent_id"),
+        "source_intent_id": item.get("source_intent_id"),
         "statement_preview": item["statement"],
         "artifact_id": item["artifact_id"],
         "locator": item["locator"],

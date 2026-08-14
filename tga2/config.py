@@ -124,7 +124,7 @@ class FileLimitSettings(BaseModel):
 
 class RuntimeSettings(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    schema_version: int = 5
+    schema_version: int = 6
     common_prompt: str = ""
     roles: dict[str, RoleRuntimeSettings]
     graph: GraphSettings = Field(default_factory=GraphSettings)
@@ -344,22 +344,34 @@ class Configuration:
         runtime = RuntimeSettings.model_validate_json(
             self.runtime_path.read_text(encoding="utf-8")
         )
-        if runtime.schema_version < 5:
+        if runtime.schema_version < 6:
             roles = dict(runtime.roles)
             worker = roles.get("worker", RoleRuntimeSettings())
             roles["worker"] = worker.model_copy(
-                update={"tools": list(dict.fromkeys([*worker.tools, "read_artifact"]))}
+                update={
+                    "tools": list(
+                        dict.fromkeys(
+                            [*worker.tools, "list_artifacts", "read_artifact"]
+                        )
+                    )
+                }
             )
             defaults = runtime.tool_defaults.model_copy(
                 update={
                     "allowed": list(
-                        dict.fromkeys([*runtime.tool_defaults.allowed, "read_artifact"])
+                        dict.fromkeys(
+                            [
+                                *runtime.tool_defaults.allowed,
+                                "list_artifacts",
+                                "read_artifact",
+                            ]
+                        )
                     )
                 }
             )
             runtime = runtime.model_copy(
                 update={
-                    "schema_version": 5,
+                    "schema_version": 6,
                     "roles": roles,
                     "tool_defaults": defaults,
                 }

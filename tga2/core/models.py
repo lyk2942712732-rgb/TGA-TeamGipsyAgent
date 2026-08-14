@@ -193,7 +193,9 @@ class EvidenceClaim(BaseModel):
     model_config = ConfigDict(extra="forbid")
     id: str = Field(default_factory=lambda: uuid4().hex)
     task_id: str
+    intent_id: str | None = None
     artifact_id: str
+    source_intent_id: str | None = None
     statement: str = Field(min_length=1, max_length=8000)
     locator: EvidenceLocator
     status: Literal["candidate", "confirmed", "rejected"] = "candidate"

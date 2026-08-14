@@ -224,8 +224,11 @@ class TaskStore:
         ]
 
     def save_claim(self, claim: EvidenceClaim) -> None:
-        if self.get_artifact(claim.artifact_id) is None:
+        artifact = self.get_artifact(claim.artifact_id)
+        if artifact is None:
             raise ValueError("evidence claim references a missing artifact")
+        if artifact.task_id != claim.task_id:
+            raise ValueError("evidence claim and artifact belong to different tasks")
         with self.transaction() as conn:
             conn.execute(
                 "INSERT INTO evidence_claims(id,task_id,artifact_id,payload_json,status,created_at) "

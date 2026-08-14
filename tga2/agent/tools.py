@@ -46,6 +46,15 @@ class ToolRegistry:
                 description="Read a task input file and publish the exact output as an immutable artifact.",
             ),
             StructuredTool.from_function(
+                func=self._list_artifacts,
+                name="list_artifacts",
+                description=(
+                    "List metadata for existing Artifacts owned by this task. "
+                    "Use it to discover reusable outputs from earlier Intents before "
+                    "calling read_artifact."
+                ),
+            ),
+            StructuredTool.from_function(
                 func=self._read_artifact,
                 name="read_artifact",
                 description=(
@@ -199,6 +208,48 @@ class ToolRegistry:
             },
             ensure_ascii=False,
         )
+
+    def _list_artifacts(
+        self, intent_id: str | None = None, kind: str | None = None, limit: int = 100
+    ) -> str:
+        """List bounded task-owned Artifact metadata without reading file content."""
+        intents = {item.id: item for item in self.store.list_intents(self.task_id)}
+        selected = []
+        maximum = min(200, max(1, int(limit)))
+        for artifact in reversed(self.store.list_artifacts(self.task_id)):
+            if intent_id and artifact.intent_id != intent_id:
+                continue
+            if kind and artifact.kind != kind:
+                continue
+            source = intents.get(artifact.intent_id or "")
+            selected.append(
+                {
+                    "artifact_id": artifact.id,
+                    "intent_id": artifact.intent_id,
+                    "intent_title": source.title if source else None,
+                    "kind": artifact.kind,
+                    "source_tool": artifact.tool_name,
+                    "sha256": artifact.sha256,
+                    "media_type": artifact.media_type,
+                    "created_at": artifact.created_at.isoformat(),
+                }
+            )
+            if len(selected) >= maximum:
+                break
+        self.store.append_event(
+            AgentEvent(
+                task_id=self.task_id,
+                type="ARTIFACTS_LISTED",
+                solver_id="worker",
+                intent_id=self.intent_id,
+                payload={
+                    "source_intent_id": intent_id,
+                    "kind": kind,
+                    "returned": len(selected),
+                },
+            )
+        )
+        return json.dumps({"artifacts": selected}, ensure_ascii=False)
 
     def _save_note(self, content: str) -> str:
         """Save a worker-authored analysis note."""

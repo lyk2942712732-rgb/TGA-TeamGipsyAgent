@@ -43,6 +43,7 @@ class PlanIntentDraft(BaseModel):
     title: str = Field(min_length=1, max_length=500)
     objective: str = Field(min_length=1, max_length=4000)
     priority: int = Field(default=50, ge=0, le=100)
+    dependencies: list[int] = Field(default_factory=list, max_length=8)
     success_criteria: list[str] = Field(min_length=1, max_length=8)
     expected_evidence: list[str] = Field(min_length=1, max_length=8)
 
@@ -156,6 +157,7 @@ class SituationPacket(BaseModel):
     authorization: dict[str, Any]
     plan: dict[str, Any]
     current_intent: dict[str, Any]
+    task_context: dict[str, Any] = Field(default_factory=dict)
     worker_result: dict[str, Any] | None = None
     review_result: dict[str, Any] | None = None
     confirmed_findings: list[dict[str, Any]] = Field(default_factory=list)

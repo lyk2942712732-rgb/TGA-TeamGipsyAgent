@@ -208,6 +208,138 @@ class _AcceptanceArtifactSuite(OfflineAgentSuite):
         )
 
 
+class _CrossIntentHandoffSuite(OfflineAgentSuite):
+    def __init__(self) -> None:
+        self.first_artifact_id = ""
+        self.second_handoff: dict = {}
+        self.listed_artifact_ids: list[str] = []
+
+    def plan(self, _task):
+        return PlanDraft(
+            summary="Reuse evidence across two dependent Intents.",
+            intents=[
+                PlanIntentDraft(
+                    title="Collect",
+                    objective="Collect the supplied observation.",
+                    success_criteria=["The supplied marker is collected."],
+                    expected_evidence=["An input-backed Artifact."],
+                ),
+                PlanIntentDraft(
+                    title="Reuse",
+                    objective="Reuse the collected observation.",
+                    dependencies=[0],
+                    success_criteria=["The earlier marker is reused."],
+                    expected_evidence=["A Claim backed by the earlier Artifact."],
+                ),
+            ],
+        )
+
+    def work(self, task, intent, tools, feedback, middleware=()):
+        if intent["title"] == "Collect":
+            read_input = next(tool for tool in tools if tool.name == "read_input")
+            payload = json.loads(read_input.invoke({"path": "target.txt"}))
+            self.first_artifact_id = payload["artifact_id"]
+        else:
+            self.second_handoff = intent["handoff_context"]
+            list_artifacts = next(
+                tool for tool in tools if tool.name == "list_artifacts"
+            )
+            listed = json.loads(list_artifacts.invoke({}))
+            self.listed_artifact_ids = [
+                item["artifact_id"] for item in listed["artifacts"]
+            ]
+            read_artifact = next(
+                tool for tool in tools if tool.name == "read_artifact"
+            )
+            reused = json.loads(
+                read_artifact.invoke({"artifact_id": self.first_artifact_id})
+            )
+            assert "handoff marker" in reused["content"]
+        return WorkerDraft(
+            summary=f"Completed {intent['title']} with persisted evidence.",
+            completion_status="completed",
+            criterion_assessments=[
+                {
+                    "criterion_index": 0,
+                    "status": "met",
+                    "artifact_ids": [self.first_artifact_id],
+                    "note": "The persisted marker supports this Intent.",
+                }
+            ],
+        )
+
+    def review(self, task, packet):
+        ids = [str(item.claim["id"]) for item in packet.evidence]
+        return ReviewDraft(
+            verdict="pass",
+            feedback="The current Intent has a valid Artifact-backed Claim.",
+            confirmed_claim_ids=ids,
+            criterion_results=[
+                {
+                    "criterion_index": 0,
+                    "status": "verified",
+                    "evidence_claim_ids": ids,
+                    "reason": "The supplied evidence packet proves the criterion.",
+                }
+            ],
+        )
+
+
+class _FailedDependencySuite(OfflineAgentSuite):
+    def __init__(self) -> None:
+        self.worker_titles: list[str] = []
+
+    def plan(self, _task):
+        return PlanDraft(
+            summary="Do not run downstream work after a failed prerequisite.",
+            intents=[
+                PlanIntentDraft(
+                    title="Prerequisite",
+                    objective="Attempt the prerequisite.",
+                    success_criteria=["The prerequisite succeeds."],
+                    expected_evidence=["A prerequisite Artifact."],
+                ),
+                PlanIntentDraft(
+                    title="Dependent",
+                    objective="Run only after the prerequisite.",
+                    dependencies=[0],
+                    success_criteria=["The dependent work succeeds."],
+                    expected_evidence=["A dependent Artifact."],
+                ),
+            ],
+        )
+
+    def work(self, task, intent, tools, feedback, middleware=()):
+        self.worker_titles.append(intent["title"])
+        return WorkerDraft(
+            summary="The prerequisite could not be evidenced.",
+            completion_status="blocked",
+            criterion_assessments=[
+                {
+                    "criterion_index": 0,
+                    "status": "blocked",
+                    "note": "No valid prerequisite evidence is available.",
+                }
+            ],
+        )
+
+    def review(self, task, packet):
+        return ReviewDraft(
+            verdict="reject",
+            feedback="The prerequisite failed.",
+            criterion_results=[
+                {
+                    "criterion_index": 0,
+                    "status": "not_verified",
+                    "reason": "No evidence was supplied.",
+                }
+            ],
+        )
+
+    def decide(self, task, packet):
+        return SupervisorDecision(action="fail", reason="Prerequisite failed.")
+
+
 def test_langchain_json_mode_receives_the_full_pydantic_schema() -> None:
     suite = LangChainAgentSuite(_VerificationModel())
     draft = suite.plan(
@@ -785,6 +917,76 @@ def test_acceptance_artifact_is_promoted_to_reviewer_visible_claim(
     assert snapshot["evidence_claims"][0]["status"] == "confirmed"
 
 
+def test_dependent_intent_reuses_runtime_handoff_and_prior_artifact(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "target.txt"
+    source.write_text("cross-intent handoff marker", encoding="utf-8")
+    suite = _CrossIntentHandoffSuite()
+    service = TaskRuntimeService(run_root=tmp_path / "runs", agents=suite)
+    made = service.create_task(
+        CreateTaskRequest(
+            name="cross-intent handoff",
+            objective="Collect and reuse one persisted observation",
+            mode="vulnerability_research",
+            input_paths=[str(source)],
+        )
+    )
+
+    result = service.run_task(made["task_id"])
+    snapshot = service.snapshot(made["task_id"])
+
+    assert result["status"] == "completed"
+    first, second = snapshot["intents"]
+    assert second["dependencies"] == [first["intent_id"]]
+    assert suite.first_artifact_id in suite.listed_artifact_ids
+    assert suite.second_handoff["completed_intents"][0]["intent_id"] == first[
+        "intent_id"
+    ]
+    assert suite.second_handoff["available_artifacts"][0]["artifact_id"] == (
+        suite.first_artifact_id
+    )
+    assert suite.second_handoff["confirmed_evidence"]
+    claims = snapshot["evidence_claims"]
+    assert len(claims) == 2
+    assert claims[1]["intent_id"] == second["intent_id"]
+    assert claims[1]["source_intent_id"] == first["intent_id"]
+    reads = [item for item in snapshot["events"] if item["type"] == "ARTIFACT_READ"]
+    assert reads[-1]["intent_id"] == second["intent_id"]
+
+
+def test_failed_dependency_is_blocked_without_starting_downstream_worker(
+    tmp_path: Path,
+) -> None:
+    suite = _FailedDependencySuite()
+    service = TaskRuntimeService(run_root=tmp_path / "runs", agents=suite)
+    made = service.create_task(
+        CreateTaskRequest(
+            name="dependency failure",
+            objective="Stop downstream work after a failed prerequisite",
+            mode="vulnerability_research",
+        )
+    )
+
+    result = service.run_task(made["task_id"])
+    snapshot = service.snapshot(made["task_id"])
+
+    assert result["status"] == "failed"
+    assert suite.worker_titles == ["Prerequisite"]
+    assert [item["status"] for item in snapshot["intents"]] == [
+        "blocked",
+        "blocked",
+    ]
+    downstream = snapshot["intents"][1]
+    blocked = [
+        item
+        for item in snapshot["events"]
+        if item["type"] == "INTENT_BLOCKED"
+        and item["intent_id"] == downstream["intent_id"]
+    ]
+    assert "dependency did not complete" in blocked[-1]["payload"]["reason"]
+
+
 def test_supervisor_checkpoint_retries_then_advances_plan(tmp_path: Path) -> None:
     service = TaskRuntimeService(run_root=tmp_path / "runs")
     suite = _CheckpointSuite()
@@ -852,7 +1054,7 @@ def test_supervisor_user_input_interrupt_has_distinct_status_and_resumes(
 def test_runtime_json_is_the_single_budget_source(tmp_path: Path) -> None:
     service = TaskRuntimeService(run_root=tmp_path / "runs")
     runtime = service.configuration.runtime
-    assert runtime.schema_version == 5
+    assert runtime.schema_version == 6
     assert runtime.budget.task.model_dump() == {
         "max_intents": 4,
         "max_model_calls": 60,
@@ -862,9 +1064,37 @@ def test_runtime_json_is_the_single_budget_source(tmp_path: Path) -> None:
     assert runtime.budget.intent.max_attempts == 3
     assert runtime.budget.roles.worker.calls_per_attempt == 8
     assert runtime.budget.roles.worker.tool_calls_per_attempt == 15
+    assert "list_artifacts" in runtime.roles["worker"].tools
+    assert "list_artifacts" in runtime.tool_defaults.allowed
     payload = json.loads((tmp_path / "runs" / ".config" / "runtime.json").read_text())
     assert "model_call_limit" not in payload["roles"]["worker"]
     assert "max_calls" not in payload["tool_defaults"]
+
+
+def test_runtime_v5_adds_artifact_discovery_during_configuration_load(
+    tmp_path: Path,
+) -> None:
+    runtime_path = tmp_path / "runs" / ".config" / "runtime.json"
+    payload = json.loads(runtime_path.read_text(encoding="utf-8"))
+    payload["schema_version"] = 5
+    payload["roles"]["worker"]["tools"] = [
+        item
+        for item in payload["roles"]["worker"]["tools"]
+        if item != "list_artifacts"
+    ]
+    payload["tool_defaults"]["allowed"] = [
+        item
+        for item in payload["tool_defaults"]["allowed"]
+        if item != "list_artifacts"
+    ]
+    runtime_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    service = TaskRuntimeService(run_root=tmp_path / "runs")
+
+    assert service.configuration.runtime.schema_version == 6
+    persisted = json.loads(runtime_path.read_text(encoding="utf-8"))
+    assert "list_artifacts" in persisted["roles"]["worker"]["tools"]
+    assert "list_artifacts" in persisted["tool_defaults"]["allowed"]
 
 
 def test_apps_api_is_the_only_http_boundary(tmp_path: Path) -> None:

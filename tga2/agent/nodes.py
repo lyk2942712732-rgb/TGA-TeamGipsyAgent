@@ -104,9 +104,8 @@ class GraphNodes:
         draft = self.deps.agents.plan(task)
         calls = self._take_model_calls("supervisor")
         maximum = self.deps.configuration.runtime.budget.task.max_intents
-        intents = tuple(
-            self._intent_from_draft(task.id, item) for item in draft.intents[:maximum]
-        )
+        draft_intents = draft.intents[:maximum]
+        intents = self._intents_from_drafts(task.id, draft_intents)
         if not intents:
             raise ValueError("supervisor produced an empty plan")
         plan = Plan(task_id=task.id, version=1, summary=draft.summary, intents=intents)
@@ -146,6 +145,7 @@ class GraphNodes:
                     payload={
                         "title": intent.title,
                         "objective": intent.objective,
+                        "dependencies": list(intent.dependencies),
                         "success_criteria": list(intent.success_criteria),
                         "expected_evidence": list(intent.expected_evidence),
                         "stop_conditions": list(intent.stop_conditions),
@@ -154,10 +154,14 @@ class GraphNodes:
                     },
                 )
             )
+        initial_intent = min(
+            (item for item in intents if not item.dependencies),
+            key=lambda item: (-item.priority, item.created_at, item.id),
+        )
         return {
             "intent_ids": [item.id for item in intents],
-            "intent_index": 0,
-            "current_intent_id": intents[0].id,
+            "intent_index": list(intents).index(initial_intent),
+            "current_intent_id": initial_intent.id,
             "attempt": 1,
             "model_calls": state.get("model_calls", 0) + calls,
             "plan_version": 1,
@@ -232,6 +236,7 @@ class GraphNodes:
             **intent.model_dump(mode="json"),
             "attempt": attempt,
             "retry_context": self._retry_context(task.id, intent.id),
+            "handoff_context": self._handoff_context(task.id, intent.id),
         }
         draft = self.deps.agents.work(
             task,
@@ -442,14 +447,41 @@ class GraphNodes:
         }
 
     def advance(self, state: TGAState) -> TGAState:
-        current_id = state["current_intent_id"]
+        intents = self.deps.store.list_intents(state["task_id"])
+        self._block_failed_dependents(state["task_id"], intents)
         intents = self.deps.store.list_intents(state["task_id"])
         pending = [item for item in intents if item.status == IntentStatus.PENDING]
         if not pending:
-            raise RuntimeError(f"no pending intent after {current_id}")
-        next_intent = pending[0]
+            return {
+                "advance_action": "report",
+                "completed_with_limitations": True,
+            }
+        completed_ids = {
+            item.id for item in intents if item.status == IntentStatus.COMPLETED
+        }
+        known_ids = {item.id for item in intents}
+        runnable = [
+            item
+            for item in pending
+            if set(item.dependencies).issubset(completed_ids)
+            and set(item.dependencies).issubset(known_ids)
+        ]
+        if not runnable:
+            for item in pending:
+                self._mark_dependency_blocked(
+                    item,
+                    "Intent has unresolved, missing, or cyclic dependencies.",
+                )
+            return {
+                "advance_action": "report",
+                "completed_with_limitations": True,
+            }
+        next_intent = min(
+            runnable, key=lambda item: (-item.priority, item.created_at, item.id)
+        )
         ids = [item.id for item in intents]
         return {
+            "advance_action": "worker",
             "intent_ids": ids,
             "intent_index": ids.index(next_intent.id),
             "current_intent_id": next_intent.id,
@@ -481,8 +513,8 @@ class GraphNodes:
         task = self._task(state)
         decision = SupervisorDecision.model_validate(state["supervisor_decision"])
         existing = self.deps.store.list_intents(task.id)
-        additions = tuple(
-            self._intent_from_draft(task.id, item) for item in decision.new_intents
+        additions = self._intents_from_drafts(
+            task.id, decision.new_intents, existing=tuple(existing)
         )
         current = self._intent(state)
         if current.status != IntentStatus.COMPLETED:
@@ -592,6 +624,9 @@ class GraphNodes:
                 intent_id=intent.id,
                 payload={"reason": reason, "attempts": state.get("attempt", 1)},
             )
+        )
+        self._block_failed_dependents(
+            task.id, self.deps.store.list_intents(task.id)
         )
         return {"completed_with_limitations": True}
 
@@ -721,7 +756,10 @@ class GraphNodes:
             if (
                 claim.status == "confirmed"
                 and artifact is not None
-                and artifact.intent_id == intent.id
+                and (
+                    claim.intent_id == intent.id
+                    or (claim.intent_id is None and artifact.intent_id == intent.id)
+                )
                 and claim.id not in claim_ids
             ):
                 claim_ids.append(claim.id)
@@ -766,14 +804,19 @@ class GraphNodes:
     def _retry_context(self, task_id: str, intent_id: str) -> dict[str, Any]:
         """Carry audited progress into a fresh Worker attempt without chat replay."""
         artifacts = {
-            item.id: item
-            for item in self.deps.store.list_artifacts(task_id)
-            if item.intent_id == intent_id
+            item.id: item for item in self.deps.store.list_artifacts(task_id)
         }
         confirmed_evidence: list[dict[str, Any]] = []
         for claim in self.deps.store.list_claims(task_id):
             artifact = artifacts.get(claim.artifact_id)
-            if claim.status != "confirmed" or artifact is None:
+            if (
+                claim.status != "confirmed"
+                or artifact is None
+                or not (
+                    claim.intent_id == intent_id
+                    or (claim.intent_id is None and artifact.intent_id == intent_id)
+                )
+            ):
                 continue
             excerpt, valid = self._evidence_excerpt(artifact.path, claim.locator)
             if not valid:
@@ -782,6 +825,7 @@ class GraphNodes:
                 {
                     "claim_id": claim.id,
                     "artifact_id": artifact.id,
+                    "source_intent_id": artifact.intent_id,
                     "statement": claim.statement,
                     "locator": claim.locator.model_dump(mode="json"),
                     "excerpt": excerpt[:1500],
@@ -897,6 +941,9 @@ class GraphNodes:
                 **self._intent(state).model_dump(mode="json"),
                 "attempt": state.get("attempt", 1),
             },
+            task_context=self._handoff_context(
+                task.id, state.get("current_intent_id", "")
+            ),
             worker_result=state.get("worker_draft"),
             review_result=state.get("review_result"),
             confirmed_findings=[
@@ -1030,7 +1077,9 @@ class GraphNodes:
         )
         return proposed_hosts.issubset(authorized_hosts)
 
-    def _intent_from_draft(self, task_id: str, item) -> Intent:
+    def _intent_from_draft(
+        self, task_id: str, item, dependencies: tuple[str, ...] = ()
+    ) -> Intent:
         budget = self.deps.configuration.runtime.budget
         policy_tools = self.deps.store.get_policy(task_id).tool.allowed_tools
         allowed_tools = policy_tools or SAFE_DEFAULT_TOOLS
@@ -1038,6 +1087,7 @@ class GraphNodes:
             task_id=task_id,
             title=item.title,
             objective=item.objective,
+            dependencies=dependencies,
             priority=item.priority,
             success_criteria=tuple(item.success_criteria),
             expected_evidence=tuple(item.expected_evidence),
@@ -1056,6 +1106,25 @@ class GraphNodes:
                 "Do not repeat a successful command merely to preserve output; Runtime already creates an Artifact.",
             ),
         )
+
+    def _intents_from_drafts(
+        self, task_id: str, drafts, *, existing: tuple[Intent, ...] = ()
+    ) -> tuple[Intent, ...]:
+        """Resolve model-authored dependency indexes into Runtime-owned Intent IDs."""
+        created = [self._intent_from_draft(task_id, item) for item in drafts]
+        available = [*existing, *created]
+        offset = len(existing)
+        resolved: list[Intent] = []
+        for position, (draft, intent) in enumerate(zip(drafts, created, strict=True)):
+            current_index = offset + position
+            indexes = list(dict.fromkeys(draft.dependencies))
+            dependencies = tuple(
+                available[index].id
+                for index in indexes
+                if 0 <= index < current_index
+            )
+            resolved.append(intent.model_copy(update={"dependencies": dependencies}))
+        return tuple(resolved)
 
     @staticmethod
     def _hosts(value: str) -> set[str]:
@@ -1137,6 +1206,156 @@ class GraphNodes:
             )
         ]
 
+    def _handoff_context(self, task_id: str, current_intent_id: str) -> dict[str, Any]:
+        """Build a bounded, auditable Task ledger for a fresh Intent or checkpoint."""
+        intents = self.deps.store.list_intents(task_id)
+        intent_by_id = {item.id: item for item in intents}
+        prior_ids = {item.id for item in intents if item.id != current_intent_id}
+        artifacts = [
+            item
+            for item in self.deps.store.list_artifacts(task_id)
+            if item.intent_id in prior_ids
+        ]
+        artifact_by_id = {item.id: item for item in artifacts}
+        summaries: dict[str, str] = {}
+        for run in self.deps.store.list_solver_runs(task_id):
+            if run.intent_id in prior_ids and run.summary:
+                summaries[run.intent_id] = run.summary[:2000]
+
+        confirmed_evidence = []
+        for claim in self.deps.store.list_claims(task_id):
+            artifact = artifact_by_id.get(claim.artifact_id)
+            if claim.status != "confirmed" or artifact is None:
+                continue
+            excerpt, valid = self._evidence_excerpt(artifact.path, claim.locator)
+            if not valid:
+                continue
+            confirmed_evidence.append(
+                {
+                    "claim_id": claim.id,
+                    "claim_intent_id": claim.intent_id,
+                    "source_intent_id": artifact.intent_id,
+                    "artifact_id": artifact.id,
+                    "statement": claim.statement,
+                    "locator": claim.locator.model_dump(mode="json"),
+                    "excerpt": excerpt[:1000],
+                }
+            )
+
+        commands = []
+        for action in self.deps.store.list_actions(task_id):
+            if action.intent_id == current_intent_id or action.tool_name != "run_command":
+                continue
+            command = str(action.arguments.get("command") or "").strip()
+            if not command:
+                continue
+            commands.append(
+                {
+                    "intent_id": action.intent_id,
+                    "command": command[:1000],
+                    "status": action.status,
+                    "artifact_ids": list(action.artifact_ids),
+                }
+            )
+
+        return {
+            "completed_intents": [
+                {
+                    "intent_id": item.id,
+                    "title": item.title,
+                    "objective": item.objective,
+                    "status": item.status.value,
+                    "summary": summaries.get(item.id, ""),
+                }
+                for item in intents
+                if item.id in prior_ids
+                and item.status
+                in {IntentStatus.COMPLETED, IntentStatus.BLOCKED, IntentStatus.FAILED}
+            ][-16:],
+            "available_artifacts": [
+                {
+                    "artifact_id": item.id,
+                    "source_intent_id": item.intent_id,
+                    "source_intent_title": (
+                        intent_by_id[item.intent_id].title
+                        if item.intent_id in intent_by_id
+                        else None
+                    ),
+                    "kind": item.kind,
+                    "source_tool": item.tool_name,
+                    "sha256": item.sha256,
+                    "media_type": item.media_type,
+                }
+                for item in artifacts[-64:]
+            ],
+            "confirmed_evidence": confirmed_evidence[-24:],
+            "confirmed_findings": [
+                item.model_dump(mode="json")
+                for item in self.deps.store.list_findings(task_id)
+                if item.status == "confirmed"
+            ][-24:],
+            "executed_commands": commands[-32:],
+            "instructions": (
+                "Reuse relevant confirmed evidence and Artifact IDs instead of "
+                "repeating completed work. Use list_artifacts for discovery and "
+                "read_artifact only when the indexed content needs inspection. "
+                "Prior conclusions do not satisfy the current Intent automatically; "
+                "cite them in a current-Intent Claim and let Reviewer verify them."
+            ),
+        }
+
+    def _block_failed_dependents(self, task_id: str, intents: list[Intent]) -> None:
+        """Propagate terminal dependency failures without starting invalid work."""
+        known = {item.id for item in intents}
+        terminal_failures = {
+            item.id
+            for item in intents
+            if item.status in {IntentStatus.BLOCKED, IntentStatus.FAILED}
+        }
+        changed = True
+        while changed:
+            changed = False
+            for position, item in enumerate(intents):
+                if item.status != IntentStatus.PENDING or not item.dependencies:
+                    continue
+                missing = set(item.dependencies) - known
+                failed = set(item.dependencies).intersection(terminal_failures)
+                if not missing and not failed:
+                    continue
+                reason = (
+                    "Intent dependency is missing: " + ", ".join(sorted(missing))
+                    if missing
+                    else "Intent dependency did not complete: "
+                    + ", ".join(sorted(failed))
+                )
+                self._mark_dependency_blocked(item, reason)
+                intents[position] = item.model_copy(
+                    update={"status": IntentStatus.BLOCKED}
+                )
+                terminal_failures.add(item.id)
+                changed = True
+
+    def _mark_dependency_blocked(self, intent: Intent, reason: str) -> None:
+        if intent.status != IntentStatus.PENDING:
+            return
+        self.deps.store.update_intent(
+            intent.model_copy(
+                update={"status": IntentStatus.BLOCKED, "updated_at": utc_now()}
+            )
+        )
+        self.deps.store.append_event(
+            AgentEvent(
+                task_id=intent.task_id,
+                type="INTENT_BLOCKED",
+                solver_id="supervisor",
+                intent_id=intent.id,
+                payload={
+                    "reason": reason,
+                    "dependencies": list(intent.dependencies),
+                },
+            )
+        )
+
     def _task(self, state: TGAState):
         task = self.deps.store.get_task(state["task_id"])
         if task is None:
@@ -1209,7 +1428,6 @@ class GraphNodes:
                 if (
                     artifact is None
                     or artifact.task_id != task_id
-                    or artifact.intent_id != intent_id
                 ):
                     continue
                 claim_id = self._save_claim_once(
@@ -1237,15 +1455,19 @@ class GraphNodes:
     ) -> str:
         for existing in self.deps.store.list_claims(task_id):
             if (
-                existing.artifact_id == artifact_id
+                existing.intent_id == intent_id
+                and existing.artifact_id == artifact_id
                 and existing.statement == statement
                 and existing.locator == locator
                 and existing.status != "rejected"
             ):
                 return existing.id
+        source_artifact = self.deps.store.get_artifact(artifact_id)
         claim = EvidenceClaim(
             task_id=task_id,
+            intent_id=intent_id,
             artifact_id=artifact_id,
+            source_intent_id=source_artifact.intent_id if source_artifact else None,
             statement=statement,
             locator=locator,
             created_by=created_by,
@@ -1260,6 +1482,7 @@ class GraphNodes:
                 payload={
                     "evidence_claim_id": claim.id,
                     "artifact_id": artifact_id,
+                    "source_intent_id": claim.source_intent_id,
                     "statement_preview": statement[:1000],
                     "locator": locator.model_dump(mode="json"),
                     "created_by": created_by,

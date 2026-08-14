@@ -119,6 +119,8 @@ export type RuntimeArtifact = {
 
 export type RuntimeEvidenceClaim = {
   claimId: string;
+  intentId: string | null;
+  sourceIntentId: string | null;
   statementPreview: string;
   artifactId: string;
   locator: Record<string, unknown>;

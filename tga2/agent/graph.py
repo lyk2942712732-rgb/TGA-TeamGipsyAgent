@@ -39,6 +39,7 @@ class TGAState(TypedDict, total=False):
     report_path: str
     status: str
     error: str
+    advance_action: str
 
 
 @dataclass(slots=True)
@@ -97,7 +98,11 @@ class TaskGraph:
             },
         )
         graph.add_edge("retry", "worker")
-        graph.add_edge("advance", "worker")
+        graph.add_conditional_edges(
+            "advance",
+            self._route_advance,
+            {"worker": "worker", "report": "reporter"},
+        )
         graph.add_edge("revise_plan", "advance")
         graph.add_edge("request_user_input", "wait_for_user")
         graph.add_edge("wait_for_user", "supervisor_checkpoint")
@@ -151,6 +156,10 @@ class TaskGraph:
         if action == "finish":
             return "report"
         return str(action)
+
+    @staticmethod
+    def _route_advance(state: TGAState) -> str:
+        return state.get("advance_action", "worker")
 
 
 __all__ = ["RuntimeDeps", "TGAState", "TaskGraph"]

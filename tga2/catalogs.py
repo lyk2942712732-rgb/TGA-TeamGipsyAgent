@@ -28,6 +28,18 @@ def host_capabilities() -> list[dict[str, Any]]:
             ("worker",),
         ),
         (
+            "list_artifacts",
+            "List task Artifacts",
+            "evidence",
+            "passive",
+            {
+                "intent_id": {"type": "string"},
+                "kind": {"type": "string"},
+                "limit": {"type": "integer", "default": 100},
+            },
+            ("worker",),
+        ),
+        (
             "read_artifact",
             "Read existing task Artifact",
             "evidence",

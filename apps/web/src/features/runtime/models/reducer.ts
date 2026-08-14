@@ -126,6 +126,8 @@ function reduceV6EntityEvent(state: RuntimeStore, event: RuntimeEvent): RuntimeS
       const current = next.evidenceById[claimId];
       const item: RuntimeEvidenceClaim = {
         claimId,
+        intentId: event.intentId ?? current?.intentId ?? null,
+        sourceIntentId: text(payload.source_intent_id) ?? current?.sourceIntentId ?? null,
         statementPreview: text(payload.statement_preview) ?? current?.statementPreview ?? "",
         artifactId: text(payload.artifact_id) ?? current?.artifactId ?? "",
         locator: object(payload.locator).kind ? object(payload.locator) : current?.locator ?? {},

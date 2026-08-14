@@ -36,6 +36,15 @@ authorization and anti-repetition `stop_conditions`. After each tool result Runt
 checklist. Worker and Reviewer return index-based criterion assessments, and
 Runtime rejects a `pass` that does not cover every criterion.
 
+Intent transitions are Runtime-owned as well. Planned dependency indexes are
+resolved into persisted Intent IDs and only ready Intents are dispatched. Before
+each Worker starts, Runtime builds a bounded handoff ledger from TaskStore rather
+than replaying prior chat. The ledger contains terminal Intent summaries,
+confirmed evidence, findings, Artifact metadata and prior commands. Workers use
+`list_artifacts` and `read_artifact` for selective retrieval. A cross-Intent
+Artifact remains immutable; the consuming Intent creates its own Claim with both
+consumer and source Intent IDs, preserving Reviewer isolation and provenance.
+
 There is one application container. API, CLI and tests receive the same Runtime,
 configuration, Skill repository and MCP repository. Settings pages therefore
 change the real execution objects instead of maintaining a display-only copy.
