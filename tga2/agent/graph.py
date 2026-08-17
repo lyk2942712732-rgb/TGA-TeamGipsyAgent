@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any, TypedDict
 
@@ -47,6 +47,7 @@ class RuntimeDeps:
     store: TaskStore
     workspace: TaskWorkspace
     agents: AgentSuite
+    agents_factory: Callable[[], AgentSuite] | None = None
     sandbox_image: str | None = None
     configuration: Configuration | None = None
     skills: SkillRepository | None = None

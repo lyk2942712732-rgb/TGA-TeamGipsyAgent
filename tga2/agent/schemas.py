@@ -149,6 +149,7 @@ class ReviewPacket(BaseModel):
     intent_success_criteria: list[str]
     expected_evidence: list[str]
     stop_conditions: list[str]
+    user_interventions: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class SituationPacket(BaseModel):

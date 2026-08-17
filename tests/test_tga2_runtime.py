@@ -1498,6 +1498,20 @@ def test_agent_model_assignments_are_validated_and_routed(
         assert isinstance(routed, RoutedAgentSuite)
         assert isinstance(routed.roles["supervisor"], LangChainAgentSuite)
         assert isinstance(routed.roles["worker"], OfflineAgentSuite)
+    changed = app.state.container.runtime.set_solver_model(
+        made["task_id"], "worker", provider["id"], model_id
+    )
+    with app.state.container.runtime._runtime(made["task_id"]) as (_store, graph):
+        routed = graph.dependencies.agents
+        assert isinstance(routed, RoutedAgentSuite)
+        assert isinstance(routed.roles["worker"], LangChainAgentSuite)
+    worker = next(
+        item
+        for item in app.state.container.runtime.snapshot(made["task_id"])["solvers"]
+        if item["solver_id"] == "worker"
+    )
+    assert changed["model"]["model_id"] == model_id
+    assert worker["model_snapshot"]["model_id"] == model_id
     runtime_payload = json.loads(
         (app.state.container.run_root / ".config" / "runtime.json").read_text()
     )
@@ -1520,6 +1534,68 @@ def test_cancelled_task_is_not_restarted_or_completed(tmp_path: Path) -> None:
     result = service.run_task(made["task_id"])
     assert result["status"] == "cancelled"
     assert service.snapshot(made["task_id"])["session"]["status"] == "cancelled"
+
+
+def test_solver_chat_persists_prompt_attachment_and_pause_state(tmp_path: Path) -> None:
+    service = TaskRuntimeService(run_root=tmp_path / "runs")
+    made = service.create_task(
+        CreateTaskRequest(
+            name="solver chat",
+            objective="accept a live solver prompt",
+            mode="vulnerability_research",
+        )
+    )
+    staged = tmp_path / "screen.png"
+    staged.write_bytes(b"not-a-real-png")
+
+    sent = service.send_solver_message(
+        made["task_id"],
+        "worker",
+        content="Inspect this screenshot next.",
+        attachments=(
+            {
+                "path": str(staged),
+                "name": "screen.png",
+                "media_type": "image/png",
+            },
+        ),
+    )
+    paused = service.control_solver(made["task_id"], "worker", "pause")
+    snapshot = service.snapshot(made["task_id"])
+    message = next(
+        item for item in snapshot["events"] if item["type"] == "USER_SOLVER_MESSAGE"
+    )
+    worker = next(item for item in snapshot["solvers"] if item["solver_id"] == "worker")
+
+    assert sent["accepted"] is True
+    assert paused["status"] == "paused"
+    assert not staged.exists()
+    assert message["payload"]["content"] == "Inspect this screenshot next."
+    assert message["payload"]["attachments"][0]["media_type"] == "image/png"
+    assert (tmp_path / "runs" / made["task_id"] / message["payload"]["attachments"][0]["path"]).is_file()
+    assert worker["status"] == "paused"
+
+
+def test_solver_pause_resumes_the_exact_langgraph_checkpoint(tmp_path: Path) -> None:
+    service = TaskRuntimeService(run_root=tmp_path / "runs")
+    made = service.create_task(
+        CreateTaskRequest(
+            name="solver pause",
+            objective="pause before planning",
+            mode="vulnerability_research",
+        )
+    )
+    service.control_solver(made["task_id"], "supervisor", "pause")
+
+    paused = service.run_task(made["task_id"])
+    resumed = service.control_solver(made["task_id"], "supervisor", "resume")
+
+    assert paused["status"] == "paused"
+    assert paused["interrupts"] == [
+        {"kind": "solver_pause", "solver_id": "supervisor", "intent_id": None}
+    ]
+    assert resumed["resumed_checkpoint"] is True
+    assert service.snapshot(made["task_id"])["session"]["status"] == "completed"
 
 
 def test_tga2_has_no_legacy_or_fastapi_imports() -> None:

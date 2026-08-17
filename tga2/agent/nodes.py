@@ -70,7 +70,7 @@ class GraphNodes:
         task = self._task(state)
         runtime = self.deps.configuration.runtime
         role_status = {
-            role: self.deps.configuration.role_model_status(role)
+            role: self._role_model_status(task.id, role)
             for role in ("supervisor", "worker", "reviewer", "reporter")
         }
         unavailable = [
@@ -96,6 +96,8 @@ class GraphNodes:
 
     def initial_plan(self, state: TGAState) -> TGAState:
         task = self._task(state)
+        self._pause_if_requested(task.id, "supervisor")
+        self._refresh_agents()
         self._ensure_task_time(task.id)
         self._ensure_model_budget(state, "supervisor")
         self._solver_activity(
@@ -170,6 +172,8 @@ class GraphNodes:
     def worker(self, state: TGAState) -> TGAState:
         task = self._task(state)
         intent = self._intent(state)
+        self._pause_if_requested(task.id, "worker", intent.id)
+        self._refresh_agents()
         self._ensure_task_time(task.id)
         self._ensure_model_budget(state, "worker")
         attempt = state.get("attempt", 1)
@@ -217,7 +221,7 @@ class GraphNodes:
         )
         tools = self._worker_tools(task.id, intent.id)
         role_tools = set(self.deps.configuration.runtime.roles["worker"].tools)
-        interventions = self._interventions(task.id, intent.id)
+        interventions = self._interventions(task.id, intent.id, "worker")
         feedback = state.get("review_feedback", "")
         if interventions:
             feedback = "\n\n".join(
@@ -226,7 +230,18 @@ class GraphNodes:
                     feedback,
                     "User interventions:\n"
                     + "\n".join(
-                        f"- [{item.get('kind', 'hint')}] {item.get('content', '')}"
+                        (
+                            f"- [{item.get('kind', 'hint')}] {item.get('content', '')}"
+                            + (
+                                "\n  attachments: "
+                                + ", ".join(
+                                    f"{attachment.get('path')} ({attachment.get('media_type')})"
+                                    for attachment in item.get("attachments", [])
+                                )
+                                if item.get("attachments")
+                                else ""
+                            )
+                        )
                         for item in interventions[-10:]
                     ),
                 )
@@ -308,6 +323,8 @@ class GraphNodes:
     def reviewer(self, state: TGAState) -> TGAState:
         task = self._task(state)
         intent = self._intent(state)
+        self._pause_if_requested(task.id, "reviewer", intent.id)
+        self._refresh_agents()
         self._ensure_task_time(task.id)
         self._ensure_model_budget(state, "reviewer")
         self._solver_activity(
@@ -407,6 +424,10 @@ class GraphNodes:
 
     def supervisor_checkpoint(self, state: TGAState) -> TGAState:
         task = self._task(state)
+        self._pause_if_requested(
+            task.id, "supervisor", state.get("current_intent_id")
+        )
+        self._refresh_agents()
         self._ensure_task_time(task.id)
         self._ensure_model_budget(state, "supervisor")
         self._solver_activity(
@@ -632,12 +653,17 @@ class GraphNodes:
 
     def reporter(self, state: TGAState) -> TGAState:
         task = self._task(state)
+        self._pause_if_requested(task.id, "reporter")
+        self._refresh_agents()
         self._ensure_task_time(task.id)
         self._ensure_model_budget(state, "reporter")
         self._solver_activity(task.id, "reporter", "running", "正在生成最终证据报告")
         snapshot = self.deps.store.snapshot(task.id)
         report_input = {
             **snapshot,
+            "user_interventions": self._interventions(
+                task.id, state.get("current_intent_id", ""), "reporter"
+            )[-10:],
             "findings": [
                 item for item in snapshot["findings"] if item["status"] == "confirmed"
             ],
@@ -799,6 +825,9 @@ class GraphNodes:
             intent_success_criteria=list(intent.success_criteria),
             expected_evidence=list(intent.expected_evidence),
             stop_conditions=list(intent.stop_conditions),
+            user_interventions=self._interventions(
+                task.id, intent.id, "reviewer"
+            )[-10:],
         )
 
     def _retry_context(self, task_id: str, intent_id: str) -> dict[str, Any]:
@@ -953,7 +982,7 @@ class GraphNodes:
             ],
             failed_attempts=failed,
             user_interventions=self._interventions(
-                task.id, state.get("current_intent_id", "")
+                task.id, state.get("current_intent_id", ""), "supervisor"
             )[-10:],
             remaining_budget={
                 "task_model_calls": max(
@@ -1172,6 +1201,23 @@ class GraphNodes:
     def _take_model_calls(self, role: str) -> int:
         return self.deps.agents.take_model_calls(role)
 
+    def _refresh_agents(self) -> None:
+        if self.deps.agents_factory is not None:
+            self.deps.agents = self.deps.agents_factory()
+
+    def _role_model_status(self, task_id: str, role: str) -> dict[str, Any]:
+        changed = next(
+            (
+                event
+                for event in reversed(self.deps.store.list_events(task_id, limit=1000))
+                if event.type == "SOLVER_MODEL_CHANGED" and event.solver_id == role
+            ),
+            None,
+        )
+        if changed:
+            return dict(changed.payload.get("model") or {})
+        return self.deps.configuration.role_model_status(role)
+
     def _solver_activity(
         self,
         task_id: str,
@@ -1194,14 +1240,49 @@ class GraphNodes:
             )
         )
 
-    def _interventions(self, task_id: str, intent_id: str) -> list[dict[str, Any]]:
+    def _pause_if_requested(
+        self, task_id: str, solver_id: str, intent_id: str | None = None
+    ) -> None:
+        latest = next(
+            (
+                event
+                for event in reversed(self.deps.store.list_events(task_id, limit=1000))
+                if event.type == "SOLVER_CONTROL_CHANGED"
+                and event.solver_id == solver_id
+            ),
+            None,
+        )
+        if latest is None or latest.payload.get("state") != "paused":
+            return
+        self._solver_activity(
+            task_id,
+            solver_id,
+            "paused",
+            "已在 LangGraph 节点边界暂停，等待用户恢复",
+            intent_id,
+        )
+        interrupt(
+            {
+                "kind": "solver_pause",
+                "solver_id": solver_id,
+                "intent_id": intent_id,
+            }
+        )
+
+    def _interventions(
+        self, task_id: str, intent_id: str, solver_id: str
+    ) -> list[dict[str, Any]]:
         return [
             item.payload
             for item in self.deps.store.list_events(task_id, limit=1000)
-            if item.type in {"USER_INTERVENTION", "USER_INPUT_RECEIVED"}
+            if item.type in {
+                "USER_INTERVENTION",
+                "USER_INPUT_RECEIVED",
+                "USER_SOLVER_MESSAGE",
+            }
             and (
                 item.payload.get("scope") == "task"
-                or item.payload.get("target_id") in {intent_id, "worker", "supervisor"}
+                or item.payload.get("target_id") in {intent_id, solver_id}
                 or item.type == "USER_INPUT_RECEIVED"
             )
         ]

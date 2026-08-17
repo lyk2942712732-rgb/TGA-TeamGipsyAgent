@@ -88,4 +88,23 @@ describe("Phase 11 command workbench components", () => {
     expect(inspector).toHaveTextContent("run_command");
     expect(inspector).toHaveTextContent("Stop when the criterion is evidenced");
   });
+
+  it("opens a solver conversation with persisted prompts and runtime controls", () => {
+    const store = workbenchStore();
+    store.eventsBySeq[8] = {
+      schemaVersion: 6, id: "event-8", taskId: "task", seq: 8,
+      type: "USER_SOLVER_MESSAGE", solverId: "reviewer", intentId: "intent-review",
+      payload: { content: "优先核对截图里的版本号", attachments: [{ name: "version.png", media_type: "image/png" }] },
+      createdAt: "2026-07-30T00:00:08Z",
+    };
+    render(<SolverInspector store={store} solver={store.solversById.reviewer} />);
+    const inspector = screen.getByRole("complementary", { name: "Solver 检查器" });
+
+    fireEvent.click(within(inspector).getByRole("tab", { name: "对话" }));
+    expect(inspector).toHaveTextContent("优先核对截图里的版本号");
+    expect(inspector).toHaveTextContent("version.png");
+    expect(within(inspector).getByPlaceholderText("给 reviewer 添加提示…")).toBeInTheDocument();
+    expect(within(inspector).getByRole("button", { name: "暂停" })).toBeInTheDocument();
+    expect(inspector).toHaveTextContent("不展示模型隐藏思维链");
+  });
 });

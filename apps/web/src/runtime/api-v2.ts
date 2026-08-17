@@ -1,6 +1,7 @@
 import { apiBase, ApiError, requestJson } from "../api/client";
 import { normalizeRuntimeEvent, normalizeRuntimeSnapshot } from "../features/runtime/models/normalize";
 import type { RuntimeStore } from "../features/runtime/models/types";
+import type { StagedAsset } from "../api/tasks";
 import type { CapabilityCatalog, MCPHealth, MCPManagedServer, MCPServerConfig, MCPServerTools } from "./event-types";
 
 export type ArtifactPreviewResponse = {
@@ -54,6 +55,15 @@ export const runtimeApi = {
   control: async (taskId: string, action: "cancel") => {
     return requestJson<{ accepted?: boolean; status?: string; reason?: string }>(`/api/v2/tasks/${encodeURIComponent(taskId)}/control`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action }) });
   },
+  solverMessage: async (taskId: string, solverId: string, content: string, attachments: StagedAsset[]) => requestJson<{ accepted: boolean; status: string; message_id: string }>(`/api/v2/tasks/${encodeURIComponent(taskId)}/solvers/${encodeURIComponent(solverId)}/messages`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ content, attachments }),
+  }),
+  solverControl: async (taskId: string, solverId: string, action: "pause" | "resume") => requestJson<{ accepted: boolean; status: string; resumed_checkpoint?: boolean }>(`/api/v2/tasks/${encodeURIComponent(taskId)}/solvers/${encodeURIComponent(solverId)}/control`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action }),
+  }),
+  solverModel: async (taskId: string, solverId: string, providerId: string, modelId: string) => requestJson<{ model: Record<string, unknown> }>(`/api/v2/tasks/${encodeURIComponent(taskId)}/solvers/${encodeURIComponent(solverId)}/model`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ provider_id: providerId, model_id: modelId }),
+  }),
   intervention: async (taskId: string, payload: { kind: "hint" | "instruction" | "constraint" | "priority_change" | "answer"; content: string; scope: "task" | "solver" | "intent"; target_id?: string }) => requestJson<{ accepted?: boolean; status?: string; intervention?: { id?: string } }>(`/api/v2/tasks/${encodeURIComponent(taskId)}/interventions`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }),
   userInput: async (taskId: string, content: string) => requestJson<{ status?: string }>(`/api/v2/tasks/${encodeURIComponent(taskId)}/user-input`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ content }) }),
   approvalDecision: async (taskId: string, actionId: string, decision: "approve" | "reject") => requestJson<{ accepted?: boolean; status?: string }>(`/api/v2/tasks/${encodeURIComponent(taskId)}/approvals/${encodeURIComponent(actionId)}/decision`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ decision }) }),

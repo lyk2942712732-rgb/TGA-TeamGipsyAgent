@@ -96,6 +96,7 @@ def runtime_snapshot_projection(
         projected_status,
         intents,
         approvals,
+        runtime,
     )
     model_call_event_types = {
         "PLAN_CREATED",
@@ -351,6 +352,7 @@ def _solvers(
     task_status: str,
     intents: list[dict[str, Any]],
     approvals: list[dict[str, Any]],
+    runtime: RuntimeSettings | None,
 ) -> list[dict[str, Any]]:
     roles = ("supervisor", "worker", "reviewer", "reporter")
     latest_run = {run["solver_id"]: run for run in runs}
@@ -431,7 +433,7 @@ def _solvers(
                 "assigned_intent_id": assigned_intent,
                 "status": status_value,
                 "current_summary": summary,
-                "model_snapshot": {},
+                "model_snapshot": _solver_model_snapshot(role, role_events, runtime),
                 "capability_binding": {},
                 "budget_usage": {
                     "input_tokens": int(run.get("input_tokens") or 0),
@@ -448,6 +450,28 @@ def _solvers(
     return result
 
 
+def _solver_model_snapshot(
+    role: str, role_events: list[dict[str, Any]], runtime: RuntimeSettings | None
+) -> dict[str, Any]:
+    changed = next(
+        (
+            item
+            for item in reversed(role_events)
+            if item["type"] == "SOLVER_MODEL_CHANGED"
+        ),
+        None,
+    )
+    if changed:
+        return dict((changed.get("payload") or {}).get("model") or {})
+    if runtime and role in runtime.roles:
+        selection = runtime.roles[role].model
+        return {
+            "provider_id": selection.provider_id,
+            "model_id": selection.model_id,
+        }
+    return {}
+
+
 def _solver_state(
     role: str,
     role_events: list[dict[str, Any]],
@@ -458,6 +482,16 @@ def _solver_state(
     current_intent: dict[str, Any] | None,
     fallback_summary: str,
 ) -> tuple[str, str]:
+    latest_control = next(
+        (
+            item
+            for item in reversed(role_events)
+            if item["type"] == "SOLVER_CONTROL_CHANGED"
+        ),
+        None,
+    )
+    if latest_control and (latest_control.get("payload") or {}).get("state") == "paused":
+        return "paused", _event_summary(latest_control) or "已暂停"
     if terminal:
         activity_status = str((activity or {}).get("payload", {}).get("status") or "")
         if task_status == "failed":

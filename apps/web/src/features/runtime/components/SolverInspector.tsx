@@ -1,9 +1,11 @@
-import { useMemo, useState } from "react";
-import { ScrollText, Users } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Bot, Paperclip, Pause, Play, Send, ScrollText, UserRound, Users, X } from "lucide-react";
 import { selectEventsBySolver } from "../models/selectors";
 import type { RuntimeEvent, RuntimeSolver, RuntimeStore } from "../models/types";
 import { StatusBadge } from "../../../shared/StatusBadge";
-import { statusDefinition } from "../../../shared/status";
+import { runtimeApi } from "../../../runtime/api-v2";
+import { deleteStagedInput, fetchAgentModelOptions, stageInput, type AgentModelOptions, type StagedAsset } from "../../../api/tasks";
+import type { TaskMode } from "../../../modes";
 
 /**
  * Reference image 05's Solver Inspector: a labelled summary of the selected
@@ -12,11 +14,12 @@ import { statusDefinition } from "../../../shared/status";
  * the summary keeps the drill-downs the workbench already projects.
  */
 
-type InspectorTab = "overview" | "transcript" | "plan" | "skills" | "tools" | "artifacts" | "config";
-const TABS: Array<[InspectorTab, string]> = [["overview", "概览"], ["transcript", "事件日志"], ["plan", "当前 Intent"], ["skills", "Skills"], ["tools", "Tools"], ["artifacts", "Artifacts"], ["config", "配置"]];
+type InspectorTab = "overview" | "chat" | "transcript" | "plan" | "skills" | "tools" | "artifacts" | "config";
+const TABS: Array<[InspectorTab, string]> = [["overview", "概览"], ["chat", "对话"], ["transcript", "事件日志"], ["plan", "当前 Intent"], ["skills", "Skills"], ["tools", "Tools"], ["artifacts", "Artifacts"], ["config", "配置"]];
 
-export function SolverInspector({ solver, store }: { solver: RuntimeSolver | null; store?: RuntimeStore }) {
+export function SolverInspector({ solver, store, readonly = false, chatOpenNonce = 0, onChanged = () => undefined }: { solver: RuntimeSolver | null; store?: RuntimeStore; readonly?: boolean; chatOpenNonce?: number; onChanged?: () => void }) {
   const [tab, setTab] = useState<InspectorTab>("overview");
+  useEffect(() => { if (chatOpenNonce) setTab("chat"); }, [chatOpenNonce]);
   return <aside className="solver-inspector" aria-label="Solver 检查器">
     <header><h2>Solver Inspector</h2><Users size={16} aria-hidden="true" /></header>
     {solver ? <>
@@ -29,6 +32,7 @@ export function SolverInspector({ solver, store }: { solver: RuntimeSolver | nul
       </div>
       <div className="solver-inspector-panel" role="tabpanel">
         {tab === "overview" ? <Overview solver={solver} store={store} /> : null}
+        {tab === "chat" && store ? <SolverChat solver={solver} store={store} readonly={readonly} onChanged={onChanged} /> : null}
         {tab === "transcript" ? <Transcript solver={solver} store={store} /> : null}
         {tab === "plan" ? <LocalPlan solver={solver} store={store} /> : null}
         {tab === "skills" ? <Skills solver={solver} store={store} /> : null}
@@ -109,6 +113,128 @@ function TokenBar({ used, total }: { used: number; total: number }) {
   if (!total) return null;
   const percent = Math.min(100, Math.round(used / total * 100));
   return <div className="inspector-bar"><i><em style={{ width: `${percent}%` }} /></i><small>{percent}%</small></div>;
+}
+
+type ConversationMessage = { id: number; role: "user" | "agent" | "action" | "system"; text: string; createdAt: string; attachments: Array<Record<string, unknown>> };
+
+function SolverChat({ solver, store, readonly, onChanged }: { solver: RuntimeSolver; store: RuntimeStore; readonly: boolean; onChanged: () => void }) {
+  const [text, setText] = useState("");
+  const [assets, setAssets] = useState<StagedAsset[]>([]);
+  const [models, setModels] = useState<AgentModelOptions["models"]>([]);
+  const [selectedModel, setSelectedModel] = useState("");
+  const [busy, setBusy] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const endRef = useRef<HTMLDivElement>(null);
+  const events = useMemo(() => selectEventsBySolver(store, solver.solverId), [store, solver.solverId]);
+  const messages = useMemo(() => events.map(conversationMessage).filter((value): value is ConversationMessage => value !== null), [events]);
+  const latestControl = [...events].reverse().find((event) => event.type === "SOLVER_CONTROL_CHANGED");
+  const paused = latestControl?.payload.state === "paused" || solver.status === "paused";
+  const terminal = ["completed", "completed_with_limitations", "cancelled", "failed"].includes(store.session.status);
+
+  useEffect(() => { endRef.current?.scrollIntoView({ block: "nearest" }); }, [messages.length]);
+  useEffect(() => {
+    let active = true;
+    void fetchAgentModelOptions(store.task.mode as TaskMode).then((value) => {
+      if (!active) return;
+      const ready = value.models.filter((item) => item.ready);
+      setModels(ready);
+      const provider = String(solver.modelSnapshot.provider_id ?? "");
+      const model = String(solver.modelSnapshot.model_id ?? "");
+      setSelectedModel(provider && model ? `${provider}::${model}` : ready[0] ? `${ready[0].provider_id}::${ready[0].model_id}` : "");
+    }).catch(() => { if (active) setModels([]); });
+    return () => { active = false; };
+  }, [solver.solverId, solver.modelSnapshot.provider_id, solver.modelSnapshot.model_id, store.task.mode]);
+
+  async function addFiles(files: File[]) {
+    setBusy("upload"); setNotice(null);
+    try {
+      const uploaded = await Promise.all(files.map((file) => stageInput(file)));
+      setAssets((current) => [...current, ...uploaded]);
+    } catch (reason) { setNotice(reason instanceof Error ? reason.message : "附件上传失败"); }
+    finally { setBusy(null); }
+  }
+
+  async function removeAsset(asset: StagedAsset) {
+    setAssets((current) => current.filter((item) => item.id !== asset.id));
+    if (asset.status === "uploaded") await deleteStagedInput(asset.id).catch(() => undefined);
+  }
+
+  async function send() {
+    if ((!text.trim() && !assets.length) || busy || readonly || terminal) return;
+    setBusy("send"); setNotice(null);
+    try {
+      await runtimeApi.solverMessage(store.task.id, solver.solverId, text.trim(), assets);
+      setText(""); setAssets([]); setNotice("提示已进入该 Solver 的运行上下文"); onChanged();
+    } catch (reason) { setNotice(reason instanceof Error ? reason.message : "发送失败"); }
+    finally { setBusy(null); }
+  }
+
+  async function togglePause() {
+    setBusy("control"); setNotice(null);
+    try {
+      await runtimeApi.solverControl(store.task.id, solver.solverId, paused ? "resume" : "pause");
+      setNotice(paused ? "Solver 已恢复" : "暂停请求已提交，将在下一个框架检查点生效"); onChanged();
+    } catch (reason) { setNotice(reason instanceof Error ? reason.message : "控制失败"); }
+    finally { setBusy(null); }
+  }
+
+  async function changeModel(value: string) {
+    setSelectedModel(value);
+    const [providerId, modelId] = value.split("::");
+    if (!providerId || !modelId) return;
+    setBusy("model"); setNotice(null);
+    try {
+      await runtimeApi.solverModel(store.task.id, solver.solverId, providerId, modelId);
+      setNotice("模型已切换，将用于该 Solver 的后续调用"); onChanged();
+    } catch (reason) { setNotice(reason instanceof Error ? reason.message : "模型切换失败"); }
+    finally { setBusy(null); }
+  }
+
+  return <section className="solver-chat" aria-label={`${solver.solverId} 对话`}>
+    <div className="solver-chat-controls">
+      <label>后续模型<select value={selectedModel} disabled={readonly || busy !== null || !models.length} onChange={(event) => void changeModel(event.target.value)}>
+        {!models.length ? <option value="">暂无已验证模型</option> : null}
+        {models.map((item) => <option key={`${item.provider_id}::${item.model_id}`} value={`${item.provider_id}::${item.model_id}`}>{item.provider_name} / {item.model_name}</option>)}
+      </select></label>
+      <button type="button" disabled={readonly || busy !== null || terminal} onClick={() => void togglePause()}>{paused ? <Play size={13} /> : <Pause size={13} />}{paused ? "继续" : "暂停"}</button>
+    </div>
+    <p className="solver-chat-note">这里展示持久化的决策摘要、阶段和工具动作，不展示模型隐藏思维链。暂停在下一个 LangGraph 节点边界生效。</p>
+    <div className="solver-chat-thread" aria-live="polite">
+      {messages.length ? messages.map((message) => <article key={message.id} data-role={message.role}>
+        <span>{message.role === "user" ? <UserRound size={13} /> : <Bot size={13} />}</span>
+        <div><small>{message.role === "user" ? "你" : message.role === "action" ? "动作" : solver.solverId} · {formatConversationTime(message.createdAt)}</small><p>{message.text}</p>{message.attachments.length ? <ul>{message.attachments.map((item, index) => <li key={`${message.id}-${index}`}>{String(item.name ?? item.path ?? "附件")}</li>)}</ul> : null}</div>
+      </article>) : <p className="runtime-empty">还没有对话。Solver 的阶段、动作、提问和你的提示会出现在这里。</p>}
+      <div ref={endRef} />
+    </div>
+    <div className="solver-chat-composer">
+      {assets.length ? <div className="solver-chat-assets">{assets.map((asset) => <span key={asset.id}>{asset.originalName}<button aria-label={`移除 ${asset.originalName}`} onClick={() => void removeAsset(asset)}><X size={11} /></button></span>)}</div> : null}
+      <textarea value={text} disabled={readonly || terminal} placeholder={store.session.status === "awaiting_user_input" && solver.solverId === "supervisor" ? "回答 Supervisor…" : `给 ${solver.solverId} 添加提示…`} onChange={(event) => setText(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void send(); } }} />
+      <div><input ref={fileRef} hidden multiple type="file" accept="image/*,audio/*,video/*,.pdf,.txt,.md,.json,.csv" onChange={(event) => { void addFiles(Array.from(event.target.files ?? [])); event.target.value = ""; }} /><button type="button" title="添加图片或文件" disabled={readonly || terminal || busy !== null} onClick={() => fileRef.current?.click()}><Paperclip size={14} /></button><small>支持图片、音视频和文档</small><button className="solver-chat-send" type="button" disabled={readonly || terminal || busy !== null || (!text.trim() && !assets.length)} onClick={() => void send()}><Send size={14} /></button></div>
+    </div>
+    {notice ? <p className="solver-chat-notice" role="status">{notice}</p> : null}
+  </section>;
+}
+
+function conversationMessage(event: RuntimeEvent): ConversationMessage | null {
+  const payload = event.payload;
+  const attachments = Array.isArray(payload.attachments) ? payload.attachments.filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object" && !Array.isArray(item)) : [];
+  if (event.type === "USER_SOLVER_MESSAGE") return { id: event.seq, role: "user", text: String(payload.content || (attachments.length ? "发送了附件" : "发送了提示")), createdAt: event.createdAt, attachments };
+  if (event.type === "USER_INPUT_REQUIRED") return { id: event.seq, role: "agent", text: String(payload.question || payload.reason || "需要用户补充信息"), createdAt: event.createdAt, attachments: [] };
+  if (["TOOL_ACTION_REQUESTED", "TOOL_COMPLETED", "ACTION_APPROVED", "ACTION_REJECTED", "SKILL_DOCUMENT_READ"].includes(event.type)) return { id: event.seq, role: "action", text: eventConversationSummary(event), createdAt: event.createdAt, attachments: [] };
+  if (["SOLVER_CONTROL_CHANGED", "SOLVER_MODEL_CHANGED"].includes(event.type)) return { id: event.seq, role: "system", text: eventConversationSummary(event), createdAt: event.createdAt, attachments: [] };
+  if (["SOLVER_STATUS_CHANGED", "PLAN_CREATED", "WORKER_ATTEMPT_COMPLETED", "REVIEW_COMPLETED", "SUPERVISOR_DECIDED", "REPORT_GENERATED"].includes(event.type)) return { id: event.seq, role: "agent", text: eventConversationSummary(event), createdAt: event.createdAt, attachments: [] };
+  return null;
+}
+
+function eventConversationSummary(event: RuntimeEvent): string {
+  const value = event.payload;
+  return String(value.summary ?? value.question ?? value.feedback ?? value.reason ?? value.status ?? value.tool_name ?? event.type);
+}
+
+function formatConversationTime(value: string): string {
+  const date = new Date(value);
+  return Number.isNaN(date.valueOf()) ? value : date.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
 }
 
 function Transcript({ solver, store }: { solver: RuntimeSolver; store?: RuntimeStore }) {

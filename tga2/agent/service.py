@@ -90,10 +90,17 @@ class TaskRuntimeService:
     def _skill_catalog(self, _task: Task) -> str:
         return self.skills.catalog_prompt()
 
-    def _agents_for_task(self, task: Task) -> AgentSuite:
-        return self.agents
+    def _agents_for_task(self, task: Task, store: TaskStore | None = None) -> AgentSuite:
+        if self._agents_overridden or store is None:
+            return self.agents
+        overrides = self._model_overrides(store, task.id)
+        return self._build_agents(overrides=overrides) if overrides else self.agents
 
-    def _build_agents(self, fallback: ModelSettings | None = None) -> AgentSuite:
+    def _build_agents(
+        self,
+        fallback: ModelSettings | None = None,
+        overrides: dict[str, tuple[str, str]] | None = None,
+    ) -> AgentSuite:
         offline = OfflineAgentSuite()
         roles: dict[str, AgentSuite] = {}
         for role in ("supervisor", "worker", "reviewer", "reporter"):
@@ -108,8 +115,9 @@ class TaskRuntimeService:
             else:
                 call_limit = role_budget.calls_per_report
             parse_retries = 0 if role == "worker" else role_budget.parse_retries
-            provider_id = role_config.model.provider_id
-            model_id = role_config.model.model_id
+            provider_id, model_id = (overrides or {}).get(
+                role, (role_config.model.provider_id, role_config.model.model_id)
+            )
             if (provider_id, model_id) == ("offline", "offline"):
                 if fallback and fallback.can_call_model and fallback.verified:
                     roles[role] = LangChainAgentSuite(
@@ -124,7 +132,9 @@ class TaskRuntimeService:
                     roles[role] = offline
                 continue
             try:
-                settings = self.configuration.role_model_settings(role)
+                settings = self.configuration.model_registry.settings(
+                    provider_id, model_id, require_verified=True
+                )
                 if settings is not None:
                     roles[role] = LangChainAgentSuite(
                         build_chat_model(settings),
@@ -499,6 +509,174 @@ class TaskRuntimeService:
             "intervention": {"id": f"evt-{event.seq}"},
         }
 
+    def send_solver_message(
+        self,
+        task_id: str,
+        solver_id: str,
+        *,
+        content: str,
+        attachments: Sequence[dict[str, Any]] = (),
+    ) -> dict[str, Any]:
+        """Persist a solver-scoped prompt and make uploaded files task resources."""
+        if solver_id not in {"supervisor", "worker", "reviewer", "reporter"}:
+            raise ValueError(f"unknown solver: {solver_id}")
+        content = content.strip()
+        if not content and not attachments:
+            raise ValueError("content or attachments are required")
+        workspace = TaskWorkspace(self.run_root, task_id)
+        ingested: list[dict[str, Any]] = []
+        should_resume = False
+        with self._store(task_id) as store:
+            task = store.get_task(task_id)
+            if task is None:
+                raise KeyError(f"task not found: {task_id}")
+            for item in attachments:
+                source = Path(str(item["path"]))
+                destination = workspace.ingest_input(source)
+                raw = destination.read_bytes()
+                ingested.append(
+                    {
+                        "name": str(item.get("name") or destination.name),
+                        "path": destination.relative_to(workspace.root).as_posix(),
+                        "media_type": str(item.get("media_type") or workspace.media_type(destination)),
+                        "size": len(raw),
+                        "sha256": hashlib.sha256(raw).hexdigest(),
+                    }
+                )
+                source.unlink(missing_ok=True)
+            intent_id = next(
+                (
+                    event.intent_id
+                    for event in reversed(store.list_events(task_id, limit=1000))
+                    if event.solver_id == solver_id and event.intent_id
+                ),
+                None,
+            )
+            event = store.append_event(
+                AgentEvent(
+                    task_id=task_id,
+                    type="USER_SOLVER_MESSAGE",
+                    solver_id=solver_id,
+                    intent_id=intent_id,
+                    payload={
+                        "kind": "answer" if task.status == TaskStatus.AWAITING_USER_INPUT else "instruction",
+                        "scope": "solver",
+                        "target_id": solver_id,
+                        "content": content[:12000],
+                        "attachments": ingested,
+                    },
+                )
+            )
+            should_resume = (
+                task.status == TaskStatus.AWAITING_USER_INPUT
+                and solver_id == "supervisor"
+                and bool(content)
+            )
+        if should_resume:
+            result = self.resume_task(task_id, {"content": content})
+            return {**result, "accepted": True, "message_id": f"evt-{event.seq}"}
+        return {
+            "task_id": task_id,
+            "accepted": True,
+            "status": "recorded",
+            "message_id": f"evt-{event.seq}",
+            "attachments": ingested,
+        }
+
+    def control_solver(self, task_id: str, solver_id: str, action: str) -> dict[str, Any]:
+        if solver_id not in {"supervisor", "worker", "reviewer", "reporter"}:
+            raise ValueError(f"unknown solver: {solver_id}")
+        if action not in {"pause", "resume"}:
+            raise ValueError("action must be pause or resume")
+        with self._store(task_id) as store:
+            task = store.get_task(task_id)
+            if task is None:
+                raise KeyError(f"task not found: {task_id}")
+            store.append_event(
+                AgentEvent(
+                    task_id=task_id,
+                    type="SOLVER_CONTROL_CHANGED",
+                    solver_id=solver_id,
+                    payload={
+                        "state": "paused" if action == "pause" else "running",
+                        "action": action,
+                        "summary": (
+                            "已请求在下一个 LangGraph 检查点暂停"
+                            if action == "pause"
+                            else "已恢复 Solver 后续工作"
+                        ),
+                    },
+                )
+            )
+        resumed = False
+        if action == "resume":
+            with self._runtime(task_id) as (_store, graph):
+                checkpoint = graph.state(task_id)
+                requests = [
+                    getattr(item, "value", item)
+                    for item in (getattr(checkpoint, "interrupts", ()) or ())
+                ]
+                if any(
+                    isinstance(item, dict)
+                    and item.get("kind") == "solver_pause"
+                    and item.get("solver_id") == solver_id
+                    for item in requests
+                ):
+                    graph.resume(
+                        task_id,
+                        {"action": "resume_solver", "solver_id": solver_id},
+                    )
+                    resumed = True
+        return {
+            "task_id": task_id,
+            "solver_id": solver_id,
+            "accepted": True,
+            "status": "paused" if action == "pause" else "running",
+            "resumed_checkpoint": resumed,
+        }
+
+    def set_solver_model(
+        self, task_id: str, solver_id: str, provider_id: str, model_id: str
+    ) -> dict[str, Any]:
+        if solver_id not in {"supervisor", "worker", "reviewer", "reporter"}:
+            raise ValueError(f"unknown solver: {solver_id}")
+        self.configuration.model_registry.settings(
+            provider_id, model_id, require_verified=True
+        )
+        provider = self.configuration.model_registry.provider(provider_id)
+        model = provider.model(model_id)
+        snapshot = {
+            "provider_id": provider_id,
+            "provider_name": provider.name,
+            "model_id": model_id,
+            "model_name": model.name,
+            "verification_status": model.verification_status,
+            "ready": True,
+        }
+        with self._store(task_id) as store:
+            store.append_event(
+                AgentEvent(
+                    task_id=task_id,
+                    type="SOLVER_MODEL_CHANGED",
+                    solver_id=solver_id,
+                    payload={"model": snapshot, "summary": f"后续调用改用 {provider.name} / {model.name}"},
+                )
+            )
+        return {"task_id": task_id, "solver_id": solver_id, "model": snapshot}
+
+    @staticmethod
+    def _model_overrides(store: TaskStore, task_id: str) -> dict[str, tuple[str, str]]:
+        values: dict[str, tuple[str, str]] = {}
+        for event in store.list_events(task_id, limit=1000):
+            if event.type != "SOLVER_MODEL_CHANGED" or not event.solver_id:
+                continue
+            model = event.payload.get("model") or {}
+            provider_id = str(model.get("provider_id") or "")
+            model_id = str(model.get("model_id") or "")
+            if provider_id and model_id:
+                values[event.solver_id] = (provider_id, model_id)
+        return values
+
     def delete_task(self, task_id: str) -> dict[str, Any]:
         workspace = TaskWorkspace(self.run_root, task_id)
         if not workspace.database_path.is_file():
@@ -570,7 +748,12 @@ class TaskRuntimeService:
             RuntimeDeps(
                 store=store,
                 workspace=workspace,
-                agents=self._agents_for_task(task),
+                agents=self._agents_for_task(task, store),
+                agents_factory=(
+                    None
+                    if self._agents_overridden
+                    else lambda: self._agents_for_task(task, store)
+                ),
                 sandbox_image=self.configuration.runtime.sandbox_image,
                 configuration=self.configuration,
                 skills=self.skills,
@@ -604,6 +787,8 @@ class TaskRuntimeService:
         status = (
             "awaiting_user_input"
             if "user_input" in interrupt_kinds
+            else "paused"
+            if "solver_pause" in interrupt_kinds
             else "awaiting_approval"
             if interrupts
             else state.get("status", "running")

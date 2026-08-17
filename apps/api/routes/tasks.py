@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import re
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
@@ -401,7 +402,15 @@ async def stage_input(
             "id": asset_id,
             "originalName": safe,
             "mimeType": request.headers.get("content-type", "application/octet-stream"),
-            "mediaKind": "other",
+            "mediaKind": (
+                "image"
+                if request.headers.get("content-type", "").startswith("image/")
+                else "text"
+                if request.headers.get("content-type", "").startswith("text/")
+                else "document"
+                if request.headers.get("content-type", "") in {"application/pdf", "application/json"}
+                else "other"
+            ),
             "size": len(raw),
             "sha256": hashlib.sha256(raw).hexdigest(),
             "status": "uploaded",
@@ -463,10 +472,62 @@ def user_input(task_id: str, payload: dict, app: Container = Depends(container))
     return _call(app.runtime.resume_task, task_id, {"content": content})
 
 
-@router.post("/tasks/{task_id}/solvers/{solver_id}/control")
 @router.post("/tasks/{task_id}/intents/{solver_id}/retry")
 def graph_managed(task_id: str, solver_id: str):
     return {"task_id": task_id, "accepted": False, "status": "graph_managed"}
+
+
+@router.post("/tasks/{task_id}/solvers/{solver_id}/messages")
+def solver_message(
+    task_id: str, solver_id: str, payload: dict, app: Container = Depends(container)
+):
+    attachments = []
+    staging = (app.run_root / ".staging").resolve()
+    for item in payload.get("attachments") or []:
+        asset_id = str((item or {}).get("id") or "")
+        if not asset_id or not re.fullmatch(r"[0-9a-f]{32}", asset_id):
+            raise HTTPException(422, "invalid attachment id")
+        matches = list(staging.glob(f"{asset_id}-*"))
+        if len(matches) != 1:
+            raise HTTPException(422, f"staged attachment not found: {asset_id}")
+        path = matches[0].resolve()
+        path.relative_to(staging)
+        attachments.append(
+            {
+                "path": str(path),
+                "name": Path(str((item or {}).get("originalName") or path.name)).name,
+                "media_type": str((item or {}).get("mimeType") or "application/octet-stream"),
+            }
+        )
+    return _call(
+        app.runtime.send_solver_message,
+        task_id,
+        solver_id,
+        content=str(payload.get("content") or ""),
+        attachments=attachments,
+    )
+
+
+@router.post("/tasks/{task_id}/solvers/{solver_id}/control")
+def solver_control(
+    task_id: str, solver_id: str, payload: dict, app: Container = Depends(container)
+):
+    return _call(
+        app.runtime.control_solver, task_id, solver_id, str(payload.get("action") or "")
+    )
+
+
+@router.put("/tasks/{task_id}/solvers/{solver_id}/model")
+def solver_model(
+    task_id: str, solver_id: str, payload: dict, app: Container = Depends(container)
+):
+    return _call(
+        app.runtime.set_solver_model,
+        task_id,
+        solver_id,
+        str(payload.get("provider_id") or ""),
+        str(payload.get("model_id") or ""),
+    )
 
 
 @router.get("/dashboard")
