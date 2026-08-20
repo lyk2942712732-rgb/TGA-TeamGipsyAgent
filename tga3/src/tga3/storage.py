@@ -26,6 +26,7 @@ from .domain import (
     QABody,
     RunState,
     TaskRun,
+    Writeup,
     utc_now,
 )
 from .errors import ConflictError, FindingRejectedError, NotFoundError
@@ -34,6 +35,7 @@ from .errors import ConflictError, FindingRejectedError, NotFoundError
 class Storage(Protocol):
     async def create_task(self, title: str, task_id: UUID | None = None) -> TaskRun: ...
     async def get_task(self, task_id: UUID) -> TaskRun: ...
+    async def list_tasks(self, *, limit: int = 200) -> list[TaskRun]: ...
     async def update_task(
         self, task_id: UUID, *, state: RunState | None = None, final_snapshot_seq: int | None = None
     ) -> TaskRun: ...
@@ -71,6 +73,7 @@ class Storage(Protocol):
         idempotency_key: str,
     ) -> BlackboardEntry: ...
     async def save_writeup(self, task_id: UUID, snapshot_seq: int, path: str, sha256: str) -> UUID: ...
+    async def latest_writeup(self, task_id: UUID) -> Writeup: ...
 
 
 def _validate_publish(
@@ -113,7 +116,7 @@ class InMemoryStorage:
         self.dialogue: dict[UUID, list[DialogueMessage]] = defaultdict(list)
         self.questions: dict[UUID, PendingQuestion] = {}
         self.answers: dict[UUID, BlackboardEntry] = {}
-        self.writeups: dict[UUID, dict[str, Any]] = {}
+        self.writeups: dict[UUID, Writeup] = {}
         self._locks: defaultdict[UUID, asyncio.Lock] = defaultdict(asyncio.Lock)
 
     async def create_task(self, title: str, task_id: UUID | None = None) -> TaskRun:
@@ -128,6 +131,9 @@ class InMemoryStorage:
             return self.tasks[task_id]
         except KeyError as exc:
             raise NotFoundError(f"task not found: {task_id}") from exc
+
+    async def list_tasks(self, *, limit: int = 200) -> list[TaskRun]:
+        return sorted(self.tasks.values(), key=lambda item: item.created_at, reverse=True)[:limit]
 
     async def update_task(
         self, task_id: UUID, *, state: RunState | None = None, final_snapshot_seq: int | None = None
@@ -312,14 +318,21 @@ class InMemoryStorage:
 
     async def save_writeup(self, task_id: UUID, snapshot_seq: int, path: str, sha256: str) -> UUID:
         await self.get_task(task_id)
-        writeup_id = uuid4()
-        self.writeups[writeup_id] = {
-            "task_id": task_id,
-            "snapshot_seq": snapshot_seq,
-            "storage_path": path,
-            "sha256": sha256,
-        }
-        return writeup_id
+        writeup = Writeup(
+            task_id=task_id,
+            snapshot_seq=snapshot_seq,
+            storage_path=path,
+            sha256=sha256,
+        )
+        self.writeups[writeup.id] = writeup
+        return writeup.id
+
+    async def latest_writeup(self, task_id: UUID) -> Writeup:
+        await self.get_task(task_id)
+        values = [item for item in self.writeups.values() if item.task_id == task_id]
+        if not values:
+            raise NotFoundError(f"writeup not found for task: {task_id}")
+        return max(values, key=lambda item: item.created_at)
 
 
 def _json(value: Any) -> str:
@@ -391,6 +404,13 @@ class PostgresStorage:
         if row is None:
             raise NotFoundError(f"task not found: {task_id}")
         return _task(row)
+
+    async def list_tasks(self, *, limit: int = 200) -> list[TaskRun]:
+        rows = await self.pool.fetch(
+            "SELECT * FROM task_runs ORDER BY created_at DESC LIMIT $1",
+            limit,
+        )
+        return [_task(row) for row in rows]
 
     async def update_task(
         self, task_id: UUID, *, state: RunState | None = None, final_snapshot_seq: int | None = None
@@ -718,6 +738,15 @@ class PostgresStorage:
             sha256,
         )
         return writeup_id
+
+    async def latest_writeup(self, task_id: UUID) -> Writeup:
+        row = await self.pool.fetchrow(
+            "SELECT * FROM writeups WHERE task_id=$1 ORDER BY created_at DESC LIMIT 1",
+            task_id,
+        )
+        if row is None:
+            raise NotFoundError(f"writeup not found for task: {task_id}")
+        return Writeup.model_validate(dict(row))
 
 
 __all__ = ["InMemoryStorage", "PostgresStorage", "Storage"]

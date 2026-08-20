@@ -61,3 +61,6 @@ async def test_final_candidate_freezes_snapshot_and_generates_writeup(tmp_path: 
     assert completed.state == RunState.COMPLETED
     assert completed.final_snapshot_seq == 2
     assert (tmp_path / str(task.id) / "writeup.md").is_file()
+    writeup = await storage.latest_writeup(task.id)
+    assert writeup.task_id == task.id
+    assert writeup.snapshot_seq == 2

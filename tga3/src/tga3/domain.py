@@ -194,6 +194,16 @@ class InputFile(BaseModel):
     created_at: datetime = Field(default_factory=utc_now)
 
 
+class Writeup(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    id: UUID = Field(default_factory=uuid4)
+    task_id: UUID
+    snapshot_seq: int = Field(ge=1)
+    storage_path: str = Field(min_length=1)
+    sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    created_at: datetime = Field(default_factory=utc_now)
+
+
 class DialogueKind(StrEnum):
     ASSISTANT_DELTA = "assistant_delta"
     BLACKBOARD_PROGRESS = "blackboard_progress"
@@ -284,5 +294,6 @@ __all__ = [
     "USER_ACTOR",
     "UserFileBody",
     "UserPromptBody",
+    "Writeup",
     "utc_now",
 ]

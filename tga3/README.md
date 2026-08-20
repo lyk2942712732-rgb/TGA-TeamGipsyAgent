@@ -1,11 +1,11 @@
 # TGA3
 
-TGA3 是与旧 `tga2` 并列的新后端，不适配旧数据库、旧任务或现有前端。它把“如何执行”交给两个成熟 Agent SDK，把主服务缩成控制面、黑板、对话流和容器生命周期管理。
+TGA3 是与旧 `tga2` 并列的新运行时，不适配旧数据库或旧任务。`apps/web` 已直接使用 TGA3 API；它把“如何执行”交给两个成熟 Agent SDK，把主服务缩成控制面、黑板、对话流和容器生命周期管理。
 
 ## 最终拓扑
 
 ```text
-用户 / 后续前端
+用户 / apps/web
        │ HTTP + SSE
        ▼
 ┌──────────────────────── Ubuntu 主服务 ────────────────────────┐
@@ -64,7 +64,7 @@ chmod +x scripts/*.sh
 ./scripts/ubuntu-bootstrap.sh
 ```
 
-脚本只通过 Compose 启动长期 PostgreSQL，并构建共同 Kali 基础镜像及两个 SDK 增量镜像。Worker 不在 Compose 中；任务创建时由 Docker SDK 动态启动，任务停止时回收。
+脚本通过 Compose 启动长期 PostgreSQL，构建共同 Kali 基础镜像及两个 SDK 增量镜像，安装主服务，并构建 `apps/web/dist`。Worker 不在 Compose 中；任务创建时由 Docker SDK 动态启动，任务停止时回收。
 
 共同基础镜像使用官方 `kalilinux/kali-rolling` 和无桌面的 `kali-linux-headless` meta package。它仍然是较大的安全工具镜像，但不再复制两份 26GB 桌面镜像：Docker layer 会被两个 Worker 共享。若以后确认工具利用率很低，再把 meta package 换成精确包列表即可。
 
@@ -81,16 +81,18 @@ docker compose up -d --wait postgres
 .venv/bin/tga3 --config-dir config serve
 ```
 
-也可复制 `deploy/tga3.service`，按实际仓库路径调整后交给 systemd。该 unit 的 `ExecStartPre` 会确保 PostgreSQL 已启动；用户不需要每次手工 `docker compose up`。
+生产运行复制 `deploy/tga3.service` 和 `deploy/nginx-tga3.conf`。systemd unit 的 `ExecStartPre` 会确保 PostgreSQL 已启动；Nginx 提供 SPA 路由并把 `/api/v3`（包括 SSE）反向代理给主服务。用户不需要每次手工 `docker compose up`。
 
-## 主要接口（供后续前端对接）
+## 前端 API
 
-- `POST /tasks`：创建任务并启动两个 Worker 容器。
-- `POST /tasks/{id}/files`、`POST /tasks/{id}/prompts`：多模态文件与后续提示。
-- `GET /tasks/{id}/blackboard`：精简黑板增量。
-- `GET /tasks/{id}/dialogue` 与 `/dialogue/stream`：历史及 SSE 对话流。
-- `POST /questions/{id}/answer`：回答 Supervisor 的问题并写入 Q&A。
-- `POST /tasks/{id}/agents/{agent}/pause|resume|model`：单独控制 Worker。
+- `GET|POST /api/v3/tasks`：任务列表；创建任务并启动两个 Worker 容器。
+- `POST /api/v3/tasks/{id}/files`、`POST /api/v3/tasks/{id}/prompts`：多模态文件与后续提示。
+- `GET /api/v3/tasks/{id}/blackboard`：精简黑板增量。
+- `GET /api/v3/tasks/{id}/dialogue` 与 `/dialogue/stream`：历史及 SSE 对话流。
+- `POST /api/v3/questions/{id}/answer`：回答 Supervisor 的问题并写入 Q&A。
+- `POST /api/v3/tasks/{id}/agents/{agent}/pause|resume|model`：单独控制 Worker。
+- `GET /api/v3/models`、`GET /api/v3/skills`：无密钥模型目录与按名读取的 Skill 目录。
+- `GET /api/v3/tasks/{id}/writeup/download`：下载最终 Markdown writeup。
 - `WS /internal/agents/{task}/{agent}`：Worker 主动建立的 JSON-RPC 通道。
 - `/mcp`：两个 Worker 共用的黑板/Skill 执行器。
 

@@ -191,6 +191,7 @@ class TaskCoordinator:
             actor=USER_ACTOR,
             kind=DialogueKind.USER_MESSAGE,
             text=text,
+            channel_agent_id=(addressed_to or ["supervisor"])[0],
             payload={"addressed_to": addressed_to or []},
         )
         return entry
