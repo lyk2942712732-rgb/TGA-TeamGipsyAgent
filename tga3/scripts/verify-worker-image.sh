@@ -3,7 +3,7 @@ set -euo pipefail
 
 image="${1:-tga3-ctf-base:local}"
 
-docker run --rm --entrypoint /bin/bash "${image}" -lc '
+docker run --rm --entrypoint /bin/bash "${image}" -c '
 set -euo pipefail
 
 required_commands=(
