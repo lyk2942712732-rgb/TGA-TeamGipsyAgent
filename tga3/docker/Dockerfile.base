@@ -71,9 +71,11 @@ RUN apt-get update \
 COPY docker/ctf-python-requirements.txt /opt/tga3/ctf-python-requirements.txt
 
 # Worker shells resolve `python` to this venv, so CTF libraries must be
-# installed here instead of only as Debian python3-* packages.
+# installed here instead of only as Debian python3-* packages. Unicorn 2.1.2
+# has no Python 3.14 wheel and its source build invokes cmake.
 RUN python3 -m venv /opt/tga3-venv \
     && /opt/tga3-venv/bin/pip install --no-cache-dir --upgrade pip setuptools wheel \
+    && /opt/tga3-venv/bin/pip install --no-cache-dir "cmake>=3.31,<5" \
     && /opt/tga3-venv/bin/pip install --no-cache-dir -r /opt/tga3/ctf-python-requirements.txt
 
 ENV PATH="/opt/tga3-venv/bin:${PATH}"

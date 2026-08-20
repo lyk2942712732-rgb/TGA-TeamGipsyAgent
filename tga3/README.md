@@ -82,7 +82,7 @@ sudo chmod -R u+rwX,go-rwx /opt/TGA-TeamGipsyAgent/tga3/config
 
 镜像构建默认直接使用 Kali HTTPS CDN，并为 APT 启用重试。官方最小容器尚无 CA bundle，Dockerfile 会先仅引导安装经过 Kali 仓库签名验证的 `ca-certificates`，之后所有软件包恢复正常 HTTPS 证书验证。构建脚本默认使用宿主网络，避免虚拟机代理或 Fake-IP DNS 只在宿主可用、Docker bridge 不可用的问题。需要切换镜像或网络时无需编辑 Dockerfile：
 
-Kali rolling 当前使用 Python 3.14；Ropper 依赖的 `filebytes` PyPI 发布包尚未适配，因此 CTF Python 依赖固定到该项目已经合并的 Python 3.14 兼容提交。这个固定版本是可复现的构建输入，不需要在测试机手工修改。
+Kali rolling 当前使用 Python 3.14；Ropper 依赖的 `filebytes` PyPI 发布包尚未适配，因此 CTF Python 依赖固定到该项目已经合并的 Python 3.14 兼容提交。Unicorn 当前也没有 Python 3.14 wheel，基础镜像会先安装 CMake 再从源码构建。以上均为可复现的镜像构建输入，不需要在测试机手工修改。
 
 ```bash
 KALI_MIRROR=https://mirrors.tuna.tsinghua.edu.cn/kali ./scripts/ubuntu-bootstrap.sh
