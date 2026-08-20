@@ -1,12 +1,26 @@
 FROM kalilinux/kali-rolling:latest
 
+ARG KALI_MIRROR=https://kali.download/kali
+
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1
 
-# kali-linux-headless is the official non-GUI metapackage. It gives both workers
-# the same broad CTF tool floor without carrying a desktop image.
+# Avoid MirrorBrain selecting an unreachable HTTP mirror, and let apt retry
+# transient package failures during the relatively large first build.
+RUN test -n "${KALI_MIRROR}" \
+    && rm -f /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources \
+    && echo "deb ${KALI_MIRROR} kali-rolling main contrib non-free non-free-firmware" > /etc/apt/sources.list \
+    && printf '%s\n' \
+       'Acquire::Retries "5";' \
+       'Acquire::http::Timeout "60";' \
+       'Acquire::https::Timeout "60";' \
+       > /etc/apt/apt.conf.d/80-tga3-network
+
+# kali-linux-headless provides the broad CLI pentest floor. The explicit
+# additions cover the gaps that matter to TGA3's Pwn, RE, vulnerability
+# research, incident-response, forensics, crypto and Misc scenes.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
        kali-linux-headless \
@@ -16,9 +30,42 @@ RUN apt-get update \
        ca-certificates \
        git \
        curl \
+       jq \
+       ripgrep \
+       build-essential \
+       gdb \
+       gdb-multiarch \
+       checksec \
+       patchelf \
+       strace \
+       ltrace \
+       qemu-user \
+       afl++ \
+       ghidra \
+       apktool \
+       jadx \
+       tshark \
+       ewf-tools \
+       foremost \
+       plaso \
+       yara \
+       steghide \
+       stegseek \
+       zbar-tools \
+       pngcheck \
+       imagemagick \
+       ffmpeg \
+       sox \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-RUN python3 -m venv /opt/tga3-venv
+COPY docker/ctf-python-requirements.txt /opt/tga3/ctf-python-requirements.txt
+
+# Worker shells resolve `python` to this venv, so CTF libraries must be
+# installed here instead of only as Debian python3-* packages.
+RUN python3 -m venv /opt/tga3-venv \
+    && /opt/tga3-venv/bin/pip install --no-cache-dir --upgrade pip setuptools wheel \
+    && /opt/tga3-venv/bin/pip install --no-cache-dir -r /opt/tga3/ctf-python-requirements.txt
+
 ENV PATH="/opt/tga3-venv/bin:${PATH}"
 WORKDIR /workspace

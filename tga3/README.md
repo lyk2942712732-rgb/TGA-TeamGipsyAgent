@@ -71,7 +71,23 @@ sudo chmod -R u+rwX,go-rwx /opt/TGA-TeamGipsyAgent/tga3/config
 
 脚本通过 Compose 启动长期 PostgreSQL，构建共享 Kali 基础镜像和两个 SDK 增量镜像，安装主服务，并构建 `apps/web/dist`。Worker 不在 Compose 中常驻；创建任务时由 Docker SDK 动态启动，停止任务时回收。
 
-共享基础镜像使用官方 `kalilinux/kali-rolling` 和无桌面的 `kali-linux-headless` meta package。两个 Worker 共享 Docker layer，不复制两份桌面镜像。
+共享基础镜像使用官方 `kalilinux/kali-rolling` 和无桌面的 `kali-linux-headless` meta package。两个 Worker 共享 Docker layer，不复制两份桌面镜像。基础层在通用渗透工具之外补充以下比赛与实战分析能力：
+
+- Pwn / 漏洞挖掘：GDB、gdb-multiarch、checksec、patchelf、strace、ltrace、QEMU user mode、AFL++、pwntools 和 angr。
+- 逆向：Ghidra（含 `analyzeHeadless`）、radare2、JADX、APKTool、Capstone、Unicorn 和 Ropper。
+- 应急响应 / 取证：TShark、EWF tools、Foremost、Plaso、YARA、Volatility 3 和 oletools。
+- 密码 / Misc：PyCryptodome、SymPy、Z3、Steghide、Stegseek、ZBar、PNGCheck、ImageMagick、FFmpeg 和 SoX。
+
+这些 Python 库安装在 Worker 实际使用的 `/opt/tga3-venv`，不是只放进系统 Python。容器默认增加 `SYS_PTRACE` 供本任务空间内的二进制动态调试使用，但不增加 `SYS_ADMIN` 或宿主设备访问权限；磁盘镜像优先使用用户态取证工具处理。
+
+镜像构建默认直接使用 Kali HTTPS CDN，并为 APT 启用重试。构建脚本默认使用宿主网络，避免虚拟机代理或 Fake-IP DNS 只在宿主可用、Docker bridge 不可用的问题。需要切换镜像或网络时无需编辑 Dockerfile：
+
+```bash
+KALI_MIRROR=https://mirrors.tuna.tsinghua.edu.cn/kali ./scripts/ubuntu-bootstrap.sh
+DOCKER_BUILD_NETWORK=bridge ./scripts/build-images.sh
+```
+
+不要同时启动多次 bootstrap。只有脚本输出 `Bootstrap complete` 后，才启动 `.venv/bin/tga3`；构建失败时不会生成完整的虚拟环境和 Worker 镜像。
 
 首次数据库由 PostgreSQL 容器执行 `schema.sql`。项目不提供迁移；schema 变化后删除测试数据卷并重建：
 

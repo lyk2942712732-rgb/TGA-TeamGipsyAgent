@@ -119,7 +119,7 @@ class DockerConfig(BaseModel):
     cpu_cores: float = Field(default=2, gt=0, le=64)
     memory_mb: int = Field(default=4096, ge=256, le=131072)
     pids_limit: int = Field(default=512, ge=32, le=65536)
-    cap_add: list[str] = Field(default_factory=lambda: ["NET_RAW"])
+    cap_add: list[str] = Field(default_factory=lambda: ["NET_RAW", "SYS_PTRACE"])
 
 
 class WorkerCyclePromptsConfig(BaseModel):

@@ -25,7 +25,7 @@
     "cpu_cores": 2.0,
     "memory_mb": 4096,
     "pids_limit": 512,
-    "cap_add": ["NET_RAW"]
+    "cap_add": ["NET_RAW", "SYS_PTRACE"]
   },
   "cadence": {
     "worker_sync_seconds": 90,
