@@ -1,0 +1,7 @@
+FROM tga3-ctf-base:local
+
+COPY pyproject.toml README.md /opt/tga3/
+COPY src /opt/tga3/src
+RUN pip install --no-cache-dir "/opt/tga3[worker-openai]"
+
+ENTRYPOINT ["python", "-m", "tga3.workers.openai_worker"]

@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "providers": [
+    {
+      "id": "openai",
+      "name": "OpenAI",
+      "protocol": "openai_responses",
+      "base_url": "https://api.openai.com/v1",
+      "api_keys": [
+        {
+          "id": "openai-primary",
+          "label": "Primary",
+          "api_key": ""
+        }
+      ],
+      "selected_api_key_id": "openai-primary",
+      "models": [
+        {
+          "id": "openai-worker-model",
+          "name": "gpt-5.6",
+          "max_output_tokens": 8192,
+          "timeout_seconds": 180
+        }
+      ]
+    },
+    {
+      "id": "anthropic",
+      "name": "Anthropic",
+      "protocol": "anthropic",
+      "base_url": "https://api.anthropic.com",
+      "api_keys": [
+        {
+          "id": "anthropic-primary",
+          "label": "Primary",
+          "api_key": ""
+        }
+      ],
+      "selected_api_key_id": "anthropic-primary",
+      "models": [
+        {
+          "id": "claude-worker-model",
+          "name": "claude-sonnet-4-6",
+          "max_output_tokens": 8192,
+          "timeout_seconds": 180
+        }
+      ]
+    }
+  ]
+}

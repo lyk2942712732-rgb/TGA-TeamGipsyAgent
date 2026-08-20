@@ -1,0 +1,22 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: tga3-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: tga3
+      POSTGRES_USER: tga3
+      POSTGRES_PASSWORD: tga3
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - tga3-postgres-data:/var/lib/postgresql/data
+      - ./schema.sql:/docker-entrypoint-initdb.d/001-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tga3 -d tga3"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  tga3-postgres-data:

@@ -1,0 +1,17 @@
+[Unit]
+Description=TGA3 control plane
+After=docker.service network-online.target
+Requires=docker.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/TGA-TeamGipsyAgent/tga3
+ExecStartPre=/usr/bin/docker compose up -d --wait postgres
+ExecStart=/opt/TGA-TeamGipsyAgent/tga3/.venv/bin/tga3 --config-dir /opt/TGA-TeamGipsyAgent/tga3/config serve
+Restart=on-failure
+RestartSec=3
+User=tga3
+Group=docker
+
+[Install]
+WantedBy=multi-user.target

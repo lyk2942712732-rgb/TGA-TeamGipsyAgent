@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "agents": {
+    "supervisor": {
+      "runtime": "openai_agents",
+      "provider_id": "openai",
+      "model_id": "openai-worker-model",
+      "max_turns_per_cycle": 3
+    },
+    "worker-openai": {
+      "runtime": "openai_agents",
+      "provider_id": "openai",
+      "model_id": "openai-worker-model",
+      "max_turns_per_cycle": 3
+    },
+    "worker-claude": {
+      "runtime": "claude_agent",
+      "provider_id": "anthropic",
+      "model_id": "claude-worker-model",
+      "max_turns_per_cycle": 3
+    },
+    "reporter": {
+      "runtime": "openai_agents",
+      "provider_id": "openai",
+      "model_id": "openai-worker-model",
+      "max_turns_per_cycle": 2
+    }
+  }
+}

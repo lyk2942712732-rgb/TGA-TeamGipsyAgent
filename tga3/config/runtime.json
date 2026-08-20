@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "postgres_dsn": "postgresql://tga3:tga3@127.0.0.1:5433/tga3",
+  "control_ws_url": "ws://host.docker.internal:8083/internal/agents",
+  "blackboard_mcp_url": "http://host.docker.internal:8083/mcp",
+  "listen_host": "0.0.0.0",
+  "listen_port": 8083,
+  "workspace_root": "./data/workspaces",
+  "input_root": "./data/inputs",
+  "artifact_root": "./data/artifacts",
+  "writeup_root": "./data/writeups",
+  "skills_root": "./config/skills",
+  "worker_images": {
+    "worker-openai": "tga3-worker-openai:local",
+    "worker-claude": "tga3-worker-claude:local"
+  },
+  "docker": {
+    "network": "bridge",
+    "cpu_cores": 2.0,
+    "memory_mb": 4096,
+    "pids_limit": 512,
+    "cap_add": ["NET_RAW"]
+  },
+  "cadence": {
+    "worker_sync_seconds": 90,
+    "supervisor_debounce_seconds": 2,
+    "supervisor_cooldown_seconds": 20,
+    "finalization_grace_seconds": 30
+  }
+}
