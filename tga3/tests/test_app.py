@@ -18,10 +18,12 @@ def test_frontend_api_is_versioned_and_never_exposes_provider_keys(tmp_path: Pat
     config.runtime.input_root = str(tmp_path / "inputs")
     config.runtime.artifact_root = str(tmp_path / "artifacts")
     config.runtime.writeup_root = str(tmp_path / "writeups")
+    storage = InMemoryStorage()
+    containers = FakeContainerRuntime()
     app = create_app(
         config,
-        InMemoryStorage(),
-        FakeContainerRuntime(),
+        storage,
+        containers,
         host_model=DeterministicHostModel(),
     )
 
@@ -33,4 +35,20 @@ def test_frontend_api_is_versioned_and_never_exposes_provider_keys(tmp_path: Pat
         assert catalog["providers"]
         assert "api_keys" not in catalog["providers"][0]
         assert "must-not-leak" not in str(catalog)
+        assert "system_prompt" not in str(catalog)
+        assert len(client.get("/api/v3/scenes").json()) == 8
         assert client.get("/api/v3/skills").status_code == 200
+        created = client.post(
+            "/api/v3/tasks",
+            data={"title": "scene task", "prompt": "analyze this", "scene_id": "reverse_engineering"},
+            files=[("files", ("challenge.bin", b"binary", "application/octet-stream"))],
+        )
+        assert created.status_code == 200
+        task_id = created.json()["id"]
+        assert created.json()["scene_id"] == "reverse_engineering"
+        detail = client.get(f"/api/v3/tasks/{task_id}").json()
+        assert len(detail["agents"]) == 4
+        assert {agent["runtime_location"] for agent in detail["agents"]} == {"host", "container"}
+        board = client.get(f"/api/v3/tasks/{task_id}/blackboard").json()["entries"]
+        assert [entry["topic"] for entry in board] == ["scene", "task", "input"]
+        assert len(containers.launched) == 2

@@ -14,7 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from .blackboard import Blackboard
 from .config import ResolvedAgent, TGA3Config
 from .dialogue import SolverDialogue
-from .domain import SYSTEM_ACTOR, Actor, DialogueKind, EntryKind, PublishRequest, RunState
+from .domain import SYSTEM_ACTOR, Actor, AgentState, DialogueKind, EntryKind, PublishRequest, RunState
 from .skills import SkillCatalog
 from .storage import Storage
 
@@ -66,17 +66,11 @@ class OpenAIHostModel:
             return self.skills.read(name)
 
         agent = Agent(
-            name="Supervisor",
+            name=binding.display_name,
             model=self._model(binding),
             output_type=SupervisorDecision,
             tools=[skills_list, skill_read],
-            instructions=(
-                "You are only an advisor. Read the compact blackboard, optionally load a skill by name, "
-                "describe observable progress, and give concise useful advice to either or both workers. "
-                "Do not schedule, verify artifacts, execute tools, or claim work was done. Ask a user question "
-                "only when the shared task truly cannot progress without user input. "
-                "Do not reveal hidden chain-of-thought."
-            ),
+            instructions=binding.system_prompt,
         )
         result = await Runner.run(agent, snapshot, max_turns=binding.max_turns_per_cycle)
         return SupervisorDecision.model_validate(result.final_output)
@@ -87,13 +81,9 @@ class OpenAIHostModel:
         set_tracing_disabled(True)
         binding = self.config.resolve_agent("reporter")
         agent = Agent(
-            name="Reporter",
+            name=binding.display_name,
             model=self._model(binding),
-            instructions=(
-                "Write a standalone Markdown writeup from the fixed blackboard snapshot. Explain the approach, "
-                "verified findings and final result. Do not invent evidence or mention hidden artifact links. "
-                "Return Markdown only."
-            ),
+            instructions=binding.system_prompt,
         )
         result = await Runner.run(agent, snapshot, max_turns=binding.max_turns_per_cycle)
         return str(result.final_output)
@@ -159,16 +149,38 @@ class Automation:
         last = self._last_supervisor_seq.get(task_id, 0)
         if trigger_seq <= last:
             return
-        sync = await self.blackboard.sync(task_id, after_seq=0)
-        snapshot = json.dumps([entry.model_dump(mode="json") for entry in sync.entries], ensure_ascii=False)
-        decision = await self.model.supervisor(snapshot)
+        configured = self.config.agents.agents["supervisor"]
         supervisor = Actor(
             agent_id="supervisor",
-            display_name="Supervisor",
+            display_name=configured.display_name,
             role="supervisor",
-            sdk=self.config.agent_models.agents["supervisor"].runtime,
-            model=self.config.agent_models.agents["supervisor"].model_id,
+            sdk=configured.runtime,
+            model=configured.model_id,
         )
+        await self.storage.update_agent(task_id, "supervisor", actual_state=AgentState.RUNNING)
+        await self.dialogue.announce_status(task_id, supervisor, AgentState.RUNNING.value)
+        try:
+            sync = await self.blackboard.sync(task_id, after_seq=0)
+            snapshot = json.dumps([entry.model_dump(mode="json") for entry in sync.entries], ensure_ascii=False)
+            decision = await self.model.supervisor(snapshot)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            await self.storage.update_agent(
+                task_id, "supervisor", actual_state=AgentState.FAILED, last_error=str(exc)
+            )
+            await self.dialogue.emit(
+                task_id,
+                actor=supervisor,
+                kind=DialogueKind.ERROR,
+                text=f"Supervisor 运行失败：{exc}",
+            )
+            return
+        finally:
+            current = await self.storage.get_agent(task_id, "supervisor")
+            if current.actual_state != AgentState.FAILED:
+                await self.storage.update_agent(task_id, "supervisor", actual_state=AgentState.IDLE)
+                await self.dialogue.announce_status(task_id, supervisor, AgentState.IDLE.value)
         await self.dialogue.announce_blackboard(task_id, sync.latest_seq, decision.progress)
         if decision.advice:
             await self.blackboard.publish(
@@ -197,9 +209,31 @@ class Automation:
         task = await self.storage.get_task(task_id)
         snapshot_seq = task.blackboard_seq
         await self.storage.update_task(task_id, state=RunState.REPORTING, final_snapshot_seq=snapshot_seq)
+        configured = self.config.agents.agents["reporter"]
+        reporter = Actor(
+            agent_id="reporter",
+            display_name=configured.display_name,
+            role="reporter",
+            sdk=configured.runtime,
+            model=configured.model_id,
+        )
+        await self.storage.update_agent(task_id, "reporter", actual_state=AgentState.RUNNING)
+        await self.dialogue.announce_status(task_id, reporter, AgentState.RUNNING.value)
         entries = await self.storage.list_entries(task_id, up_to_seq=snapshot_seq, limit=10_000)
         snapshot = json.dumps([entry.model_dump(mode="json") for entry in entries], ensure_ascii=False, indent=2)
-        markdown = await self.model.report(snapshot)
+        try:
+            markdown = await self.model.report(snapshot)
+        except Exception as exc:
+            await self.storage.update_agent(task_id, "reporter", actual_state=AgentState.FAILED, last_error=str(exc))
+            await self.storage.update_task(task_id, state=RunState.FAILED)
+            await self.dialogue.emit(
+                task_id,
+                actor=reporter,
+                kind=DialogueKind.ERROR,
+                text=f"Reporter 运行失败：{exc}",
+                channel_agent_id="reporter",
+            )
+            return
         root = self.config.resolve_path(self.config.runtime.writeup_root) / str(task_id)
         root.mkdir(parents=True, exist_ok=True)
         path = root / "writeup.md"
@@ -208,6 +242,19 @@ class Automation:
         await self.storage.save_writeup(task_id, snapshot_seq, str(path), digest)
         if self.on_reported:
             await self.on_reported(task_id)
+        await self.storage.update_agent(
+            task_id,
+            "reporter",
+            desired_state=AgentState.COMPLETED,
+            actual_state=AgentState.COMPLETED,
+        )
+        await self.storage.update_agent(
+            task_id,
+            "supervisor",
+            desired_state=AgentState.COMPLETED,
+            actual_state=AgentState.COMPLETED,
+        )
+        await self.dialogue.announce_status(task_id, reporter, AgentState.COMPLETED.value)
         await self.storage.update_task(task_id, state=RunState.COMPLETED)
         await self.dialogue.emit(
             task_id,

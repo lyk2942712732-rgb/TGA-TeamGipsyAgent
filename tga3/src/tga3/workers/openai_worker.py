@@ -17,7 +17,7 @@ class OpenAIAdapter(AgentAdapter):
         self.protocol = os.environ["TGA3_PROVIDER_PROTOCOL"]
         self.api_key = os.environ["TGA3_API_KEY"]
         self.base_url = os.environ.get("TGA3_BASE_URL") or None
-        self.max_turns = int(os.environ.get("TGA3_MAX_TURNS_PER_CYCLE", "3"))
+        self.max_turns = int(os.environ["TGA3_MAX_TURNS_PER_CYCLE"])
         self.mcp_url = os.environ["TGA3_BLACKBOARD_MCP_URL"]
         self.session: Any = None
 
@@ -90,11 +90,8 @@ class OpenAIAdapter(AgentAdapter):
             max_retry_attempts=3,
         ) as server:
             agent = Agent(
-                name=os.environ["TGA3_AGENT_ID"],
-                instructions=(
-                    worker_instructions()
-                    + "\nUse progress_update at meaningful milestones so the user can follow your approach."
-                ),
+                name=os.environ["TGA3_AGENT_DISPLAY_NAME"],
+                instructions=worker_instructions(),
                 model=model,
                 tools=[shell_exec, progress_update],
                 mcp_servers=[server],

@@ -4,12 +4,12 @@ import type {
   BlackboardSync,
   DialogueMessage,
   ModelCatalog,
+  SceneInfo,
   SkillDocument,
   SkillInfo,
   TaskDetail,
   TaskRun,
   UploadedFile,
-  Writeup,
 } from "./types";
 
 const configuredBase = (import.meta.env.VITE_TGA3_API_BASE as string | undefined)?.trim();
@@ -55,7 +55,14 @@ function json(method: string, body?: unknown): RequestInit {
 
 export const tga3Api = {
   listTasks: () => request<TaskRun[]>("/tasks"),
-  createTask: (title: string, prompt: string) => request<TaskRun>("/tasks", json("POST", { title, prompt })),
+  createTask: (title: string, prompt: string, sceneId: string, files: File[]) => {
+    const form = new FormData();
+    form.append("title", title);
+    form.append("prompt", prompt);
+    form.append("scene_id", sceneId);
+    files.forEach((file) => form.append("files", file));
+    return request<TaskRun>("/tasks", { method: "POST", body: form });
+  },
   getTask: (taskId: string) => request<TaskDetail>(`/tasks/${encodeURIComponent(taskId)}`),
   getBlackboard: (taskId: string) => request<BlackboardSync>(`/tasks/${encodeURIComponent(taskId)}/blackboard`),
   getDialogue: (taskId: string) => request<DialogueMessage[]>(`/tasks/${encodeURIComponent(taskId)}/dialogue`),
@@ -100,9 +107,9 @@ export const tga3Api = {
   ),
   stopTask: (taskId: string) => request<void>(`/tasks/${encodeURIComponent(taskId)}/stop`, { method: "POST" }),
   models: () => request<ModelCatalog>("/models"),
+  scenes: () => request<SceneInfo[]>("/scenes"),
   skills: () => request<SkillInfo[]>("/skills"),
   skill: (name: string) => request<SkillDocument>(`/skills/${encodeURIComponent(name)}`),
-  writeup: (taskId: string) => request<Writeup>(`/tasks/${encodeURIComponent(taskId)}/writeup`),
   writeupDownloadUrl: (taskId: string) => apiUrl(`/tasks/${encodeURIComponent(taskId)}/writeup/download`),
   dialogueStreamUrl: (taskId: string) => apiUrl(`/tasks/${encodeURIComponent(taskId)}/dialogue/stream`),
 };

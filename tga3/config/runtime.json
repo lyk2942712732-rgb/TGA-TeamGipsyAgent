@@ -10,9 +10,15 @@
   "artifact_root": "./data/artifacts",
   "writeup_root": "./data/writeups",
   "skills_root": "./config/skills",
+  "mcp_instructions": "共享任务记忆执行器：按序号增量读取黑板，只发布精简且已验证的知识，并仅在需要时按名称读取通用 Skill。",
   "worker_images": {
     "worker-openai": "tga3-worker-openai:local",
     "worker-claude": "tga3-worker-claude:local"
+  },
+  "worker_cycle_prompts": {
+    "startup": "开始任务：先增量读取共享黑板中的场景提示、用户描述和文件，再自主推进。",
+    "periodic": "进入周期工作：先增量读取共享黑板，再从当前会话状态继续推进任务。",
+    "blackboard_changed": "共享黑板已更新，请读取上次序号之后的条目并继续。latest_seq={latest_seq}"
   },
   "docker": {
     "network": "bridge",

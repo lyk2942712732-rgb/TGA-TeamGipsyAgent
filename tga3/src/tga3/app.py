@@ -3,31 +3,23 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 from contextlib import asynccontextmanager
-from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, FastAPI, Request, UploadFile, WebSocket
+from fastapi import APIRouter, FastAPI, File, Form, Request, UploadFile, WebSocket
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from .config import TGA3Config
 from .coordinator import TaskCoordinator
 from .docker_runtime import ContainerRuntime
-from .domain import USER_ACTOR, EntryKind, InputFile, PublishRequest, RunState, UserFileBody
+from .domain import RunState
 from .errors import TGA3Error
 from .host_agents import Automation, HostModel, OpenAIHostModel
 from .mcp_server import build_mcp
 from .skills import SkillCatalog
 from .storage import Storage
-
-
-class CreateTaskRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    title: str = Field(min_length=1, max_length=500)
-    prompt: str = Field(min_length=1)
 
 
 class PromptRequest(BaseModel):
@@ -89,6 +81,11 @@ def create_app(
         status = 404 if exc.code == "not_found" else 409 if exc.code == "conflict" else 422
         return JSONResponse(status_code=status, content={"error": exc.code, "message": str(exc)})
 
+    @app.exception_handler(KeyError)
+    @app.exception_handler(ValueError)
+    async def configuration_error(_request: Request, exc: KeyError | ValueError) -> JSONResponse:
+        return JSONResponse(status_code=422, content={"error": "invalid_configuration", "message": str(exc)})
+
     @api.get("/health")
     async def health() -> dict[str, str]:
         return {"status": "ok", "service": "tga3"}
@@ -99,8 +96,21 @@ def create_app(
         return [task.model_dump(mode="json") for task in tasks]
 
     @api.post("/tasks")
-    async def create_task(body: CreateTaskRequest) -> dict[str, Any]:
-        task = await coordinator.create_and_start(body.title, body.prompt)
+    async def create_task(
+        title: Annotated[str, Form(min_length=1, max_length=500)],
+        prompt: Annotated[str, Form(min_length=1)],
+        scene_id: Annotated[str, Form(min_length=1, max_length=100)],
+        files: Annotated[list[UploadFile] | None, File()] = None,
+    ) -> dict[str, Any]:
+        initial_files = [
+            (
+                file.filename or "upload.bin",
+                file.content_type or "application/octet-stream",
+                await file.read(),
+            )
+            for file in files or []
+        ]
+        task = await coordinator.create_and_start(title, prompt, scene_id, initial_files)
         return task.model_dump(mode="json")
 
     @api.get("/tasks/{task_id}")
@@ -109,46 +119,28 @@ def create_app(
         agents = await storage.list_agents(task_id)
         return {
             "task": task.model_dump(mode="json"),
-            "agents": [item.model_dump(mode="json") for item in agents],
+            "agents": [
+                {
+                    **item.model_dump(mode="json"),
+                    "display_name": config.agents.agents[item.agent_id].display_name,
+                    "role": config.agents.agents[item.agent_id].role,
+                    "runtime_location": (
+                        "container" if config.agents.agents[item.agent_id].role == "worker" else "host"
+                    ),
+                }
+                for item in agents
+            ],
         }
 
     @api.post("/tasks/{task_id}/files")
     async def upload_file(task_id: UUID, file: UploadFile) -> dict[str, Any]:
-        await storage.get_task(task_id)
-        name = Path(file.filename or "upload.bin").name
-        item_id = uuid4()
-        root = config.resolve_path(config.runtime.input_root) / str(task_id)
-        root.mkdir(parents=True, exist_ok=True)
-        path = root / f"{item_id}-{name}"
-        content = await file.read()
-        path.write_bytes(content)
-        item = InputFile(
-            id=item_id,
-            task_id=task_id,
-            name=name,
-            storage_path=str(path),
-            media_type=file.content_type or "application/octet-stream",
-            sha256=hashlib.sha256(content).hexdigest(),
-            size_bytes=len(content),
-        )
-        await storage.register_input_file(item)
-        body = UserFileBody(
-            input_file_id=item.id,
-            name=item.name,
-            media_type=item.media_type,
-            sha256=item.sha256,
-        )
-        entry = await coordinator.blackboard.publish(
+        item, entry_id = await coordinator.add_input_file(
             task_id,
-            USER_ACTOR,
-            PublishRequest(
-                kind=EntryKind.USER_FILE,
-                topic="input",
-                body=body.model_dump(mode="json"),
-                idempotency_key=f"file-{item.id}",
-            ),
+            file.filename or "upload.bin",
+            file.content_type or "application/octet-stream",
+            await file.read(),
         )
-        return {"file": item.model_dump(mode="json"), "blackboard_entry_id": str(entry.id)}
+        return {"file": item.model_dump(mode="json"), "blackboard_entry_id": str(entry_id)}
 
     @api.post("/tasks/{task_id}/prompts")
     async def add_prompt(task_id: UUID, body: PromptRequest) -> dict[str, Any]:
@@ -159,8 +151,6 @@ def create_app(
             attachment_ids=body.attachment_ids,
             idempotency_key=body.idempotency_key,
         )
-        for agent_id in body.addressed_to:
-            await coordinator.gateway.notify(task_id, agent_id, "session.add_prompt", {"text": body.text})
         return entry.model_dump(mode="json")
 
     @api.get("/tasks/{task_id}/blackboard")
@@ -228,10 +218,24 @@ def create_app(
                 for provider in config.models.providers
             ],
             "bindings": {
-                agent_id: binding.model_dump(mode="json")
-                for agent_id, binding in config.agent_models.agents.items()
+                agent_id: {
+                    "display_name": binding.display_name,
+                    "role": binding.role,
+                    "runtime": binding.runtime,
+                    "provider_id": binding.provider_id,
+                    "model_id": binding.model_id,
+                    "max_turns_per_cycle": binding.max_turns_per_cycle,
+                }
+                for agent_id, binding in config.agents.agents.items()
             },
         }
+
+    @api.get("/scenes")
+    async def scenes() -> list[dict[str, str]]:
+        return [
+            {"id": scene.id, "name": scene.name, "description": scene.description}
+            for scene in config.scenes.scenes
+        ]
 
     @api.get("/skills")
     async def skill_index() -> list[dict[str, str]]:

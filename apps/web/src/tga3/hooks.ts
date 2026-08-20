@@ -20,22 +20,28 @@ export function useTaskRuntime(taskId: string) {
 
   useEffect(() => {
     let active = true;
-    tga3Api.getDialogue(taskId).then((items) => {
-      if (active) setMessages(items);
-    }).catch(() => setStreamState("offline"));
+    const merge = (items: DialogueMessage[]) => {
+      if (!active) return;
+      setMessages((current) => {
+        const byId = new Map(current.map((item) => [item.id, item]));
+        items.forEach((item) => byId.set(item.id, item));
+        return [...byId.values()].sort((left, right) => left.seq - right.seq);
+      });
+    };
+    const poll = () => tga3Api.getDialogue(taskId).then(merge).catch(() => setStreamState("offline"));
+    void poll();
     const source = new EventSource(tga3Api.dialogueStreamUrl(taskId));
     source.onopen = () => setStreamState("online");
     source.onerror = () => setStreamState("offline");
     source.onmessage = (event) => {
-      const message = JSON.parse(event.data) as DialogueMessage;
-      setMessages((current) => current.some((item) => item.id === message.id)
-        ? current
-        : [...current, message].sort((left, right) => left.seq - right.seq));
+      merge([JSON.parse(event.data) as DialogueMessage]);
       void client.invalidateQueries({ queryKey: ["tga3", "task", taskId] });
       void client.invalidateQueries({ queryKey: ["tga3", "blackboard", taskId] });
     };
+    const pollingFallback = window.setInterval(() => void poll(), 2500);
     return () => {
       active = false;
+      window.clearInterval(pollingFallback);
       source.close();
     };
   }, [client, taskId]);

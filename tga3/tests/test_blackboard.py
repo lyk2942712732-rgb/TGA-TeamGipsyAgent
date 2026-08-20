@@ -41,7 +41,7 @@ def artifact(task_id, actor) -> Artifact:
 @pytest.mark.asyncio
 async def test_finding_gate_hides_artifact_links_and_is_idempotent():
     storage = InMemoryStorage()
-    task = await storage.create_task("gate")
+    task = await storage.create_task("gate", "penetration_test")
     board = Blackboard(storage)
     actor = worker()
     proof = await storage.register_artifact(artifact(task.id, actor))
@@ -64,7 +64,7 @@ async def test_finding_gate_hides_artifact_links_and_is_idempotent():
 @pytest.mark.asyncio
 async def test_finding_rejects_unknown_artifact_and_final_requires_known_finding():
     storage = InMemoryStorage()
-    task = await storage.create_task("reject")
+    task = await storage.create_task("reject", "penetration_test")
     board = Blackboard(storage)
     actor = worker()
 
@@ -94,7 +94,7 @@ async def test_finding_rejects_unknown_artifact_and_final_requires_known_finding
 @pytest.mark.asyncio
 async def test_concurrent_workers_receive_gapless_per_task_sequences():
     storage = InMemoryStorage()
-    task = await storage.create_task("concurrency")
+    task = await storage.create_task("concurrency", "penetration_test")
     board = Blackboard(storage)
     actors = [worker("worker-openai"), worker("worker-claude")]
     proof = await storage.register_artifact(artifact(task.id, actors[0]))
@@ -119,7 +119,7 @@ async def test_concurrent_workers_receive_gapless_per_task_sequences():
 @pytest.mark.asyncio
 async def test_role_policy_prevents_worker_from_writing_user_prompt():
     storage = InMemoryStorage()
-    task = await storage.create_task("policy")
+    task = await storage.create_task("policy", "penetration_test")
     board = Blackboard(storage)
     with pytest.raises(ContractError):
         await board.publish(

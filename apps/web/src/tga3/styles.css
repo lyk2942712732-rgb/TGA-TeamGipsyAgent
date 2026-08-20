@@ -86,19 +86,57 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .state-failed i, .state-cancelled i { background: var(--red); }
 .state-paused, .state-stopped { color: #58655e; }
 
-.new-task-form { display: grid; gap: 17px; padding: 24px; border: 1px solid var(--border); border-radius: 15px; background: var(--surface); box-shadow: var(--shadow); }
-.new-task-form > label, .control-field { display: grid; gap: 7px; color: var(--muted); font-size: 12px; font-weight: 700; }
-.new-task-form input, .new-task-form textarea, .control-field select, .message-composer textarea { width: 100%; border: 1px solid var(--border); border-radius: 9px; outline: 0; color: var(--ink); background: white; }
-.new-task-form input { height: 42px; padding: 0 12px; }
-.new-task-form textarea, .message-composer textarea { padding: 11px 12px; line-height: 1.65; resize: vertical; }
-.new-task-form input:focus, .new-task-form textarea:focus, .control-field select:focus, .message-composer textarea:focus { border-color: var(--green); box-shadow: 0 0 0 3px rgba(21,128,92,.1); }
-.file-drop { padding: 15px; border: 1px dashed #adc9bb; border-radius: 10px; background: var(--green-soft); }
-.file-drop input { height: auto; padding: 0; border: 0; background: transparent; }
-.file-drop span { color: var(--muted); font-weight: 400; }
+.control-field { display: grid; gap: 7px; color: var(--muted); font-size: 12px; font-weight: 700; }
+.control-field select, .message-composer textarea { width: 100%; border: 1px solid var(--border); border-radius: 9px; outline: 0; color: var(--ink); background: white; }
+.message-composer textarea { padding: 11px 12px; line-height: 1.65; resize: vertical; }
+.control-field select:focus, .message-composer textarea:focus { border-color: var(--green); box-shadow: 0 0 0 3px rgba(21,128,92,.1); }
+.task-modal-backdrop { position: fixed; inset: 0; z-index: 50; display: grid; place-items: start center; padding: 40px 18px; overflow-y: auto; background: rgba(8,18,14,.7); backdrop-filter: blur(5px); }
+.task-modal { width: min(840px, 100%); overflow: hidden; border: 1px solid #b8c9c0; border-radius: 18px; background: #f8faf9; box-shadow: 0 26px 80px rgba(0,0,0,.3); }
+.task-modal > header { display: flex; align-items: start; justify-content: space-between; gap: 20px; padding: 22px 25px; border-bottom: 1px solid var(--border); background: white; }
+.task-modal > header small { color: var(--green); font-size: 9px; font-weight: 800; letter-spacing: .15em; }
+.task-modal > header h1 { margin: 4px 0; font-size: 21px; }
+.task-modal > header p { margin: 0; color: var(--muted); font-size: 11px; }
+.task-modal > header button { display: grid; place-items: center; width: 34px; height: 34px; border: 0; border-radius: 9px; color: var(--muted); background: var(--surface-2); }
+.task-modal > form { display: grid; gap: 18px; padding: 24px 25px 26px; }
+.modal-field { display: grid; gap: 7px; color: var(--muted); font-size: 11px; font-weight: 700; }
+.modal-field input, .modal-field textarea { width: 100%; border: 1px solid var(--border); border-radius: 9px; outline: 0; color: var(--ink); background: white; }
+.modal-field input { height: 43px; padding: 0 12px; }
+.modal-field textarea { padding: 11px 12px; line-height: 1.65; resize: vertical; }
+.modal-field input:focus, .modal-field textarea:focus { border-color: var(--green); box-shadow: 0 0 0 3px rgba(21,128,92,.1); }
+.scene-field, .agent-defaults { min-width: 0; margin: 0; padding: 0; border: 0; }
+.scene-field legend, .agent-defaults legend { margin-bottom: 8px; color: var(--muted); font-size: 11px; font-weight: 700; }
+.scene-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.scene-grid button { display: grid; grid-template-columns: 28px minmax(0, 1fr); align-items: start; gap: 8px; min-height: 82px; padding: 11px; border: 1px solid var(--border); border-radius: 10px; color: var(--ink); background: white; text-align: left; }
+.scene-grid button > svg { width: 20px; color: var(--subtle); }
+.scene-grid button span { display: grid; gap: 4px; min-width: 0; }
+.scene-grid button b { font-size: 11px; }
+.scene-grid button small { display: -webkit-box; overflow: hidden; color: var(--subtle); font-size: 8px; line-height: 1.45; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.scene-grid button.active { border-color: var(--green); background: var(--green-soft); box-shadow: inset 0 0 0 1px var(--green); }
+.scene-grid button.active > svg, .scene-grid button.active b { color: var(--green-dark); }
+.architecture-card { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 14px 16px; border: 1px solid #b9d8c9; border-radius: 11px; background: var(--green-soft); }
+.architecture-card > div { display: flex; align-items: center; gap: 10px; color: var(--green-dark); }
+.architecture-card span { display: grid; gap: 2px; }
+.architecture-card small { font-size: 8px; }
+.architecture-card b { font-size: 12px; }
+.architecture-card p { margin: 0; color: var(--muted); font-size: 9px; }
+.agent-defaults { padding: 15px; border: 1px solid var(--border); border-radius: 11px; background: white; }
+.agent-defaults > p { margin: -2px 0 11px; color: var(--subtle); font-size: 9px; }
+.agent-defaults > div { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
+.agent-defaults article { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 9px 10px; border-radius: 8px; background: var(--surface-2); }
+.agent-defaults article span { display: grid; gap: 2px; }
+.agent-defaults article b { font-size: 10px; }
+.agent-defaults article small { color: var(--subtle); font-size: 8px; }
+.agent-defaults code { color: var(--green-dark); font-size: 8px; }
+.file-drop { cursor: pointer; }
+.file-drop input { display: none; }
+.modal-upload { display: flex; align-items: center; gap: 11px; padding: 14px; border: 1px dashed #adc9bb; border-radius: 10px; color: var(--green-dark); background: var(--green-soft); }
+.modal-upload span { display: grid; gap: 2px; color: var(--ink); font-size: 10px; font-weight: 700; }
+.modal-upload small { color: var(--muted); font-size: 8px; font-weight: 400; }
 .file-list { display: grid; gap: 6px; margin: -5px 0 0; padding: 0; list-style: none; }
 .file-list li { display: flex; justify-content: space-between; padding: 8px 10px; border-radius: 7px; background: var(--surface-2); font-size: 11px; }
 .file-list small { color: var(--subtle); }
-.submit-button { justify-self: end; min-width: 180px; }
+.task-modal form > footer { display: flex; justify-content: end; gap: 9px; padding-top: 4px; }
+.task-modal form > footer button { min-width: 110px; }
 .form-error, .error-box { margin: 0; padding: 11px 13px; border: 1px solid #f0caca; border-radius: 9px; color: var(--red); background: var(--red-soft); font-size: 12px; }
 
 .provider-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; }
@@ -282,4 +320,9 @@ button:disabled { cursor: not-allowed; opacity: .5; }
   .runtime-page { padding: 11px; }
   .runtime-title h1 { max-width: 270px; }
   .runtime-metrics .outline-button, .runtime-metrics .danger-button { min-height: 32px; padding: 0 9px; font-size: 10px; }
+  .task-modal-backdrop { padding: 12px; }
+  .task-modal > header, .task-modal > form { padding: 18px; }
+  .scene-grid { grid-template-columns: 1fr 1fr; }
+  .agent-defaults > div { grid-template-columns: 1fr; }
+  .architecture-card { align-items: start; flex-direction: column; }
 }

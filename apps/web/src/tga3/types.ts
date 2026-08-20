@@ -11,6 +11,7 @@ export type TaskState =
 
 export type AgentState =
   | "created"
+  | "idle"
   | "starting"
   | "running"
   | "pause_requested"
@@ -23,6 +24,7 @@ export type AgentState =
 export type TaskRun = {
   id: string;
   title: string;
+  scene_id: string;
   state: TaskState;
   blackboard_seq: number;
   dialogue_seq: number;
@@ -34,6 +36,9 @@ export type TaskRun = {
 export type AgentRun = {
   task_id: string;
   agent_id: "worker-openai" | "worker-claude" | string;
+  display_name: string;
+  role: "supervisor" | "worker" | "reporter";
+  runtime_location: "host" | "container";
   sdk: "openai_agents" | "claude_agent";
   desired_state: AgentState;
   actual_state: AgentState;
@@ -125,6 +130,8 @@ export type ProviderRecord = {
 export type ModelCatalog = {
   providers: ProviderRecord[];
   bindings: Record<string, {
+    display_name: string;
+    role: "supervisor" | "worker" | "reporter";
     runtime: "openai_agents" | "claude_agent";
     provider_id: string;
     model_id: string;
@@ -134,6 +141,7 @@ export type ModelCatalog = {
 
 export type SkillInfo = { name: string; description: string };
 export type SkillDocument = { name: string; content: string };
+export type SceneInfo = { id: string; name: string; description: string };
 
 export type UploadedFile = {
   file: {
@@ -145,13 +153,4 @@ export type UploadedFile = {
     size_bytes: number;
   };
   blackboard_entry_id: string;
-};
-
-export type Writeup = {
-  id: string;
-  task_id: string;
-  snapshot_seq: number;
-  storage_path: string;
-  sha256: string;
-  created_at: string;
 };

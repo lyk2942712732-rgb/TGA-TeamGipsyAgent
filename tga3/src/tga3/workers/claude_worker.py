@@ -16,7 +16,7 @@ class ClaudeAdapter(AgentAdapter):
         self.model_name = os.environ["TGA3_MODEL_NAME"]
         self.api_key = os.environ["TGA3_API_KEY"]
         self.base_url = os.environ.get("TGA3_BASE_URL") or None
-        self.max_turns = int(os.environ.get("TGA3_MAX_TURNS_PER_CYCLE", "3"))
+        self.max_turns = int(os.environ["TGA3_MAX_TURNS_PER_CYCLE"])
         self.mcp_url = os.environ["TGA3_BLACKBOARD_MCP_URL"]
         self.session_id: str | None = None
 

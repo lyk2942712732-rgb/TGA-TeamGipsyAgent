@@ -28,7 +28,7 @@ class WorkerSession:
         self.task_id = os.environ["TGA3_TASK_ID"]
         self.agent_id = os.environ["TGA3_AGENT_ID"]
         self.control_url = f"{os.environ['TGA3_CONTROL_WS_URL'].rstrip('/')}/{self.task_id}/{self.agent_id}"
-        self.sync_seconds = int(os.environ.get("TGA3_SYNC_SECONDS", "90"))
+        self.sync_seconds = int(os.environ["TGA3_SYNC_SECONDS"])
         self.session_id = str(uuid4())
         self.queue: asyncio.Queue[str | None] = asyncio.Queue()
         self.paused = asyncio.Event()
@@ -59,7 +59,7 @@ class WorkerSession:
             params = message.params or {}
             try:
                 if message.method == "session.start":
-                    await self.queue.put(str(params.get("prompt", "Start by syncing the blackboard.")))
+                    await self.queue.put(str(params.get("prompt") or os.environ["TGA3_STARTUP_PROMPT"]))
                 elif message.method == "session.pause":
                     self.paused.clear()
                     if self.current_cycle and not self.current_cycle.done():
@@ -83,20 +83,18 @@ class WorkerSession:
                 elif message.method == "session.add_prompt":
                     await self.queue.put(str(params["text"]))
                 elif message.method == "blackboard.changed":
-                    await self.queue.put(
-                        f"Blackboard changed; sync entries after your last sequence. latest_seq={params['latest_seq']}"
-                    )
+                    await self.queue.put(os.environ["TGA3_BLACKBOARD_CHANGED_PROMPT"].format(**params))
                 await self._reply(message, {"accepted": True})
             except Exception as exc:
                 await self._reply(message, error=str(exc))
 
     async def _work(self) -> None:
-        await self.queue.put("Start by syncing the blackboard, then continue the task autonomously.")
+        await self.queue.put(os.environ["TGA3_STARTUP_PROMPT"])
         while not self.stop.is_set():
             try:
                 prompt = await asyncio.wait_for(self.queue.get(), timeout=self.sync_seconds)
             except TimeoutError:
-                prompt = "Periodic work cycle: sync the blackboard, then continue from your current state."
+                prompt = os.environ["TGA3_PERIODIC_PROMPT"]
             if prompt is None:
                 return
             await self.paused.wait()

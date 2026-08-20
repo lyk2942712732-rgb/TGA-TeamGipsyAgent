@@ -1,6 +1,7 @@
 CREATE TABLE task_runs (
     id UUID PRIMARY KEY,
     title TEXT NOT NULL,
+    scene_id TEXT NOT NULL,
     state TEXT NOT NULL,
     blackboard_seq BIGINT NOT NULL DEFAULT 0,
     dialogue_seq BIGINT NOT NULL DEFAULT 0,

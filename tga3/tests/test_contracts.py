@@ -50,9 +50,10 @@ def test_skills_are_listed_and_read_only_by_name(tmp_path: Path):
 def test_config_separates_secrets_from_agent_bindings():
     config = Path(__file__).parents[1] / "config"
     models = json.loads((config / "models.json").read_text(encoding="utf-8"))
-    bindings = json.loads((config / "agents-models.json").read_text(encoding="utf-8"))
+    bindings = json.loads((config / "agents.json").read_text(encoding="utf-8"))
     assert all("api_keys" in provider for provider in models["providers"])
     assert "providers" not in bindings
+    assert all(item["system_prompt"] for item in bindings["agents"].values())
     assert set(bindings["agents"]) == {
         "supervisor",
         "worker-openai",

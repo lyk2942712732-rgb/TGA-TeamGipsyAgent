@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 from collections.abc import Awaitable, Callable
+from pathlib import Path
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from .blackboard import Blackboard
 from .config import TGA3Config
@@ -19,16 +21,16 @@ from .domain import (
     AgentState,
     DialogueKind,
     EntryKind,
+    InputFile,
     PublishRequest,
     RunState,
+    UserFileBody,
 )
 from .gateway import AgentGateway
 from .storage import Storage
 
 
 class TaskCoordinator:
-    WORKERS = ("worker-openai", "worker-claude")
-
     def __init__(self, config: TGA3Config, storage: Storage, containers: ContainerRuntime) -> None:
         self.config = config
         self.storage = storage
@@ -38,19 +40,51 @@ class TaskCoordinator:
         self.blackboard = Blackboard(storage, self.blackboard_changed)
         self.change_handlers: list[Callable[[UUID, int], Awaitable[None]]] = []
 
-    @staticmethod
-    def actor_for(run: AgentRun) -> Actor:
+    def actor_for(self, run: AgentRun) -> Actor:
+        configured = self.config.agents.agents[run.agent_id]
         return Actor(
             agent_id=run.agent_id,
-            display_name=run.agent_id,
-            role="worker",
+            display_name=configured.display_name,
+            role=configured.role,
             sdk=run.sdk,
             model=run.model_id,
         )
 
-    async def create_and_start(self, title: str, initial_prompt: str, task_id: UUID | None = None):
-        task = await self.storage.create_task(title, task_id)
+    async def create_and_start(
+        self,
+        title: str,
+        initial_prompt: str,
+        scene_id: str,
+        initial_files: list[tuple[str, str, bytes]] | None = None,
+        task_id: UUID | None = None,
+    ):
+        scene = self.config.scene(scene_id)
+        task = await self.storage.create_task(title, scene.id, task_id)
         await self.storage.update_task(task.id, state=RunState.STARTING)
+        for agent_id, configured in self.config.agents.agents.items():
+            resolved = self.config.resolve_agent(agent_id)
+            state = AgentState.IDLE if configured.role == "supervisor" else AgentState.CREATED
+            await self.storage.upsert_agent(
+                AgentRun(
+                    task_id=task.id,
+                    agent_id=agent_id,
+                    sdk=resolved.runtime,
+                    desired_state=state,
+                    actual_state=state,
+                    provider_id=resolved.provider.id,
+                    model_id=resolved.model.id,
+                )
+            )
+        await self.blackboard.publish(
+            task.id,
+            SYSTEM_ACTOR,
+            PublishRequest(
+                kind=EntryKind.USER_PROMPT,
+                topic="scene",
+                body={"text": f"场景：{scene.name}\n\n{scene.system_prompt}"},
+                idempotency_key="scene-prompt",
+            ),
+        )
         await self.blackboard.publish(
             task.id,
             USER_ACTOR,
@@ -58,33 +92,69 @@ class TaskCoordinator:
                 kind=EntryKind.USER_PROMPT,
                 topic="task",
                 body={"text": initial_prompt},
-                idempotency_key="initial-prompt",
+                idempotency_key="initial-user-prompt",
             ),
         )
+        for name, media_type, content in initial_files or []:
+            await self.add_input_file(task.id, name, media_type, content)
         try:
-            for agent_id in self.WORKERS:
+            for agent_id in self.config.worker_agent_ids:
                 resolved = self.config.resolve_agent(agent_id)
-                run = AgentRun(
-                    task_id=task.id,
-                    agent_id=agent_id,
-                    sdk=resolved.runtime,
+                run = await self.storage.update_agent(
+                    task.id,
+                    agent_id,
                     desired_state=AgentState.RUNNING,
                     actual_state=AgentState.STARTING,
-                    provider_id=resolved.provider.id,
-                    model_id=resolved.model.id,
                 )
-                await self.storage.upsert_agent(run)
                 container_id = await self.containers.launch(LaunchSpec(task_id=task.id, agent=resolved))
-                await self.storage.update_agent(task.id, agent_id, container_id=container_id)
+                run = await self.storage.update_agent(task.id, agent_id, container_id=container_id)
                 await self.dialogue.announce_status(task.id, self.actor_for(run), AgentState.STARTING.value)
             return await self.storage.update_task(task.id, state=RunState.RUNNING)
         except Exception:
             await self.storage.update_task(task.id, state=RunState.FAILED)
             await asyncio.gather(
-                *(self.containers.stop(task.id, agent_id) for agent_id in self.WORKERS),
+                *(self.containers.stop(task.id, agent_id) for agent_id in self.config.worker_agent_ids),
                 return_exceptions=True,
             )
             raise
+
+    async def add_input_file(
+        self, task_id: UUID, raw_name: str, media_type: str, content: bytes
+    ) -> tuple[InputFile, UUID]:
+        await self.storage.get_task(task_id)
+        name = Path(raw_name or "upload.bin").name
+        item_id = uuid4()
+        root = self.config.resolve_path(self.config.runtime.input_root) / str(task_id)
+        root.mkdir(parents=True, exist_ok=True)
+        path = root / f"{item_id}-{name}"
+        path.write_bytes(content)
+        item = InputFile(
+            id=item_id,
+            task_id=task_id,
+            name=name,
+            storage_path=str(path),
+            media_type=media_type or "application/octet-stream",
+            sha256=hashlib.sha256(content).hexdigest(),
+            size_bytes=len(content),
+        )
+        await self.storage.register_input_file(item)
+        body = UserFileBody(
+            input_file_id=item.id,
+            name=item.name,
+            media_type=item.media_type,
+            sha256=item.sha256,
+        )
+        entry = await self.blackboard.publish(
+            task_id,
+            USER_ACTOR,
+            PublishRequest(
+                kind=EntryKind.USER_FILE,
+                topic="input",
+                body=body.model_dump(mode="json"),
+                idempotency_key=f"file-{item.id}",
+            ),
+        )
+        return item, entry.id
 
     async def blackboard_changed(self, task_id: UUID, latest_seq: int) -> None:
         await self.gateway.broadcast(task_id, "blackboard.changed", {"latest_seq": latest_seq})
@@ -127,10 +197,9 @@ class TaskCoordinator:
                 payload=params,
             )
         elif method == "agent.needs_user_input":
-            supervisor = self.supervisor_actor(task_id)
             await self.dialogue.ask(
                 task_id,
-                supervisor=supervisor,
+                supervisor=self.supervisor_actor(),
                 origin=actor,
                 question=str(params["question"]),
             )
@@ -155,13 +224,12 @@ class TaskCoordinator:
                 last_error=None if state == AgentState.STOPPED else detail,
             )
             await self.dialogue.announce_status(task_id, self.actor_for(run), state.value, detail)
-        # heartbeat is deliberately ephemeral; it does not pollute the blackboard/dialogue.
 
-    def supervisor_actor(self, task_id: UUID) -> Actor:
-        binding = self.config.agent_models.agents["supervisor"]
+    def supervisor_actor(self) -> Actor:
+        binding = self.config.agents.agents["supervisor"]
         return Actor(
             agent_id="supervisor",
-            display_name="Supervisor",
+            display_name=binding.display_name,
             role="supervisor",
             sdk=binding.runtime,
             model=binding.model_id,
@@ -197,17 +265,18 @@ class TaskCoordinator:
         return entry
 
     async def pause_agent(self, task_id: UUID, agent_id: str) -> AgentRun:
-        run = await self.storage.update_agent(task_id, agent_id, desired_state=AgentState.PAUSED)
+        await self._worker_run(task_id, agent_id)
+        await self.storage.update_agent(task_id, agent_id, desired_state=AgentState.PAUSE_REQUESTED)
         await self.gateway.request(task_id, agent_id, "session.pause")
-        return run
+        return await self.storage.update_agent(task_id, agent_id, desired_state=AgentState.PAUSED)
 
     async def resume_agent(self, task_id: UUID, agent_id: str) -> AgentRun:
-        run = await self.storage.update_agent(task_id, agent_id, desired_state=AgentState.RUNNING)
+        await self._worker_run(task_id, agent_id)
         await self.gateway.request(task_id, agent_id, "session.resume")
-        return run
+        return await self.storage.update_agent(task_id, agent_id, desired_state=AgentState.RUNNING)
 
     async def set_agent_model(self, task_id: UUID, agent_id: str, provider_id: str, model_id: str) -> AgentRun:
-        current = await self.storage.get_agent(task_id, agent_id)
+        current = await self._worker_run(task_id, agent_id)
         provider = self.config.models.provider(provider_id)
         provider.model(model_id)
         if current.sdk == "claude_agent" and provider.protocol != "anthropic":
@@ -237,12 +306,26 @@ class TaskCoordinator:
         )
         return run
 
+    async def _worker_run(self, task_id: UUID, agent_id: str) -> AgentRun:
+        run = await self.storage.get_agent(task_id, agent_id)
+        configured = self.config.agents.agents.get(agent_id)
+        if configured is None or configured.role != "worker":
+            raise ValueError(f"runtime control is available only for worker agents: {agent_id}")
+        return run
+
+    async def _worker_runs(self, task_id: UUID) -> list[AgentRun]:
+        return [
+            run
+            for run in await self.storage.list_agents(task_id)
+            if self.config.agents.agents[run.agent_id].role == "worker"
+        ]
+
     async def finish_task_workers(self, task_id: UUID) -> None:
-        agents = await self.storage.list_agents(task_id)
-        for run in agents:
+        workers = await self._worker_runs(task_id)
+        for run in workers:
             await self.gateway.notify(task_id, run.agent_id, "session.stop")
-        await asyncio.gather(*(self.containers.stop(task_id, run.agent_id) for run in agents), return_exceptions=True)
-        for run in agents:
+        await asyncio.gather(*(self.containers.stop(task_id, run.agent_id) for run in workers), return_exceptions=True)
+        for run in workers:
             await self.storage.update_agent(
                 task_id,
                 run.agent_id,
@@ -251,11 +334,18 @@ class TaskCoordinator:
             )
 
     async def stop_task(self, task_id: UUID) -> None:
-        agents = await self.storage.list_agents(task_id)
-        for run in agents:
+        workers = await self._worker_runs(task_id)
+        for run in workers:
             await self.storage.update_agent(task_id, run.agent_id, desired_state=AgentState.STOPPING)
             await self.gateway.notify(task_id, run.agent_id, "session.stop")
-        await asyncio.gather(*(self.containers.stop(task_id, run.agent_id) for run in agents), return_exceptions=True)
+        await asyncio.gather(*(self.containers.stop(task_id, run.agent_id) for run in workers), return_exceptions=True)
+        for run in await self.storage.list_agents(task_id):
+            await self.storage.update_agent(
+                task_id,
+                run.agent_id,
+                desired_state=AgentState.STOPPED,
+                actual_state=AgentState.STOPPED,
+            )
         await self.storage.update_task(task_id, state=RunState.CANCELLED)
 
 

@@ -5,7 +5,7 @@ import pytest
 from tga3.blackboard import Blackboard
 from tga3.config import TGA3Config
 from tga3.dialogue import SolverDialogue
-from tga3.domain import Actor, Artifact, ArtifactRef, EntryKind, PublishRequest, RunState
+from tga3.domain import Actor, AgentRun, AgentState, Artifact, ArtifactRef, EntryKind, PublishRequest, RunState
 from tga3.host_agents import Automation, DeterministicHostModel
 from tga3.storage import InMemoryStorage
 
@@ -17,7 +17,21 @@ async def test_final_candidate_freezes_snapshot_and_generates_writeup(tmp_path: 
     config.runtime.cadence.finalization_grace_seconds = 0
     config.runtime.cadence.supervisor_debounce_seconds = 0
     storage = InMemoryStorage()
-    task = await storage.create_task("report")
+    task = await storage.create_task("report", "penetration_test")
+    for agent_id in ("supervisor", "reporter"):
+        configured_agent = config.agents.agents[agent_id]
+        state = AgentState.IDLE if agent_id == "supervisor" else AgentState.CREATED
+        await storage.upsert_agent(
+            AgentRun(
+                task_id=task.id,
+                agent_id=agent_id,
+                sdk=configured_agent.runtime,
+                desired_state=state,
+                actual_state=state,
+                provider_id=configured_agent.provider_id,
+                model_id=configured_agent.model_id,
+            )
+        )
     board = Blackboard(storage)
     dialogue = SolverDialogue(storage)
     automation = Automation(config, storage, board, dialogue, DeterministicHostModel())

@@ -33,7 +33,7 @@ from .errors import ConflictError, FindingRejectedError, NotFoundError
 
 
 class Storage(Protocol):
-    async def create_task(self, title: str, task_id: UUID | None = None) -> TaskRun: ...
+    async def create_task(self, title: str, scene_id: str, task_id: UUID | None = None) -> TaskRun: ...
     async def get_task(self, task_id: UUID) -> TaskRun: ...
     async def list_tasks(self, *, limit: int = 200) -> list[TaskRun]: ...
     async def update_task(
@@ -119,8 +119,8 @@ class InMemoryStorage:
         self.writeups: dict[UUID, Writeup] = {}
         self._locks: defaultdict[UUID, asyncio.Lock] = defaultdict(asyncio.Lock)
 
-    async def create_task(self, title: str, task_id: UUID | None = None) -> TaskRun:
-        run = TaskRun(id=task_id or uuid4(), title=title)
+    async def create_task(self, title: str, scene_id: str, task_id: UUID | None = None) -> TaskRun:
+        run = TaskRun(id=task_id or uuid4(), title=title, scene_id=scene_id)
         if run.id in self.tasks:
             raise ConflictError(f"task already exists: {run.id}")
         self.tasks[run.id] = run
@@ -389,12 +389,13 @@ class PostgresStorage:
     async def _lock(conn: Any, task_id: UUID) -> None:
         await conn.execute("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", str(task_id))
 
-    async def create_task(self, title: str, task_id: UUID | None = None) -> TaskRun:
+    async def create_task(self, title: str, scene_id: str, task_id: UUID | None = None) -> TaskRun:
         task_id = task_id or uuid4()
         row = await self.pool.fetchrow(
-            "INSERT INTO task_runs(id,title,state) VALUES($1,$2,$3) RETURNING *",
+            "INSERT INTO task_runs(id,title,scene_id,state) VALUES($1,$2,$3,$4) RETURNING *",
             task_id,
             title,
+            scene_id,
             RunState.CREATED.value,
         )
         return _task(row)

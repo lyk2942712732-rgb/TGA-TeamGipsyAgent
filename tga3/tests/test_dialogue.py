@@ -8,7 +8,7 @@ from tga3.storage import InMemoryStorage
 @pytest.mark.asyncio
 async def test_only_answered_question_becomes_single_complete_qa_entry():
     storage = InMemoryStorage()
-    task = await storage.create_task("q&a")
+    task = await storage.create_task("q&a", "penetration_test")
     dialogue = SolverDialogue(storage)
     supervisor = Actor(agent_id="supervisor", display_name="Supervisor", role="supervisor")
     worker = Actor(agent_id="worker-claude", display_name="Claude Worker", role="worker")

@@ -1,16 +1,24 @@
 import { useQuery } from "@tanstack/react-query";
 import {
+  Binary,
   Bot,
   Boxes,
   BrainCircuit,
+  Bug,
   ChevronRight,
   CirclePlus,
+  FileSearch,
+  Globe2,
+  KeyRound,
   ListTodo,
   LoaderCircle,
   PanelLeft,
+  Puzzle,
   ServerCog,
+  ShieldAlert,
+  X,
 } from "lucide-react";
-import { useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { Link, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { tga3Api } from "./api";
 import { RuntimePage } from "./RuntimePage";
@@ -104,26 +112,23 @@ function TaskCard({ task }: { task: TaskRun }) {
 
 function NewTask() {
   const navigate = useNavigate();
+  const scenes = useQuery({ queryKey: ["tga3", "scenes"], queryFn: tga3Api.scenes });
+  const models = useQuery({ queryKey: ["tga3", "models"], queryFn: tga3Api.models });
   const [title, setTitle] = useState("");
   const [prompt, setPrompt] = useState("");
+  const [sceneId, setSceneId] = useState("");
   const [files, setFiles] = useState<File[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  useEffect(() => {
+    if (!sceneId && scenes.data?.length) setSceneId(scenes.data[0].id);
+  }, [sceneId, scenes.data]);
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     setBusy(true);
     setError("");
     try {
-      const task = await tga3Api.createTask(title, prompt);
-      if (files.length) {
-        const uploaded = await Promise.all(files.map((file) => tga3Api.uploadFile(task.id, file)));
-        await tga3Api.addPrompt(
-          task.id,
-          `用户随任务补充了 ${files.length} 个文件，请读取 /inputs 并结合原始目标继续。`,
-          [],
-          uploaded.map((item) => item.file.id),
-        );
-      }
+      const task = await tga3Api.createTask(title, prompt, sceneId, files);
       navigate(`/tasks/${encodeURIComponent(task.id)}`);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "创建任务失败");
@@ -131,17 +136,24 @@ function NewTask() {
       setBusy(false);
     }
   };
-  return <section className="page-stack narrow-page">
-    <PageHead eyebrow="NEW TASK" title="新建任务" description="任务创建后，两个 Worker 容器会自动启动，无需手工 docker compose up。" />
-    <form className="new-task-form" onSubmit={(event) => void submit(event)}>
-      <label>任务名称<input value={title} onChange={(event) => setTitle(event.target.value)} required maxLength={500} placeholder="例如：分析附件并找到 flag" /></label>
-      <label>初始提示<textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} required rows={9} placeholder="说明目标、边界以及已知条件……" /></label>
-      <label className="file-drop">多模态文件<input type="file" multiple onChange={(event) => setFiles(Array.from(event.target.files ?? []))} /><span>{files.length ? `已选择 ${files.length} 个文件` : "图片、音频、压缩包、二进制或文本"}</span></label>
-      {files.length ? <ul className="file-list">{files.map((file) => <li key={`${file.name}-${file.size}`}>{file.name}<small>{formatBytes(file.size)}</small></li>)}</ul> : null}
-      {error ? <p className="form-error">{error}</p> : null}
-      <button className="primary-button submit-button" disabled={busy || !title.trim() || !prompt.trim()}>{busy ? <LoaderCircle className="spin" size={17} /> : <CirclePlus size={17} />}{busy ? "正在启动两个 Worker…" : "创建并启动任务"}</button>
-    </form>
-  </section>;
+  return <div className="task-modal-backdrop" role="presentation" onMouseDown={() => navigate("/tasks")}>
+    <section className="task-modal" role="dialog" aria-modal="true" aria-labelledby="new-task-title" onMouseDown={(event) => event.stopPropagation()}>
+      <header><div><small>NEW TASK</small><h1 id="new-task-title">创建任务</h1><p>选择场景；黑板架构和四个 Agent 的默认模型来自统一配置。</p></div><button aria-label="关闭" onClick={() => navigate("/tasks")}><X /></button></header>
+      <form onSubmit={(event) => void submit(event)}>
+        <label className="modal-field">任务名称<input value={title} onChange={(event) => setTitle(event.target.value)} required maxLength={500} placeholder="例如：分析附件并找到 flag" /></label>
+        <fieldset className="scene-field"><legend>场景</legend>
+          {scenes.isLoading ? <Loading label="读取场景配置" /> : scenes.error ? <ErrorBox error={scenes.error} /> : <div className="scene-grid">{scenes.data?.map((scene) => <button type="button" className={sceneId === scene.id ? "active" : ""} key={scene.id} onClick={() => setSceneId(scene.id)}>{sceneIcon(scene.id)}<span><b>{scene.name}</b><small>{scene.description}</small></span></button>)}</div>}
+        </fieldset>
+        <div className="architecture-card"><div><Boxes size={19} /><span><small>解题架构</small><b>共享黑板</b></span></div><p>两个 Worker 独立执行，只通过经过校验的黑板条目协作。</p></div>
+        <fieldset className="agent-defaults"><legend>Agent 默认模型</legend><p>本任务不另选调度模型或工作模型，以下绑定直接来自 config/agents.json。</p>{models.isLoading ? <Loading label="读取 Agent 配置" /> : models.error ? <ErrorBox error={models.error} /> : <div>{Object.entries(models.data?.bindings ?? {}).map(([id, binding]) => <article key={id}><span><b>{binding.display_name}</b><small>{binding.role} · {binding.runtime}</small></span><code>{binding.provider_id}/{binding.model_id}</code></article>)}</div>}</fieldset>
+        <label className="modal-field">描述<textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} required rows={7} placeholder="输入题目描述、授权目标、已知条件或 flag 格式……" /></label>
+        <label className="file-drop modal-upload"><input type="file" multiple onChange={(event) => setFiles(Array.from(event.target.files ?? []))} /><FileSearch size={21} /><span>{files.length ? `已选择 ${files.length} 个文件` : "添加多模态输入"}<small>图片、音频、压缩包、流量、内存、二进制或文本</small></span></label>
+        {files.length ? <ul className="file-list">{files.map((file) => <li key={`${file.name}-${file.size}`}>{file.name}<small>{formatBytes(file.size)}</small></li>)}</ul> : null}
+        {error ? <p className="form-error">{error}</p> : null}
+        <footer><button type="button" className="outline-button" onClick={() => navigate("/tasks")}>取消</button><button className="primary-button" disabled={busy || !title.trim() || !prompt.trim() || !sceneId}>{busy ? <LoaderCircle className="spin" size={17} /> : <CirclePlus size={17} />}{busy ? "正在写入黑板并启动 Worker…" : "创建任务"}</button></footer>
+      </form>
+    </section>
+  </div>;
 }
 
 function Models() {
@@ -191,8 +203,16 @@ function Empty({ title, detail }: { title: string; detail: string }) { return <d
 function NotFound() { return <section className="page-stack narrow-page"><Empty title="页面不存在" detail="该入口不属于 TGA3 控制面。" /><Link className="primary-button" to="/tasks">返回任务</Link></section>; }
 
 export function stateLabel(value: string): string {
-  return ({ created: "已创建", starting: "启动中", running: "运行中", waiting_user: "等待用户", finalizing: "收敛中", reporting: "生成报告", completed: "已完成", failed: "失败", cancelled: "已取消", paused: "已暂停", pause_requested: "暂停中", stopping: "停止中", stopped: "已停止" } as Record<string, string>)[value] ?? value;
+  return ({ created: "已创建", idle: "待命", starting: "启动中", running: "运行中", waiting_user: "等待用户", finalizing: "收敛中", reporting: "生成报告", completed: "已完成", failed: "失败", cancelled: "已取消", paused: "已暂停", pause_requested: "暂停中", stopping: "停止中", stopped: "已停止" } as Record<string, string>)[value] ?? value;
 }
 export function shortId(value: string) { return value.slice(0, 8); }
 export function formatTime(value: string) { return new Date(value).toLocaleString("zh-CN", { hour12: false }); }
 function formatBytes(value: number) { return value < 1024 ? `${value} B` : value < 1024 ** 2 ? `${(value / 1024).toFixed(1)} KB` : `${(value / 1024 ** 2).toFixed(1)} MB`; }
+function sceneIcon(id: string) {
+  if (id === "penetration_test") return <Globe2 />;
+  if (id === "incident_response") return <ShieldAlert />;
+  if (id === "vulnerability_research") return <Bug />;
+  if (id === "reverse_engineering" || id === "pwn") return <Binary />;
+  if (id === "cryptography") return <KeyRound />;
+  return <Puzzle />;
+}

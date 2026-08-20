@@ -50,7 +50,9 @@ class DockerContainerRuntime:
         environment = {
             "TGA3_TASK_ID": str(spec.task_id),
             "TGA3_AGENT_ID": binding.agent_id,
+            "TGA3_AGENT_DISPLAY_NAME": binding.display_name,
             "TGA3_AGENT_RUNTIME": binding.runtime,
+            "TGA3_SYSTEM_PROMPT": binding.system_prompt,
             "TGA3_CONTROL_WS_URL": runtime.control_ws_url,
             "TGA3_BLACKBOARD_MCP_URL": runtime.blackboard_mcp_url,
             "TGA3_PROVIDER_ID": binding.provider.id,
@@ -61,6 +63,9 @@ class DockerContainerRuntime:
             "TGA3_BASE_URL": binding.provider.base_url or "",
             "TGA3_MAX_TURNS_PER_CYCLE": str(binding.max_turns_per_cycle),
             "TGA3_SYNC_SECONDS": str(runtime.cadence.worker_sync_seconds),
+            "TGA3_STARTUP_PROMPT": runtime.worker_cycle_prompts.startup,
+            "TGA3_PERIODIC_PROMPT": runtime.worker_cycle_prompts.periodic,
+            "TGA3_BLACKBOARD_CHANGED_PROMPT": runtime.worker_cycle_prompts.blackboard_changed,
         }
         container = self.client.containers.run(
             image=image,

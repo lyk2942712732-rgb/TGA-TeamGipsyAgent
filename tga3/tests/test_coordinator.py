@@ -23,22 +23,31 @@ async def test_task_start_launches_two_independent_worker_containers():
     containers = FakeContainerRuntime()
     coordinator = TaskCoordinator(configured(), storage, containers)
 
-    task = await coordinator.create_and_start("dual", "solve this")
+    task = await coordinator.create_and_start("dual", "solve this", "penetration_test")
     assert task.state == RunState.RUNNING
     assert [spec.agent.agent_id for spec in containers.launched] == [
         "worker-openai",
         "worker-claude",
     ]
     agents = await storage.list_agents(task.id)
-    assert {agent.sdk for agent in agents} == {"openai_agents", "claude_agent"}
-    assert (await storage.list_entries(task.id))[0].kind == EntryKind.USER_PROMPT
+    assert {agent.agent_id for agent in agents} == {
+        "supervisor",
+        "worker-openai",
+        "worker-claude",
+        "reporter",
+    }
+    entries = await storage.list_entries(task.id)
+    assert entries[0].kind == EntryKind.USER_PROMPT
+    assert entries[0].topic == "scene"
+    assert "拿到" in str(entries[0].body) or "flag" in str(entries[0].body)
+    assert entries[1].body["text"] == "solve this"
 
 
 @pytest.mark.asyncio
-async def test_worker_question_is_runtime_event_not_blackboard_type():
+async def test_worker_input_request_is_runtime_event_not_blackboard_type():
     storage = InMemoryStorage()
     coordinator = TaskCoordinator(configured(), storage, FakeContainerRuntime())
-    task = await coordinator.create_and_start("question", "solve this")
+    task = await coordinator.create_and_start("question", "solve this", "penetration_test")
     before = len(await storage.list_entries(task.id))
 
     await coordinator.handle_agent_event(
@@ -49,5 +58,5 @@ async def test_worker_question_is_runtime_event_not_blackboard_type():
     )
     assert len(await storage.list_entries(task.id)) == before
     messages = await storage.list_dialogue(task.id)
-    assert any("worker-claude" in message.text for message in messages)
+    assert any(message.payload.get("origin_agent_id") == "worker-claude" for message in messages)
     assert (await storage.get_task(task.id)).state == RunState.WAITING_USER

@@ -17,10 +17,7 @@ from .skills import SkillCatalog
 def build_mcp(config: TGA3Config, blackboard: Blackboard, skills: SkillCatalog) -> FastMCP:
     mcp = FastMCP(
         "tga3-blackboard",
-        instructions=(
-            "Shared task memory. Sync by sequence, publish compact validated knowledge, "
-            "and load universal skills by name only when useful."
-        ),
+        instructions=config.runtime.mcp_instructions,
         streamable_http_path="/",
         stateless_http=True,
         json_response=True,

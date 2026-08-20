@@ -37,6 +37,7 @@ class RunState(StrEnum):
 
 class AgentState(StrEnum):
     CREATED = "created"
+    IDLE = "idle"
     STARTING = "starting"
     RUNNING = "running"
     PAUSE_REQUESTED = "pause_requested"
@@ -247,6 +248,7 @@ class TaskRun(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     id: UUID = Field(default_factory=uuid4)
     title: str = Field(min_length=1, max_length=500)
+    scene_id: str = Field(min_length=1, max_length=100)
     state: RunState = RunState.CREATED
     blackboard_seq: int = 0
     dialogue_seq: int = 0
