@@ -75,7 +75,7 @@ sudo chmod -R u+rwX,go-rwx /opt/TGA-TeamGipsyAgent/tga3/config
 
 - Pwn / 漏洞挖掘：GDB、gdb-multiarch、checksec、patchelf、strace、ltrace、QEMU user mode、AFL++、pwntools 和 angr。
 - 逆向：Ghidra（含 `analyzeHeadless`）、radare2、JADX、APKTool、Capstone、Unicorn 和 Ropper。
-- 应急响应 / 取证：TShark、EWF tools、Foremost、Plaso、YARA、Volatility 3 和 oletools。
+- 应急响应 / 取证：TShark、EWF tools、Foremost、Plaso（Kali 命令名为 `plaso-log2timeline`）、YARA、Volatility 3 和 oletools。
 - 密码 / Misc：PyCryptodome、SymPy、Z3、Steghide、Stegseek、ZBar、PNGCheck、ImageMagick、FFmpeg 和 SoX。
 
 这些 Python 库安装在 Worker 实际使用的 `/opt/tga3-venv`，不是只放进系统 Python。容器默认增加 `SYS_PTRACE` 供本任务空间内的二进制动态调试使用，但不增加 `SYS_ADMIN` 或宿主设备访问权限；磁盘镜像优先使用用户态取证工具处理。

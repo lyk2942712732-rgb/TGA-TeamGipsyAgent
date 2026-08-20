@@ -10,7 +10,7 @@ required_commands=(
   nmap ffuf sqlmap
   gdb gdb-multiarch checksec patchelf strace ltrace qemu-x86_64 afl-fuzz
   ghidra apktool jadx
-  tshark ewfinfo foremost log2timeline.py yara
+  tshark ewfinfo foremost plaso-log2timeline yara
   steghide stegseek zbarimg pngcheck convert ffmpeg sox
   jq rg
 )
