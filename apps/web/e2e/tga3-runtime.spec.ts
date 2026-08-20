@@ -2,6 +2,20 @@ import { expect, test } from "@playwright/test";
 
 const taskId = "11111111-1111-4111-8111-111111111111";
 const task = { id: taskId, title: "TGA3 fixture", scene_id: "penetration_test", state: "running", blackboard_seq: 1, dialogue_seq: 0, final_snapshot_seq: null, created_at: "2026-08-20T00:00:00Z", updated_at: "2026-08-20T00:01:00Z" };
+const configBundle = {
+  models: { schema_version: 1, providers: [
+    { id: "openai", name: "OpenAI", protocol: "openai_responses", base_url: "https://api.openai.com/v1", api_keys: [{ id: "primary", label: "Primary", api_key: "sk-editable" }], selected_api_key_id: "primary", models: [{ id: "openai-worker-model", name: "gpt-test", max_output_tokens: 8192, timeout_seconds: 180 }] },
+    { id: "anthropic", name: "Anthropic", protocol: "anthropic", base_url: "https://api.anthropic.com", api_keys: [{ id: "primary", label: "Primary", api_key: "claude-editable" }], selected_api_key_id: "primary", models: [{ id: "claude-worker-model", name: "claude-test", max_output_tokens: 8192, timeout_seconds: 180 }] },
+  ] },
+  agents: { schema_version: 1, agents: {
+    supervisor: { display_name: "Supervisor", role: "supervisor", runtime: "openai_agents", provider_id: "openai", model_id: "openai-worker-model", max_turns_per_cycle: 3, system_prompt: "supervisor" },
+    "worker-openai": { display_name: "OpenAI Worker", role: "worker", runtime: "openai_agents", provider_id: "openai", model_id: "openai-worker-model", max_turns_per_cycle: 3, system_prompt: "openai worker" },
+    "worker-claude": { display_name: "Claude Worker", role: "worker", runtime: "claude_agent", provider_id: "anthropic", model_id: "claude-worker-model", max_turns_per_cycle: 3, system_prompt: "claude worker" },
+    reporter: { display_name: "Reporter", role: "reporter", runtime: "openai_agents", provider_id: "openai", model_id: "openai-worker-model", max_turns_per_cycle: 2, system_prompt: "reporter" },
+  } },
+  scenes: { schema_version: 1, scenes: [{ id: "penetration_test", name: "渗透测试", description: "Web 与网络服务题", system_prompt: "找到 flag" }] },
+  runtime: { schema_version: 1, postgres_dsn: "postgresql://local", listen_port: 8083 },
+};
 
 test.beforeEach(async ({ page }) => {
   await page.route("**/api/v3/tasks", (route) => route.fulfill({ json: [task] }));
@@ -24,6 +38,7 @@ test.beforeEach(async ({ page }) => {
     { id: "penetration_test", name: "渗透测试", description: "Web 与网络服务题" },
     { id: "pwn", name: "Pwn", description: "二进制利用题" },
   ] }));
+  await page.route("**/api/v3/config", (route) => route.fulfill({ json: route.request().method() === "PUT" ? route.request().postDataJSON() : configBundle }));
   await page.route("**/api/v3/skills", (route) => route.fulfill({ json: [] }));
 });
 
@@ -43,4 +58,17 @@ test("runtime exposes TGA3 agents, dialogue, blackboard and skills", async ({ pa
   await expect(page.getByRole("button", { name: "黑板" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Skills" })).toBeVisible();
   await expect(page.getByText("状态来自后端 agent_runs")).toBeVisible();
+});
+
+test("config center reads and writes providers from config", async ({ page }) => {
+  await page.goto("/config");
+  await expect(page.getByRole("heading", { name: "统一配置中心" })).toBeVisible();
+  const providerName = page.getByLabel("显示名称").first();
+  await expect(providerName).toHaveValue("OpenAI");
+  await providerName.fill("OpenAI Custom");
+  const requestPromise = page.waitForRequest((request) => request.url().endsWith("/api/v3/config") && request.method() === "PUT");
+  await page.getByRole("button", { name: "保存全部配置" }).click();
+  const request = await requestPromise;
+  expect(request.postDataJSON().models.providers[0].name).toBe("OpenAI Custom");
+  await expect(page.getByText(/配置已校验并原子写回/)).toBeVisible();
 });

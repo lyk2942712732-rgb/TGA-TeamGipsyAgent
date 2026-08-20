@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Binary,
   Bot,
@@ -14,13 +14,16 @@ import {
   LoaderCircle,
   PanelLeft,
   Puzzle,
+  Save,
   ServerCog,
   ShieldAlert,
+  Trash2,
   X,
 } from "lucide-react";
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { Link, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { tga3Api } from "./api";
+import { ConfigPage } from "./ConfigPage";
 import { RuntimePage } from "./RuntimePage";
 import type { SkillInfo, TaskRun } from "./types";
 
@@ -31,7 +34,8 @@ export function App() {
       <Route path="/tasks" element={<TaskList />} />
       <Route path="/tasks/new" element={<NewTask />} />
       <Route path="/tasks/:taskId" element={<RuntimePage />} />
-      <Route path="/models" element={<Models />} />
+      <Route path="/config" element={<ConfigPage />} />
+      <Route path="/models" element={<Navigate to="/config" replace />} />
       <Route path="/skills" element={<Skills />} />
       <Route path="*" element={<NotFound />} />
     </Routes>
@@ -44,7 +48,7 @@ function Shell({ children }: { children: ReactNode }) {
   const nav = [
     { path: "/tasks", label: "任务", icon: ListTodo },
     { path: "/tasks/new", label: "新建任务", icon: CirclePlus },
-    { path: "/models", label: "模型绑定", icon: BrainCircuit },
+    { path: "/config", label: "配置中心", icon: BrainCircuit },
     { path: "/skills", label: "Skills", icon: Boxes },
   ];
   return <div className={`tga3-shell ${open ? "nav-open" : ""}`}>
@@ -156,35 +160,73 @@ function NewTask() {
   </div>;
 }
 
-function Models() {
-  const query = useQuery({ queryKey: ["tga3", "models"], queryFn: tga3Api.models });
-  return <section className="page-stack">
-    <PageHead eyebrow="MODELS" title="模型与 Agent 绑定" description="密钥只保存在 Ubuntu 的 models.json；浏览器仅获取脱敏目录。" />
-    {query.isLoading ? <Loading label="读取模型目录" /> : query.error ? <ErrorBox error={query.error} /> : <>
-      <div className="provider-grid">{query.data?.providers.map((provider) => <article className="provider-card" key={provider.id}>
-        <header><span>{provider.name.slice(0, 1)}</span><div><strong>{provider.name}</strong><small>{provider.protocol}</small></div></header>
-        <ul>{provider.models.map((model) => <li key={model.id}><b>{model.name}</b><small>{model.id} · {model.max_output_tokens} 输出 Token</small></li>)}</ul>
-      </article>)}</div>
-      <section className="binding-table"><h2>默认绑定</h2>{Object.entries(query.data?.bindings ?? {}).map(([agent, binding]) => <div key={agent}><b>{agent}</b><span>{binding.runtime}</span><code>{binding.provider_id}/{binding.model_id}</code><small>{binding.max_turns_per_cycle} 轮/周期</small></div>)}</section>
-    </>}
-  </section>;
-}
-
 function Skills() {
+  const client = useQueryClient();
   const index = useQuery({ queryKey: ["tga3", "skills"], queryFn: tga3Api.skills });
   const [selected, setSelected] = useState<string | null>(null);
+  const [name, setName] = useState("");
+  const [content, setContent] = useState("");
+  const [creating, setCreating] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
   const document = useQuery({
     queryKey: ["tga3", "skill", selected],
     queryFn: () => tga3Api.skill(selected!),
     enabled: Boolean(selected),
   });
+  useEffect(() => {
+    if (document.data && !creating) {
+      setName(document.data.name);
+      setContent(document.data.content);
+    }
+  }, [creating, document.data]);
+  const save = async () => {
+    const target = name.trim();
+    if (!target || !content.trim()) return;
+    setBusy(true);
+    setError("");
+    try {
+      await tga3Api.saveSkill(target, content);
+      setCreating(false);
+      setSelected(target);
+      await Promise.all([
+        client.invalidateQueries({ queryKey: ["tga3", "skills"] }),
+        client.invalidateQueries({ queryKey: ["tga3", "skill", target] }),
+      ]);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "保存 Skill 失败");
+    } finally {
+      setBusy(false);
+    }
+  };
+  const remove = async () => {
+    if (!selected) return;
+    setBusy(true);
+    setError("");
+    try {
+      await tga3Api.deleteSkill(selected);
+      setSelected(null);
+      setName("");
+      setContent("");
+      await client.invalidateQueries({ queryKey: ["tga3", "skills"] });
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "删除 Skill 失败");
+    } finally {
+      setBusy(false);
+    }
+  };
   return <section className="page-stack">
-    <PageHead eyebrow="SKILLS" title="通用 Skills" description="不按角色或场景预分配；每个 Agent 先看名称，再按需读取完整内容。" />
+    <PageHead eyebrow="SKILLS" title="通用 Skills" description="直接读写 config/skills；不按角色或场景预分配。"><button className="primary-button" onClick={() => { setCreating(true); setSelected(null); setName(""); setContent("# 新 Skill\n\n"); }}><CirclePlus size={16} />新建 Skill</button></PageHead>
     {index.isLoading ? <Loading label="读取 Skills" /> : index.error ? <ErrorBox error={index.error} />
-      : index.data?.length ? <div className="skills-layout">
-        <div className="skills-index">{index.data.map((skill: SkillInfo) => <button className={selected === skill.name ? "active" : ""} onClick={() => setSelected(skill.name)} key={skill.name}><Boxes size={17} /><span><b>{skill.name}</b><small>{skill.description}</small></span></button>)}</div>
-        <article className="skill-document">{selected ? document.isLoading ? <Loading label="读取 Skill" /> : <pre>{document.data?.content}</pre> : <Empty title="选择一个 Skill" detail="这里展示 Agent 通过按名读取获得的完整 SKILL.md。" />}</article>
-      </div> : <Empty title="尚未配置 Skill" detail="在 tga3/config/skills/<name>/SKILL.md 中添加即可。" />}
+      : <div className="skills-layout">
+        <div className="skills-index">{index.data?.map((skill: SkillInfo) => <button className={selected === skill.name ? "active" : ""} onClick={() => { setCreating(false); setSelected(skill.name); }} key={skill.name}><Boxes size={17} /><span><b>{skill.name}</b><small>{skill.description}</small></span></button>)}{!index.data?.length ? <Empty title="尚未配置 Skill" detail="点击“新建 Skill”直接写入 config/skills。" /> : null}</div>
+        <article className="skill-document skill-editor-document">{selected && document.isLoading ? <Loading label="读取 Skill" /> : selected || creating ? <>
+          <label className="config-field"><span>名称</span><input value={name} disabled={!creating} onChange={(event) => setName(event.target.value)} placeholder="例如 web-audit" /></label>
+          <label className="config-field"><span>SKILL.md</span><textarea value={content} rows={20} onChange={(event) => setContent(event.target.value)} /></label>
+          {error ? <div className="error-box">{error}</div> : null}
+          <footer><button className="danger-button" disabled={!selected || busy} onClick={() => void remove()}><Trash2 size={15} />删除</button><button className="primary-button" disabled={busy || !name.trim() || !content.trim()} onClick={() => void save()}>{busy ? <LoaderCircle className="spin" size={15} /> : <Save size={15} />}保存 Skill</button></footer>
+        </> : <Empty title="选择或新建 Skill" detail="修改内容后会直接写回对应的 SKILL.md。" />}</article>
+      </div>}
   </section>;
 }
 

@@ -21,6 +21,8 @@ apps/web  ── /api/v3 + SSE ──>  tga3 control plane
 - `tga3/config/runtime.json`：容器、存储路径、运行节奏和周期提示。
 - `tga3/config/skills/<name>/SKILL.md`：所有 Agent 按名称读取的通用 Skills。
 
+前端“配置中心”直接读写上述配置文件，可新增供应商、模型和密钥，也可修改 Agent 系统提示词、场景及 Runtime；不需要在 Ubuntu 上手工编辑 `models.json`。
+
 ## 验证
 
 ```bash

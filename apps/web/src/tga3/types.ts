@@ -143,6 +143,35 @@ export type SkillInfo = { name: string; description: string };
 export type SkillDocument = { name: string; content: string };
 export type SceneInfo = { id: string; name: string; description: string };
 
+export type APIKeyConfig = { id: string; label: string; api_key: string };
+export type EditableModelConfig = ModelRecord & { [key: string]: unknown };
+export type EditableProviderConfig = {
+  id: string;
+  name: string;
+  protocol: ProviderRecord["protocol"];
+  base_url: string | null;
+  api_keys: APIKeyConfig[];
+  selected_api_key_id: string;
+  models: EditableModelConfig[];
+  [key: string]: unknown;
+};
+export type EditableAgentConfig = {
+  display_name: string;
+  role: "supervisor" | "worker" | "reporter";
+  runtime: "openai_agents" | "claude_agent";
+  provider_id: string;
+  model_id: string;
+  max_turns_per_cycle: number;
+  system_prompt: string;
+};
+export type EditableSceneConfig = SceneInfo & { system_prompt: string };
+export type ConfigBundle = {
+  models: { schema_version: number; providers: EditableProviderConfig[] };
+  agents: { schema_version: number; agents: Record<string, EditableAgentConfig> };
+  scenes: { schema_version: number; scenes: EditableSceneConfig[] };
+  runtime: Record<string, unknown> & { schema_version: number };
+};
+
 export type UploadedFile = {
   file: {
     id: string;

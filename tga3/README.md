@@ -48,11 +48,9 @@ PostgreSQL 用每任务 advisory transaction lock 分配黑板和对话序号，
 - `config/runtime.json`：Docker 资源、镜像、目录、通信地址、运行节奏、MCP 指令和 Worker 周期提示。
 - `config/skills/<name>/SKILL.md`：不分角色与场景的通用 Skill；Agent 先列名称再按需读取。
 
-生产代码不从环境变量覆盖 Provider、模型、密钥或 Agent 提示词。环境变量只用于把上述已解析配置传给动态 Worker 容器。运行前填写 `models.json` 并限制权限：
+生产代码不从环境变量覆盖 Provider、模型、密钥或 Agent 提示词。环境变量只用于把上述已解析配置传给动态 Worker 容器。前端“配置中心”通过 `GET/PUT /api/v3/config` 直接读取并原子写回这四份 JSON；Skills 页面直接管理 `config/skills`。供应商、模型和 API Key 不需要再登录服务器手工编辑。保存时后端先执行完整的跨文件校验，校验失败不会替换现有配置。
 
-```bash
-chmod 600 config/models.json config/agents.json config/scenes.json config/runtime.json
-```
+新任务立即使用保存后的 Provider、模型、Agent 提示词、场景和容器参数。运行中的任务保留 PostgreSQL 中的运行状态；监听地址和 PostgreSQL DSN 保存后需要重启主服务。`GET /api/v3/models` 仍是供普通任务界面使用的无密钥目录，只有配置中心接口返回可编辑的完整配置。
 
 ## Ubuntu 部署
 
@@ -62,6 +60,13 @@ Windows 仓库只负责开发和提交；镜像在 Ubuntu 测试机拉取代码�
 cd tga3
 chmod +x scripts/*.sh
 ./scripts/ubuntu-bootstrap.sh
+```
+
+启动主服务后直接进入前端“配置中心”填写供应商、模型和密钥。若使用示例 systemd unit，确保服务用户可以写配置目录：
+
+```bash
+sudo chown -R tga3:docker /opt/TGA-TeamGipsyAgent/tga3/config
+sudo chmod -R u+rwX,go-rwx /opt/TGA-TeamGipsyAgent/tga3/config
 ```
 
 脚本通过 Compose 启动长期 PostgreSQL，构建共享 Kali 基础镜像和两个 SDK 增量镜像，安装主服务，并构建 `apps/web/dist`。Worker 不在 Compose 中常驻；创建任务时由 Docker SDK 动态启动，停止任务时回收。
@@ -87,6 +92,8 @@ docker compose up -d --wait postgres
 
 - `GET /api/v3/scenes`：返回 `scenes.json` 中的真实场景目录。
 - `GET /api/v3/models`：返回无密钥、无系统提示词的 Agent 默认模型绑定与模型目录。
+- `GET|PUT /api/v3/config`：读取、校验并原子写回完整的 models、agents、scenes 和 runtime 配置。
+- `GET|PUT|DELETE /api/v3/skills/{name}`：直接管理 `config/skills/<name>/SKILL.md`。
 - `GET /api/v3/tasks`：任务列表。
 - `POST /api/v3/tasks`：multipart 创建任务；字段为 `title`、`scene_id`、`prompt` 和零到多个 `files`，写完初始黑板后启动 Worker。
 - `POST /api/v3/tasks/{id}/files`、`POST /api/v3/tasks/{id}/prompts`：后续多模态文件与提示。

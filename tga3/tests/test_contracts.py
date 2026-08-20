@@ -36,13 +36,18 @@ def test_json_rpc_shapes():
     assert RpcMessage.success("1", {"accepted": True}).result == {"accepted": True}
 
 
-def test_skills_are_listed_and_read_only_by_name(tmp_path: Path):
+def test_skills_are_managed_and_read_only_by_name(tmp_path: Path):
     folder = tmp_path / "pwn"
     folder.mkdir()
     (folder / "SKILL.md").write_text("# Pwn\n\nUse pwntools.", encoding="utf-8")
     catalog = SkillCatalog(tmp_path)
     assert [item.name for item in catalog.list()] == ["pwn"]
     assert "pwntools" in catalog.read("pwn")
+    catalog.write("web", "# Web\n\nInspect inputs.")
+    assert "Inspect inputs" in catalog.read("web")
+    catalog.delete("web")
+    with pytest.raises(NotFoundError):
+        catalog.read("web")
     with pytest.raises(NotFoundError):
         catalog.read("../pwn")
 

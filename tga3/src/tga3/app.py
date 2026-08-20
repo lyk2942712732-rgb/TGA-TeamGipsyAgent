@@ -11,7 +11,7 @@ from fastapi import APIRouter, FastAPI, File, Form, Request, UploadFile, WebSock
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
-from .config import TGA3Config
+from .config import ConfigBundle, TGA3Config
 from .coordinator import TaskCoordinator
 from .docker_runtime import ContainerRuntime
 from .domain import RunState
@@ -41,6 +41,11 @@ class ModelRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     provider_id: str
     model_id: str
+
+
+class SkillRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    content: str = Field(min_length=1)
 
 
 def create_app(
@@ -75,6 +80,7 @@ def create_app(
     app.state.coordinator = coordinator
     app.state.automation = automation
     api = APIRouter(prefix="/api/v3")
+    config_lock = asyncio.Lock()
 
     @app.exception_handler(TGA3Error)
     async def tga3_error(_request: Request, exc: TGA3Error) -> JSONResponse:
@@ -230,6 +236,21 @@ def create_app(
             },
         }
 
+    @api.get("/config")
+    async def read_config() -> dict[str, dict]:
+        """Return the complete on-disk configuration, including editable provider keys."""
+
+        return config.export_bundle()
+
+    @api.put("/config")
+    async def write_config(body: ConfigBundle) -> dict[str, dict]:
+        """Validate and atomically persist the complete config bundle."""
+
+        async with config_lock:
+            config.apply_bundle(body)
+            skills.set_root(config.skills_root)
+        return config.export_bundle()
+
     @api.get("/scenes")
     async def scenes() -> list[dict[str, str]]:
         return [
@@ -244,6 +265,15 @@ def create_app(
     @api.get("/skills/{name}")
     async def skill_document(name: str) -> dict[str, str]:
         return {"name": name, "content": skills.read(name)}
+
+    @api.put("/skills/{name}")
+    async def write_skill(name: str, body: SkillRequest) -> dict[str, str]:
+        item = skills.write(name, body.content)
+        return {"name": item.name, "description": item.description, "content": skills.read(name)}
+
+    @api.delete("/skills/{name}", status_code=204)
+    async def delete_skill(name: str) -> None:
+        skills.delete(name)
 
     @api.get("/tasks/{task_id}/writeup")
     async def writeup(task_id: UUID) -> dict[str, Any]:

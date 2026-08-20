@@ -17,4 +17,4 @@ python3 -m venv "${project_dir}/.venv"
 npm --prefix "${repo_dir}/apps/web" ci
 npm --prefix "${repo_dir}/apps/web" run build
 
-echo "Bootstrap complete. Fill config/models.json, install deploy/tga3.service and deploy/nginx-tga3.conf."
+echo "Bootstrap complete. Start the control service, then configure providers, models, agents and scenes in the web Config Center."

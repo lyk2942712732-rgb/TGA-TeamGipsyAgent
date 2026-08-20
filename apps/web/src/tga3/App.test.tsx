@@ -61,6 +61,19 @@ const agents = [
   },
 ];
 
+const configBundle = {
+  models: { schema_version: 1, providers: [
+    { id: "openai", name: "OpenAI", protocol: "openai_responses", base_url: "https://api.openai.com/v1", api_keys: [{ id: "primary", label: "Primary", api_key: "sk-local" }], selected_api_key_id: "primary", models: [{ id: "openai-worker-model", name: "gpt-test", max_output_tokens: 8192, timeout_seconds: 180 }] },
+    { id: "anthropic", name: "Anthropic", protocol: "anthropic", base_url: "https://api.anthropic.com", api_keys: [{ id: "primary", label: "Primary", api_key: "claude-local" }], selected_api_key_id: "primary", models: [{ id: "claude-worker-model", name: "claude-test", max_output_tokens: 8192, timeout_seconds: 180 }] },
+  ] },
+  agents: { schema_version: 1, agents: Object.fromEntries(agents.map((agent) => [agent.agent_id, {
+    display_name: agent.display_name, role: agent.role, runtime: agent.sdk, provider_id: agent.provider_id,
+    model_id: agent.model_id, max_turns_per_cycle: 3, system_prompt: `${agent.display_name} system prompt`,
+  }])) },
+  scenes: { schema_version: 1, scenes: [{ id: "penetration_test", name: "渗透测试", description: "Web 与网络服务题", system_prompt: "找到并验证 flag" }] },
+  runtime: { schema_version: 1, postgres_dsn: "postgresql://local", listen_port: 8083 },
+};
+
 class EventSourceStub {
   onopen: (() => void) | null = null;
   onerror: (() => void) | null = null;
@@ -105,6 +118,7 @@ describe("TGA3 frontend", () => {
         "worker-openai": { display_name: "OpenAI Worker", role: "worker", runtime: "openai_agents", provider_id: "openai", model_id: "openai-worker-model", max_turns_per_cycle: 3 },
       } });
       if (url.endsWith("/api/v3/scenes")) return response([{ id: "penetration_test", name: "渗透测试", description: "Web 与网络服务题" }]);
+      if (url.endsWith("/api/v3/config")) return response(configBundle);
       if (url.endsWith("/api/v3/skills")) return response([]);
       return response({});
     }));
@@ -134,6 +148,14 @@ describe("TGA3 frontend", () => {
     expect(await screen.findByRole("button", { name: /渗透测试/ })).toBeInTheDocument();
     expect(screen.getByText("共享黑板")).toBeInTheDocument();
     expect(await screen.findByText("openai/openai-worker-model")).toBeInTheDocument();
+  });
+
+  it("reads the editable config source in the frontend", async () => {
+    renderAt("/config");
+    expect(await screen.findByText("统一配置中心")).toBeInTheDocument();
+    expect(await screen.findByDisplayValue("OpenAI")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "添加供应商" })).toBeInTheDocument();
+    expect(screen.getAllByLabelText("API Key")[0]).toHaveValue("sk-local");
   });
 
   it("maps backend states without legacy status semantics", () => {

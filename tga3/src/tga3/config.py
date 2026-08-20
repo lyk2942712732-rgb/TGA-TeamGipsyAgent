@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import json
+import os
 from pathlib import Path
 from typing import Literal
+from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
@@ -146,6 +149,28 @@ class RuntimeConfig(BaseModel):
     cadence: CadenceConfig = Field(default_factory=CadenceConfig)
 
 
+class ConfigBundle(BaseModel):
+    """The complete editable config surface persisted below config/."""
+
+    model_config = ConfigDict(extra="forbid")
+    models: ModelsConfig
+    agents: AgentsConfig
+    scenes: ScenesConfig
+    runtime: RuntimeConfig
+
+    def documents(self) -> dict[str, dict]:
+        models = self.models.model_dump(mode="json")
+        for provider_data, provider in zip(models["providers"], self.models.providers, strict=True):
+            for key_data, key in zip(provider_data["api_keys"], provider.api_keys, strict=True):
+                key_data["api_key"] = key.api_key.get_secret_value()
+        return {
+            "models.json": models,
+            "agents.json": self.agents.model_dump(mode="json"),
+            "scenes.json": self.scenes.model_dump(mode="json"),
+            "runtime.json": self.runtime.model_dump(mode="json"),
+        }
+
+
 class ResolvedAgent(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     agent_id: str
@@ -181,7 +206,7 @@ class TGA3Config:
         self.agents = AgentsConfig.model_validate_json(self._read("agents.json"))
         self.scenes = ScenesConfig.model_validate_json(self._read("scenes.json"))
         self.runtime = RuntimeConfig.model_validate_json(self._read("runtime.json"))
-        self._validate_bindings()
+        self._validate_values(self.models, self.agents, self.scenes, self.runtime)
 
     def resolve_agent(self, agent_id: str) -> ResolvedAgent:
         try:
@@ -227,14 +252,71 @@ class TGA3Config:
         ):
             self.resolve_path(value).mkdir(parents=True, exist_ok=True)
 
+    def export_bundle(self) -> dict[str, dict]:
+        documents = ConfigBundle(
+            models=self.models,
+            agents=self.agents,
+            scenes=self.scenes,
+            runtime=self.runtime,
+        ).documents()
+        return {
+            "models": documents["models.json"],
+            "agents": documents["agents.json"],
+            "scenes": documents["scenes.json"],
+            "runtime": documents["runtime.json"],
+        }
+
+    def apply_bundle(self, bundle: ConfigBundle) -> None:
+        """Validate, atomically replace all config documents, then refresh this live snapshot."""
+
+        self._validate_values(bundle.models, bundle.agents, bundle.scenes, bundle.runtime)
+        documents = bundle.documents()
+        targets = {name: self.config_dir / name for name in documents}
+        originals = {name: path.read_bytes() for name, path in targets.items()}
+        staged: dict[str, Path] = {}
+        replaced: list[str] = []
+        try:
+            for name, payload in documents.items():
+                temporary = self.config_dir / f".{name}.{uuid4().hex}.tmp"
+                temporary.write_text(
+                    json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+                    encoding="utf-8",
+                )
+                staged[name] = temporary
+            for name, target in targets.items():
+                os.replace(staged[name], target)
+                replaced.append(name)
+        except Exception:
+            for name in replaced:
+                recovery = self.config_dir / f".{name}.{uuid4().hex}.rollback"
+                recovery.write_bytes(originals[name])
+                os.replace(recovery, targets[name])
+            raise
+        finally:
+            for temporary in staged.values():
+                temporary.unlink(missing_ok=True)
+
+        self.models = bundle.models
+        self.agents = bundle.agents
+        self.scenes = bundle.scenes
+        self.runtime = bundle.runtime
+        self.ensure_directories()
+
     def _read(self, name: str) -> str:
         path = self.config_dir / name
         if not path.is_file():
             raise FileNotFoundError(f"missing TGA3 configuration: {path}")
         return path.read_text(encoding="utf-8")
 
-    def _validate_bindings(self) -> None:
-        missing = sorted(self.REQUIRED_AGENTS.difference(self.agents.agents))
+    @classmethod
+    def _validate_values(
+        cls,
+        models: ModelsConfig,
+        agents: AgentsConfig,
+        scenes: ScenesConfig,
+        runtime: RuntimeConfig,
+    ) -> None:
+        missing = sorted(cls.REQUIRED_AGENTS.difference(agents.agents))
         if missing:
             raise ValueError(f"agents.json is missing: {', '.join(missing)}")
         expected_roles = {
@@ -244,12 +326,12 @@ class TGA3Config:
             "reporter": "reporter",
         }
         for agent_id, expected_role in expected_roles.items():
-            if self.agents.agents[agent_id].role != expected_role:
+            if agents.agents[agent_id].role != expected_role:
                 raise ValueError(f"{agent_id} must use role={expected_role}")
-        scene_ids = {scene.id for scene in self.scenes.scenes}
-        if len(scene_ids) != len(self.scenes.scenes):
+        scene_ids = {scene.id for scene in scenes.scenes}
+        if len(scene_ids) != len(scenes.scenes):
             raise ValueError("scenes.json contains duplicate scene ids")
-        missing_scenes = sorted(self.REQUIRED_SCENES.difference(scene_ids))
+        missing_scenes = sorted(cls.REQUIRED_SCENES.difference(scene_ids))
         if missing_scenes:
             raise ValueError(f"scenes.json is missing: {', '.join(missing_scenes)}")
         expected_runtimes = {
@@ -259,20 +341,28 @@ class TGA3Config:
             "reporter": "openai_agents",
         }
         for agent_id, expected_runtime in expected_runtimes.items():
-            if self.agents.agents[agent_id].runtime != expected_runtime:
+            if agents.agents[agent_id].runtime != expected_runtime:
                 raise ValueError(f"{agent_id} must use runtime={expected_runtime}")
-        for agent_id, binding in self.agents.agents.items():
-            provider = self.models.provider(binding.provider_id)
+        for agent_id, binding in agents.agents.items():
+            provider = models.provider(binding.provider_id)
             provider.model(binding.model_id)
             if binding.runtime == "claude_agent" and provider.protocol != "anthropic":
                 raise ValueError(f"{agent_id} requires an anthropic provider")
             if binding.runtime == "openai_agents" and provider.protocol == "anthropic":
                 raise ValueError(f"{agent_id} cannot use anthropic through openai_agents")
+        missing_images = sorted(
+            agent_id
+            for agent_id, binding in agents.agents.items()
+            if binding.role == "worker" and agent_id not in runtime.worker_images
+        )
+        if missing_images:
+            raise ValueError(f"runtime.json worker_images is missing: {', '.join(missing_images)}")
 
 
 __all__ = [
     "AgentConfig",
     "AgentsConfig",
+    "ConfigBundle",
     "DockerConfig",
     "ModelConfig",
     "ModelsConfig",
