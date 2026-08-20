@@ -18,6 +18,15 @@ RUN test -n "${KALI_MIRROR}" \
        'Acquire::https::Timeout "60";' \
        > /etc/apt/apt.conf.d/80-tga3-network
 
+# The official minimal Kali container has no populated CA bundle. Bootstrap
+# only that bundle with TLS peer verification disabled; APT still verifies the
+# signed Kali repository metadata. Every subsequent download uses normal HTTPS
+# certificate verification.
+RUN apt-get -o Acquire::https::Verify-Peer=false update \
+    && apt-get -o Acquire::https::Verify-Peer=false install -y --no-install-recommends ca-certificates \
+    && update-ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
 # kali-linux-headless provides the broad CLI pentest floor. The explicit
 # additions cover the gaps that matter to TGA3's Pwn, RE, vulnerability
 # research, incident-response, forensics, crypto and Misc scenes.

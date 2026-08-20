@@ -80,7 +80,7 @@ sudo chmod -R u+rwX,go-rwx /opt/TGA-TeamGipsyAgent/tga3/config
 
 这些 Python 库安装在 Worker 实际使用的 `/opt/tga3-venv`，不是只放进系统 Python。容器默认增加 `SYS_PTRACE` 供本任务空间内的二进制动态调试使用，但不增加 `SYS_ADMIN` 或宿主设备访问权限；磁盘镜像优先使用用户态取证工具处理。
 
-镜像构建默认直接使用 Kali HTTPS CDN，并为 APT 启用重试。构建脚本默认使用宿主网络，避免虚拟机代理或 Fake-IP DNS 只在宿主可用、Docker bridge 不可用的问题。需要切换镜像或网络时无需编辑 Dockerfile：
+镜像构建默认直接使用 Kali HTTPS CDN，并为 APT 启用重试。官方最小容器尚无 CA bundle，Dockerfile 会先仅引导安装经过 Kali 仓库签名验证的 `ca-certificates`，之后所有软件包恢复正常 HTTPS 证书验证。构建脚本默认使用宿主网络，避免虚拟机代理或 Fake-IP DNS 只在宿主可用、Docker bridge 不可用的问题。需要切换镜像或网络时无需编辑 Dockerfile：
 
 ```bash
 KALI_MIRROR=https://mirrors.tuna.tsinghua.edu.cn/kali ./scripts/ubuntu-bootstrap.sh
