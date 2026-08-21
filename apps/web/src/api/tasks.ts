@@ -164,6 +164,7 @@ export type ProviderAPIKey = {
   label: string;
   masked: string;
   selected: boolean;
+  configured?: boolean;
   created_at?: string;
 };
 export type ProviderModel = {
@@ -513,8 +514,9 @@ function providerView(
     api_keys: provider.api_keys.map((key) => ({
       id: key.id,
       label: key.label,
-      masked: mask(key.api_key),
+      masked: key.api_key ? mask(key.api_key) : "未设置",
       selected: key.id === provider.selected_api_key_id,
+      configured: Boolean(key.api_key),
     })),
   };
 }

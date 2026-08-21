@@ -25,7 +25,7 @@ export function ModelsPage({ onConfiguredChange }: { onConfiguredChange?: (confi
     const value = await fetchProviderCatalog();
     setCatalog(value);
     setSelectedId((current) => preferredId ?? current ?? value.providers[0]?.id ?? null);
-    onConfiguredChange?.(value.providers.some((provider) => provider.models.length > 0 && provider.api_keys.length > 0));
+    onConfiguredChange?.(value.providers.some((provider) => provider.models.length > 0 && configuredKeyCount(provider) > 0));
   };
 
   useEffect(() => { void load().catch((reason: unknown) => setMessage(errorText(reason))); }, []);
@@ -113,15 +113,15 @@ export function ModelsPage({ onConfiguredChange }: { onConfiguredChange?: (confi
         <header><div><h2>已配置</h2><span>{catalog?.providers.length ?? 0}</span></div><p>选择供应商查看模型与密钥</p></header>
         {catalog?.providers.length ? catalog.providers.map((provider) => {
           return <button key={provider.id} className={provider.id === selectedId ? "selected" : ""} onClick={() => setSelectedId(provider.id)}>
-            <span className="provider-mark"><Server size={18} /></span><span><strong>{provider.name}</strong><small>{provider.models.length} 个模型 · {provider.api_keys.length} 个密钥</small></span>
-            <em className={provider.models.length && provider.api_keys.length ? "ready" : "pending"}>{provider.models.length && provider.api_keys.length ? "已配置" : "未完整配置"}</em><ChevronRight size={16} />
+            <span className="provider-mark"><Server size={18} /></span><span><strong>{provider.name}</strong><small>{provider.models.length} 个模型 · {configuredKeyCount(provider)} 个有效密钥</small></span>
+            <em className={provider.models.length && configuredKeyCount(provider) ? "ready" : "pending"}>{provider.models.length && configuredKeyCount(provider) ? "已配置" : "未完整配置"}</em><ChevronRight size={16} />
           </button>;
         }) : <div className="provider-empty"><Server size={24} /><strong>还没有供应商</strong><p>添加一个供应商后即可配置 Agent 使用的模型。</p></div>}
       </section>
 
       <section className="provider-detail" aria-label="供应商详情">
         {selected ? <>
-          <header className="provider-detail-head"><div><span>{selected.preset_id === "custom" ? "自定义供应商" : "官方预设"}</span><h2>{selected.name}</h2><code>{selected.base_url}</code></div><div className="provider-counts"><span><Cpu size={15} />{selected.models.length} 模型</span><span><KeyRound size={15} />{selected.api_keys.length} 密钥</span></div></header>
+          <header className="provider-detail-head"><div><span>{selected.preset_id === "custom" ? "自定义供应商" : "官方预设"}</span><h2>{selected.name}</h2><code>{selected.base_url}</code></div><div className="provider-counts"><span><Cpu size={15} />{selected.models.length} 模型</span><span><KeyRound size={15} />{configuredKeyCount(selected)} 有效密钥</span></div></header>
           <form className="provider-endpoint-form" onSubmit={syncModels}><label>API URL<input required type="url" value={endpoint} onChange={(event) => setEndpoint(event.target.value)} /></label><button className="ref-secondary-button" disabled={busy === "models"}><RefreshCw size={15} />{busy === "models" ? "读取中…" : "读取可访问模型"}</button></form>
 
           <div className="provider-detail-grid">
@@ -134,8 +134,8 @@ export function ModelsPage({ onConfiguredChange }: { onConfiguredChange?: (confi
             </section>
 
             <section className="provider-keys"><header><div><h3>API 密钥</h3><p>点击条目即可选中；页面列表仅显示密钥掩码。</p></div></header>
-              <div className="provider-items key-items">{selected.api_keys.map((key) => <button type="button" key={key.id} className={key.selected ? "selected" : ""} onClick={() => void selectKey(selected, key.id)} disabled={busy === `key:${key.id}`}>
-                <span className="item-icon"><KeyRound size={16} /></span><span><strong>{key.label}</strong><code>{key.masked}</code></span>{key.selected ? <em><Check size={13} />当前使用</em> : <small>点击选中</small>}
+              <div className="provider-items key-items">{selected.api_keys.map((key) => <button type="button" key={key.id} className={key.selected && key.configured !== false ? "selected" : ""} onClick={() => void selectKey(selected, key.id)} disabled={busy === `key:${key.id}` || key.configured === false}>
+                <span className="item-icon"><KeyRound size={16} /></span><span><strong>{key.label}</strong><code>{key.masked}</code></span>{key.configured === false ? <small>请在下方添加密钥</small> : key.selected ? <em><Check size={13} />当前使用</em> : <small>点击选中</small>}
               </button>)}</div>
               <form className="provider-key-form" onSubmit={appendKey}><input aria-label="密钥备注" value={newKeyLabel} onChange={(event) => setNewKeyLabel(event.target.value)} placeholder="备注（可选）" /><input required type="password" aria-label="添加 API 密钥" autoComplete="new-password" value={newKey} onChange={(event) => setNewKey(event.target.value)} placeholder="输入新的 API 密钥" /><button disabled={busy === "key"}><Plus size={14} />添加 API 密钥</button></form>
             </section>
@@ -149,4 +149,8 @@ export function ModelsPage({ onConfiguredChange }: { onConfiguredChange?: (confi
 
 function errorText(reason: unknown): string {
   return reason instanceof Error ? reason.message : "操作失败，请稍后重试";
+}
+
+function configuredKeyCount(provider: ModelProvider): number {
+  return provider.api_keys.filter((key) => key.configured !== false).length;
 }
