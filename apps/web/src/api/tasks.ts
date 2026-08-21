@@ -158,7 +158,12 @@ export type LLMSettingsUpdate = {
   temperature?: number;
   reasoning_mode?: "auto" | "enabled" | "disabled";
 };
-export type ProviderPreset = { id: string; name: string; base_url: string };
+export type ProviderPreset = {
+  id: string;
+  name: string;
+  base_url: string;
+  protocol: "openai_responses" | "openai_chat_completions" | "anthropic";
+};
 export type ProviderAPIKey = {
   id: string;
   label: string;
@@ -182,6 +187,8 @@ export type ModelProvider = {
   id: string;
   name: string;
   preset_id: string;
+  built_in: boolean;
+  protocol: "openai_responses" | "openai_chat_completions" | "anthropic";
   base_url: string;
   models: ProviderModel[];
   api_keys: ProviderAPIKey[];
@@ -230,6 +237,8 @@ type ModelsDocument = {
   providers: Array<{
     id: string;
     name: string;
+    preset_id?: string;
+    built_in?: boolean;
     protocol: "openai_responses" | "openai_chat_completions" | "anthropic";
     base_url?: string | null;
     selected_api_key_id: string;
@@ -493,12 +502,9 @@ function providerView(
   return {
     id: provider.id,
     name: provider.name,
-    preset_id:
-      provider.protocol === "anthropic"
-        ? "anthropic"
-        : provider.id === "openai"
-          ? "openai"
-          : "custom",
+    preset_id: provider.preset_id ?? "custom",
+    built_in: provider.built_in ?? false,
+    protocol: provider.protocol,
     base_url: provider.base_url ?? "",
     selected_api_key_id: provider.selected_api_key_id,
     models: provider.models.map((model) => ({
@@ -521,6 +527,8 @@ function providerView(
   };
 }
 const loadModels = () => requestJson<ModelsDocument>("/api/v3/config/models");
+const loadProviderPresets = () =>
+  requestJson<ProviderPreset[]>("/api/v3/config/model-provider-presets");
 const saveModels = (value: ModelsDocument) =>
   requestJson<ModelsDocument>("/api/v3/config/models", {
     method: "PUT",
@@ -528,23 +536,17 @@ const saveModels = (value: ModelsDocument) =>
     body: JSON.stringify(value),
   });
 export async function fetchProviderCatalog(): Promise<ProviderCatalog> {
-  const value = await loadModels();
+  const [value, presets] = await Promise.all([loadModels(), loadProviderPresets()]);
   return {
     schema_version: 1,
-    presets: [
-      { id: "openai", name: "OpenAI", base_url: "https://api.openai.com/v1" },
-      {
-        id: "anthropic",
-        name: "Anthropic",
-        base_url: "https://api.anthropic.com",
-      },
-    ],
+    presets,
     providers: value.providers.map(providerView),
   };
 }
 export async function createModelProvider(payload: {
   name: string;
   preset_id?: string;
+  protocol: "openai_responses" | "openai_chat_completions" | "anthropic";
   base_url: string;
   api_key: string;
   api_key_label?: string;
@@ -557,12 +559,9 @@ export async function createModelProvider(payload: {
   const provider: ModelsDocument["providers"][number] = {
     id,
     name: payload.name,
-    protocol:
-      payload.preset_id === "anthropic"
-        ? "anthropic"
-        : payload.preset_id === "openai"
-          ? "openai_responses"
-          : "openai_chat_completions",
+    preset_id: payload.preset_id ?? "custom",
+    built_in: false,
+    protocol: payload.protocol,
     base_url: payload.base_url,
     api_keys: [
       {
@@ -581,6 +580,12 @@ export async function createModelProvider(payload: {
   return {
     provider: providerView(refreshed.providers.find((item) => item.id === id)!),
   };
+}
+export async function deleteModelProvider(providerId: string): Promise<void> {
+  await requestJson<void>(
+    `/api/v3/config/models/${encodeURIComponent(providerId)}`,
+    { method: "DELETE" },
+  );
 }
 export async function discoverProviderModels(
   providerId: string,

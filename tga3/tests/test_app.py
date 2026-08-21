@@ -46,6 +46,33 @@ def test_frontend_api_uses_safe_catalog_and_page_owned_config_documents(tmp_path
         assert "system_prompt" not in str(catalog)
         models = client.get("/api/v3/config/models").json()
         assert models["providers"][0]["api_keys"][0]["api_key"] == "must-not-leak"
+        presets = client.get("/api/v3/config/model-provider-presets").json()
+        assert {item["id"] for item in presets} >= {
+            "openai", "anthropic", "deepseek", "gemini", "openrouter", "groq"
+        }
+        assert next(item for item in presets if item["id"] == "deepseek")["base_url"] == (
+            "https://api.deepseek.com"
+        )
+        custom_provider = {
+            "id": "team-gateway",
+            "name": "Team Gateway",
+            "preset_id": "custom",
+            "built_in": False,
+            "protocol": "openai_chat_completions",
+            "base_url": "https://gateway.example.test/v1/models",
+            "api_keys": [{"id": "team-key", "label": "Primary", "api_key": "secret"}],
+            "selected_api_key_id": "team-key",
+            "models": [],
+        }
+        models["providers"].append(custom_provider)
+        saved_models = client.put("/api/v3/config/models", json=models)
+        assert saved_models.status_code == 200
+        saved_custom = next(
+            item for item in saved_models.json()["providers"] if item["id"] == "team-gateway"
+        )
+        assert saved_custom["base_url"] == "https://gateway.example.test"
+        assert client.delete("/api/v3/config/models/team-gateway").status_code == 204
+        assert client.delete("/api/v3/config/models/openai").status_code == 422
         agents = client.get("/api/v3/config/agents").json()
         assert agents["agents"]["supervisor"]["system_prompt"]
         definitions = client.get("/api/v3/agent-definitions").json()

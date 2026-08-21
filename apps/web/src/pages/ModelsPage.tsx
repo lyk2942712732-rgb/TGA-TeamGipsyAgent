@@ -1,14 +1,17 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { Check, ChevronRight, Cpu, KeyRound, Plus, RefreshCw, Server, ShieldCheck, X } from "lucide-react";
+import { Check, ChevronRight, Cpu, KeyRound, Plus, RefreshCw, Server, ShieldCheck, Trash2, X } from "lucide-react";
 import {
-  addProviderAPIKey, createModelProvider, discoverProviderModels, fetchProviderCatalog,
+  addProviderAPIKey, createModelProvider, deleteModelProvider, discoverProviderModels, fetchProviderCatalog,
   selectProviderAPIKey, updateProviderEndpoint,
   type ModelProvider, type ProviderCatalog,
 } from "../api/tasks";
 
-type ProviderDraft = { preset_id: string; name: string; base_url: string; api_key: string };
+type ProviderProtocol = "openai_responses" | "openai_chat_completions" | "anthropic";
+type ProviderDraft = { preset_id: string; name: string; protocol: ProviderProtocol; base_url: string; api_key: string };
 
-const EMPTY_PROVIDER: ProviderDraft = { preset_id: "custom", name: "", base_url: "", api_key: "" };
+const EMPTY_PROVIDER: ProviderDraft = {
+  preset_id: "custom", name: "", protocol: "openai_chat_completions", base_url: "", api_key: "",
+};
 
 export function ModelsPage({ onConfiguredChange }: { onConfiguredChange?: (configured: boolean) => void }) {
   const [catalog, setCatalog] = useState<ProviderCatalog | null>(null);
@@ -34,6 +37,12 @@ export function ModelsPage({ onConfiguredChange }: { onConfiguredChange?: (confi
     () => catalog?.providers.find((provider) => provider.id === selectedId) ?? null,
     [catalog, selectedId],
   );
+  const availablePresets = useMemo(
+    () => catalog?.presets.filter(
+      (preset) => !catalog.providers.some((provider) => provider.preset_id === preset.id),
+    ) ?? [],
+    [catalog],
+  );
   useEffect(() => { setEndpoint(selected?.base_url ?? ""); }, [selected?.id, selected?.base_url]);
 
   const choosePreset = (presetId: string) => {
@@ -41,6 +50,7 @@ export function ModelsPage({ onConfiguredChange }: { onConfiguredChange?: (confi
     setDraft((current) => ({
       ...current, preset_id: presetId,
       name: preset ? preset.name : current.name,
+      protocol: preset ? preset.protocol : current.protocol,
       base_url: preset ? preset.base_url : current.base_url,
     }));
   };
@@ -53,6 +63,19 @@ export function ModelsPage({ onConfiguredChange }: { onConfiguredChange?: (confi
       await load(result.provider.id);
       setMessage(`已添加供应商 ${result.provider.name}，并读取到 ${result.provider.models.length} 个可访问模型。`);
     } catch (reason) { await load().catch(() => undefined); setMessage(errorText(reason)); }
+    finally { setBusy(""); }
+  };
+
+  const removeProvider = async () => {
+    if (!selected || selected.built_in) return;
+    if (!window.confirm(`确认删除供应商“${selected.name}”？其密钥和模型记录会一起删除。`)) return;
+    setBusy("delete"); setMessage("");
+    try {
+      await deleteModelProvider(selected.id);
+      setSelectedId(null);
+      await load();
+      setMessage(`已删除供应商 ${selected.name}。`);
+    } catch (reason) { await load(selected.id).catch(() => undefined); setMessage(errorText(reason)); }
     finally { setBusy(""); }
   };
 
@@ -91,7 +114,7 @@ export function ModelsPage({ onConfiguredChange }: { onConfiguredChange?: (confi
 
   return <div className="ref-page models-catalog-page">
     <header className="ref-page-head models-page-head">
-      <div><span className="eyebrow">MODEL REGISTRY</span><h1>模型供应商</h1><p>配置 API URL 与密钥后，系统自动读取该密钥可访问的模型。</p></div>
+      <div><span className="eyebrow">MODEL REGISTRY</span><h1>模型供应商</h1><p>只填写 API 根地址与密钥，系统会按供应商自动补全协议路径并读取可访问模型。</p></div>
       <button className="ref-primary-button" onClick={() => setAdding(true)}><Plus size={16} />添加供应商</button>
     </header>
 
@@ -100,9 +123,10 @@ export function ModelsPage({ onConfiguredChange }: { onConfiguredChange?: (confi
     {adding ? <section className="provider-create-card" aria-label="添加供应商">
       <header><div><h2>添加供应商</h2><p>选择官方预设会自动填写 API URL；也可以使用任意兼容端点。</p></div><button className="icon-button" aria-label="关闭" onClick={() => setAdding(false)}><X size={18} /></button></header>
       <form onSubmit={create}>
-        <label>供应商类型<select aria-label="供应商类型" value={draft.preset_id} onChange={(event) => choosePreset(event.target.value)}><option value="custom">自定义</option>{catalog?.presets.map((preset) => <option key={preset.id} value={preset.id}>{preset.name}</option>)}</select></label>
+        <label>供应商类型<select aria-label="供应商类型" value={draft.preset_id} onChange={(event) => choosePreset(event.target.value)}><option value="custom">自定义供应商</option>{availablePresets.map((preset) => <option key={preset.id} value={preset.id}>{preset.name}</option>)}</select></label>
         <label>供应商名称<input required aria-label="供应商名称" value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} placeholder="例如：团队网关" /></label>
-        <label className="wide">API URL<input required type="url" aria-label="API URL" value={draft.base_url} onChange={(event) => setDraft({ ...draft, base_url: event.target.value })} placeholder="https://api.example.com/v1" /></label>
+        {draft.preset_id === "custom" ? <label>兼容协议<select aria-label="兼容协议" value={draft.protocol} onChange={(event) => setDraft({ ...draft, protocol: event.target.value as ProviderProtocol })}><option value="openai_chat_completions">OpenAI Chat Completions</option><option value="openai_responses">OpenAI Responses</option><option value="anthropic">Anthropic Messages</option></select></label> : null}
+        <label className="wide">API 根地址<input required type="url" aria-label="API URL" value={draft.base_url} onChange={(event) => setDraft({ ...draft, base_url: event.target.value })} placeholder="https://api.example.com" /><small>只需填写协议、域名和端口，不需要填写 /v1、/anthropic 或 /models。</small></label>
         <label>API 密钥<input required type="password" aria-label="API 密钥" autoComplete="new-password" value={draft.api_key} onChange={(event) => setDraft({ ...draft, api_key: event.target.value })} placeholder="仅写入，不会回显" /></label>
         <footer><button type="button" className="ref-secondary-button" onClick={() => setAdding(false)}>取消</button><button className="ref-primary-button" disabled={busy === "create"}>{busy === "create" ? "正在保存…" : "保存供应商"}</button></footer>
       </form>
@@ -121,8 +145,8 @@ export function ModelsPage({ onConfiguredChange }: { onConfiguredChange?: (confi
 
       <section className="provider-detail" aria-label="供应商详情">
         {selected ? <>
-          <header className="provider-detail-head"><div><span>{selected.preset_id === "custom" ? "自定义供应商" : "官方预设"}</span><h2>{selected.name}</h2><code>{selected.base_url}</code></div><div className="provider-counts"><span><Cpu size={15} />{selected.models.length} 模型</span><span><KeyRound size={15} />{configuredKeyCount(selected)} 有效密钥</span></div></header>
-          <form className="provider-endpoint-form" onSubmit={syncModels}><label>API URL<input required type="url" value={endpoint} onChange={(event) => setEndpoint(event.target.value)} /></label><button className="ref-secondary-button" disabled={busy === "models"}><RefreshCw size={15} />{busy === "models" ? "读取中…" : "读取可访问模型"}</button></form>
+          <header className="provider-detail-head"><div><span>{selected.preset_id === "custom" ? "自定义供应商" : "供应商预设"}</span><h2>{selected.name}</h2><code>{selected.base_url}</code></div><div className="provider-detail-actions"><div className="provider-counts"><span><Cpu size={15} />{selected.models.length} 模型</span><span><KeyRound size={15} />{configuredKeyCount(selected)} 有效密钥</span></div>{!selected.built_in ? <button type="button" className="provider-delete-button" disabled={busy === "delete"} onClick={() => void removeProvider()}><Trash2 size={15} />删除</button> : null}</div></header>
+          <form className="provider-endpoint-form" onSubmit={syncModels}><label>API 根地址<input required type="url" value={endpoint} onChange={(event) => setEndpoint(event.target.value)} /><small>系统会自动拼接模型发现与 SDK 推理路径。</small></label><button className="ref-secondary-button" disabled={busy === "models"}><RefreshCw size={15} />{busy === "models" ? "读取中…" : "读取可访问模型"}</button></form>
 
           <div className="provider-detail-grid">
             <section className="provider-models"><header><div><h3>可访问模型</h3><p>列表由当前 API URL 和所选 API 密钥自动读取，不再手动添加。</p></div><button type="button" className="icon-button" aria-label="刷新模型" disabled={busy === "models"} onClick={() => void syncModels()}><RefreshCw size={16} /></button></header>

@@ -4,8 +4,10 @@
     {
       "id": "openai",
       "name": "OpenAI",
+      "preset_id": "openai",
+      "built_in": true,
       "protocol": "openai_responses",
-      "base_url": "https://api.openai.com/v1",
+      "base_url": "https://api.openai.com",
       "api_keys": [
         {
           "id": "openai-primary",
@@ -26,6 +28,8 @@
     {
       "id": "anthropic",
       "name": "Anthropic",
+      "preset_id": "anthropic",
+      "built_in": true,
       "protocol": "anthropic",
       "base_url": "https://api.anthropic.com",
       "api_keys": [
@@ -44,6 +48,74 @@
           "timeout_seconds": 180
         }
       ]
+    },
+    {
+      "id": "deepseek",
+      "name": "DeepSeek",
+      "preset_id": "deepseek",
+      "built_in": true,
+      "protocol": "anthropic",
+      "base_url": "https://api.deepseek.com",
+      "api_keys": [
+        {
+          "id": "deepseek-primary",
+          "label": "Primary",
+          "api_key": ""
+        }
+      ],
+      "selected_api_key_id": "deepseek-primary",
+      "models": []
+    },
+    {
+      "id": "gemini",
+      "name": "Google Gemini",
+      "preset_id": "gemini",
+      "built_in": true,
+      "protocol": "openai_chat_completions",
+      "base_url": "https://generativelanguage.googleapis.com",
+      "api_keys": [
+        {
+          "id": "gemini-primary",
+          "label": "Primary",
+          "api_key": ""
+        }
+      ],
+      "selected_api_key_id": "gemini-primary",
+      "models": []
+    },
+    {
+      "id": "openrouter",
+      "name": "OpenRouter",
+      "preset_id": "openrouter",
+      "built_in": true,
+      "protocol": "openai_chat_completions",
+      "base_url": "https://openrouter.ai",
+      "api_keys": [
+        {
+          "id": "openrouter-primary",
+          "label": "Primary",
+          "api_key": ""
+        }
+      ],
+      "selected_api_key_id": "openrouter-primary",
+      "models": []
+    },
+    {
+      "id": "groq",
+      "name": "Groq",
+      "preset_id": "groq",
+      "built_in": true,
+      "protocol": "openai_chat_completions",
+      "base_url": "https://api.groq.com",
+      "api_keys": [
+        {
+          "id": "groq-primary",
+          "label": "Primary",
+          "api_key": ""
+        }
+      ],
+      "selected_api_key_id": "groq-primary",
+      "models": []
     }
   ]
 }

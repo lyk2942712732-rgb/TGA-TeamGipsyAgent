@@ -20,6 +20,7 @@ from .errors import TGA3Error
 from .host_agents import Automation, HostModel, OpenAIHostModel
 from .mcp_server import build_mcp
 from .model_discovery import discover_provider_models
+from .provider_profiles import PROVIDER_PROFILES
 from .skills import SkillCatalog
 from .storage import Storage
 
@@ -328,11 +329,32 @@ def create_app(
     async def read_models_config() -> dict:
         return config.export_document("models")
 
+    @api.get("/config/model-provider-presets")
+    async def read_model_provider_presets() -> list[dict[str, str]]:
+        return [profile.public_dict() for profile in PROVIDER_PROFILES]
+
     @api.put("/config/models")
     async def write_models_config(body: ModelsConfig) -> dict:
         async with config_lock:
             config.apply_document("models", body)
         return config.export_document("models")
+
+    @api.delete("/config/models/{provider_id}", status_code=204)
+    async def delete_model_provider(provider_id: str) -> None:
+        async with config_lock:
+            updated = config.models.model_copy(deep=True)
+            provider = updated.provider(provider_id)
+            if provider.built_in:
+                raise ValueError("内置供应商不能删除；可以不配置它的 API 密钥")
+            bound_agents = [
+                agent_id
+                for agent_id, binding in config.agents.agents.items()
+                if binding.provider_id == provider_id
+            ]
+            if bound_agents:
+                raise ValueError(f"供应商仍被 Agent 使用：{', '.join(bound_agents)}")
+            updated.providers = [item for item in updated.providers if item.id != provider_id]
+            config.apply_document("models", updated)
 
     @api.post("/config/models/{provider_id}/discover")
     async def discover_models(provider_id: str) -> dict[str, Any]:

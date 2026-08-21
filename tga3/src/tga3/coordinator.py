@@ -301,7 +301,7 @@ class TaskCoordinator:
                 "model_id": model_id,
                 "model_name": provider.model(model_id).name,
                 "protocol": provider.protocol,
-                "base_url": provider.base_url,
+                "base_url": provider.sdk_base_url(),
                 "api_key": provider.key(),
             },
         )

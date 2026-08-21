@@ -60,5 +60,6 @@ export async function requestJson<T>(path: string, init?: RequestInit): Promise<
       : formatApiErrorDetail(detail, response.status);
     throw new ApiError(response.status, message);
   }
+  if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;
 }

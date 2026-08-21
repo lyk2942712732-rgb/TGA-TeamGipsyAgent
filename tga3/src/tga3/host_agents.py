@@ -43,7 +43,7 @@ class OpenAIHostModel:
 
         client = AsyncOpenAI(
             api_key=binding.api_key.get_secret_value(),
-            base_url=binding.provider.base_url,
+            base_url=binding.provider.sdk_base_url(),
         )
         if binding.provider.protocol == "openai_chat_completions":
             return OpenAIChatCompletionsModel(model=binding.model.name, openai_client=client)

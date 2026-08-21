@@ -366,6 +366,7 @@ button, .secondary-button { display: inline-flex; align-items: center; justify-c
 .provider-create-card p,.provider-list p,.provider-detail p { margin:3px 0 0; color:#718096; font-size:12px; }
 .provider-create-card form { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:13px; margin-top:16px; }
 .provider-create-card label { display:grid; gap:6px; color:#475569; font-size:12px; font-weight:700; }
+.provider-create-card label small,.provider-endpoint-form label small { color:#94a3b8; font-size:9px; font-weight:500; }
 .provider-create-card .wide,.provider-create-card footer { grid-column:1/-1; }
 .provider-create-card footer { justify-content:flex-end; margin-top:3px; }
 .provider-layout { display:grid; grid-template-columns:minmax(270px,340px) minmax(0,1fr); gap:16px; min-height:560px; }
@@ -387,6 +388,7 @@ button, .secondary-button { display: inline-flex; align-items: center; justify-c
 .provider-detail-head > div:first-child { display:grid; gap:4px; }
 .provider-detail-head > div:first-child > span { color:#2563eb; font-size:9px; font-weight:900; letter-spacing:.1em; text-transform:uppercase; }
 .provider-detail-head code { color:#64748b; font-size:11px; }
+.provider-detail-actions { display:flex; align-items:center; gap:8px; }.provider-delete-button { display:flex; align-items:center; gap:5px; min-height:31px; padding:0 9px; border:1px solid #fecaca; color:#b91c1c; background:#fff7f7; font-size:10px; font-weight:800; }.provider-delete-button:hover:not(:disabled) { background:#fef2f2; }
 .provider-endpoint-form { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:end; gap:10px; padding:15px 0; border-bottom:1px solid #edf0f5; }.provider-endpoint-form label { display:grid; gap:6px; color:#64748b; font-size:10px; font-weight:750; }.provider-endpoint-form input { width:100%; }.provider-endpoint-form button { white-space:nowrap; }
 .provider-counts { display:flex; gap:7px; }.provider-counts span { display:flex; align-items:center; gap:5px; padding:6px 9px; border:1px solid #e2e8f0; border-radius:8px; color:#64748b; font-size:10px; font-weight:700; }
 .provider-detail-grid { display:grid; grid-template-columns:1fr 1fr; gap:20px; padding-top:20px; }

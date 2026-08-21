@@ -61,7 +61,7 @@ class DockerContainerRuntime:
             "TGA3_MODEL_ID": binding.model.id,
             "TGA3_MODEL_NAME": binding.model.name,
             "TGA3_API_KEY": binding.api_key.get_secret_value(),
-            "TGA3_BASE_URL": binding.provider.base_url or "",
+            "TGA3_BASE_URL": binding.provider.sdk_base_url() or "",
             "TGA3_MAX_TURNS_PER_CYCLE": str(binding.max_turns_per_cycle),
             "TGA3_SYNC_SECONDS": str(runtime.cadence.worker_sync_seconds),
             "TGA3_STARTUP_PROMPT": runtime.worker_cycle_prompts.startup,

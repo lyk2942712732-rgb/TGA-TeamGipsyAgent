@@ -8,7 +8,9 @@ from pathlib import Path
 from typing import Literal
 from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict, Field, SecretStr
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, model_validator
+
+from .provider_profiles import normalize_api_origin, provider_profile, runtime_base_url
 
 
 class APIKeyConfig(BaseModel):
@@ -31,11 +33,27 @@ class ProviderConfig(BaseModel):
     model_config = ConfigDict(extra="allow")
     id: str
     name: str
+    preset_id: str = "custom"
+    built_in: bool = False
     protocol: Literal["openai_responses", "openai_chat_completions", "anthropic"]
     base_url: str | None = None
     api_keys: list[APIKeyConfig]
     selected_api_key_id: str
     models: list[ModelConfig]
+
+    @model_validator(mode="after")
+    def normalize_endpoint(self) -> ProviderConfig:
+        if self.base_url:
+            self.base_url = normalize_api_origin(self.base_url)
+        profile = provider_profile(self.preset_id)
+        if profile and self.protocol != profile.protocol:
+            raise ValueError(f"{self.preset_id} preset requires protocol={profile.protocol}")
+        return self
+
+    def sdk_base_url(self) -> str | None:
+        if not self.base_url:
+            return None
+        return runtime_base_url(self.preset_id, self.base_url, self.protocol)
 
     def key(self) -> str:
         item = next(
