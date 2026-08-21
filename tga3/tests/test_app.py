@@ -53,12 +53,15 @@ def test_frontend_api_uses_safe_catalog_and_page_owned_config_documents(tmp_path
         assert next(item for item in presets if item["id"] == "deepseek")["base_url"] == (
             "https://api.deepseek.com"
         )
+        assert next(item for item in presets if item["id"] == "deepseek")["protocols"] == [
+            "openai_chat_completions", "anthropic"
+        ]
         custom_provider = {
             "id": "team-gateway",
             "name": "Team Gateway",
             "preset_id": "custom",
             "built_in": False,
-            "protocol": "openai_chat_completions",
+            "protocols": ["openai_chat_completions"],
             "base_url": "https://gateway.example.test/v1/models",
             "api_keys": [{"id": "team-key", "label": "Primary", "api_key": "secret"}],
             "selected_api_key_id": "team-key",
@@ -127,7 +130,11 @@ def test_frontend_api_uses_safe_catalog_and_page_owned_config_documents(tmp_path
                 "prompt": "analyze this",
                 "scene_id": "reverse_engineering",
                 "agent_models": json.dumps(
-                    {"worker-openai": {"provider_id": "openai", "model_id": "gpt-task-override"}}
+                    {"worker-openai": {
+                        "provider_id": "openai",
+                        "model_id": "gpt-task-override",
+                        "protocol": "openai_chat_completions",
+                    }}
                 ),
             },
             files=[("files", ("challenge.bin", b"binary", "application/octet-stream"))],
@@ -140,6 +147,9 @@ def test_frontend_api_uses_safe_catalog_and_page_owned_config_documents(tmp_path
         assert {agent["runtime_location"] for agent in detail["agents"]} == {"host", "container"}
         assert next(agent for agent in detail["agents"] if agent["agent_id"] == "worker-openai")["model_id"] == (
             "gpt-task-override"
+        )
+        assert next(agent for agent in detail["agents"] if agent["agent_id"] == "worker-openai")["protocol"] == (
+            "openai_chat_completions"
         )
         board = client.get(f"/api/v3/tasks/{task_id}/blackboard").json()["entries"]
         assert [entry["topic"] for entry in board] == ["scene", "task", "input"]

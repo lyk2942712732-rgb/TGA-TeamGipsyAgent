@@ -430,12 +430,12 @@ class PostgresStorage:
 
     async def upsert_agent(self, run: AgentRun) -> AgentRun:
         row = await self.pool.fetchrow(
-            """INSERT INTO agent_runs(task_id,agent_id,sdk,desired_state,actual_state,provider_id,model_id,
+            """INSERT INTO agent_runs(task_id,agent_id,sdk,desired_state,actual_state,provider_id,model_id,protocol,
                container_id,session_id,last_error,updated_at)
-               VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+               VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
                ON CONFLICT(task_id,agent_id) DO UPDATE SET sdk=EXCLUDED.sdk,
                desired_state=EXCLUDED.desired_state,actual_state=EXCLUDED.actual_state,
-               provider_id=EXCLUDED.provider_id,model_id=EXCLUDED.model_id,
+               provider_id=EXCLUDED.provider_id,model_id=EXCLUDED.model_id,protocol=EXCLUDED.protocol,
                container_id=EXCLUDED.container_id,session_id=EXCLUDED.session_id,
                last_error=EXCLUDED.last_error,updated_at=EXCLUDED.updated_at RETURNING *""",
             run.task_id,
@@ -445,6 +445,7 @@ class PostgresStorage:
             run.actual_state.value,
             run.provider_id,
             run.model_id,
+            run.protocol,
             run.container_id,
             run.session_id,
             run.last_error,

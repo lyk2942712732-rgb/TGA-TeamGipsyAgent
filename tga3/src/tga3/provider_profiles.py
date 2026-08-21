@@ -1,34 +1,34 @@
-"""Canonical provider presets and endpoint resolution.
-
-Users configure only an API origin (for example ``https://api.deepseek.com``).
-Provider-specific protocol paths stay here instead of leaking into models.json or
-the settings UI.
-"""
+"""Canonical provider capabilities and protocol-aware endpoint resolution."""
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
+from typing import Literal
 from urllib.parse import urlsplit
+
+
+ProviderProtocol = Literal["openai_responses", "openai_chat_completions", "anthropic"]
 
 
 @dataclass(frozen=True)
 class ProviderProfile:
     id: str
     name: str
-    protocol: str
+    protocols: tuple[ProviderProtocol, ...]
+    default_protocol: ProviderProtocol
     base_url: str
-    runtime_path: str
+    runtime_paths: dict[ProviderProtocol, str]
     models_path: str
     discovery_auth: str = "bearer"
     anthropic_pagination: bool = False
 
-    def public_dict(self) -> dict[str, str]:
-        value = asdict(self)
+    def public_dict(self) -> dict[str, object]:
         return {
-            "id": value["id"],
-            "name": value["name"],
-            "protocol": value["protocol"],
-            "base_url": value["base_url"],
+            "id": self.id,
+            "name": self.name,
+            "protocols": list(self.protocols),
+            "default_protocol": self.default_protocol,
+            "base_url": self.base_url,
         }
 
 
@@ -36,17 +36,19 @@ PROVIDER_PROFILES: tuple[ProviderProfile, ...] = (
     ProviderProfile(
         id="openai",
         name="OpenAI",
-        protocol="openai_responses",
+        protocols=("openai_responses", "openai_chat_completions"),
+        default_protocol="openai_responses",
         base_url="https://api.openai.com",
-        runtime_path="/v1",
+        runtime_paths={"openai_responses": "/v1", "openai_chat_completions": "/v1"},
         models_path="/v1/models",
     ),
     ProviderProfile(
         id="anthropic",
         name="Anthropic",
-        protocol="anthropic",
+        protocols=("anthropic",),
+        default_protocol="anthropic",
         base_url="https://api.anthropic.com",
-        runtime_path="",
+        runtime_paths={"anthropic": ""},
         models_path="/v1/models",
         discovery_auth="anthropic",
         anthropic_pagination=True,
@@ -54,33 +56,37 @@ PROVIDER_PROFILES: tuple[ProviderProfile, ...] = (
     ProviderProfile(
         id="deepseek",
         name="DeepSeek",
-        protocol="anthropic",
+        protocols=("openai_chat_completions", "anthropic"),
+        default_protocol="openai_chat_completions",
         base_url="https://api.deepseek.com",
-        runtime_path="/anthropic",
+        runtime_paths={"openai_chat_completions": "", "anthropic": "/anthropic"},
         models_path="/models",
     ),
     ProviderProfile(
         id="gemini",
         name="Google Gemini",
-        protocol="openai_chat_completions",
+        protocols=("openai_chat_completions",),
+        default_protocol="openai_chat_completions",
         base_url="https://generativelanguage.googleapis.com",
-        runtime_path="/v1beta/openai",
+        runtime_paths={"openai_chat_completions": "/v1beta/openai"},
         models_path="/v1beta/openai/models",
     ),
     ProviderProfile(
         id="openrouter",
         name="OpenRouter",
-        protocol="openai_chat_completions",
+        protocols=("openai_chat_completions",),
+        default_protocol="openai_chat_completions",
         base_url="https://openrouter.ai",
-        runtime_path="/api/v1",
+        runtime_paths={"openai_chat_completions": "/api/v1"},
         models_path="/api/v1/models",
     ),
     ProviderProfile(
         id="groq",
         name="Groq",
-        protocol="openai_chat_completions",
+        protocols=("openai_chat_completions",),
+        default_protocol="openai_chat_completions",
         base_url="https://api.groq.com",
-        runtime_path="/openai/v1",
+        runtime_paths={"openai_chat_completions": "/openai/v1"},
         models_path="/openai/v1/models",
     ),
 )
@@ -105,24 +111,30 @@ def join_origin(origin: str, path: str) -> str:
     return f"{normalize_api_origin(origin)}{path}"
 
 
-def runtime_base_url(preset_id: str | None, origin: str, protocol: str) -> str:
+def runtime_base_url(preset_id: str | None, origin: str, protocol: ProviderProtocol) -> str:
     profile = provider_profile(preset_id)
     if profile:
-        return join_origin(origin, profile.runtime_path)
-    # Custom providers use the conventional SDK roots. Known non-standard
-    # layouts should be represented as presets above.
+        try:
+            path = profile.runtime_paths[protocol]
+        except KeyError as exc:
+            raise ValueError(f"{profile.name} 不支持协议 {protocol}") from exc
+        return join_origin(origin, path)
     path = "" if protocol == "anthropic" else "/v1"
     return join_origin(origin, path)
 
 
-def discovery_urls(preset_id: str | None, origin: str, protocol: str) -> tuple[str, ...]:
+def discovery_urls(
+    preset_id: str | None,
+    origin: str,
+    protocols: tuple[ProviderProtocol, ...] | list[ProviderProtocol],
+) -> tuple[str, ...]:
     profile = provider_profile(preset_id)
     if profile:
         return (join_origin(origin, profile.models_path),)
     normalized = normalize_api_origin(origin)
     paths = (
         ("/v1/models", "/models")
-        if protocol == "anthropic"
+        if set(protocols) == {"anthropic"}
         else ("/models", "/v1/models", "/api/v1/models", "/openai/v1/models")
     )
     return tuple(f"{normalized}{path}" for path in paths)
@@ -131,6 +143,7 @@ def discovery_urls(preset_id: str | None, origin: str, protocol: str) -> tuple[s
 __all__ = [
     "PROVIDER_PROFILES",
     "ProviderProfile",
+    "ProviderProtocol",
     "discovery_urls",
     "normalize_api_origin",
     "provider_profile",

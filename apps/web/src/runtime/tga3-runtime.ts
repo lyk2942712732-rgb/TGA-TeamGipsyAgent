@@ -2,7 +2,7 @@ import { requestJson } from "../api/client";
 import type { RuntimeEvent, RuntimeFinding, RuntimeSolver, RuntimeStore } from "../features/runtime/models/types";
 
 type Task = { id: string; title: string; scene_id: string; state: string; blackboard_seq: number; dialogue_seq: number; final_snapshot_seq?: number | null; created_at: string; updated_at: string };
-type Agent = { agent_id: string; sdk: string; desired_state: string; actual_state: string; provider_id: string; model_id: string; display_name: string; role: string; runtime_location: string; updated_at: string; last_error?: string | null };
+type Agent = { agent_id: string; sdk: string; desired_state: string; actual_state: string; provider_id: string; model_id: string; protocol: string; display_name: string; role: string; runtime_location: string; updated_at: string; last_error?: string | null };
 type Detail = { task: Task; agents: Agent[] };
 type Actor = { agent_id: string; display_name: string; role: string; sdk?: string | null; model?: string | null };
 type BoardEntry = { id: string; seq: number; actor: Actor; kind: string; topic: string; body: Record<string, unknown>; created_at: string };
@@ -19,7 +19,7 @@ export async function loadTGA3Runtime(taskId: string): Promise<RuntimeStore> {
     taskId: task.id, solverId: agent.agent_id, definitionId: agent.display_name, orchestrationRole: agent.role,
     specialties: agent.role === "worker" ? [agent.sdk, "container"] : [agent.sdk, "host"], parentSolverId: agent.role === "worker" ? "supervisor" : null,
     assignedIntentId: null, status: agent.actual_state, currentSummary: agent.last_error ?? statusSummary(agent),
-    modelSnapshot: { provider_id: agent.provider_id, model_id: agent.model_id, sdk: agent.sdk, runtime_location: agent.runtime_location },
+    modelSnapshot: { provider_id: agent.provider_id, model_id: agent.model_id, protocol: agent.protocol, sdk: agent.sdk, runtime_location: agent.runtime_location },
     capabilityBinding: { host_capability_ids: agent.role === "worker" ? [] : ["blackboard", "skills"], kali: agent.role === "worker" ? { capabilities: ["shell", "files", "network"], profile_id: "tga3-worker" } : {} },
     budgetUsage: {}, timestamps: { updated_at: agent.updated_at },
   }]));

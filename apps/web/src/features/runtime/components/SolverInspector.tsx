@@ -4,7 +4,7 @@ import { selectEventsBySolver } from "../models/selectors";
 import type { RuntimeEvent, RuntimeSolver, RuntimeStore } from "../models/types";
 import { StatusBadge } from "../../../shared/StatusBadge";
 import { runtimeApi } from "../../../runtime/api-v2";
-import { deleteStagedInput, fetchAgentModelOptions, stageInput, type AgentModelOptions, type StagedAsset } from "../../../api/tasks";
+import { deleteStagedInput, fetchAgentModelOptions, stageInput, type AgentModelOptions, type ProviderProtocol, type StagedAsset } from "../../../api/tasks";
 import type { TaskMode } from "../../../modes";
 
 /**
@@ -137,14 +137,16 @@ function SolverChat({ solver, store, readonly, onChanged }: { solver: RuntimeSol
     let active = true;
     void fetchAgentModelOptions(store.task.mode as TaskMode).then((value) => {
       if (!active) return;
-      const ready = value.models.filter((item) => item.ready);
+      const sdk = String(solver.modelSnapshot.sdk ?? "");
+      const ready = value.models.filter((item) => item.ready && (sdk === "claude_agent" ? item.protocol === "anthropic" : item.protocol !== "anthropic"));
       setModels(ready);
       const provider = String(solver.modelSnapshot.provider_id ?? "");
       const model = String(solver.modelSnapshot.model_id ?? "");
-      setSelectedModel(provider && model ? `${provider}::${model}` : ready[0] ? `${ready[0].provider_id}::${ready[0].model_id}` : "");
+      const protocol = String(solver.modelSnapshot.protocol ?? "");
+      setSelectedModel(provider && model && protocol ? `${provider}::${model}::${protocol}` : ready[0] ? `${ready[0].provider_id}::${ready[0].model_id}::${ready[0].protocol}` : "");
     }).catch(() => { if (active) setModels([]); });
     return () => { active = false; };
-  }, [solver.solverId, solver.modelSnapshot.provider_id, solver.modelSnapshot.model_id, store.task.mode]);
+  }, [solver.solverId, solver.modelSnapshot.provider_id, solver.modelSnapshot.model_id, solver.modelSnapshot.protocol, solver.modelSnapshot.sdk, store.task.mode]);
 
   async function addFiles(files: File[]) {
     setBusy("upload"); setNotice(null);
@@ -181,11 +183,11 @@ function SolverChat({ solver, store, readonly, onChanged }: { solver: RuntimeSol
 
   async function changeModel(value: string) {
     setSelectedModel(value);
-    const [providerId, modelId] = value.split("::");
-    if (!providerId || !modelId) return;
+    const [providerId, modelId, protocol] = value.split("::");
+    if (!providerId || !modelId || !protocol) return;
     setBusy("model"); setNotice(null);
     try {
-      await runtimeApi.solverModel(store.task.id, solver.solverId, providerId, modelId);
+      await runtimeApi.solverModel(store.task.id, solver.solverId, providerId, modelId, protocol as ProviderProtocol);
       setNotice("模型已切换，将用于该 Solver 的后续调用"); onChanged();
     } catch (reason) { setNotice(reason instanceof Error ? reason.message : "模型切换失败"); }
     finally { setBusy(null); }
@@ -195,7 +197,7 @@ function SolverChat({ solver, store, readonly, onChanged }: { solver: RuntimeSol
     <div className="solver-chat-controls">
       <label>后续模型<select value={selectedModel} disabled={readonly || busy !== null || !models.length} onChange={(event) => void changeModel(event.target.value)}>
         {!models.length ? <option value="">暂无已验证模型</option> : null}
-        {models.map((item) => <option key={`${item.provider_id}::${item.model_id}`} value={`${item.provider_id}::${item.model_id}`}>{item.provider_name} / {item.model_name}</option>)}
+        {models.map((item) => <option key={`${item.provider_id}::${item.model_id}::${item.protocol}`} value={`${item.provider_id}::${item.model_id}::${item.protocol}`}>{item.provider_name} / {item.model_name} / {item.protocol}</option>)}
       </select></label>
       <button type="button" disabled={readonly || busy !== null || terminal} onClick={() => void togglePause()}>{paused ? <Play size={13} /> : <Pause size={13} />}{paused ? "继续" : "暂停"}</button>
     </div>

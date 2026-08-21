@@ -2,7 +2,7 @@ import { type ChangeEvent, type ClipboardEvent, type DragEvent, useEffect, useMe
 import { Check, FileText, Image, Paperclip, Play, X } from "lucide-react";
 import {
   createTask, deleteStagedInput, fetchAgentModelOptions, fetchModeProfiles, stageInput,
-  type AgentModelOptions, type CreateTaskRequest, type ModeProfileContract, type StagedAsset,
+  type AgentModelOptions, type CreateTaskRequest, type ModeProfileContract, type ProviderProtocol, type StagedAsset,
 } from "../api/tasks";
 import { TASK_MODES, type TaskMode } from "../modes";
 
@@ -35,7 +35,7 @@ export function NewTaskPage({ onCreated, onCancel = () => history.back() }: { on
   const [profiles, setProfiles] = useState<ModeProfileContract[]>([]);
   const [assets, setAssets] = useState<StagedAsset[]>([]);
   const [agentOptions, setAgentOptions] = useState<AgentModelOptions | null>(null);
-  const [agentModels, setAgentModels] = useState<Record<string, { provider_id: string; model_id: string }>>({});
+  const [agentModels, setAgentModels] = useState<Record<string, { provider_id: string; model_id: string; protocol: ProviderProtocol }>>({});
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
@@ -45,7 +45,7 @@ export function NewTaskPage({ onCreated, onCancel = () => history.back() }: { on
   useEffect(() => {
     void fetchAgentModelOptions(sceneId).then((value) => {
       setAgentOptions(value);
-      setAgentModels(Object.fromEntries(value.agents.map((agent) => [agent.id, { provider_id: agent.model.provider_id, model_id: agent.model.model_id }])));
+      setAgentModels(Object.fromEntries(value.agents.map((agent) => [agent.id, { provider_id: agent.model.provider_id, model_id: agent.model.model_id, protocol: agent.model.protocol }])));
     }).catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "无法读取 Agent 模型"));
   }, [sceneId]);
   assetsRef.current = assets;
@@ -54,7 +54,7 @@ export function NewTaskPage({ onCreated, onCancel = () => history.back() }: { on
   const selected = useMemo(() => profiles.find((profile) => profile.id === sceneId), [profiles, sceneId]);
   const ready = Boolean(name.trim() && description.trim() && profiles.length && agentOptions && agentOptions.agents.every((agent) => {
     const selectedModel = agentModels[agent.id];
-    return selectedModel && agentOptions.models.some((model) => model.provider_id === selectedModel.provider_id && model.model_id === selectedModel.model_id && model.ready && modelCompatible(agent.runtime, model.protocol));
+    return selectedModel && agentOptions.models.some((model) => model.provider_id === selectedModel.provider_id && model.model_id === selectedModel.model_id && model.protocol === selectedModel.protocol && model.ready && modelCompatible(agent.runtime, model.protocol));
   }) && !busy && assets.every((asset) => asset.status === "uploaded"));
 
   async function upload(files: File[]) {
@@ -108,8 +108,8 @@ export function NewTaskPage({ onCreated, onCancel = () => history.back() }: { on
         {agentOptions ? <fieldset className="task-agent-models"><legend>本任务 Solver 模型</legend><p>默认继承 Solver 配置；这里的选择只影响本任务。</p><div>{agentOptions.agents.map((agent) => {
           const compatible = agentOptions.models.filter((model) => modelCompatible(agent.runtime, model.protocol));
           const current = agentModels[agent.id];
-          return <label key={agent.id}><span><strong>{agent.display_name}</strong><small>{agent.id}</small></span><select aria-label={`${agent.display_name} 模型`} value={current ? `${current.provider_id}::${current.model_id}` : ""} onChange={(event) => { const [provider_id, model_id] = event.target.value.split("::"); setAgentModels((value) => ({ ...value, [agent.id]: { provider_id, model_id } })); }}>
-            {compatible.map((model) => <option key={`${model.provider_id}::${model.model_id}`} value={`${model.provider_id}::${model.model_id}`} disabled={!model.ready}>{model.provider_name} / {model.model_name}{model.ready ? "" : "（密钥不可用）"}</option>)}
+          return <label key={agent.id}><span><strong>{agent.display_name}</strong><small>{agent.id}</small></span><select aria-label={`${agent.display_name} 模型`} value={current ? `${current.provider_id}::${current.model_id}::${current.protocol}` : ""} onChange={(event) => { const [provider_id, model_id, protocol] = event.target.value.split("::"); setAgentModels((value) => ({ ...value, [agent.id]: { provider_id, model_id, protocol: protocol as ProviderProtocol } })); }}>
+            {compatible.map((model) => <option key={`${model.provider_id}::${model.model_id}::${model.protocol}`} value={`${model.provider_id}::${model.model_id}::${model.protocol}`} disabled={!model.ready}>{model.provider_name} / {model.model_name} / {protocolName(model.protocol)}{model.ready ? "" : "（密钥不可用）"}</option>)}
           </select></label>;
         })}</div></fieldset> : null}
         <aside className="new-task-config-note"><strong>{selected?.label ?? "场景"}提示词将自动进入黑板</strong><p>任务启动时写入场景提示词、当前描述和附件索引；上面的模型选择会保存为本任务 Agent 快照。</p></aside>
@@ -122,3 +122,4 @@ export function NewTaskPage({ onCreated, onCancel = () => history.back() }: { on
 
 function formatBytes(value: number) { return value < 1024 ? `${value} B` : value < 1024 ** 2 ? `${(value / 1024).toFixed(1)} KB` : `${(value / 1024 ** 2).toFixed(1)} MB`; }
 function modelCompatible(runtime: "openai_agents" | "claude_agent", protocol: "openai_responses" | "openai_chat_completions" | "anthropic") { return runtime === "claude_agent" ? protocol === "anthropic" : protocol !== "anthropic"; }
+function protocolName(protocol: ProviderProtocol) { return ({ openai_responses: "OpenAI Responses", openai_chat_completions: "OpenAI Chat", anthropic: "Anthropic Messages" } as const)[protocol]; }

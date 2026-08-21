@@ -42,13 +42,13 @@ PostgreSQL 用每任务 advisory transaction lock 分配黑板和对话序号，
 
 ## 配置唯一数据源
 
-- `config/models.json`：Provider、模型、Base URL 和密钥。
-- `config/agents.json`：四个 Agent 的身份、SDK、模型绑定、轮次和完整系统提示词。
+- `config/models.json`：Provider、支持的兼容协议、自动发现的模型、Base URL 和密钥。
+- `config/agents.json`：四个 Agent 的身份、SDK、模型与实际调用协议绑定、轮次和完整系统提示词。
 - `config/scenes.json`：八种任务场景及进入黑板的场景提示词。
 - `config/runtime.json`：Docker 资源、镜像、目录、通信地址、运行节奏、MCP 指令和 Worker 周期提示。
 - `config/skills/<name>/SKILL.md`：不分角色与场景的通用 Skill；Agent 先列名称再按需读取。
 
-生产代码不从环境变量覆盖 Provider、模型、密钥或 Agent 提示词。环境变量只用于把上述已解析配置传给动态 Worker 容器。前端“配置中心”通过 `GET/PUT /api/v3/config` 直接读取并原子写回这四份 JSON；Skills 页面直接管理 `config/skills`。供应商、模型和 API Key 不需要再登录服务器手工编辑。保存时后端先执行完整的跨文件校验，校验失败不会替换现有配置。
+生产代码不从环境变量覆盖 Provider、模型、密钥或 Agent 提示词。环境变量只用于把上述已解析配置传给动态 Worker 容器。前端各配置页面通过 `/api/v3/config` 读写自己的 JSON；Skills 页面直接管理 `config/skills`。Models 页面按供应商预设补全模型发现路径，Solver 页面按 Agent SDK 选择实际推理协议；同一供应商可同时为不同 Agent 暴露多种协议。保存时后端先执行完整的跨文件校验，校验失败不会替换现有配置。
 
 新任务立即使用保存后的 Provider、模型、Agent 提示词、场景和容器参数。运行中的任务保留 PostgreSQL 中的运行状态；监听地址和 PostgreSQL DSN 保存后需要重启主服务。`GET /api/v3/models` 仍是供普通任务界面使用的无密钥目录，只有配置中心接口返回可编辑的完整配置。
 

@@ -6,7 +6,7 @@ const mocks = vi.hoisted(() => ({
   createTask: vi.fn(async () => ({ task_id: "task-created", status: "running", scheduled: true })),
   stageInput: vi.fn(async (file: File) => ({ id: `asset-${file.name}`, originalName: file.name, mimeType: file.type, mediaKind: file.type.startsWith("image/") ? "image" : "other", size: file.size, sha256: "pending", status: "uploaded" as const })),
   deleteStagedInput: vi.fn(async () => ({ deleted: true })),
-  fetchAgentModelOptions: vi.fn(async (mode: string) => ({ mode, agents: [{ id: "supervisor", display_name: "Supervisor", role: "supervisor", runtime: "openai_agents", model: { provider_id: "openai", provider_name: "OpenAI", model_id: "gpt-test", model_name: "gpt-test", ready: true } }], models: [{ provider_id: "openai", provider_name: "OpenAI", protocol: "openai_responses", model_id: "gpt-test", model_name: "gpt-test", ready: true }] })),
+  fetchAgentModelOptions: vi.fn(async (mode: string) => ({ mode, agents: [{ id: "supervisor", display_name: "Supervisor", role: "supervisor", runtime: "openai_agents", model: { provider_id: "openai", provider_name: "OpenAI", model_id: "gpt-test", model_name: "gpt-test", protocol: "openai_responses", ready: true } }], models: [{ provider_id: "openai", provider_name: "OpenAI", protocol: "openai_responses", model_id: "gpt-test", model_name: "gpt-test", ready: true }] })),
   fetchModeProfiles: vi.fn(async () => ({ schema_version: 1, profiles: [
     ["penetration_test", "渗透测试"], ["incident_response", "应急响应"], ["vulnerability_research", "漏洞挖掘"], ["reverse_engineering", "逆向分析"],
     ["pwn", "Pwn"], ["security_misc", "安全杂项"], ["cryptography", "密码"], ["forensics", "取证"],
@@ -29,7 +29,7 @@ describe("NewTaskPage", () => {
     expect(screen.queryByText("解题架构")).toBeNull();
     expect(screen.queryByText("调度模型")).toBeNull();
     expect(screen.queryByText("工作模型")).toBeNull();
-    expect(await screen.findByLabelText("Supervisor 模型")).toHaveValue("openai::gpt-test");
+    expect(await screen.findByLabelText("Supervisor 模型")).toHaveValue("openai::gpt-test::openai_responses");
   });
 
   it("submits the description as initial prompt and includes multimodal files", async () => {
@@ -43,7 +43,7 @@ describe("NewTaskPage", () => {
     await screen.findByText("challenge.png");
     await user.click(screen.getByRole("button", { name: "创建并启动" }));
     await waitFor(() => expect(mocks.createTask).toHaveBeenCalledWith(expect.objectContaining({
-      name: "Web challenge", mode: "penetration_test", goal: "分析目标并拿到 flag", input: { text: "", fileIds: ["asset-challenge.png"] }, agentModels: { supervisor: { provider_id: "openai", model_id: "gpt-test" } },
+      name: "Web challenge", mode: "penetration_test", goal: "分析目标并拿到 flag", input: { text: "", fileIds: ["asset-challenge.png"] }, agentModels: { supervisor: { provider_id: "openai", model_id: "gpt-test", protocol: "openai_responses" } },
     })));
     expect(onCreated).toHaveBeenCalledWith("task-created");
   });

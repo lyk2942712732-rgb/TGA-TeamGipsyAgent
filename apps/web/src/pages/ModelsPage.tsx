@@ -3,15 +3,15 @@ import { Check, ChevronRight, Cpu, KeyRound, Plus, RefreshCw, Server, ShieldChec
 import {
   addProviderAPIKey, createModelProvider, deleteModelProvider, discoverProviderModels, fetchProviderCatalog,
   selectProviderAPIKey, updateProviderEndpoint,
-  type ModelProvider, type ProviderCatalog,
+  type ModelProvider, type ProviderCatalog, type ProviderProtocol,
 } from "../api/tasks";
 
-type ProviderProtocol = "openai_responses" | "openai_chat_completions" | "anthropic";
-type ProviderDraft = { preset_id: string; name: string; protocol: ProviderProtocol; base_url: string; api_key: string };
+type ProviderDraft = { preset_id: string; name: string; protocols: ProviderProtocol[]; base_url: string; api_key: string };
 
 const EMPTY_PROVIDER: ProviderDraft = {
-  preset_id: "custom", name: "", protocol: "openai_chat_completions", base_url: "", api_key: "",
+  preset_id: "custom", name: "", protocols: ["openai_chat_completions"], base_url: "", api_key: "",
 };
+const PROTOCOLS: ProviderProtocol[] = ["openai_chat_completions", "openai_responses", "anthropic"];
 
 export function ModelsPage({ onConfiguredChange }: { onConfiguredChange?: (configured: boolean) => void }) {
   const [catalog, setCatalog] = useState<ProviderCatalog | null>(null);
@@ -50,7 +50,7 @@ export function ModelsPage({ onConfiguredChange }: { onConfiguredChange?: (confi
     setDraft((current) => ({
       ...current, preset_id: presetId,
       name: preset ? preset.name : current.name,
-      protocol: preset ? preset.protocol : current.protocol,
+      protocols: preset ? preset.protocols : current.protocols,
       base_url: preset ? preset.base_url : current.base_url,
     }));
   };
@@ -58,6 +58,7 @@ export function ModelsPage({ onConfiguredChange }: { onConfiguredChange?: (confi
   const create = async (event: FormEvent) => {
     event.preventDefault(); setBusy("create"); setMessage("");
     try {
+      if (!draft.protocols.length) throw new Error("至少选择一种兼容协议");
       const result = await createModelProvider({ ...draft, preset_id: draft.preset_id });
       setDraft(EMPTY_PROVIDER); setAdding(false);
       await load(result.provider.id);
@@ -125,7 +126,11 @@ export function ModelsPage({ onConfiguredChange }: { onConfiguredChange?: (confi
       <form onSubmit={create}>
         <label>供应商类型<select aria-label="供应商类型" value={draft.preset_id} onChange={(event) => choosePreset(event.target.value)}><option value="custom">自定义供应商</option>{availablePresets.map((preset) => <option key={preset.id} value={preset.id}>{preset.name}</option>)}</select></label>
         <label>供应商名称<input required aria-label="供应商名称" value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} placeholder="例如：团队网关" /></label>
-        {draft.preset_id === "custom" ? <label>兼容协议<select aria-label="兼容协议" value={draft.protocol} onChange={(event) => setDraft({ ...draft, protocol: event.target.value as ProviderProtocol })}><option value="openai_chat_completions">OpenAI Chat Completions</option><option value="openai_responses">OpenAI Responses</option><option value="anthropic">Anthropic Messages</option></select></label> : null}
+        <fieldset className="provider-protocol-picker wide"><legend>兼容协议</legend><div>{PROTOCOLS.map((protocol) => {
+          const allowed = draft.preset_id === "custom" || Boolean(catalog?.presets.find((item) => item.id === draft.preset_id)?.protocols.includes(protocol));
+          const checked = draft.protocols.includes(protocol);
+          return <label key={protocol}><input type="checkbox" checked={checked} disabled={!allowed || draft.preset_id !== "custom"} onChange={(event) => setDraft({ ...draft, protocols: event.target.checked ? [...draft.protocols, protocol] : draft.protocols.filter((item) => item !== protocol) })} />{protocolName(protocol)}</label>;
+        })}</div><small>同一供应商可同时服务不同 Agent；实际协议在 Solver 模型绑定中选择。</small></fieldset>
         <label className="wide">API 根地址<input required type="url" aria-label="API URL" value={draft.base_url} onChange={(event) => setDraft({ ...draft, base_url: event.target.value })} placeholder="https://api.example.com" /><small>只需填写协议、域名和端口，不需要填写 /v1、/anthropic 或 /models。</small></label>
         <label>API 密钥<input required type="password" aria-label="API 密钥" autoComplete="new-password" value={draft.api_key} onChange={(event) => setDraft({ ...draft, api_key: event.target.value })} placeholder="仅写入，不会回显" /></label>
         <footer><button type="button" className="ref-secondary-button" onClick={() => setAdding(false)}>取消</button><button className="ref-primary-button" disabled={busy === "create"}>{busy === "create" ? "正在保存…" : "保存供应商"}</button></footer>
@@ -145,7 +150,7 @@ export function ModelsPage({ onConfiguredChange }: { onConfiguredChange?: (confi
 
       <section className="provider-detail" aria-label="供应商详情">
         {selected ? <>
-          <header className="provider-detail-head"><div><span>{selected.preset_id === "custom" ? "自定义供应商" : "供应商预设"}</span><h2>{selected.name}</h2><code>{selected.base_url}</code></div><div className="provider-detail-actions"><div className="provider-counts"><span><Cpu size={15} />{selected.models.length} 模型</span><span><KeyRound size={15} />{configuredKeyCount(selected)} 有效密钥</span></div>{!selected.built_in ? <button type="button" className="provider-delete-button" disabled={busy === "delete"} onClick={() => void removeProvider()}><Trash2 size={15} />删除</button> : null}</div></header>
+          <header className="provider-detail-head"><div><span>{selected.preset_id === "custom" ? "自定义供应商" : "供应商预设"}</span><h2>{selected.name}</h2><code>{selected.base_url}</code><div className="provider-protocol-tags">{selected.protocols.map((protocol) => <em key={protocol}>{protocolName(protocol)}</em>)}</div></div><div className="provider-detail-actions"><div className="provider-counts"><span><Cpu size={15} />{selected.models.length} 模型</span><span><KeyRound size={15} />{configuredKeyCount(selected)} 有效密钥</span></div>{!selected.built_in ? <button type="button" className="provider-delete-button" disabled={busy === "delete"} onClick={() => void removeProvider()}><Trash2 size={15} />删除</button> : null}</div></header>
           <form className="provider-endpoint-form" onSubmit={syncModels}><label>API 根地址<input required type="url" value={endpoint} onChange={(event) => setEndpoint(event.target.value)} /><small>系统会自动拼接模型发现与 SDK 推理路径。</small></label><button className="ref-secondary-button" disabled={busy === "models"}><RefreshCw size={15} />{busy === "models" ? "读取中…" : "读取可访问模型"}</button></form>
 
           <div className="provider-detail-grid">
@@ -177,4 +182,8 @@ function errorText(reason: unknown): string {
 
 function configuredKeyCount(provider: ModelProvider): number {
   return provider.api_keys.filter((key) => key.configured !== false).length;
+}
+
+function protocolName(protocol: ProviderProtocol): string {
+  return ({ openai_chat_completions: "OpenAI Chat Completions", openai_responses: "OpenAI Responses", anthropic: "Anthropic Messages" } as Record<ProviderProtocol, string>)[protocol];
 }

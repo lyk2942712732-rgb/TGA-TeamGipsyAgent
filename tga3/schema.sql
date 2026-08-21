@@ -18,6 +18,7 @@ CREATE TABLE agent_runs (
     actual_state TEXT NOT NULL,
     provider_id TEXT NOT NULL,
     model_id TEXT NOT NULL,
+    protocol TEXT NOT NULL,
     container_id TEXT,
     session_id TEXT,
     last_error TEXT,

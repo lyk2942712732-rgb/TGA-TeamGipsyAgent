@@ -1,7 +1,7 @@
 import { apiBase, ApiError, requestJson } from "../api/client";
 import { normalizeRuntimeEvent, normalizeRuntimeSnapshot } from "../features/runtime/models/normalize";
 import type { RuntimeStore } from "../features/runtime/models/types";
-import type { StagedAsset } from "../api/tasks";
+import type { ProviderProtocol, StagedAsset } from "../api/tasks";
 import { takeStagedFile } from "../api/tasks";
 import { loadTGA3Runtime } from "./tga3-runtime";
 import type { CapabilityCatalog, MCPHealth, MCPManagedServer, MCPServerConfig, MCPServerTools } from "./event-types";
@@ -66,6 +66,6 @@ export const runtimeApi = {
     return { accepted: true, status: "accepted", message_id: message.id };
   },
   solverControl: async (taskId: string, solverId: string, action: "pause" | "resume") => requestJson<{ actual_state: string }>(`/api/v3/tasks/${encodeURIComponent(taskId)}/agents/${encodeURIComponent(solverId)}/${action}`, { method: "POST" }).then((value) => ({ accepted: true, status: value.actual_state })),
-  solverModel: async (taskId: string, solverId: string, providerId: string, modelId: string) => requestJson<Record<string, unknown>>(`/api/v3/tasks/${encodeURIComponent(taskId)}/agents/${encodeURIComponent(solverId)}/model`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ provider_id: providerId, model_id: modelId }) }).then((model) => ({ model })),
+  solverModel: async (taskId: string, solverId: string, providerId: string, modelId: string, protocol: ProviderProtocol) => requestJson<Record<string, unknown>>(`/api/v3/tasks/${encodeURIComponent(taskId)}/agents/${encodeURIComponent(solverId)}/model`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ provider_id: providerId, model_id: modelId, protocol }) }).then((model) => ({ model })),
   streamUrl: (taskId: string, afterSeq: number) => url(`/tasks/${encodeURIComponent(taskId)}/events/stream?after_seq=${afterSeq}`),
 };

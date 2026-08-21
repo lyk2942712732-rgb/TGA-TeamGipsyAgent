@@ -266,6 +266,7 @@ class AgentRun(BaseModel):
     actual_state: AgentState = AgentState.CREATED
     provider_id: str
     model_id: str
+    protocol: Literal["openai_responses", "openai_chat_completions", "anthropic"]
     container_id: str | None = None
     session_id: str | None = None
     last_error: str | None = None

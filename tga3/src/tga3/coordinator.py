@@ -27,6 +27,7 @@ from .domain import (
     UserFileBody,
 )
 from .gateway import AgentGateway
+from .provider_profiles import ProviderProtocol
 from .storage import Storage
 
 
@@ -57,7 +58,7 @@ class TaskCoordinator:
         scene_id: str,
         initial_files: list[tuple[str, str, bytes]] | None = None,
         task_id: UUID | None = None,
-        model_overrides: dict[str, tuple[str, str]] | None = None,
+        model_overrides: dict[str, tuple[str, str, ProviderProtocol]] | None = None,
     ):
         scene = self.config.scene(scene_id)
         model_overrides = model_overrides or {}
@@ -65,7 +66,7 @@ class TaskCoordinator:
         if unknown_agents:
             raise ValueError(f"unknown task agent model overrides: {', '.join(unknown_agents)}")
         resolved_agents = {
-            agent_id: self.config.resolve_agent(agent_id, *(model_overrides.get(agent_id) or (None, None)))
+            agent_id: self.config.resolve_agent(agent_id, *(model_overrides.get(agent_id) or (None, None, None)))
             for agent_id in self.config.agents.agents
         }
         task = await self.storage.create_task(title, scene.id, task_id)
@@ -82,6 +83,7 @@ class TaskCoordinator:
                     actual_state=state,
                     provider_id=resolved.provider.id,
                     model_id=resolved.model.id,
+                    protocol=resolved.protocol,
                 )
             )
         await self.blackboard.publish(
@@ -284,14 +286,15 @@ class TaskCoordinator:
         await self.gateway.request(task_id, agent_id, "session.resume")
         return await self.storage.update_agent(task_id, agent_id, desired_state=AgentState.RUNNING)
 
-    async def set_agent_model(self, task_id: UUID, agent_id: str, provider_id: str, model_id: str) -> AgentRun:
+    async def set_agent_model(
+        self, task_id: UUID, agent_id: str, provider_id: str, model_id: str, protocol: ProviderProtocol
+    ) -> AgentRun:
         current = await self._worker_run(task_id, agent_id)
         provider = self.config.models.provider(provider_id)
         provider.model(model_id)
-        if current.sdk == "claude_agent" and provider.protocol != "anthropic":
-            raise ValueError("Claude Agent SDK can only use an anthropic provider")
-        if current.sdk == "openai_agents" and provider.protocol == "anthropic":
-            raise ValueError("OpenAI Agents SDK cannot use an anthropic provider")
+        if protocol not in provider.protocols:
+            raise ValueError(f"provider {provider.id} does not support protocol={protocol}")
+        self.config.validate_runtime_protocol(current.sdk, protocol)
         await self.gateway.request(
             task_id,
             agent_id,
@@ -300,17 +303,19 @@ class TaskCoordinator:
                 "provider_id": provider_id,
                 "model_id": model_id,
                 "model_name": provider.model(model_id).name,
-                "protocol": provider.protocol,
-                "base_url": provider.sdk_base_url(),
+                "protocol": protocol,
+                "base_url": provider.sdk_base_url(protocol),
                 "api_key": provider.key(),
             },
         )
-        run = await self.storage.update_agent(task_id, agent_id, provider_id=provider_id, model_id=model_id)
+        run = await self.storage.update_agent(
+            task_id, agent_id, provider_id=provider_id, model_id=model_id, protocol=protocol
+        )
         await self.dialogue.emit(
             task_id,
             actor=SYSTEM_ACTOR,
             kind=DialogueKind.MODEL_CHANGED,
-            text=f"{agent_id} 已切换到 {provider_id}/{model_id}",
+            text=f"{agent_id} 已切换到 {provider_id}/{model_id}（{protocol}）",
             channel_agent_id=agent_id,
         )
         return run

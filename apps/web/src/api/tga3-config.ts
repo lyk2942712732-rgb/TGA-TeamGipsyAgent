@@ -1,9 +1,10 @@
 import { requestJson } from "./client";
 
 export type TGA3Model = { id: string; name: string; max_output_tokens: number; timeout_seconds: number; temperature?: number | null };
-export type TGA3Provider = { id: string; name: string; protocol: "openai_responses" | "openai_chat_completions" | "anthropic"; base_url?: string | null; api_keys: Array<{ id: string; label: string; api_key: string }>; selected_api_key_id: string; models: TGA3Model[] };
+export type ProviderProtocol = "openai_responses" | "openai_chat_completions" | "anthropic";
+export type TGA3Provider = { id: string; name: string; protocols: ProviderProtocol[]; base_url?: string | null; api_keys: Array<{ id: string; label: string; api_key: string }>; selected_api_key_id: string; models: TGA3Model[] };
 export type ModelsConfig = { schema_version: number; providers: TGA3Provider[] };
-export type AgentConfig = { display_name: string; role: "supervisor" | "worker" | "reporter"; runtime: "openai_agents" | "claude_agent"; provider_id: string; model_id: string; max_turns_per_cycle: number; system_prompt: string };
+export type AgentConfig = { display_name: string; role: "supervisor" | "worker" | "reporter"; runtime: "openai_agents" | "claude_agent"; provider_id: string; model_id: string; protocol: ProviderProtocol; max_turns_per_cycle: number; system_prompt: string };
 export type AgentsConfig = { schema_version: number; agents: Record<string, AgentConfig> };
 export type SceneConfig = { id: string; name: string; description: string; system_prompt: string };
 export type ScenesConfig = { schema_version: number; scenes: SceneConfig[] };

@@ -43,9 +43,9 @@ class OpenAIHostModel:
 
         client = AsyncOpenAI(
             api_key=binding.api_key.get_secret_value(),
-            base_url=binding.provider.sdk_base_url(),
+            base_url=binding.provider.sdk_base_url(binding.protocol),
         )
-        if binding.provider.protocol == "openai_chat_completions":
+        if binding.protocol == "openai_chat_completions":
             return OpenAIChatCompletionsModel(model=binding.model.name, openai_client=client)
         return OpenAIResponsesModel(model=binding.model.name, openai_client=client)
 
@@ -164,7 +164,7 @@ class Automation:
         configured = self.config.agents.agents["supervisor"]
         run = await self.storage.get_agent(task_id, "supervisor")
         binding = self.config.resolve_agent(
-            "supervisor", run.provider_id, run.model_id, require_api_key=False
+            "supervisor", run.provider_id, run.model_id, run.protocol, require_api_key=False
         )
         supervisor = Actor(
             agent_id="supervisor",
@@ -228,7 +228,7 @@ class Automation:
         configured = self.config.agents.agents["reporter"]
         run = await self.storage.get_agent(task_id, "reporter")
         binding = self.config.resolve_agent(
-            "reporter", run.provider_id, run.model_id, require_api_key=False
+            "reporter", run.provider_id, run.model_id, run.protocol, require_api_key=False
         )
         reporter = Actor(
             agent_id="reporter",

@@ -20,7 +20,7 @@ from .errors import TGA3Error
 from .host_agents import Automation, HostModel, OpenAIHostModel
 from .mcp_server import build_mcp
 from .model_discovery import discover_provider_models
-from .provider_profiles import PROVIDER_PROFILES
+from .provider_profiles import PROVIDER_PROFILES, ProviderProtocol
 from .skills import SkillCatalog
 from .storage import Storage
 
@@ -44,6 +44,7 @@ class ModelRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     provider_id: str
     model_id: str
+    protocol: ProviderProtocol
 
 
 class SkillRequest(BaseModel):
@@ -175,7 +176,7 @@ def create_app(
             scene_id,
             initial_files,
             model_overrides={
-                agent_id: (value.provider_id, value.model_id)
+                agent_id: (value.provider_id, value.model_id, value.protocol)
                 for agent_id, value in overrides.items()
             },
         )
@@ -265,9 +266,11 @@ def create_app(
 
     @api.post("/tasks/{task_id}/agents/{agent_id}/model")
     async def set_model(task_id: UUID, agent_id: str, body: ModelRequest) -> dict[str, Any]:
-        return (await coordinator.set_agent_model(task_id, agent_id, body.provider_id, body.model_id)).model_dump(
-            mode="json"
-        )
+        return (
+            await coordinator.set_agent_model(
+                task_id, agent_id, body.provider_id, body.model_id, body.protocol
+            )
+        ).model_dump(mode="json")
 
     @api.post("/tasks/{task_id}/stop", status_code=204)
     async def stop_task(task_id: UUID) -> None:
@@ -280,7 +283,7 @@ def create_app(
                 {
                     "id": provider.id,
                     "name": provider.name,
-                    "protocol": provider.protocol,
+                    "protocols": provider.protocols,
                     "models": [model.model_dump(mode="json") for model in provider.models],
                 }
                 for provider in config.models.providers
@@ -292,6 +295,7 @@ def create_app(
                     "runtime": binding.runtime,
                     "provider_id": binding.provider_id,
                     "model_id": binding.model_id,
+                    "protocol": binding.protocol,
                     "max_turns_per_cycle": binding.max_turns_per_cycle,
                 }
                 for agent_id, binding in config.agents.agents.items()
@@ -330,7 +334,7 @@ def create_app(
         return config.export_document("models")
 
     @api.get("/config/model-provider-presets")
-    async def read_model_provider_presets() -> list[dict[str, str]]:
+    async def read_model_provider_presets() -> list[dict[str, object]]:
         return [profile.public_dict() for profile in PROVIDER_PROFILES]
 
     @api.put("/config/models")

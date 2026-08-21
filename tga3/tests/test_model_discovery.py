@@ -4,7 +4,7 @@ import httpx
 import pytest
 from pydantic import SecretStr
 
-from tga3.config import TGA3Config
+from tga3.config import ModelConfig, TGA3Config
 from tga3.model_discovery import discover_provider_models
 
 
@@ -75,7 +75,42 @@ async def test_deepseek_uses_root_models_endpoint_and_anthropic_runtime_endpoint
         "url": "https://api.deepseek.com/models",
         "authorization": "Bearer deepseek-secret",
     }
-    assert provider.sdk_base_url() == "https://api.deepseek.com/anthropic"
+    assert provider.sdk_base_url("anthropic") == "https://api.deepseek.com/anthropic"
+    assert provider.sdk_base_url("openai_chat_completions") == "https://api.deepseek.com"
+
+
+def test_deepseek_protocol_is_selected_by_each_agent_binding():
+    config = TGA3Config(Path(__file__).parents[1] / "config")
+    provider = config.models.provider("deepseek")
+    provider.models.append(ModelConfig(id="deepseek-v4", name="deepseek-v4"))
+
+    openai_binding = config.resolve_agent(
+        "worker-openai",
+        "deepseek",
+        "deepseek-v4",
+        "openai_chat_completions",
+        require_api_key=False,
+    )
+    claude_binding = config.resolve_agent(
+        "worker-claude",
+        "deepseek",
+        "deepseek-v4",
+        "anthropic",
+        require_api_key=False,
+    )
+
+    assert openai_binding.protocol == "openai_chat_completions"
+    assert openai_binding.provider.sdk_base_url(openai_binding.protocol) == "https://api.deepseek.com"
+    assert claude_binding.protocol == "anthropic"
+    assert claude_binding.provider.sdk_base_url(claude_binding.protocol) == "https://api.deepseek.com/anthropic"
+    with pytest.raises(ValueError, match="OpenAI Agents SDK"):
+        config.resolve_agent(
+            "worker-openai",
+            "deepseek",
+            "deepseek-v4",
+            "anthropic",
+            require_api_key=False,
+        )
 
 
 @pytest.mark.asyncio

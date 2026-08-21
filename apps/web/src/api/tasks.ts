@@ -1,6 +1,8 @@
 import { apiBase, requestJson } from "./client";
 import type { TaskMode } from "../modes";
 
+export type ProviderProtocol = "openai_responses" | "openai_chat_completions" | "anthropic";
+
 export type ModeConfig = { mode: TaskMode; [key: string]: unknown };
 export type ExecutionPolicy = {
   preset: "autonomous_ctf" | "safe_observation" | "offline_analysis" | "custom";
@@ -77,7 +79,7 @@ export type CreateTaskRequest = {
   modeOptions: ModeConfig;
   input: { text: string; fileIds: string[] };
   executionPolicy: ExecutionPolicy;
-  agentModels?: Record<string, { provider_id: string; model_id: string }>;
+  agentModels?: Record<string, { provider_id: string; model_id: string; protocol: ProviderProtocol }>;
   preflightFingerprint?: string | null;
 };
 
@@ -162,7 +164,8 @@ export type ProviderPreset = {
   id: string;
   name: string;
   base_url: string;
-  protocol: "openai_responses" | "openai_chat_completions" | "anthropic";
+  protocols: ProviderProtocol[];
+  default_protocol: ProviderProtocol;
 };
 export type ProviderAPIKey = {
   id: string;
@@ -188,7 +191,7 @@ export type ModelProvider = {
   name: string;
   preset_id: string;
   built_in: boolean;
-  protocol: "openai_responses" | "openai_chat_completions" | "anthropic";
+  protocols: ProviderProtocol[];
   base_url: string;
   models: ProviderModel[];
   api_keys: ProviderAPIKey[];
@@ -216,6 +219,7 @@ export type AgentModelOptions = {
       provider_name: string;
       model_id: string;
       model_name: string;
+      protocol: ProviderProtocol;
       verification_status: LLMVerification["status"];
       ready: boolean;
     };
@@ -223,7 +227,7 @@ export type AgentModelOptions = {
   models: Array<{
     provider_id: string;
     provider_name: string;
-    protocol: "openai_responses" | "openai_chat_completions" | "anthropic";
+    protocol: ProviderProtocol;
     model_id: string;
     model_name: string;
     api_key_id: string;
@@ -239,7 +243,7 @@ type ModelsDocument = {
     name: string;
     preset_id?: string;
     built_in?: boolean;
-    protocol: "openai_responses" | "openai_chat_completions" | "anthropic";
+    protocols: ProviderProtocol[];
     base_url?: string | null;
     selected_api_key_id: string;
     api_keys: Array<{ id: string; label: string; api_key: string }>;
@@ -264,6 +268,7 @@ type AgentsDocument = {
       runtime: "openai_agents" | "claude_agent";
       provider_id: string;
       model_id: string;
+      protocol: ProviderProtocol;
       max_turns_per_cycle: number;
       system_prompt: string;
     }
@@ -504,7 +509,7 @@ function providerView(
     name: provider.name,
     preset_id: provider.preset_id ?? "custom",
     built_in: provider.built_in ?? false,
-    protocol: provider.protocol,
+    protocols: provider.protocols,
     base_url: provider.base_url ?? "",
     selected_api_key_id: provider.selected_api_key_id,
     models: provider.models.map((model) => ({
@@ -546,7 +551,7 @@ export async function fetchProviderCatalog(): Promise<ProviderCatalog> {
 export async function createModelProvider(payload: {
   name: string;
   preset_id?: string;
-  protocol: "openai_responses" | "openai_chat_completions" | "anthropic";
+  protocols: ProviderProtocol[];
   base_url: string;
   api_key: string;
   api_key_label?: string;
@@ -561,7 +566,7 @@ export async function createModelProvider(payload: {
     name: payload.name,
     preset_id: payload.preset_id ?? "custom",
     built_in: false,
-    protocol: payload.protocol,
+    protocols: payload.protocols,
     base_url: payload.base_url,
     api_keys: [
       {
@@ -674,10 +679,10 @@ export async function fetchAgentModelOptions(
     requestJson<AgentsDocument>("/api/v3/config/agents"),
   ]);
   const options = models.providers.flatMap((provider) =>
-    provider.models.map((model) => ({
+    provider.models.flatMap((model) => provider.protocols.map((protocol) => ({
       provider_id: provider.id,
       provider_name: provider.name,
-      protocol: provider.protocol,
+      protocol,
       model_id: model.id,
       model_name: model.name,
       api_key_id: provider.selected_api_key_id,
@@ -686,7 +691,7 @@ export async function fetchAgentModelOptions(
         provider.api_keys.find((key) => key.id === provider.selected_api_key_id)
           ?.api_key,
       ),
-    })),
+    }))),
   );
   return {
     mode,
@@ -695,7 +700,8 @@ export async function fetchAgentModelOptions(
       const model = options.find(
         (item) =>
           item.provider_id === agent.provider_id &&
-          item.model_id === agent.model_id,
+          item.model_id === agent.model_id &&
+          item.protocol === agent.protocol,
       );
       return {
         id,
@@ -709,6 +715,7 @@ export async function fetchAgentModelOptions(
           provider_name: agent.provider_id,
           model_id: agent.model_id,
           model_name: agent.model_id,
+          protocol: agent.protocol,
           verification_status: "unverified",
           ready: false,
         },

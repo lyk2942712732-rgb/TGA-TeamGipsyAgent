@@ -28,8 +28,9 @@ async def test_final_candidate_freezes_snapshot_and_generates_writeup(tmp_path: 
                 sdk=configured_agent.runtime,
                 desired_state=state,
                 actual_state=state,
-                provider_id=configured_agent.provider_id,
-                model_id=configured_agent.model_id,
+                    provider_id=configured_agent.provider_id,
+                    model_id=configured_agent.model_id,
+                    protocol=configured_agent.protocol,
             )
         )
     board = Blackboard(storage)

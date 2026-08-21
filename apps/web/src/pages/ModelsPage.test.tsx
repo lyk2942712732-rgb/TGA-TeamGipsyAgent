@@ -19,8 +19,8 @@ import { ModelsPage } from "./ModelsPage";
 const emptyCatalog = {
   schema_version: 1 as const,
   presets: [
-    { id: "openai", name: "OpenAI", base_url: "https://api.openai.com", protocol: "openai_responses" as const },
-    { id: "deepseek", name: "DeepSeek", base_url: "https://api.deepseek.com", protocol: "anthropic" as const },
+    { id: "openai", name: "OpenAI", base_url: "https://api.openai.com", protocols: ["openai_responses", "openai_chat_completions"] as const, default_protocol: "openai_responses" as const },
+    { id: "deepseek", name: "DeepSeek", base_url: "https://api.deepseek.com", protocols: ["openai_chat_completions", "anthropic"] as const, default_protocol: "openai_chat_completions" as const },
   ],
   providers: [],
 };
@@ -29,7 +29,7 @@ const configuredCatalog = {
   ...emptyCatalog,
   providers: [{
     id: "provider_deepseek", name: "DeepSeek", preset_id: "deepseek",
-    built_in: false, protocol: "anthropic" as const,
+    built_in: false, protocols: ["openai_chat_completions", "anthropic"] as const,
     base_url: "https://api.deepseek.com", selected_api_key_id: "key_1",
     models: [{
       id: "model_1", name: "deepseek-chat", max_output_tokens: 1024,
@@ -68,7 +68,7 @@ describe("ModelsPage provider catalog", () => {
 
     await waitFor(() => expect(mocks.createModelProvider).toHaveBeenCalledWith({
       preset_id: "deepseek", name: "DeepSeek", base_url: "https://api.deepseek.com",
-      protocol: "anthropic",
+      protocols: ["openai_chat_completions", "anthropic"],
       api_key: "secret-key-value",
     }));
     expect(screen.queryByDisplayValue("secret-key-value")).toBeNull();

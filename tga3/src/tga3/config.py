@@ -10,7 +10,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, model_validator
 
-from .provider_profiles import normalize_api_origin, provider_profile, runtime_base_url
+from .provider_profiles import ProviderProtocol, normalize_api_origin, provider_profile, runtime_base_url
 
 
 class APIKeyConfig(BaseModel):
@@ -35,7 +35,7 @@ class ProviderConfig(BaseModel):
     name: str
     preset_id: str = "custom"
     built_in: bool = False
-    protocol: Literal["openai_responses", "openai_chat_completions", "anthropic"]
+    protocols: list[ProviderProtocol]
     base_url: str | None = None
     api_keys: list[APIKeyConfig]
     selected_api_key_id: str
@@ -46,14 +46,21 @@ class ProviderConfig(BaseModel):
         if self.base_url:
             self.base_url = normalize_api_origin(self.base_url)
         profile = provider_profile(self.preset_id)
-        if profile and self.protocol != profile.protocol:
-            raise ValueError(f"{self.preset_id} preset requires protocol={profile.protocol}")
+        if not self.protocols:
+            raise ValueError(f"provider {self.id} must support at least one protocol")
+        if len(set(self.protocols)) != len(self.protocols):
+            raise ValueError(f"provider {self.id} contains duplicate protocols")
+        if profile and not set(self.protocols).issubset(profile.protocols):
+            unsupported = sorted(set(self.protocols).difference(profile.protocols))
+            raise ValueError(f"{self.preset_id} preset does not support: {', '.join(unsupported)}")
         return self
 
-    def sdk_base_url(self) -> str | None:
+    def sdk_base_url(self, protocol: ProviderProtocol) -> str | None:
         if not self.base_url:
             return None
-        return runtime_base_url(self.preset_id, self.base_url, self.protocol)
+        if protocol not in self.protocols:
+            raise ValueError(f"provider {self.id} does not support protocol={protocol}")
+        return runtime_base_url(self.preset_id, self.base_url, protocol)
 
     def key(self) -> str:
         item = next(
@@ -93,6 +100,7 @@ class AgentConfig(BaseModel):
     runtime: Literal["openai_agents", "claude_agent"]
     provider_id: str
     model_id: str
+    protocol: ProviderProtocol
     max_turns_per_cycle: int = Field(default=3, ge=1, le=50)
     system_prompt: str = Field(min_length=1)
 
@@ -197,6 +205,7 @@ class ResolvedAgent(BaseModel):
     runtime: Literal["openai_agents", "claude_agent"]
     provider: ProviderConfig
     model: ModelConfig
+    protocol: ProviderProtocol
     api_key: SecretStr
     max_turns_per_cycle: int
     system_prompt: str
@@ -231,6 +240,7 @@ class TGA3Config:
         agent_id: str,
         provider_id: str | None = None,
         model_id: str | None = None,
+        protocol: ProviderProtocol | None = None,
         *,
         require_api_key: bool = True,
     ) -> ResolvedAgent:
@@ -240,7 +250,10 @@ class TGA3Config:
             raise KeyError(f"agent config not found: {agent_id}") from exc
         provider = self.models.provider(provider_id or binding.provider_id)
         model = provider.model(model_id or binding.model_id)
-        self.validate_runtime_provider(binding.runtime, provider)
+        selected_protocol = protocol or binding.protocol
+        self.validate_runtime_protocol(binding.runtime, selected_protocol)
+        if selected_protocol not in provider.protocols:
+            raise ValueError(f"provider {provider.id} does not support protocol={selected_protocol}")
         selected_key = next(
             (value.api_key for value in provider.api_keys if value.id == provider.selected_api_key_id),
             None,
@@ -255,16 +268,17 @@ class TGA3Config:
             runtime=binding.runtime,
             provider=provider,
             model=model,
+            protocol=selected_protocol,
             api_key=api_key,
             max_turns_per_cycle=binding.max_turns_per_cycle,
             system_prompt=binding.system_prompt,
         )
 
     @staticmethod
-    def validate_runtime_provider(runtime: str, provider: ProviderConfig) -> None:
-        if runtime == "claude_agent" and provider.protocol != "anthropic":
+    def validate_runtime_protocol(runtime: str, protocol: ProviderProtocol) -> None:
+        if runtime == "claude_agent" and protocol != "anthropic":
             raise ValueError("Claude Agent SDK requires an Anthropic-compatible provider")
-        if runtime == "openai_agents" and provider.protocol == "anthropic":
+        if runtime == "openai_agents" and protocol == "anthropic":
             raise ValueError("OpenAI Agents SDK requires an OpenAI-compatible provider")
 
     def scene(self, scene_id: str) -> SceneConfig:
@@ -455,7 +469,9 @@ class TGA3Config:
         for _agent_id, binding in agents.agents.items():
             provider = models.provider(binding.provider_id)
             provider.model(binding.model_id)
-            cls.validate_runtime_provider(binding.runtime, provider)
+            if binding.protocol not in provider.protocols:
+                raise ValueError(f"provider {provider.id} does not support protocol={binding.protocol}")
+            cls.validate_runtime_protocol(binding.runtime, binding.protocol)
         missing_images = sorted(
             agent_id
             for agent_id, binding in agents.agents.items()

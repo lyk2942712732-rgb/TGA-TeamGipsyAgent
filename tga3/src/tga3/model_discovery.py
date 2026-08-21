@@ -12,7 +12,9 @@ from .provider_profiles import discovery_urls, provider_profile
 
 def _headers(provider: ProviderConfig) -> dict[str, str]:
     profile = provider_profile(provider.preset_id)
-    auth_style = profile.discovery_auth if profile else provider.protocol
+    auth_style = profile.discovery_auth if profile else (
+        "anthropic" if set(provider.protocols) == {"anthropic"} else "bearer"
+    )
     key = provider.key()
     if auth_style == "anthropic":
         return {
@@ -84,7 +86,7 @@ async def discover_provider_models(
 
     if not provider.base_url:
         raise ValueError(f"供应商 {provider.id} 尚未配置 API 根地址")
-    urls = discovery_urls(provider.preset_id, provider.base_url, provider.protocol)
+    urls = discovery_urls(provider.preset_id, provider.base_url, provider.protocols)
     failures: list[str] = []
     async with httpx.AsyncClient(transport=transport, timeout=httpx.Timeout(20.0)) as client:
         for url in urls:

@@ -6,7 +6,7 @@
       "name": "OpenAI",
       "preset_id": "openai",
       "built_in": true,
-      "protocol": "openai_responses",
+      "protocols": ["openai_responses", "openai_chat_completions"],
       "base_url": "https://api.openai.com",
       "api_keys": [
         {
@@ -30,7 +30,7 @@
       "name": "Anthropic",
       "preset_id": "anthropic",
       "built_in": true,
-      "protocol": "anthropic",
+      "protocols": ["anthropic"],
       "base_url": "https://api.anthropic.com",
       "api_keys": [
         {
@@ -54,7 +54,7 @@
       "name": "DeepSeek",
       "preset_id": "deepseek",
       "built_in": true,
-      "protocol": "anthropic",
+      "protocols": ["openai_chat_completions", "anthropic"],
       "base_url": "https://api.deepseek.com",
       "api_keys": [
         {
@@ -71,7 +71,7 @@
       "name": "Google Gemini",
       "preset_id": "gemini",
       "built_in": true,
-      "protocol": "openai_chat_completions",
+      "protocols": ["openai_chat_completions"],
       "base_url": "https://generativelanguage.googleapis.com",
       "api_keys": [
         {
@@ -88,7 +88,7 @@
       "name": "OpenRouter",
       "preset_id": "openrouter",
       "built_in": true,
-      "protocol": "openai_chat_completions",
+      "protocols": ["openai_chat_completions"],
       "base_url": "https://openrouter.ai",
       "api_keys": [
         {
@@ -105,7 +105,7 @@
       "name": "Groq",
       "preset_id": "groq",
       "built_in": true,
-      "protocol": "openai_chat_completions",
+      "protocols": ["openai_chat_completions"],
       "base_url": "https://api.groq.com",
       "api_keys": [
         {
