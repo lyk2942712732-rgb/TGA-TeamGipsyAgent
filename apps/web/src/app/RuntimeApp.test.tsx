@@ -50,10 +50,11 @@ describe("RuntimeApp product shell", () => {
     renderShell("/reports");
 
     const navigation = screen.getByRole("navigation", { name: "主导航" });
-    expect(navigation.querySelectorAll("button")).toHaveLength(8);
+    expect(navigation.querySelectorAll("button")).toHaveLength(9);
     expect(screen.getByRole("button", { name: "首页" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "任务" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "场景提示词" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "审批中心" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "场景" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "系统状态" })).toBeInTheDocument();
     expect(screen.getByText("reports")).toBeInTheDocument();
     expect(apiMocks.fetchTasks).not.toHaveBeenCalled();
@@ -64,7 +65,7 @@ describe("RuntimeApp product shell", () => {
     const user = userEvent.setup();
     renderShell("/reports");
 
-    await user.click(screen.getByRole("button", { name: "场景提示词" }));
+    await user.click(screen.getByRole("button", { name: "场景" }));
     expect(screen.getByText("policies")).toBeInTheDocument();
     expect(apiMocks.fetchTasks).not.toHaveBeenCalled();
     expect(apiMocks.getLLMSettings).not.toHaveBeenCalled();

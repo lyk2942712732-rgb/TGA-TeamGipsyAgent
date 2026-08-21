@@ -14,7 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from .config import AgentsConfig, ModelsConfig, RuntimeConfig, ScenesConfig, TGA3Config
 from .coordinator import TaskCoordinator
 from .docker_runtime import ContainerRuntime
-from .domain import RunState
+from .domain import AgentState, DialogueKind, RunState
 from .errors import TGA3Error
 from .host_agents import Automation, HostModel, OpenAIHostModel
 from .mcp_server import build_mcp
@@ -100,6 +100,48 @@ def create_app(
     async def list_tasks(limit: int = 200) -> list[dict[str, Any]]:
         tasks = await storage.list_tasks(limit=min(max(limit, 1), 500))
         return [task.model_dump(mode="json") for task in tasks]
+
+    @api.get("/attention")
+    async def attention(limit: int = 200) -> list[dict[str, Any]]:
+        """Human-action queue for questions, pauses and failures."""
+
+        result: list[dict[str, Any]] = []
+        tasks = await storage.list_tasks(limit=min(max(limit, 1), 500))
+        for task in tasks:
+            if task.state == RunState.WAITING_USER:
+                messages = await coordinator.dialogue.history(task.id, after_seq=0, limit=500)
+                for message in reversed(messages):
+                    if message.kind != DialogueKind.QUESTION or not message.payload.get("question_id"):
+                        continue
+                    question = await storage.get_question(UUID(str(message.payload["question_id"])))
+                    if question.state == "waiting":
+                        result.append({
+                            "id": f"question:{question.id}", "kind": "question", "task_id": str(task.id),
+                            "task_title": task.title, "task_state": task.state, "agent_id": question.origin.agent_id,
+                            "title": "等待用户回答", "detail": question.question, "question_id": str(question.id),
+                            "created_at": question.created_at,
+                        })
+                        break
+            if task.state == RunState.FAILED:
+                result.append({
+                    "id": f"task:{task.id}:failed", "kind": "task_failed", "task_id": str(task.id),
+                    "task_title": task.title, "task_state": task.state, "agent_id": None,
+                    "title": "任务运行失败", "detail": "打开任务查看错误和 Agent 状态。", "question_id": None,
+                    "created_at": task.updated_at,
+                })
+            for agent in await storage.list_agents(task.id):
+                if agent.actual_state not in {AgentState.PAUSED, AgentState.PAUSE_REQUESTED, AgentState.FAILED}:
+                    continue
+                result.append({
+                    "id": f"agent:{task.id}:{agent.agent_id}:{agent.actual_state}",
+                    "kind": "agent_failed" if agent.actual_state == AgentState.FAILED else "agent_paused",
+                    "task_id": str(task.id), "task_title": task.title, "task_state": task.state,
+                    "agent_id": agent.agent_id,
+                    "title": "Agent 运行失败" if agent.actual_state == AgentState.FAILED else "Agent 已暂停",
+                    "detail": agent.last_error or ("可恢复该 Agent，或打开任务补充提示。"),
+                    "question_id": None, "created_at": agent.updated_at,
+                })
+        return sorted(result, key=lambda item: str(item["created_at"]), reverse=True)
 
     @api.post("/tasks")
     async def create_task(
@@ -235,6 +277,27 @@ def create_app(
                 for agent_id, binding in config.agents.agents.items()
             },
         }
+
+    @api.get("/agent-definitions")
+    async def agent_definitions() -> list[dict[str, Any]]:
+        tools = {
+            "supervisor": ["skills.list", "skills.read"],
+            "worker-openai": ["shell_exec", "progress_update", "blackboard.sync", "blackboard.publish", "artifact.register", "skills.list", "skills.read"],
+            "worker-claude": ["Bash", "Read", "Write", "Edit", "Glob", "Grep", "blackboard.sync", "blackboard.publish", "artifact.register", "skills.list", "skills.read"],
+            "reporter": ["skills.list", "skills.read"],
+        }
+        result: list[dict[str, Any]] = []
+        for agent_id, binding in config.agents.agents.items():
+            image = config.runtime.worker_images.get(agent_id)
+            image_health = await containers.image_status(image) if image else None
+            result.append({
+                "id": agent_id,
+                **binding.model_dump(mode="json"),
+                "tools": tools.get(agent_id, []),
+                "image": image,
+                "image_health": image_health,
+            })
+        return result
 
     @api.get("/config/models")
     async def read_models_config() -> dict:

@@ -199,7 +199,7 @@ function SolverChat({ solver, store, readonly, onChanged }: { solver: RuntimeSol
       </select></label>
       <button type="button" disabled={readonly || busy !== null || terminal} onClick={() => void togglePause()}>{paused ? <Play size={13} /> : <Pause size={13} />}{paused ? "继续" : "暂停"}</button>
     </div>
-    <p className="solver-chat-note">这里展示持久化的决策摘要、阶段和工具动作，不展示模型隐藏思维链。暂停在下一个 LangGraph 节点边界生效。</p>
+    <p className="solver-chat-note">这里展示持久化的决策摘要、阶段和工具动作，不展示模型隐藏思维链。暂停在下一个 Agent 周期检查点生效。</p>
     <div className="solver-chat-thread" aria-live="polite">
       {messages.length ? messages.map((message) => <article key={message.id} data-role={message.role}>
         <span>{message.role === "user" ? <UserRound size={13} /> : <Bot size={13} />}</span>

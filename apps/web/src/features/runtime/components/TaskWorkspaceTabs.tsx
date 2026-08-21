@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { ApprovalCenter } from "../../approvals/ApprovalCenter";
 import { EvidenceWorkspace } from "../../evidence/EvidenceWorkspace";
 import { IntentBoard } from "../../intents/IntentBoard";
 import { TimelinePanel } from "../../timeline/TimelinePanel";
@@ -10,7 +9,7 @@ import { TaskOverview } from "./TaskOverview";
 import { RuntimeTopology } from "./RuntimeTopology";
 
 // Labels follow reference image 05's Main Workspace tab strip.
-const TABS: Array<[RuntimeTab, string]> = [["overview", "概览"], ["work-items", "Intent Board"], ["timeline", "时间线"], ["evidence", "证据库"], ["resources", "资源"], ["approvals", "审批中心"], ["topology", "运行拓扑"]];
+const TABS: Array<[RuntimeTab, string]> = [["overview", "概览"], ["work-items", "Intent Board"], ["timeline", "时间线"], ["evidence", "证据库"], ["resources", "资源"], ["topology", "运行拓扑"]];
 
 export function TaskWorkspaceTabs({ store, tab, selectedSolverId, selectedIntentId, readonly = false, onChanged = () => undefined, onTab, onSolver = () => undefined, onIntent }: { store: RuntimeStore; tab: RuntimeTab; selectedSolverId: string | null; selectedIntentId: string | null; readonly?: boolean; onChanged?: () => void; onTab: (tab: RuntimeTab) => void; onSolver?: (solverId: string) => void; onIntent: (intentId: string) => void }) {
   const [compact, setCompact] = useState(false);
@@ -50,7 +49,6 @@ export function TaskWorkspaceTabs({ store, tab, selectedSolverId, selectedIntent
       {effectiveTab === "timeline" ? <TimelinePanel store={store} solverId={selectedSolverId} intentId={selectedIntentId} /> : null}
       {effectiveTab === "evidence" ? <EvidenceWorkspace store={store} /> : null}
       {effectiveTab === "resources" ? <ResourceWorkspace store={store} /> : null}
-      {effectiveTab === "approvals" ? <ApprovalCenter store={store} readonly={readonly} onChanged={onChanged} /> : null}
       {effectiveTab === "topology" ? <RuntimeTopology store={store} readonly={readonly} onSelectSolver={onSolver} /> : null}
     </div>
   </section>;

@@ -21,6 +21,7 @@ class LaunchSpec:
 class ContainerRuntime(Protocol):
     async def launch(self, spec: LaunchSpec) -> str: ...
     async def stop(self, task_id: UUID, agent_id: str) -> None: ...
+    async def image_status(self, image: str) -> dict[str, object]: ...
 
 
 class DockerContainerRuntime:
@@ -110,6 +111,29 @@ class DockerContainerRuntime:
     async def stop(self, task_id: UUID, agent_id: str) -> None:
         await asyncio.to_thread(self._stop_sync, task_id, agent_id)
 
+    def _image_status_sync(self, image: str) -> dict[str, object]:
+        try:
+            item = self.client.images.get(image)
+        except Exception as exc:
+            # Docker's exception types are intentionally not imported here so a
+            # daemon/protocol error is reported through the same stable contract.
+            name = type(exc).__name__
+            if name == "ImageNotFound":
+                return {"status": "missing", "available": False, "detail": "镜像尚未构建"}
+            return {"status": "unavailable", "available": False, "detail": str(exc)}
+        size = int(item.attrs.get("Size") or 0)
+        return {
+            "status": "healthy",
+            "available": True,
+            "detail": "Docker 镜像可用",
+            "image_id": item.short_id,
+            "size_bytes": size,
+            "created": item.attrs.get("Created"),
+        }
+
+    async def image_status(self, image: str) -> dict[str, object]:
+        return await asyncio.to_thread(self._image_status_sync, image)
+
 
 class FakeContainerRuntime:
     """Test runtime recording lifecycle operations without Docker."""
@@ -124,6 +148,9 @@ class FakeContainerRuntime:
 
     async def stop(self, task_id: UUID, agent_id: str) -> None:
         self.stopped.append((task_id, agent_id))
+
+    async def image_status(self, image: str) -> dict[str, object]:
+        return {"status": "healthy", "available": True, "detail": "test image", "image_id": image}
 
 
 __all__ = ["ContainerRuntime", "DockerContainerRuntime", "FakeContainerRuntime", "LaunchSpec"]

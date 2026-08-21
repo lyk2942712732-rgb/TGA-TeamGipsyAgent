@@ -7,12 +7,19 @@ export type AgentConfig = { display_name: string; role: "supervisor" | "worker" 
 export type AgentsConfig = { schema_version: number; agents: Record<string, AgentConfig> };
 export type SceneConfig = { id: string; name: string; description: string; system_prompt: string };
 export type ScenesConfig = { schema_version: number; scenes: SceneConfig[] };
+export type AgentDefinition = AgentConfig & {
+  id: string;
+  tools: string[];
+  image: string | null;
+  image_health: null | { status: "healthy" | "missing" | "unavailable"; available: boolean; detail: string; image_id?: string; size_bytes?: number; created?: string };
+};
 
 const json = { "Content-Type": "application/json" };
 export const tga3ConfigApi = {
   models: () => requestJson<ModelsConfig>("/api/v3/config/models"),
   agents: () => requestJson<AgentsConfig>("/api/v3/config/agents"),
   scenes: () => requestJson<ScenesConfig>("/api/v3/config/scenes"),
+  agentDefinitions: () => requestJson<AgentDefinition[]>("/api/v3/agent-definitions"),
   saveAgents: (value: AgentsConfig) => requestJson<AgentsConfig>("/api/v3/config/agents", { method: "PUT", headers: json, body: JSON.stringify(value) }),
   saveScenes: (value: ScenesConfig) => requestJson<ScenesConfig>("/api/v3/config/scenes", { method: "PUT", headers: json, body: JSON.stringify(value) }),
 };

@@ -76,14 +76,26 @@ class OpenAIHostModel:
         return SupervisorDecision.model_validate(result.final_output)
 
     async def report(self, snapshot: str) -> str:
-        from agents import Agent, Runner, set_tracing_disabled
+        from agents import Agent, Runner, function_tool, set_tracing_disabled
 
         set_tracing_disabled(True)
         binding = self.config.resolve_agent("reporter")
+
+        @function_tool
+        def skills_list() -> list[dict[str, str]]:
+            """List role-neutral skills available by name, including writeup guidance."""
+            return [item.__dict__ for item in self.skills.list()]
+
+        @function_tool
+        def skill_read(name: str) -> str:
+            """Read one selected reporting skill completely."""
+            return self.skills.read(name)
+
         agent = Agent(
             name=binding.display_name,
             model=self._model(binding),
             instructions=binding.system_prompt,
+            tools=[skills_list, skill_read],
         )
         result = await Runner.run(agent, snapshot, max_turns=binding.max_turns_per_cycle)
         return str(result.final_output)

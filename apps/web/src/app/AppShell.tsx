@@ -93,7 +93,7 @@ export function AppShell({ route, children }: { route: AppRoute; children: React
             {running.length ? "运行中" : "空闲"}
             <ChevronDown size={14} aria-hidden="true" />
           </span>
-          <button className="topbar-icon topbar-bell" aria-label={`通知，${pending} 条待审批`} title="通知中心" disabled>
+          <button className="topbar-icon topbar-bell" aria-label={`通知，${pending} 条待处理`} title="审批中心" onClick={() => go("/approvals")}>
             <Bell size={18} />
             {pending > 0 ? <b className="topbar-badge">{pending}</b> : null}
           </button>

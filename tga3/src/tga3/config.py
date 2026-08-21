@@ -278,6 +278,25 @@ class TGA3Config:
     ) -> None:
         """Validate the whole live configuration, but persist only the owned document."""
 
+        if name == "agents":
+            assert isinstance(value, AgentsConfig)
+            if set(value.agents) != set(self.agents.agents):
+                raise ValueError("Agent definitions cannot be added, removed, or renamed")
+            for agent_id, current in self.agents.agents.items():
+                proposed = value.agents[agent_id]
+                if (proposed.display_name, proposed.role, proposed.runtime) != (
+                    current.display_name,
+                    current.role,
+                    current.runtime,
+                ):
+                    raise ValueError(f"{agent_id} name, role, and runtime are fixed definitions")
+        if name == "scenes":
+            assert isinstance(value, ScenesConfig)
+            current_definitions = [(item.id, item.name, item.description) for item in self.scenes.scenes]
+            proposed_definitions = [(item.id, item.name, item.description) for item in value.scenes]
+            if proposed_definitions != current_definitions:
+                raise ValueError("Scene id, name, order, and description are fixed definitions")
+
         candidates = {
             "models": self.models,
             "agents": self.agents,

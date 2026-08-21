@@ -44,7 +44,7 @@ export function TaskRuntimePage({ taskId, mode = "runtime" }: { taskId: string; 
   const terminalFailure = taskFailure(viewStore);
   const control = async (action: "cancel") => { setBusy(true); setNotice(null); try { const result = await runtimeApi.control(taskId, action); setNotice(result.accepted === false ? (result.reason ?? "当前 Runtime 不支持该控制操作") : "Task 控制请求已提交"); refresh(); } catch (reason) { setNotice(reason instanceof Error ? reason.message : "Task 控制失败"); } finally { setBusy(false); } };
   return <section className="task-runtime-page">
-    <TaskCommandHeader store={viewStore} connection={connection} mode={mode} busy={busy} onControl={(action) => void control(action)} onIntervention={openSolverChat} onApprovals={() => setSelection({ tab: "approvals" })} onReplay={() => navigate({ pathname: `/tasks/${encodeURIComponent(taskId)}/replay`, search: location.search })} />
+    <TaskCommandHeader store={viewStore} connection={connection} mode={mode} busy={busy} onControl={(action) => void control(action)} onIntervention={openSolverChat} onApprovals={() => navigate(`/approvals?task_id=${encodeURIComponent(taskId)}`)} onReplay={() => navigate({ pathname: `/tasks/${encodeURIComponent(taskId)}/replay`, search: location.search })} />
     {mode === "replay" && replaySeq !== null ? <ReplayControls store={store} seq={replaySeq} onSeq={setReplaySeq} /> : null}
     {error ? <div className="runtime-sync-error" role="alert">实时同步暂时中断：{error}<button onClick={refresh}>重试</button></div> : null}
     {terminalFailure ? <div className="runtime-sync-error runtime-task-failure" role="alert">
@@ -59,7 +59,7 @@ export function TaskRuntimePage({ taskId, mode = "runtime" }: { taskId: string; 
       <main><TaskWorkspaceTabs store={viewStore} tab={selection.tab} selectedSolverId={selectedSolverId} selectedIntentId={selection.intentId} readonly={mode === "replay"} onChanged={refresh} onTab={(tab: RuntimeTab) => setSelection({ tab })} onSolver={(solverId) => setSelection({ solverId })} onIntent={(intentId) => setSelection({ intentId, solverId: viewStore.intentsById[intentId]?.assignedSolverId ?? selection.solverId })} /></main>
       <div className="runtime-side runtime-inspector-side" data-open={drawer === "inspector"}><SolverInspector store={viewStore} solver={selectedSolver ?? null} readonly={mode === "replay"} chatOpenNonce={chatOpenNonce} onChanged={refresh} /></div>
     </div>
-    <GlobalActionDock store={viewStore} mode={mode} onRefresh={refresh} onOpenApprovals={() => setSelection({ tab: "approvals" })} onIntervention={openSolverChat} />
+    <GlobalActionDock store={viewStore} mode={mode} onRefresh={refresh} onOpenApprovals={() => navigate(`/approvals?task_id=${encodeURIComponent(taskId)}`)} onIntervention={openSolverChat} />
   </section>;
 }
 
