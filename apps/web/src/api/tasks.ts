@@ -508,8 +508,8 @@ function providerView(
       timeout_seconds: model.timeout_seconds ?? 180,
       temperature: model.temperature ?? 0,
       reasoning_mode: model.reasoning_mode ?? "auto",
-      verification_status: model.verification_status ?? "verified",
-      verification: { status: model.verification_status ?? "verified" },
+      verification_status: model.verification_status ?? "unverified",
+      verification: { status: model.verification_status ?? "unverified" },
     })),
     api_keys: provider.api_keys.map((key) => ({
       id: key.id,

@@ -128,7 +128,7 @@ export function ModelsPage({ onConfiguredChange }: { onConfiguredChange?: (confi
             <section className="provider-models"><header><div><h3>可访问模型</h3><p>列表由当前 API URL 和所选 API 密钥自动读取，不再手动添加。</p></div><button type="button" className="icon-button" aria-label="刷新模型" disabled={busy === "models"} onClick={() => void syncModels()}><RefreshCw size={16} /></button></header>
               <div className="provider-items">{selected.models.map((model) => <article key={model.id}>
                 <span className="item-icon"><Cpu size={16} /></span><div><strong>{model.name}</strong><small>{model.max_output_tokens} tokens · {model.reasoning_mode === "enabled" ? "推理模式" : "标准模式"}</small></div>
-                <span className="verification-pill verified"><Check size={12} />已配置</span>
+                <span className={`verification-pill ${model.verification_status === "verified" ? "verified" : "stale"}`}><Check size={12} />{model.verification_status === "verified" ? "已同步" : "待同步"}</span>
               </article>)}</div>
               {!selected.models.length ? <p className="provider-model-empty">尚未读取到模型，请检查 API URL、所选密钥及供应商协议。</p> : null}
             </section>
