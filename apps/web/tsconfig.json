@@ -16,6 +16,6 @@
     "noEmit": true,
     "jsx": "react-jsx"
   },
-  "include": ["src/main.tsx", "src/vite-env.d.ts", "src/tga3", "src/test/setup.ts"],
+  "include": ["src"],
   "references": []
 }

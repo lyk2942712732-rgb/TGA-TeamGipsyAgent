@@ -11,7 +11,7 @@ from fastapi import APIRouter, FastAPI, File, Form, Request, UploadFile, WebSock
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
-from .config import ConfigBundle, TGA3Config
+from .config import AgentsConfig, ModelsConfig, RuntimeConfig, ScenesConfig, TGA3Config
 from .coordinator import TaskCoordinator
 from .docker_runtime import ContainerRuntime
 from .domain import RunState
@@ -236,20 +236,46 @@ def create_app(
             },
         }
 
-    @api.get("/config")
-    async def read_config() -> dict[str, dict]:
-        """Return the complete on-disk configuration, including editable provider keys."""
+    @api.get("/config/models")
+    async def read_models_config() -> dict:
+        return config.export_document("models")
 
-        return config.export_bundle()
-
-    @api.put("/config")
-    async def write_config(body: ConfigBundle) -> dict[str, dict]:
-        """Validate and atomically persist the complete config bundle."""
-
+    @api.put("/config/models")
+    async def write_models_config(body: ModelsConfig) -> dict:
         async with config_lock:
-            config.apply_bundle(body)
+            config.apply_document("models", body)
+        return config.export_document("models")
+
+    @api.get("/config/agents")
+    async def read_agents_config() -> dict:
+        return config.export_document("agents")
+
+    @api.put("/config/agents")
+    async def write_agents_config(body: AgentsConfig) -> dict:
+        async with config_lock:
+            config.apply_document("agents", body)
+        return config.export_document("agents")
+
+    @api.get("/config/scenes")
+    async def read_scenes_config() -> dict:
+        return config.export_document("scenes")
+
+    @api.put("/config/scenes")
+    async def write_scenes_config(body: ScenesConfig) -> dict:
+        async with config_lock:
+            config.apply_document("scenes", body)
+        return config.export_document("scenes")
+
+    @api.get("/config/runtime")
+    async def read_runtime_config() -> dict:
+        return config.export_document("runtime")
+
+    @api.put("/config/runtime")
+    async def write_runtime_config(body: RuntimeConfig) -> dict:
+        async with config_lock:
+            config.apply_document("runtime", body)
             skills.set_root(config.skills_root)
-        return config.export_bundle()
+        return config.export_document("runtime")
 
     @api.get("/scenes")
     async def scenes() -> list[dict[str, str]]:

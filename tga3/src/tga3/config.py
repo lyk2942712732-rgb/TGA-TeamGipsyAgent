@@ -266,6 +266,56 @@ class TGA3Config:
             "runtime": documents["runtime.json"],
         }
 
+    def export_document(self, name: Literal["models", "agents", "scenes", "runtime"]) -> dict:
+        """Return one editable config document for its owning settings screen."""
+
+        return self.export_bundle()[name]
+
+    def apply_document(
+        self,
+        name: Literal["models", "agents", "scenes", "runtime"],
+        value: ModelsConfig | AgentsConfig | ScenesConfig | RuntimeConfig,
+    ) -> None:
+        """Validate the whole live configuration, but persist only the owned document."""
+
+        candidates = {
+            "models": self.models,
+            "agents": self.agents,
+            "scenes": self.scenes,
+            "runtime": self.runtime,
+        }
+        candidates[name] = value
+        models = candidates["models"]
+        agents = candidates["agents"]
+        scenes = candidates["scenes"]
+        runtime = candidates["runtime"]
+        assert isinstance(models, ModelsConfig)
+        assert isinstance(agents, AgentsConfig)
+        assert isinstance(scenes, ScenesConfig)
+        assert isinstance(runtime, RuntimeConfig)
+        self._validate_values(models, agents, scenes, runtime)
+
+        documents = ConfigBundle(
+            models=models,
+            agents=agents,
+            scenes=scenes,
+            runtime=runtime,
+        ).documents()
+        filename = f"{name}.json"
+        target = self.config_dir / filename
+        temporary = self.config_dir / f".{filename}.{uuid4().hex}.tmp"
+        try:
+            temporary.write_text(
+                json.dumps(documents[filename], ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            os.replace(temporary, target)
+        finally:
+            temporary.unlink(missing_ok=True)
+
+        setattr(self, name, value)
+        self.ensure_directories()
+
     def apply_bundle(self, bundle: ConfigBundle) -> None:
         """Validate, atomically replace all config documents, then refresh this live snapshot."""
 
