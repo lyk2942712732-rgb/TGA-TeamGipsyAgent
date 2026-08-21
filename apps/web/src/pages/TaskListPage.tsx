@@ -76,7 +76,7 @@ export function TaskListPage() {
     setPage(1);
   };
 
-  const open = (row: TaskRow) => navigate(`/tasks/${encodeURIComponent(row.taskId)}`);
+  const open = (row: TaskRow) => navigate(`/tasks/${encodeURIComponent(row.taskId)}/runtime`);
 
   const columns: Array<Column<TaskRow>> = [
     {

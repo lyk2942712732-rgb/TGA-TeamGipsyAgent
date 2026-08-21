@@ -15,10 +15,10 @@ describe("readRoute", () => {
     expect(readRoute("/system")).toEqual({ page: "system" });
   });
 
-  it("separates task detail, runtime and replay while decoding stable ids", () => {
-    expect(readRoute("/tasks/task%20one")).toEqual({ page: "task-detail", taskId: "task one" });
+  it("routes both task links directly to the native runtime", () => {
+    expect(readRoute("/tasks/task%20one")).toEqual({ page: "runtime", taskId: "task one" });
     expect(readRoute("/tasks/task%20one/runtime")).toEqual({ page: "runtime", taskId: "task one" });
-    expect(readRoute("/tasks/task%20one/replay")).toEqual({ page: "replay", taskId: "task one" });
+    expect(readRoute("/tasks/task%20one/replay")).toEqual({ page: "not-found" });
   });
 
   it("falls back instead of throwing on malformed escapes", () => {

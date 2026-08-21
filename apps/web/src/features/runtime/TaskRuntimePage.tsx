@@ -1,88 +1,64 @@
+import { CircleStop, MessageSquareText, ShieldQuestion } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { TeamExplorer } from "../team/TeamExplorer";
-import { GlobalActionDock } from "./components/GlobalActionDock";
-import { ReplayControls } from "./components/ReplayControls";
-import { SolverInspector } from "./components/SolverInspector";
-import { TaskCommandHeader } from "./components/TaskCommandHeader";
-import { TaskWorkspaceTabs } from "./components/TaskWorkspaceTabs";
-import { selectSupervisor } from "./models/selectors";
-import { replayStoreAtSeq } from "./models/replay";
-import type { RuntimeStore } from "./models/types";
 import { runtimeApi } from "../../runtime/api-v2";
-import { readRuntimeSelection, writeRuntimeSelection, type RuntimeTab } from "./runtime-selection";
-import { useTaskRuntime } from "./use-task-runtime";
+import { TGA3AgentInspector } from "./components/TGA3AgentInspector";
+import { TGA3AgentRail } from "./components/TGA3AgentRail";
+import { TGA3TaskHeader } from "./components/TGA3TaskHeader";
+import { TGA3Workspace, type TGA3WorkspaceTab } from "./components/TGA3Workspace";
+import { latestPendingQuestion } from "./tga3-view";
+import { useTGA3Runtime } from "./use-tga3-runtime";
 
-export function TaskRuntimePage({ taskId, mode = "runtime" }: { taskId: string; mode?: "runtime" | "replay" }) {
-  const { store, connection, error, refresh } = useTaskRuntime(taskId, { live: mode === "runtime" });
-  const location = useLocation();
-  const navigate = useNavigate();
-  const [drawer, setDrawer] = useState<"team" | "inspector" | null>(null);
-  const [chatOpenNonce, setChatOpenNonce] = useState(0);
-  const [busy, setBusy] = useState(false);
-  const [notice, setNotice] = useState<string | null>(null);
-  const [replaySeq, setReplaySeq] = useState<number | null>(null);
-  const selection = useMemo(() => readRuntimeSelection(location.search), [location.search]);
-  const setSelection = (patch: Parameters<typeof writeRuntimeSelection>[1]) => navigate({ pathname: location.pathname, search: writeRuntimeSelection(location.search, patch) }, { replace: true });
+const VALID_TABS: TGA3WorkspaceTab[] = ["blackboard", "dialogue", "findings", "inputs", "report"];
 
-  useEffect(() => { if (mode === "replay" && store) setReplaySeq((current) => current ?? store.latestSeq); }, [mode, store]);
+export function TaskRuntimePage({ taskId }: { taskId: string }) {
+  const { snapshot, connection, error, refresh } = useTGA3Runtime(taskId);
+  const location = useLocation(); const navigate = useNavigate();
+  const params = useMemo(() => new URLSearchParams(location.search), [location.search]);
+  const requestedTab = params.get("tab") as TGA3WorkspaceTab | null;
+  const [tab, setTab] = useState<TGA3WorkspaceTab>(requestedTab && VALID_TABS.includes(requestedTab) ? requestedTab : "blackboard");
+  const [selectedAgentId, setSelectedAgentId] = useState<string | null>(params.get("agent"));
+  const [drawer, setDrawer] = useState<"agents" | "inspector" | null>(null);
+  const [conversationNonce, setConversationNonce] = useState(0); const [busy, setBusy] = useState(false); const [notice, setNotice] = useState<string | null>(null);
 
-  if (!store) return <section className="task-runtime-loading" aria-live="polite"><h1>正在加载任务运行时</h1><p>{error ?? "正在读取 Snapshot 并连接事件流。"}</p>{error ? <button onClick={refresh}>重试</button> : null}</section>;
-  const viewStore = mode === "replay" && replaySeq !== null ? replayStoreAtSeq(store, replaySeq) : store;
-  const currentIntent = selection.intentId
-    ? viewStore.intentsById[selection.intentId]
-    : Object.values(viewStore.intentsById).find((intent) => ["running", "reviewing", "awaiting_approval", "failed", "blocked"].includes(intent.status));
-  const intentSolver = currentIntent?.assignedSolverId ?? null;
-  const supervisor = selectSupervisor(viewStore);
-  const activeSolver = Object.values(viewStore.solversById).find((solver) => ["running", "awaiting_approval", "awaiting_user_input", "failed"].includes(solver.status));
-  const selectedSolver = (selection.solverId ? viewStore.solversById[selection.solverId] : undefined)
-    ?? (intentSolver ? viewStore.solversById[intentSolver] : undefined)
-    ?? activeSolver
-    ?? supervisor;
-  const selectedSolverId = selectedSolver?.solverId ?? null;
-  const openSolverChat = () => { setChatOpenNonce((value) => value + 1); setDrawer("inspector"); };
-  const terminalFailure = taskFailure(viewStore);
-  const control = async (action: "cancel") => { setBusy(true); setNotice(null); try { const result = await runtimeApi.control(taskId, action); setNotice(result.accepted === false ? (result.reason ?? "当前 Runtime 不支持该控制操作") : "Task 控制请求已提交"); refresh(); } catch (reason) { setNotice(reason instanceof Error ? reason.message : "Task 控制失败"); } finally { setBusy(false); } };
-  return <section className="task-runtime-page">
-    <TaskCommandHeader store={viewStore} connection={connection} mode={mode} busy={busy} onControl={(action) => void control(action)} onIntervention={openSolverChat} onApprovals={() => navigate(`/approvals?task_id=${encodeURIComponent(taskId)}`)} onReplay={() => navigate({ pathname: `/tasks/${encodeURIComponent(taskId)}/replay`, search: location.search })} />
-    {mode === "replay" && replaySeq !== null ? <ReplayControls store={store} seq={replaySeq} onSeq={setReplaySeq} /> : null}
+  useEffect(() => {
+    if (!snapshot?.agents.length) return;
+    if (!selectedAgentId || !snapshot.agents.some((agent) => agent.agent_id === selectedAgentId)) {
+      const preferred = snapshot.agents.find((agent) => agent.role === "supervisor") ?? snapshot.agents[0];
+      setSelectedAgentId(preferred.agent_id);
+    }
+  }, [snapshot, selectedAgentId]);
+
+  useEffect(() => {
+    const next = new URLSearchParams(location.search);
+    if (selectedAgentId) next.set("agent", selectedAgentId); else next.delete("agent");
+    next.set("tab", tab);
+    if (next.toString() !== params.toString()) navigate({ pathname: location.pathname, search: next.toString() }, { replace: true });
+  }, [selectedAgentId, tab, location.pathname, location.search, navigate, params]);
+
+  if (!snapshot) return <section className="task-runtime-loading" aria-live="polite"><h1>正在加载 TGA3 任务</h1><p>{error ?? "正在读取任务、Agent、共享黑板和任务对话。"}</p>{error ? <button onClick={refresh}>重试</button> : null}</section>;
+
+  const current = snapshot;
+  const selectedAgent = current.agents.find((agent) => agent.agent_id === selectedAgentId) ?? null;
+  const question = latestPendingQuestion(current.dialogue, current.task.state);
+  const terminal = ["completed", "failed", "cancelled", "stopped"].includes(current.task.state);
+  async function stop() { if (busy) return; setBusy(true); setNotice(null); try { await runtimeApi.control(taskId, "cancel"); setNotice("停止请求已提交。"); refresh(); } catch (reason) { setNotice(reason instanceof Error ? reason.message : "停止任务失败"); } finally { setBusy(false); } }
+  function openConversation() { if (!selectedAgentId) setSelectedAgentId(current.agents.find((agent) => agent.role === "supervisor")?.agent_id ?? current.agents[0]?.agent_id ?? null); setConversationNonce((value) => value + 1); setDrawer("inspector"); }
+
+  return <section className="task-runtime-page tga3-runtime-page">
+    <TGA3TaskHeader snapshot={snapshot} connection={connection} busy={busy} onRefresh={refresh} onStop={() => void stop()} />
     {error ? <div className="runtime-sync-error" role="alert">实时同步暂时中断：{error}<button onClick={refresh}>重试</button></div> : null}
-    {terminalFailure ? <div className="runtime-sync-error runtime-task-failure" role="alert">
-      <strong>{terminalFailure.title}</strong>
-      <span>{terminalFailure.message}</span>
-      {terminalFailure.attempts ? <small>已自动尝试 {terminalFailure.attempts} 次</small> : null}
-    </div> : null}
     {notice ? <div className="runtime-sync-notice" role="status">{notice}<button onClick={() => setNotice(null)}>关闭</button></div> : null}
-    <div className="runtime-mobile-switches"><button aria-expanded={drawer === "team"} onClick={() => setDrawer(drawer === "team" ? null : "team")}>团队</button><button aria-expanded={drawer === "inspector"} onClick={() => setDrawer(drawer === "inspector" ? null : "inspector")}>检查器</button></div>
-    <div className="task-runtime-layout">
-      <div className="runtime-side runtime-team-side" data-open={drawer === "team"}><TeamExplorer store={viewStore} selectedSolverId={selectedSolverId} onSelect={(solverId) => { setSelection({ solverId }); setDrawer(null); }} onDetails={() => { setSelection({ tab: "overview" }); setDrawer(null); }} /></div>
-      <main><TaskWorkspaceTabs store={viewStore} tab={selection.tab} selectedSolverId={selectedSolverId} selectedIntentId={selection.intentId} readonly={mode === "replay"} onChanged={refresh} onTab={(tab: RuntimeTab) => setSelection({ tab })} onSolver={(solverId) => setSelection({ solverId })} onIntent={(intentId) => setSelection({ intentId, solverId: viewStore.intentsById[intentId]?.assignedSolverId ?? selection.solverId })} /></main>
-      <div className="runtime-side runtime-inspector-side" data-open={drawer === "inspector"}><SolverInspector store={viewStore} solver={selectedSolver ?? null} readonly={mode === "replay"} chatOpenNonce={chatOpenNonce} onChanged={refresh} /></div>
+    <div className="runtime-mobile-switches"><button aria-expanded={drawer === "agents"} onClick={() => setDrawer(drawer === "agents" ? null : "agents")}>Agent</button><button aria-expanded={drawer === "inspector"} onClick={() => setDrawer(drawer === "inspector" ? null : "inspector")}>Agent 面板</button></div>
+    <div className="tga3-runtime-layout">
+      <div className="tga3-runtime-side tga3-agent-side" data-open={drawer === "agents"}><TGA3AgentRail agents={snapshot.agents} selectedAgentId={selectedAgentId} onSelect={(agentId) => { setSelectedAgentId(agentId); setDrawer(null); }} /></div>
+      <main><TGA3Workspace snapshot={snapshot} tab={tab} selectedAgentId={selectedAgentId} onTab={setTab} /></main>
+      <div className="tga3-runtime-side tga3-inspector-side" data-open={drawer === "inspector"}><TGA3AgentInspector snapshot={snapshot} agent={selectedAgent} openConversationNonce={conversationNonce} onChanged={refresh} /></div>
     </div>
-    <GlobalActionDock store={viewStore} mode={mode} onRefresh={refresh} onOpenApprovals={() => navigate(`/approvals?task_id=${encodeURIComponent(taskId)}`)} onIntervention={openSolverChat} />
+    <footer className="tga3-action-dock">
+      <button type="button" onClick={openConversation}><MessageSquareText size={16} />给 Agent 添加提示</button>
+      <button type="button" className={question ? "needs-attention" : ""} onClick={() => navigate(`/approvals?task_id=${encodeURIComponent(taskId)}`)}><ShieldQuestion size={16} />{question ? "处理待回答问题" : "Q&A 中心"}</button>
+      {!terminal ? <button type="button" className="danger" disabled={busy} onClick={() => void stop()}><CircleStop size={16} />停止任务</button> : null}
+    </footer>
   </section>;
-}
-
-function taskFailure(store: RuntimeStore): { title: string; message: string; retryable: boolean; attempts: number | null } | null {
-  if (!["blocked", "failed"].includes(store.session.status)) return null;
-  const events = Object.values(store.eventsBySeq).sort((left, right) => right.seq - left.seq);
-  const failed = events.find((event) => event.type === "TASK_FAILED");
-  const retryable = failed?.payload.retryable === true;
-  const rawAttempts = failed?.payload.attempts;
-  const attempts = typeof rawAttempts === "number" && Number.isFinite(rawAttempts) && rawAttempts > 0 ? rawAttempts : null;
-  const message = stringValue(failed?.payload.message)
-    ?? store.session.stopReason
-    ?? "任务运行时发生未分类错误。";
-  const title = ({
-    AuthenticationError: "模型认证失败",
-    APITimeoutError: "模型请求超时",
-    ModelCallLimitExceededError: "模型未能生成有效结构化结果",
-    BudgetExceededError: "任务预算已耗尽",
-    TaskCancelledError: "任务已取消",
-  } as Record<string, string>)[stringValue(failed?.payload.error_type) ?? ""] ?? "任务运行失败";
-  return { title, message, retryable, attempts };
-}
-
-function stringValue(value: unknown): string | null {
-  return typeof value === "string" && value.trim() ? value : null;
 }

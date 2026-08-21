@@ -2,9 +2,7 @@ export type AppPage =
   | "dashboard"
   | "tasks"
   | "new"
-  | "task-detail"
   | "runtime"
-  | "replay"
   | "approvals"
   | "resources"
   | "reports"
@@ -57,10 +55,8 @@ function readTaskRoute(parts: string[]): AppRoute {
 
   const taskId = decodeTaskId(parts[1]);
   if (!taskId) return { page: "not-found" };
-  if (parts.length === 2) return { page: "task-detail", taskId };
-  if (parts.length === 3 && (parts[2] === "runtime" || parts[2] === "replay")) {
-    return { page: parts[2], taskId };
-  }
+  if (parts.length === 2) return { page: "runtime", taskId };
+  if (parts.length === 3 && parts[2] === "runtime") return { page: "runtime", taskId };
   return { page: "not-found" };
 }
 
@@ -73,5 +69,5 @@ function decodeTaskId(value: string): string | null {
 }
 
 export function isRuntimePage(page: AppPage): boolean {
-  return page === "runtime" || page === "replay";
+  return page === "runtime";
 }

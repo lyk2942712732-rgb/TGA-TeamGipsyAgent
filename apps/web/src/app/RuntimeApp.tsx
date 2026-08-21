@@ -13,7 +13,6 @@ import { SolversPage } from "../pages/SolversPage";
 import { SystemPage } from "../pages/SystemPage";
 import { TeamsPage } from "../pages/TeamsPage";
 import { CapabilitiesPage } from "../pages/ToolsPage";
-import { TaskDetailPage } from "../pages/TaskDetailPage";
 import { TaskListPage } from "../pages/TaskListPage";
 import { AppShell } from "./AppShell";
 import { readRoute, type AppRoute } from "./router";
@@ -35,9 +34,7 @@ function RoutePage({ route, navigate }: { route: AppRoute; navigate: (path: stri
   if (route.page === "tasks") return <TaskListPage />;
   if (route.page === "approvals") return <ApprovalsPage />;
   if (route.page === "new") return <><TaskListPage /><NewTaskPage onCancel={() => navigate("/tasks")} onCreated={(id) => navigate(`/tasks/${encodeURIComponent(id)}/runtime`)} /></>;
-  if (route.page === "task-detail" && route.taskId) return <TaskDetailPage taskId={route.taskId} />;
-  if (route.page === "runtime" && route.taskId) return <TaskRuntimePage taskId={route.taskId} mode="runtime" />;
-  if (route.page === "replay" && route.taskId) return <TaskRuntimePage taskId={route.taskId} mode="replay" />;
+  if (route.page === "runtime" && route.taskId) return <TaskRuntimePage taskId={route.taskId} />;
   if (route.page === "models") return <ModelsPage />;
   if (route.page === "tools") return <CapabilitiesPage />;
   if (route.page === "skills") return <SkillsPage />;

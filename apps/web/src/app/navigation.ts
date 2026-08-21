@@ -33,7 +33,7 @@ export const NAVIGATION_GROUPS: NavigationGroup[] = [
     label: "工作区",
     items: [
       { id: "home", label: "首页", path: "/", icon: Home, activePages: ["dashboard"] },
-      { id: "tasks", label: "任务", path: "/tasks", icon: CheckSquare, activePages: ["tasks", "new", "task-detail", "runtime", "replay"] },
+      { id: "tasks", label: "任务", path: "/tasks", icon: CheckSquare, activePages: ["tasks", "new", "runtime"] },
       { id: "approvals", label: "审批中心", path: "/approvals", icon: ClipboardCheck, activePages: ["approvals"] },
       { id: "reports", label: "报告", path: "/reports", icon: FileBarChart, activePages: ["reports"] },
     ],

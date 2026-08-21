@@ -15,7 +15,6 @@ vi.mock("../pages/DashboardRoute", () => ({ DashboardRoute: () => <div>dashboard
 vi.mock("../pages/ApprovalsPage", () => ({ ApprovalsPage: () => <div>global approvals</div> }));
 vi.mock("../pages/NewTaskPage", () => ({ NewTaskPage: () => <div>new task</div> }));
 vi.mock("../pages/TaskListPage", () => ({ TaskListPage: () => <div>task list</div> }));
-vi.mock("../pages/TaskDetailPage", () => ({ TaskDetailPage: ({ taskId }: { taskId: string }) => <div>task detail {taskId}</div> }));
 vi.mock("../features/runtime/TaskRuntimePage", () => ({ TaskRuntimePage: () => <div>task runtime</div> }));
 vi.mock("../pages/ToolsPage", () => ({ CapabilitiesPage: () => <div>tools</div> }));
 vi.mock("../pages/ModelsPage", () => ({ ModelsPage: () => <div>models</div> }));

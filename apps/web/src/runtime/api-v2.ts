@@ -1,9 +1,6 @@
 import { apiBase, ApiError, requestJson } from "../api/client";
-import { normalizeRuntimeEvent, normalizeRuntimeSnapshot } from "../features/runtime/models/normalize";
-import type { RuntimeStore } from "../features/runtime/models/types";
 import type { ProviderProtocol, StagedAsset } from "../api/tasks";
 import { takeStagedFile } from "../api/tasks";
-import { loadTGA3Runtime } from "./tga3-runtime";
 import type { CapabilityCatalog, MCPHealth, MCPManagedServer, MCPServerConfig, MCPServerTools } from "./event-types";
 
 export type ArtifactPreviewResponse = {
@@ -30,11 +27,6 @@ async function get<T>(path: string): Promise<T> {
 }
 
 export const runtimeApi = {
-  taskRuntime: async (taskId: string): Promise<RuntimeStore> => loadTGA3Runtime(taskId),
-  runtimeEvents: async (taskId: string, afterSeq: number) => {
-    const value = await get<{ events: unknown[]; latest_seq: number; has_more?: boolean }>(`/tasks/${encodeURIComponent(taskId)}/events?after_seq=${afterSeq}`);
-    return { events: value.events.map(normalizeRuntimeEvent), latestSeq: value.latest_seq, hasMore: Boolean(value.has_more) };
-  },
   capabilities: () => get<CapabilityCatalog>("/capabilities"),
   toolHealth: () => get<MCPHealth>("/tools/health"),
   mcpServers: () => requestJson<{ servers: MCPManagedServer[] }>("/api/v2/mcp/servers"),
@@ -64,6 +56,12 @@ export const runtimeApi = {
     for (const asset of attachments) { const file = takeStagedFile(asset.id); if (!file) continue; const form = new FormData(); form.set("file", file, file.name); const uploaded = await requestJson<{ file: { id: string } }>(`/api/v3/tasks/${encodeURIComponent(taskId)}/files`, { method: "POST", body: form }); attachmentIds.push(uploaded.file.id); }
     const message = await requestJson<{ id: string }>(`/api/v3/tasks/${encodeURIComponent(taskId)}/prompts`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: content || "请查看附件", addressed_to: [solverId], attachment_ids: attachmentIds, idempotency_key: globalThis.crypto?.randomUUID?.() ?? `${Date.now()}` }) });
     return { accepted: true, status: "accepted", message_id: message.id };
+  },
+  answerQuestion: async (taskId: string, questionId: string, answer: string, attachments: StagedAsset[]) => {
+    const attachmentIds: string[] = [];
+    for (const asset of attachments) { const file = takeStagedFile(asset.id); if (!file) continue; const form = new FormData(); form.set("file", file, file.name); const uploaded = await requestJson<{ file: { id: string } }>(`/api/v3/tasks/${encodeURIComponent(taskId)}/files`, { method: "POST", body: form }); attachmentIds.push(uploaded.file.id); }
+    const entry = await requestJson<{ id: string }>(`/api/v3/questions/${encodeURIComponent(questionId)}/answer`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ answer, attachment_ids: attachmentIds, idempotency_key: globalThis.crypto?.randomUUID?.() ?? `${Date.now()}` }) });
+    return { accepted: true, status: "answered", entry_id: entry.id };
   },
   solverControl: async (taskId: string, solverId: string, action: "pause" | "resume") => requestJson<{ actual_state: string }>(`/api/v3/tasks/${encodeURIComponent(taskId)}/agents/${encodeURIComponent(solverId)}/${action}`, { method: "POST" }).then((value) => ({ accepted: true, status: value.actual_state })),
   solverModel: async (taskId: string, solverId: string, providerId: string, modelId: string, protocol: ProviderProtocol) => requestJson<Record<string, unknown>>(`/api/v3/tasks/${encodeURIComponent(taskId)}/agents/${encodeURIComponent(solverId)}/model`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ provider_id: providerId, model_id: modelId, protocol }) }).then((model) => ({ model })),

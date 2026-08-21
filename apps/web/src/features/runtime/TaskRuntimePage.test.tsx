@@ -1,92 +1,45 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { normalizeRuntimeSnapshot } from "./models/normalize";
+import type { TGA3RuntimeSnapshot } from "../../runtime/tga3-runtime";
 
-const useTaskRuntime = vi.fn();
-vi.mock("./use-task-runtime", () => ({ useTaskRuntime: (...args: unknown[]) => useTaskRuntime(...args) }));
+const useTGA3Runtime = vi.hoisted(() => vi.fn());
+vi.mock("./use-tga3-runtime", () => ({ useTGA3Runtime: (...args: unknown[]) => useTGA3Runtime(...args) }));
+vi.mock("../../api/tasks", async (original) => ({ ...await original<typeof import("../../api/tasks")>(), fetchAgentModelOptions: vi.fn(async () => ({ mode: "pwn", agents: [], models: [] })) }));
 import { TaskRuntimePage } from "./TaskRuntimePage";
 
-const snapshot = (solvers = 2) => normalizeRuntimeSnapshot({
-  schema_version: 6,
-  task: { id: "task", name: "Task workbench", mode: "ctf" },
-  session: { status: "running", supervisor_solver_id: solvers ? "supervisor" : null, active_solver_count: solvers, max_active_workers: 2, task_budget_usage: { input_tokens: 12 }, stop_reason: null, timestamps: {}, turn_count: 1, max_turns: 20 },
-  team: { task_id: "task", status: "running", supervisor_solver_id: solvers ? "supervisor" : null, max_active_workers: 2, max_total_solvers: 8, active_solver_count: solvers, solver_ids: solvers ? ["supervisor", "worker"] : [], version: 1, timestamps: {} },
-  solvers: solvers ? [
-    { task_id: "task", solver_id: "supervisor", definition_id: "supervisor", orchestration_role: "supervisor", specialties: ["planning"], parent_solver_id: null, assigned_intent_id: null, status: "running", current_summary: "coordinate", model_snapshot: {}, skill_snapshot: {}, capability_binding: {}, budget_usage: {}, timestamps: {} },
-    ...(solvers > 1 ? [{ task_id: "task", solver_id: "worker", definition_id: "worker", orchestration_role: "worker", specialties: ["web"], parent_solver_id: "supervisor", assigned_intent_id: "intent", status: "running", current_summary: "inspect", model_snapshot: {}, skill_snapshot: {}, capability_binding: {}, budget_usage: {}, timestamps: {} }] : []),
-  ] : [],
-  intents: solvers > 1 ? [{ task_id: "task", intent_id: "intent", kind: "investigate", title: "Inspect", objective: "inspect", status: "running", assigned_solver_id: "worker", dependencies: [], priority: 1, budget: {}, created_at: "", updated_at: "" }] : [],
-  worker_results: [], global_plan: null, knowledge: [], artifacts: [], evidence_claims: [], findings: [], actions: [], approvals: [], retrieval_runs: [], events: [], events_page: { after_seq: 0, next_after_seq: 0, has_more: false }, latest_seq: 0,
-});
+const snapshot: TGA3RuntimeSnapshot = {
+  task: { id: "task", title: "Native TGA3 task", scene_id: "pwn", state: "running", blackboard_seq: 2, dialogue_seq: 2, created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:01:00Z" },
+  agents: [
+    { agent_id: "supervisor", sdk: "openai_agents", desired_state: "running", actual_state: "running", provider_id: "openai", model_id: "gpt", protocol: "openai_responses", display_name: "Supervisor", role: "supervisor", runtime_location: "host", updated_at: "2026-01-01T00:01:00Z" },
+    { agent_id: "worker-openai", sdk: "openai_agents", desired_state: "running", actual_state: "running", provider_id: "openai", model_id: "gpt", protocol: "openai_responses", display_name: "OpenAI Worker", role: "worker", runtime_location: "container", updated_at: "2026-01-01T00:01:00Z" },
+  ],
+  blackboard: [
+    { id: "prompt", seq: 1, actor: { agent_id: "user", display_name: "用户", role: "user" }, kind: "user_prompt", topic: "initial", body: { text: "拿到 flag" }, created_at: "2026-01-01T00:00:00Z" },
+    { id: "finding", seq: 2, actor: { agent_id: "worker-openai", display_name: "OpenAI Worker", role: "worker" }, kind: "finding", topic: "flag", body: { claim: "已发现入口" }, created_at: "2026-01-01T00:01:00Z" },
+  ],
+  dialogue: [
+    { id: "status", seq: 1, channel_agent_id: "worker-openai", actor: { agent_id: "worker-openai", display_name: "OpenAI Worker", role: "worker" }, kind: "agent_status", text: "开始执行", payload: {}, created_at: "2026-01-01T00:00:30Z" },
+    { id: "progress", seq: 2, channel_agent_id: "supervisor", actor: { agent_id: "supervisor", display_name: "Supervisor", role: "supervisor" }, kind: "blackboard_progress", text: "黑板已有新 Finding", payload: {}, created_at: "2026-01-01T00:01:00Z" },
+  ],
+};
 
-describe("TaskRuntimePage skeleton", () => {
-  beforeEach(() => useTaskRuntime.mockReturnValue({ store: snapshot(), connection: "live", error: null, refresh: vi.fn() }));
-
-  it("connects the task header, team tree, workspace and inspector to normalized state", () => {
-    render(<MemoryRouter initialEntries={["/tasks/task/runtime?solver=worker&intent=intent&tab=timeline"]}><TaskRuntimePage taskId="task" mode="runtime" /></MemoryRouter>);
-    expect(screen.getByRole("heading", { name: "Task workbench" })).toBeInTheDocument();
-    expect(screen.getByRole("tree", { name: "Solver 团队" })).toBeInTheDocument();
-    expect(screen.getByRole("treeitem", { name: /worker/ })).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByRole("tab", { name: "时间线" })).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByRole("complementary", { name: "Solver 检查器" })).toHaveTextContent("inspect");
-    expect(screen.getByRole("region", { name: "全局操作" })).toBeInTheDocument();
+describe("TaskRuntimePage", () => {
+  beforeEach(() => useTGA3Runtime.mockReturnValue({ snapshot, connection: "live", error: null, refresh: vi.fn() }));
+  it("renders only native TGA3 runtime concepts", () => {
+    render(<MemoryRouter initialEntries={["/tasks/task/runtime"]}><TaskRuntimePage taskId="task" /></MemoryRouter>);
+    expect(screen.getByRole("heading", { name: "Native TGA3 task" })).toBeInTheDocument();
+    expect(screen.getByRole("navigation", { name: "任务 Agent" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /共享黑板/ })).toBeInTheDocument();
+    expect(screen.getByText("已发现入口")).toBeInTheDocument();
+    expect(screen.queryByText("Intent Board")).not.toBeInTheDocument();
+    expect(screen.queryByText("Reviewer")).not.toBeInTheDocument();
   });
-
-  it("allows keyboard-native Solver selection and keeps state in the URL", () => {
-    render(<MemoryRouter initialEntries={["/tasks/task/runtime"]}><TaskRuntimePage taskId="task" mode="runtime" /></MemoryRouter>);
-    expect(screen.getByRole("treeitem", { name: /worker/ })).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByRole("complementary", { name: "Solver 检查器" })).toHaveTextContent("Inspect");
-    fireEvent.click(screen.getByRole("treeitem", { name: /worker/ }));
-    expect(screen.getByRole("treeitem", { name: /worker/ })).toHaveAttribute("aria-selected", "true");
-  });
-
-  it("switches the responsive team and inspector drawers without duplicating runtime state", () => {
-    const { container } = render(<MemoryRouter initialEntries={["/tasks/task/runtime"]}><TaskRuntimePage taskId="task" mode="runtime" /></MemoryRouter>);
-    const teamDrawer = container.querySelector(".runtime-team-side");
-    const inspectorDrawer = container.querySelector(".runtime-inspector-side");
-    expect(teamDrawer).toHaveAttribute("data-open", "false");
-    expect(inspectorDrawer).toHaveAttribute("data-open", "false");
-    fireEvent.click(screen.getByRole("button", { name: "团队" }));
-    expect(teamDrawer).toHaveAttribute("data-open", "true");
-    fireEvent.click(screen.getByRole("button", { name: "检查器" }));
-    expect(teamDrawer).toHaveAttribute("data-open", "false");
-    expect(inspectorDrawer).toHaveAttribute("data-open", "true");
-  });
-
-  it("renders an explicit empty state without positional Solver assumptions", () => {
-    useTaskRuntime.mockReturnValueOnce({ store: snapshot(0), connection: "live", error: null, refresh: vi.fn() });
-    render(<MemoryRouter><TaskRuntimePage taskId="task" mode="runtime" /></MemoryRouter>);
-    expect(screen.getByText("尚无 Solver" )).toBeInTheDocument();
-  });
-
-  it("renders a single-Solver task through the same team projection", () => {
-    useTaskRuntime.mockReturnValueOnce({ store: snapshot(1), connection: "live", error: null, refresh: vi.fn() });
-    render(<MemoryRouter><TaskRuntimePage taskId="task" mode="runtime" /></MemoryRouter>);
-    expect(screen.getByRole("treeitem", { name: /supervisor/ })).toBeInTheDocument();
-    expect(screen.getByRole("complementary", { name: "Solver 检查器" })).toHaveTextContent("coordinate");
-  });
-
-  it("shows the exhausted model transport error and a recovery action", () => {
-    const blocked = snapshot(1);
-    blocked.session.status = "blocked";
-    blocked.session.stopReason = "model_request_failed";
-    blocked.team.status = "blocked";
-    blocked.eventsBySeq[34] = {
-      schemaVersion: 6, id: "event-34", taskId: "task", seq: 34,
-      type: "TASK_FAILED", solverId: "supervisor", intentId: null,
-      payload: { error_type: "AuthenticationError", message: "provider request failed after 3 attempts", retryable: true, attempts: 3 },
-      createdAt: "",
-    };
-    blocked.latestSeq = 34;
-    useTaskRuntime.mockReturnValueOnce({ store: blocked, connection: "live", error: null, refresh: vi.fn() });
-
-    render(<MemoryRouter><TaskRuntimePage taskId="task" mode="runtime" /></MemoryRouter>);
-
-    const alert = screen.getByRole("alert");
-    expect(alert).toHaveTextContent("模型认证失败");
-    expect(alert).toHaveTextContent("provider request failed after 3 attempts");
-    expect(alert).toHaveTextContent("已自动尝试 3 次");
-    expect(screen.queryByRole("button", { name: "重新连接并恢复" })).toBeNull();
+  it("selects an agent and opens its native inspector", () => {
+    render(<MemoryRouter initialEntries={["/tasks/task/runtime"]}><TaskRuntimePage taskId="task" /></MemoryRouter>);
+    fireEvent.click(screen.getByRole("option", { name: /OpenAI Worker/ }));
+    expect(screen.getByRole("heading", { name: "OpenAI Worker" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: "活动" }));
+    expect(screen.getByText("开始执行")).toBeInTheDocument();
   });
 });
