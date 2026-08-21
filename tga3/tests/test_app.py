@@ -1,6 +1,8 @@
+import json
 from copy import deepcopy
 from pathlib import Path
 from shutil import copytree
+from unittest.mock import AsyncMock, patch
 from uuid import UUID
 
 from fastapi.testclient import TestClient
@@ -55,6 +57,17 @@ def test_frontend_api_uses_safe_catalog_and_page_owned_config_documents(tmp_path
         worker_definition = next(item for item in definitions if item["id"] == "worker-openai")
         assert worker_definition["image"]
         assert worker_definition["image_health"]["status"] == "healthy"
+        with patch(
+            "tga3.app.discover_provider_models",
+            new=AsyncMock(return_value=["gpt-5.6", "gpt-task-override"]),
+        ):
+            discovered = client.post("/api/v3/config/models/openai/discover")
+        assert discovered.status_code == 200
+        assert discovered.json()["count"] == 2
+        assert [item["name"] for item in discovered.json()["models"]] == [
+            "gpt-5.6",
+            "gpt-task-override",
+        ]
         invalid = deepcopy(agents)
         invalid["agents"]["worker-openai"]["model_id"] = "missing-model"
         original_agents = (config_dir / "agents.json").read_text(encoding="utf-8")
@@ -82,7 +95,14 @@ def test_frontend_api_uses_safe_catalog_and_page_owned_config_documents(tmp_path
         assert client.delete("/api/v3/skills/web").status_code == 204
         created = client.post(
             "/api/v3/tasks",
-            data={"title": "scene task", "prompt": "analyze this", "scene_id": "reverse_engineering"},
+            data={
+                "title": "scene task",
+                "prompt": "analyze this",
+                "scene_id": "reverse_engineering",
+                "agent_models": json.dumps(
+                    {"worker-openai": {"provider_id": "openai", "model_id": "gpt-task-override"}}
+                ),
+            },
             files=[("files", ("challenge.bin", b"binary", "application/octet-stream"))],
         )
         assert created.status_code == 200
@@ -91,9 +111,15 @@ def test_frontend_api_uses_safe_catalog_and_page_owned_config_documents(tmp_path
         detail = client.get(f"/api/v3/tasks/{task_id}").json()
         assert len(detail["agents"]) == 4
         assert {agent["runtime_location"] for agent in detail["agents"]} == {"host", "container"}
+        assert next(agent for agent in detail["agents"] if agent["agent_id"] == "worker-openai")["model_id"] == (
+            "gpt-task-override"
+        )
         board = client.get(f"/api/v3/tasks/{task_id}/blackboard").json()["entries"]
         assert [entry["topic"] for entry in board] == ["scene", "task", "input"]
         assert len(containers.launched) == 2
+        assert next(item for item in containers.launched if item.agent.agent_id == "worker-openai").agent.model.id == (
+            "gpt-task-override"
+        )
 
         async def ask_user():
             supervisor = Actor(agent_id="supervisor", display_name="Supervisor", role="supervisor")

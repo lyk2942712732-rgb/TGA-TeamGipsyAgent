@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from contextlib import asynccontextmanager
 from typing import Annotated, Any
 from uuid import UUID, uuid4
@@ -11,13 +12,14 @@ from fastapi import APIRouter, FastAPI, File, Form, Request, UploadFile, WebSock
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
-from .config import AgentsConfig, ModelsConfig, RuntimeConfig, ScenesConfig, TGA3Config
+from .config import AgentsConfig, ConfigBundle, ModelConfig, ModelsConfig, RuntimeConfig, ScenesConfig, TGA3Config
 from .coordinator import TaskCoordinator
 from .docker_runtime import ContainerRuntime
 from .domain import AgentState, DialogueKind, RunState
 from .errors import TGA3Error
 from .host_agents import Automation, HostModel, OpenAIHostModel
 from .mcp_server import build_mcp
+from .model_discovery import discover_provider_models
 from .skills import SkillCatalog
 from .storage import Storage
 
@@ -148,8 +150,16 @@ def create_app(
         title: Annotated[str, Form(min_length=1, max_length=500)],
         prompt: Annotated[str, Form(min_length=1)],
         scene_id: Annotated[str, Form(min_length=1, max_length=100)],
+        agent_models: Annotated[str, Form()] = "{}",
         files: Annotated[list[UploadFile] | None, File()] = None,
     ) -> dict[str, Any]:
+        raw_overrides = json.loads(agent_models)
+        if not isinstance(raw_overrides, dict):
+            raise ValueError("agent_models must be an object")
+        overrides = {
+            agent_id: ModelRequest.model_validate(value)
+            for agent_id, value in raw_overrides.items()
+        }
         initial_files = [
             (
                 file.filename or "upload.bin",
@@ -158,7 +168,16 @@ def create_app(
             )
             for file in files or []
         ]
-        task = await coordinator.create_and_start(title, prompt, scene_id, initial_files)
+        task = await coordinator.create_and_start(
+            title,
+            prompt,
+            scene_id,
+            initial_files,
+            model_overrides={
+                agent_id: (value.provider_id, value.model_id)
+                for agent_id, value in overrides.items()
+            },
+        )
         return task.model_dump(mode="json")
 
     @api.get("/tasks/{task_id}")
@@ -282,8 +301,14 @@ def create_app(
     async def agent_definitions() -> list[dict[str, Any]]:
         tools = {
             "supervisor": ["skills.list", "skills.read"],
-            "worker-openai": ["shell_exec", "progress_update", "blackboard.sync", "blackboard.publish", "artifact.register", "skills.list", "skills.read"],
-            "worker-claude": ["Bash", "Read", "Write", "Edit", "Glob", "Grep", "blackboard.sync", "blackboard.publish", "artifact.register", "skills.list", "skills.read"],
+            "worker-openai": [
+                "shell_exec", "progress_update", "blackboard.sync", "blackboard.publish",
+                "artifact.register", "skills.list", "skills.read",
+            ],
+            "worker-claude": [
+                "Bash", "Read", "Write", "Edit", "Glob", "Grep", "blackboard.sync",
+                "blackboard.publish", "artifact.register", "skills.list", "skills.read",
+            ],
             "reporter": ["skills.list", "skills.read"],
         }
         result: list[dict[str, Any]] = []
@@ -308,6 +333,51 @@ def create_app(
         async with config_lock:
             config.apply_document("models", body)
         return config.export_document("models")
+
+    @api.post("/config/models/{provider_id}/discover")
+    async def discover_models(provider_id: str) -> dict[str, Any]:
+        snapshot = config.models.provider(provider_id).model_copy(deep=True)
+        discovered = await discover_provider_models(snapshot)
+        async with config_lock:
+            updated = config.models.model_copy(deep=True)
+            provider = updated.provider(provider_id)
+            if (
+                provider.base_url != snapshot.base_url
+                or provider.selected_api_key_id != snapshot.selected_api_key_id
+            ):
+                raise ValueError("供应商 URL 或所选密钥已变化，请重新同步")
+            existing_by_name = {model.name: model for model in provider.models}
+            existing_by_id = {model.id: model for model in provider.models}
+            provider.models = [
+                (
+                    existing_by_name.get(remote_id)
+                    or existing_by_id.get(remote_id)
+                    or ModelConfig(id=remote_id, name=remote_id)
+                )
+                .model_copy(update={"name": remote_id, "verification_status": "verified", "source": "api"})
+                for remote_id in discovered
+            ]
+            discovered_ids = {model.id for model in provider.models}
+            updated_agents = config.agents.model_copy(deep=True)
+            rebound_agents: list[str] = []
+            for agent_id, binding in updated_agents.agents.items():
+                if binding.provider_id == provider_id and binding.model_id not in discovered_ids:
+                    binding.model_id = provider.models[0].id
+                    rebound_agents.append(agent_id)
+            config.apply_bundle(
+                ConfigBundle(
+                    models=updated,
+                    agents=updated_agents,
+                    scenes=config.scenes,
+                    runtime=config.runtime,
+                )
+            )
+        return {
+            "provider_id": provider_id,
+            "count": len(provider.models),
+            "models": [model.model_dump(mode="json") for model in provider.models],
+            "rebound_agents": rebound_agents,
+        }
 
     @api.get("/config/agents")
     async def read_agents_config() -> dict:

@@ -28,8 +28,8 @@ class SupervisorDecision(BaseModel):
 
 
 class HostModel(Protocol):
-    async def supervisor(self, snapshot: str) -> SupervisorDecision: ...
-    async def report(self, snapshot: str) -> str: ...
+    async def supervisor(self, snapshot: str, binding: ResolvedAgent | None = None) -> SupervisorDecision: ...
+    async def report(self, snapshot: str, binding: ResolvedAgent | None = None) -> str: ...
 
 
 class OpenAIHostModel:
@@ -49,11 +49,11 @@ class OpenAIHostModel:
             return OpenAIChatCompletionsModel(model=binding.model.name, openai_client=client)
         return OpenAIResponsesModel(model=binding.model.name, openai_client=client)
 
-    async def supervisor(self, snapshot: str) -> SupervisorDecision:
+    async def supervisor(self, snapshot: str, binding: ResolvedAgent | None = None) -> SupervisorDecision:
         from agents import Agent, Runner, function_tool, set_tracing_disabled
 
         set_tracing_disabled(True)
-        binding = self.config.resolve_agent("supervisor")
+        binding = binding or self.config.resolve_agent("supervisor")
 
         @function_tool
         def skills_list() -> list[dict[str, str]]:
@@ -75,11 +75,11 @@ class OpenAIHostModel:
         result = await Runner.run(agent, snapshot, max_turns=binding.max_turns_per_cycle)
         return SupervisorDecision.model_validate(result.final_output)
 
-    async def report(self, snapshot: str) -> str:
+    async def report(self, snapshot: str, binding: ResolvedAgent | None = None) -> str:
         from agents import Agent, Runner, function_tool, set_tracing_disabled
 
         set_tracing_disabled(True)
-        binding = self.config.resolve_agent("reporter")
+        binding = binding or self.config.resolve_agent("reporter")
 
         @function_tool
         def skills_list() -> list[dict[str, str]]:
@@ -104,10 +104,10 @@ class OpenAIHostModel:
 class DeterministicHostModel:
     """Offline test model; production selects OpenAIHostModel."""
 
-    async def supervisor(self, snapshot: str) -> SupervisorDecision:
+    async def supervisor(self, snapshot: str, binding: ResolvedAgent | None = None) -> SupervisorDecision:
         return SupervisorDecision(progress="黑板已有更新，两个 Worker 正在独立推进。")
 
-    async def report(self, snapshot: str) -> str:
+    async def report(self, snapshot: str, binding: ResolvedAgent | None = None) -> str:
         return f"# TGA3 Writeup\n\n## 固定黑板快照\n\n```json\n{snapshot}\n```\n"
 
 
@@ -162,19 +162,23 @@ class Automation:
         if trigger_seq <= last:
             return
         configured = self.config.agents.agents["supervisor"]
+        run = await self.storage.get_agent(task_id, "supervisor")
+        binding = self.config.resolve_agent(
+            "supervisor", run.provider_id, run.model_id, require_api_key=False
+        )
         supervisor = Actor(
             agent_id="supervisor",
             display_name=configured.display_name,
             role="supervisor",
             sdk=configured.runtime,
-            model=configured.model_id,
+            model=run.model_id,
         )
         await self.storage.update_agent(task_id, "supervisor", actual_state=AgentState.RUNNING)
         await self.dialogue.announce_status(task_id, supervisor, AgentState.RUNNING.value)
         try:
             sync = await self.blackboard.sync(task_id, after_seq=0)
             snapshot = json.dumps([entry.model_dump(mode="json") for entry in sync.entries], ensure_ascii=False)
-            decision = await self.model.supervisor(snapshot)
+            decision = await self.model.supervisor(snapshot, binding)
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -222,19 +226,23 @@ class Automation:
         snapshot_seq = task.blackboard_seq
         await self.storage.update_task(task_id, state=RunState.REPORTING, final_snapshot_seq=snapshot_seq)
         configured = self.config.agents.agents["reporter"]
+        run = await self.storage.get_agent(task_id, "reporter")
+        binding = self.config.resolve_agent(
+            "reporter", run.provider_id, run.model_id, require_api_key=False
+        )
         reporter = Actor(
             agent_id="reporter",
             display_name=configured.display_name,
             role="reporter",
             sdk=configured.runtime,
-            model=configured.model_id,
+            model=run.model_id,
         )
         await self.storage.update_agent(task_id, "reporter", actual_state=AgentState.RUNNING)
         await self.dialogue.announce_status(task_id, reporter, AgentState.RUNNING.value)
         entries = await self.storage.list_entries(task_id, up_to_seq=snapshot_seq, limit=10_000)
         snapshot = json.dumps([entry.model_dump(mode="json") for entry in entries], ensure_ascii=False, indent=2)
         try:
-            markdown = await self.model.report(snapshot)
+            markdown = await self.model.report(snapshot, binding)
         except Exception as exc:
             await self.storage.update_agent(task_id, "reporter", actual_state=AgentState.FAILED, last_error=str(exc))
             await self.storage.update_task(task_id, state=RunState.FAILED)

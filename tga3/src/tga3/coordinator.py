@@ -57,12 +57,21 @@ class TaskCoordinator:
         scene_id: str,
         initial_files: list[tuple[str, str, bytes]] | None = None,
         task_id: UUID | None = None,
+        model_overrides: dict[str, tuple[str, str]] | None = None,
     ):
         scene = self.config.scene(scene_id)
+        model_overrides = model_overrides or {}
+        unknown_agents = sorted(set(model_overrides).difference(self.config.agents.agents))
+        if unknown_agents:
+            raise ValueError(f"unknown task agent model overrides: {', '.join(unknown_agents)}")
+        resolved_agents = {
+            agent_id: self.config.resolve_agent(agent_id, *(model_overrides.get(agent_id) or (None, None)))
+            for agent_id in self.config.agents.agents
+        }
         task = await self.storage.create_task(title, scene.id, task_id)
         await self.storage.update_task(task.id, state=RunState.STARTING)
         for agent_id, configured in self.config.agents.agents.items():
-            resolved = self.config.resolve_agent(agent_id)
+            resolved = resolved_agents[agent_id]
             state = AgentState.IDLE if configured.role == "supervisor" else AgentState.CREATED
             await self.storage.upsert_agent(
                 AgentRun(
@@ -99,7 +108,7 @@ class TaskCoordinator:
             await self.add_input_file(task.id, name, media_type, content)
         try:
             for agent_id in self.config.worker_agent_ids:
-                resolved = self.config.resolve_agent(agent_id)
+                resolved = resolved_agents[agent_id]
                 run = await self.storage.update_agent(
                     task.id,
                     agent_id,

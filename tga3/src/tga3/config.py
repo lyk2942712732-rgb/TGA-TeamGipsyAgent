@@ -208,13 +208,28 @@ class TGA3Config:
         self.runtime = RuntimeConfig.model_validate_json(self._read("runtime.json"))
         self._validate_values(self.models, self.agents, self.scenes, self.runtime)
 
-    def resolve_agent(self, agent_id: str) -> ResolvedAgent:
+    def resolve_agent(
+        self,
+        agent_id: str,
+        provider_id: str | None = None,
+        model_id: str | None = None,
+        *,
+        require_api_key: bool = True,
+    ) -> ResolvedAgent:
         try:
             binding = self.agents.agents[agent_id]
         except KeyError as exc:
             raise KeyError(f"agent config not found: {agent_id}") from exc
-        provider = self.models.provider(binding.provider_id)
-        model = provider.model(binding.model_id)
+        provider = self.models.provider(provider_id or binding.provider_id)
+        model = provider.model(model_id or binding.model_id)
+        self.validate_runtime_provider(binding.runtime, provider)
+        selected_key = next(
+            (value.api_key for value in provider.api_keys if value.id == provider.selected_api_key_id),
+            None,
+        )
+        if selected_key is None:
+            raise KeyError(f"selected API key not found for provider {provider.id}")
+        api_key = SecretStr(provider.key()) if require_api_key else selected_key
         return ResolvedAgent(
             agent_id=agent_id,
             display_name=binding.display_name,
@@ -222,10 +237,17 @@ class TGA3Config:
             runtime=binding.runtime,
             provider=provider,
             model=model,
-            api_key=SecretStr(provider.key()),
+            api_key=api_key,
             max_turns_per_cycle=binding.max_turns_per_cycle,
             system_prompt=binding.system_prompt,
         )
+
+    @staticmethod
+    def validate_runtime_provider(runtime: str, provider: ProviderConfig) -> None:
+        if runtime == "claude_agent" and provider.protocol != "anthropic":
+            raise ValueError("Claude Agent SDK requires an Anthropic-compatible provider")
+        if runtime == "openai_agents" and provider.protocol == "anthropic":
+            raise ValueError("OpenAI Agents SDK requires an OpenAI-compatible provider")
 
     def scene(self, scene_id: str) -> SceneConfig:
         return self.scenes.scene(scene_id)
@@ -412,13 +434,10 @@ class TGA3Config:
         for agent_id, expected_runtime in expected_runtimes.items():
             if agents.agents[agent_id].runtime != expected_runtime:
                 raise ValueError(f"{agent_id} must use runtime={expected_runtime}")
-        for agent_id, binding in agents.agents.items():
+        for _agent_id, binding in agents.agents.items():
             provider = models.provider(binding.provider_id)
             provider.model(binding.model_id)
-            if binding.runtime == "claude_agent" and provider.protocol != "anthropic":
-                raise ValueError(f"{agent_id} requires an anthropic provider")
-            if binding.runtime == "openai_agents" and provider.protocol == "anthropic":
-                raise ValueError(f"{agent_id} cannot use anthropic through openai_agents")
+            cls.validate_runtime_provider(binding.runtime, provider)
         missing_images = sorted(
             agent_id
             for agent_id, binding in agents.agents.items()

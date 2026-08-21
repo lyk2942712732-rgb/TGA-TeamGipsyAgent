@@ -89,11 +89,21 @@ html, body { height: 100%; overflow: hidden; }
 .task-attachment-list strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
 .task-attachment-list small { color: var(--c-text-muted); font-size: 10px; }
 .task-attachment-list article > button { display: grid; place-items: center; width: 28px; height: 28px; padding: 0; border: 0; color: var(--c-text-muted); background: transparent; }
+.task-agent-models { display: grid; gap: 5px; padding: 14px; border: 1px solid var(--c-border); border-radius: 11px; background: var(--c-surface-muted); }
+.task-agent-models legend { padding: 0 5px; color: var(--c-text); font-size: 13px; font-weight: 750; }
+.task-agent-models > p { margin: 0 0 8px; color: var(--c-text-muted); font-size: 11px; }
+.task-agent-models > div { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
+.task-agent-models label { display: grid; grid-template-columns: minmax(105px, .7fr) minmax(150px, 1.3fr); align-items: center; gap: 9px; padding: 10px; border: 1px solid var(--c-border); border-radius: 9px; background: var(--c-surface); }
+.task-agent-models label > span { display: grid; min-width: 0; gap: 2px; }
+.task-agent-models strong, .task-agent-models small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.task-agent-models strong { font-size: 11.5px; }.task-agent-models small { color: var(--c-text-subtle); font-size: 9.5px; }
+.task-agent-models select { min-width: 0; width: 100%; }
 .new-task-config-note { padding: 13px 15px; border: 1px solid #cfe0ff; border-radius: 10px; background: #f4f8ff; }
 .new-task-config-note strong { font-size: 12.5px; }
 .new-task-config-note p { margin: 5px 0; color: var(--c-text-muted); font-size: 11.5px; }
 .new-task-config-note small { color: #355487; line-height: 1.6; }
 .new-task-modal-actions { justify-content: flex-end; border-top: 1px solid var(--c-border); border-bottom: 0; }
+@media (max-width: 760px) { .task-agent-models > div { grid-template-columns: 1fr; }.task-agent-models label { grid-template-columns: 1fr; } }
 
 /* Solver configuration: compact neutral list, detailed tools and real image state. */
 .solver-head-actions { display: flex; gap: 9px; }

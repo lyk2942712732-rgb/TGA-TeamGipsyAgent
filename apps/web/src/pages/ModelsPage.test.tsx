@@ -4,7 +4,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   fetchProviderCatalog: vi.fn(),
   createModelProvider: vi.fn(),
-  addProviderModel: vi.fn(),
+  discoverProviderModels: vi.fn(),
+  updateProviderEndpoint: vi.fn(),
   addProviderAPIKey: vi.fn(),
   selectProviderAPIKey: vi.fn(),
   verifyProviderModel: vi.fn(),
@@ -46,16 +47,17 @@ describe("ModelsPage provider catalog", () => {
     vi.clearAllMocks();
     mocks.fetchProviderCatalog.mockResolvedValue(emptyCatalog);
     mocks.createModelProvider.mockResolvedValue({ provider: configuredCatalog.providers[0] });
+    mocks.discoverProviderModels.mockResolvedValue({ provider_id: "provider_deepseek", count: 1, models: configuredCatalog.providers[0].models });
+    mocks.updateProviderEndpoint.mockResolvedValue({ provider: configuredCatalog.providers[0] });
     mocks.selectProviderAPIKey.mockResolvedValue({ provider: configuredCatalog.providers[0] });
   });
 
-  it("prefills an official URL and submits a write-only API key", async () => {
+  it("prefills an official URL and lets the backend discover models from a write-only API key", async () => {
     render(<ModelsPage />);
     await screen.findByText("还没有供应商");
     fireEvent.click(screen.getByRole("button", { name: "添加供应商" }));
     fireEvent.change(screen.getByLabelText("供应商类型"), { target: { value: "deepseek" } });
     expect(screen.getByLabelText("API URL")).toHaveValue("https://api.deepseek.com");
-    fireEvent.change(screen.getByLabelText("模型名称"), { target: { value: "deepseek-chat" } });
     const key = screen.getByLabelText("API 密钥");
     expect(key).toHaveAttribute("type", "password");
     fireEvent.change(key, { target: { value: "secret-key-value" } });
@@ -63,7 +65,7 @@ describe("ModelsPage provider catalog", () => {
 
     await waitFor(() => expect(mocks.createModelProvider).toHaveBeenCalledWith({
       preset_id: "deepseek", name: "DeepSeek", base_url: "https://api.deepseek.com",
-      model: "deepseek-chat", api_key: "secret-key-value",
+      api_key: "secret-key-value",
     }));
     expect(screen.queryByDisplayValue("secret-key-value")).toBeNull();
   });
@@ -77,5 +79,15 @@ describe("ModelsPage provider catalog", () => {
     fireEvent.click(screen.getByRole("button", { name: /Backup/ }));
     await waitFor(() => expect(mocks.selectProviderAPIKey).toHaveBeenCalledWith("provider_deepseek", "key_2"));
     expect(screen.getByLabelText("添加 API 密钥")).toHaveAttribute("type", "password");
+    expect(screen.queryByLabelText("添加模型")).toBeNull();
+  });
+
+  it("refreshes models from the current API URL and selected key", async () => {
+    mocks.fetchProviderCatalog.mockResolvedValue(configuredCatalog);
+    render(<ModelsPage />);
+
+    await screen.findByText("deepseek-chat");
+    fireEvent.click(screen.getByRole("button", { name: "读取可访问模型" }));
+    await waitFor(() => expect(mocks.discoverProviderModels).toHaveBeenCalledWith("provider_deepseek"));
   });
 });

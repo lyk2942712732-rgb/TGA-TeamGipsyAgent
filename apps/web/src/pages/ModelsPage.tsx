@@ -1,21 +1,21 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { Check, ChevronRight, Cpu, KeyRound, Plus, Server, ShieldCheck, X } from "lucide-react";
+import { Check, ChevronRight, Cpu, KeyRound, Plus, RefreshCw, Server, ShieldCheck, X } from "lucide-react";
 import {
-  addProviderAPIKey, addProviderModel, createModelProvider, fetchProviderCatalog,
-  selectProviderAPIKey,
+  addProviderAPIKey, createModelProvider, discoverProviderModels, fetchProviderCatalog,
+  selectProviderAPIKey, updateProviderEndpoint,
   type ModelProvider, type ProviderCatalog,
 } from "../api/tasks";
 
-type ProviderDraft = { preset_id: string; name: string; base_url: string; model: string; api_key: string };
+type ProviderDraft = { preset_id: string; name: string; base_url: string; api_key: string };
 
-const EMPTY_PROVIDER: ProviderDraft = { preset_id: "custom", name: "", base_url: "", model: "", api_key: "" };
+const EMPTY_PROVIDER: ProviderDraft = { preset_id: "custom", name: "", base_url: "", api_key: "" };
 
 export function ModelsPage({ onConfiguredChange }: { onConfiguredChange?: (configured: boolean) => void }) {
   const [catalog, setCatalog] = useState<ProviderCatalog | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const [draft, setDraft] = useState<ProviderDraft>(EMPTY_PROVIDER);
-  const [newModel, setNewModel] = useState("");
+  const [endpoint, setEndpoint] = useState("");
   const [newKey, setNewKey] = useState("");
   const [newKeyLabel, setNewKeyLabel] = useState("");
   const [busy, setBusy] = useState("");
@@ -34,6 +34,7 @@ export function ModelsPage({ onConfiguredChange }: { onConfiguredChange?: (confi
     () => catalog?.providers.find((provider) => provider.id === selectedId) ?? null,
     [catalog, selectedId],
   );
+  useEffect(() => { setEndpoint(selected?.base_url ?? ""); }, [selected?.id, selected?.base_url]);
 
   const choosePreset = (presetId: string) => {
     const preset = catalog?.presets.find((item) => item.id === presetId);
@@ -50,16 +51,22 @@ export function ModelsPage({ onConfiguredChange }: { onConfiguredChange?: (confi
       const result = await createModelProvider({ ...draft, preset_id: draft.preset_id });
       setDraft(EMPTY_PROVIDER); setAdding(false);
       await load(result.provider.id);
-      setMessage(`已添加供应商 ${result.provider.name}，请验证模型连接后用于任务。`);
-    } catch (reason) { setMessage(errorText(reason)); }
+      setMessage(`已添加供应商 ${result.provider.name}，并读取到 ${result.provider.models.length} 个可访问模型。`);
+    } catch (reason) { await load().catch(() => undefined); setMessage(errorText(reason)); }
     finally { setBusy(""); }
   };
 
-  const appendModel = async (event: FormEvent) => {
-    event.preventDefault(); if (!selected) return;
-    setBusy("model"); setMessage("");
-    try { await addProviderModel(selected.id, { name: newModel }); setNewModel(""); await load(selected.id); }
-    catch (reason) { setMessage(errorText(reason)); }
+  const syncModels = async (event?: FormEvent) => {
+    event?.preventDefault();
+    if (!selected) return;
+    setBusy("models"); setMessage("");
+    try {
+      if (endpoint.trim() !== selected.base_url) await updateProviderEndpoint(selected.id, endpoint.trim());
+      else await discoverProviderModels(selected.id);
+      await load(selected.id);
+      setMessage("已使用当前 API URL 和所选密钥刷新可访问模型。");
+    }
+    catch (reason) { await load(selected.id).catch(() => undefined); setMessage(errorText(reason)); }
     finally { setBusy(""); }
   };
 
@@ -69,22 +76,22 @@ export function ModelsPage({ onConfiguredChange }: { onConfiguredChange?: (confi
     try {
       await addProviderAPIKey(selected.id, { api_key: newKey, label: newKeyLabel || undefined });
       setNewKey(""); setNewKeyLabel(""); await load(selected.id);
-      setMessage("API 密钥已保存并选中。切换密钥后需要重新验证模型。");
-    } catch (reason) { setMessage(errorText(reason)); }
+      setMessage("API 密钥已保存并选中，可访问模型也已自动刷新。");
+    } catch (reason) { await load(selected.id).catch(() => undefined); setMessage(errorText(reason)); }
     finally { setBusy(""); }
   };
 
   const selectKey = async (provider: ModelProvider, keyId: string) => {
     if (provider.selected_api_key_id === keyId) return;
     setBusy(`key:${keyId}`); setMessage("");
-    try { await selectProviderAPIKey(provider.id, keyId); await load(provider.id); }
-    catch (reason) { setMessage(errorText(reason)); }
+    try { await selectProviderAPIKey(provider.id, keyId); await load(provider.id); setMessage("已切换密钥并自动刷新可访问模型。"); }
+    catch (reason) { await load(provider.id).catch(() => undefined); setMessage(errorText(reason)); }
     finally { setBusy(""); }
   };
 
   return <div className="ref-page models-catalog-page">
     <header className="ref-page-head models-page-head">
-      <div><span className="eyebrow">MODEL REGISTRY</span><h1>模型供应商</h1><p>此页面直接读写 config/models.json，管理供应商、模型和 API 密钥。</p></div>
+      <div><span className="eyebrow">MODEL REGISTRY</span><h1>模型供应商</h1><p>配置 API URL 与密钥后，系统自动读取该密钥可访问的模型。</p></div>
       <button className="ref-primary-button" onClick={() => setAdding(true)}><Plus size={16} />添加供应商</button>
     </header>
 
@@ -96,7 +103,6 @@ export function ModelsPage({ onConfiguredChange }: { onConfiguredChange?: (confi
         <label>供应商类型<select aria-label="供应商类型" value={draft.preset_id} onChange={(event) => choosePreset(event.target.value)}><option value="custom">自定义</option>{catalog?.presets.map((preset) => <option key={preset.id} value={preset.id}>{preset.name}</option>)}</select></label>
         <label>供应商名称<input required aria-label="供应商名称" value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} placeholder="例如：团队网关" /></label>
         <label className="wide">API URL<input required type="url" aria-label="API URL" value={draft.base_url} onChange={(event) => setDraft({ ...draft, base_url: event.target.value })} placeholder="https://api.example.com/v1" /></label>
-        <label>模型名称<input required aria-label="模型名称" value={draft.model} onChange={(event) => setDraft({ ...draft, model: event.target.value })} placeholder="例如：gpt-5" /></label>
         <label>API 密钥<input required type="password" aria-label="API 密钥" autoComplete="new-password" value={draft.api_key} onChange={(event) => setDraft({ ...draft, api_key: event.target.value })} placeholder="仅写入，不会回显" /></label>
         <footer><button type="button" className="ref-secondary-button" onClick={() => setAdding(false)}>取消</button><button className="ref-primary-button" disabled={busy === "create"}>{busy === "create" ? "正在保存…" : "保存供应商"}</button></footer>
       </form>
@@ -116,14 +122,15 @@ export function ModelsPage({ onConfiguredChange }: { onConfiguredChange?: (confi
       <section className="provider-detail" aria-label="供应商详情">
         {selected ? <>
           <header className="provider-detail-head"><div><span>{selected.preset_id === "custom" ? "自定义供应商" : "官方预设"}</span><h2>{selected.name}</h2><code>{selected.base_url}</code></div><div className="provider-counts"><span><Cpu size={15} />{selected.models.length} 模型</span><span><KeyRound size={15} />{selected.api_keys.length} 密钥</span></div></header>
+          <form className="provider-endpoint-form" onSubmit={syncModels}><label>API URL<input required type="url" value={endpoint} onChange={(event) => setEndpoint(event.target.value)} /></label><button className="ref-secondary-button" disabled={busy === "models"}><RefreshCw size={15} />{busy === "models" ? "读取中…" : "读取可访问模型"}</button></form>
 
           <div className="provider-detail-grid">
-            <section className="provider-models"><header><div><h3>模型</h3><p>模型保存后可在 Solver 配置页面分配给 Agent；实际连通性由首次调用返回。</p></div></header>
+            <section className="provider-models"><header><div><h3>可访问模型</h3><p>列表由当前 API URL 和所选 API 密钥自动读取，不再手动添加。</p></div><button type="button" className="icon-button" aria-label="刷新模型" disabled={busy === "models"} onClick={() => void syncModels()}><RefreshCw size={16} /></button></header>
               <div className="provider-items">{selected.models.map((model) => <article key={model.id}>
                 <span className="item-icon"><Cpu size={16} /></span><div><strong>{model.name}</strong><small>{model.max_output_tokens} tokens · {model.reasoning_mode === "enabled" ? "推理模式" : "标准模式"}</small></div>
                 <span className="verification-pill verified"><Check size={12} />已配置</span>
               </article>)}</div>
-              <form className="provider-inline-form" onSubmit={appendModel}><input required aria-label="添加模型" value={newModel} onChange={(event) => setNewModel(event.target.value)} placeholder="输入模型名称" /><button disabled={busy === "model"}><Plus size={14} />添加模型</button></form>
+              {!selected.models.length ? <p className="provider-model-empty">尚未读取到模型，请检查 API URL、所选密钥及供应商协议。</p> : null}
             </section>
 
             <section className="provider-keys"><header><div><h3>API 密钥</h3><p>点击条目即可选中；页面列表仅显示密钥掩码。</p></div></header>
