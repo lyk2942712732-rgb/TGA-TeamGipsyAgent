@@ -5,15 +5,17 @@ import pytest
 
 from tga3.blackboard import Blackboard
 from tga3.domain import (
+    SYSTEM_ACTOR,
     USER_ACTOR,
     Actor,
     Artifact,
     ArtifactRef,
     EntryKind,
     PublishRequest,
+    utc_now,
 )
 from tga3.errors import ContractError, FindingRejectedError
-from tga3.storage import InMemoryStorage
+from tga3.storage import InMemoryStorage, _entry
 
 
 def worker(agent_id: str = "worker-openai") -> Actor:
@@ -36,6 +38,28 @@ def artifact(task_id, actor) -> Artifact:
         sha256="a" * 64,
         size_bytes=5,
     )
+
+
+def test_postgres_blackboard_row_hides_internal_actor_id_column():
+    task_id = uuid4()
+    entry = _entry(
+        {
+            "id": uuid4(),
+            "task_id": task_id,
+            "seq": 1,
+            "actor": SYSTEM_ACTOR.model_dump(mode="json"),
+            "actor_id": SYSTEM_ACTOR.agent_id,
+            "kind": EntryKind.USER_PROMPT.value,
+            "topic": "scene",
+            "body": {"text": "scene prompt"},
+            "idempotency_key": "scene",
+            "created_at": utc_now(),
+        }
+    )
+
+    assert entry.task_id == task_id
+    assert entry.actor == SYSTEM_ACTOR
+    assert "actor_id" not in entry.model_dump()
 
 
 @pytest.mark.asyncio

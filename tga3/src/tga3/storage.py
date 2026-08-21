@@ -356,7 +356,10 @@ def _entry(row: Any) -> BlackboardEntry:
     data = dict(row)
     data["actor"] = _object(data["actor"])
     data["body"] = _object(data["body"])
-    return BlackboardEntry.model_validate(data)
+    # ``actor_id`` is a denormalized PostgreSQL-only column used by the
+    # idempotency index.  It is intentionally not part of the public blackboard
+    # contract, whose canonical actor identity lives in ``actor``.
+    return BlackboardEntry.model_validate({key: data[key] for key in BlackboardEntry.model_fields})
 
 
 def _dialogue(row: Any) -> DialogueMessage:
