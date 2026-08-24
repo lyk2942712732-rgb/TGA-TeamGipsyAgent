@@ -2,8 +2,8 @@ import { useQuery } from "@tanstack/react-query";
 import { Bell, ChevronDown, ChevronLeft, ChevronRight, CirclePlay, CircleHelp, Menu, Search, Shield } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
-import { fetchDashboard } from "../api/operations-query-adapter";
-import { buildDashboardView } from "../pages/dashboard-view";
+import { attentionApi } from "../api/tga3-attention";
+import { listTasks } from "../api/tga3-tasks";
 import { NAVIGATION_GROUPS, isNavigationItemActive } from "./navigation";
 import { isRuntimePage, type AppRoute } from "./router";
 
@@ -12,13 +12,10 @@ export function AppShell({ route, children }: { route: AppRoute; children: React
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
 
-  // Shares the dashboard query key, so the shell reuses the page's cache
-  // instead of issuing a second aggregate request.  It also builds the same
-  // view model, so the sidebar and topbar can never disagree with the page.
-  const dashboard = useQuery({ queryKey: ["dashboard"], queryFn: fetchDashboard });
-  const view = dashboard.data ? buildDashboardView(dashboard.data) : null;
-  const running = (view?.runningTasks ?? []).slice(0, 3);
-  const pending = view?.metrics.find((metric) => metric.key === "pending_approvals")?.value ?? 0;
+  const tasks = useQuery({ queryKey: ["tga3", "tasks"], queryFn: listTasks });
+  const attention = useQuery({ queryKey: ["tga3", "attention"], queryFn: attentionApi.list });
+  const running = (tasks.data ?? []).filter((task) => ["starting", "running", "finalizing", "reporting"].includes(task.state)).slice(0, 3);
+  const pending = attention.data?.length ?? 0;
 
   const go = (path: string) => {
     setMobileOpen(false);
@@ -58,13 +55,13 @@ export function AppShell({ route, children }: { route: AppRoute; children: React
       {running.length ? <section className="sidebar-running" aria-label="正在运行">
         <h2>正在运行 <i className="running-dot" aria-hidden="true" /></h2>
         {running.map((task) => <button
-          key={task.taskId}
-          onClick={() => go(`/tasks/${encodeURIComponent(task.taskId)}/runtime`)}
+          key={task.id}
+          onClick={() => go(`/tasks/${encodeURIComponent(task.id)}/runtime`)}
         >
           <CirclePlay size={15} aria-hidden="true" />
           <span>
-            <strong>{task.name}</strong>
-            <small>运行中 · {task.percent}%</small>
+            <strong>{task.title}</strong>
+            <small>{task.state}</small>
           </span>
         </button>)}
       </section> : null}

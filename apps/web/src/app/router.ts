@@ -4,12 +4,9 @@ export type AppPage =
   | "new"
   | "runtime"
   | "approvals"
-  | "resources"
   | "reports"
-  | "teams"
   | "solvers"
   | "skills"
-  | "tools"
   | "models"
   | "policies"
   | "system"
@@ -22,16 +19,13 @@ export type AppRoute = {
 
 const ROOT_ROUTES: Record<string, AppPage> = {
   approvals: "approvals",
-  resources: "resources",
   reports: "reports",
   system: "system",
 };
 
 const SETTINGS_ROUTES: Record<string, AppPage> = {
-  teams: "teams",
   solvers: "solvers",
   skills: "skills",
-  tools: "tools",
   models: "models",
   policies: "policies",
 };

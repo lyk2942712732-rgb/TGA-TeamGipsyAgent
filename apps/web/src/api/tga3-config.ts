@@ -1,8 +1,26 @@
 import { requestJson } from "./client";
 
-export type TGA3Model = { id: string; name: string; max_output_tokens: number; timeout_seconds: number; temperature?: number | null };
+export type TGA3Model = {
+  id: string;
+  name: string;
+  max_output_tokens: number;
+  timeout_seconds: number;
+  temperature?: number | null;
+  reasoning_mode?: "auto" | "enabled" | "disabled";
+  verification_status?: "unverified" | "verifying" | "verified" | "failed" | "stale";
+};
 export type ProviderProtocol = "openai_responses" | "openai_chat_completions" | "anthropic";
-export type TGA3Provider = { id: string; name: string; protocols: ProviderProtocol[]; base_url?: string | null; api_keys: Array<{ id: string; label: string; api_key: string }>; selected_api_key_id: string; models: TGA3Model[] };
+export type TGA3Provider = {
+  id: string;
+  name: string;
+  preset_id?: string;
+  built_in?: boolean;
+  protocols: ProviderProtocol[];
+  base_url?: string | null;
+  api_keys: Array<{ id: string; label: string; api_key: string }>;
+  selected_api_key_id: string;
+  models: TGA3Model[];
+};
 export type ModelsConfig = { schema_version: number; providers: TGA3Provider[] };
 export type AgentConfig = { display_name: string; role: "supervisor" | "worker" | "reporter"; runtime: "openai_agents" | "claude_agent"; provider_id: string; model_id: string; protocol: ProviderProtocol; max_turns_per_cycle: number; system_prompt: string };
 export type AgentsConfig = { schema_version: number; agents: Record<string, AgentConfig> };

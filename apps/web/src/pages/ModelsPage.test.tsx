@@ -12,7 +12,7 @@ const mocks = vi.hoisted(() => ({
   verifyProviderModel: vi.fn(),
 }));
 
-vi.mock("../api/tasks", async (original) => ({ ...await original<typeof import("../api/tasks")>(), ...mocks }));
+vi.mock("../api/tga3-models", async (original) => ({ ...await original<typeof import("../api/tga3-models")>(), ...mocks }));
 
 import { ModelsPage } from "./ModelsPage";
 

@@ -1,6 +1,6 @@
 import { Download, File, FileText, Flag, Lightbulb, MessageSquareText, Search, ShieldCheck } from "lucide-react";
 import { useMemo, useState, type ReactNode } from "react";
-import { runtimeApi } from "../../../runtime/api-v2";
+import { tga3RuntimeApi } from "../../../api/tga3-runtime-control";
 import type { TGA3BoardEntry, TGA3DialogueMessage, TGA3RuntimeSnapshot } from "../../../runtime/tga3-runtime";
 import { BOARD_KIND_LABELS, DIALOGUE_KIND_LABELS, bodyText, formatTime, listStrings } from "../tga3-view";
 
@@ -58,7 +58,7 @@ function InputsPanel({ entries }: { entries: TGA3BoardEntry[] }) {
 }
 function ReportPanel({ snapshot }: { snapshot: TGA3RuntimeSnapshot }) {
   const finals = snapshot.blackboard.filter((entry) => entry.kind === "final_candidate"); const ready = snapshot.task.state === "completed";
-  return <div className="tga3-report-panel"><FileText size={34} /><span>REPORTER</span><h3>{ready ? "Markdown Writeup 已生成" : finals.length ? "Reporter 正在固定黑板快照并生成报告" : "等待最终候选"}</h3><p>{ready ? "报告只基于 final_candidate 触发时固定的黑板内容生成。" : "Worker 发布引用既有 Finding 的 final_candidate 后，Reporter 才会被唤醒。"}</p>{ready ? <a className="ref-primary-button" href={runtimeApi.reportUrl(snapshot.task.id)} target="_blank" rel="noreferrer"><Download size={15} />下载 writeup.md</a> : null}</div>;
+  return <div className="tga3-report-panel"><FileText size={34} /><span>REPORTER</span><h3>{ready ? "Markdown Writeup 已生成" : finals.length ? "Reporter 正在固定黑板快照并生成报告" : "等待最终候选"}</h3><p>{ready ? "报告只基于 final_candidate 触发时固定的黑板内容生成。" : "Worker 发布引用既有 Finding 的 final_candidate 后，Reporter 才会被唤醒。"}</p>{ready ? <a className="ref-primary-button" href={tga3RuntimeApi.reportUrl(snapshot.task.id)} target="_blank" rel="noreferrer"><Download size={15} />下载 writeup.md</a> : null}</div>;
 }
 function Meta({ label, values }: { label: string; values: string[] }) { return values.length ? <footer className="tga3-entry-meta"><span>{label}</span>{values.map((value, index) => <em key={`${value}-${index}`}>{value}</em>)}</footer> : null; }
 function Empty({ icon, title, detail }: { icon: ReactNode; title: string; detail: string }) { return <div className="tga3-empty">{icon}<h3>{title}</h3><p>{detail}</p></div>; }

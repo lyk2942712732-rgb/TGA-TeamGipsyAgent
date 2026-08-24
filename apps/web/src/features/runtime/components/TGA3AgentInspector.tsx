@@ -1,8 +1,9 @@
 import { Bot, Box, CirclePause, CirclePlay, Paperclip, Send, Settings2, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { deleteStagedInput, fetchAgentModelOptions, stageInput, type ProviderProtocol, type StagedAsset } from "../../../api/tasks";
+import { tga3RuntimeApi } from "../../../api/tga3-runtime-control";
+import { deleteStagedInput, fetchAgentModelOptions, stageInput, type StagedAsset } from "../../../api/tga3-tasks";
+import type { ProviderProtocol } from "../../../api/tga3-config";
 import type { TaskMode } from "../../../modes";
-import { runtimeApi } from "../../../runtime/api-v2";
 import type { TGA3Agent, TGA3RuntimeSnapshot } from "../../../runtime/tga3-runtime";
 import { formatTime, latestPendingQuestion, protocolLabel, roleLabel, sdkLabel, stateLabel, stateTone } from "../tga3-view";
 import { DialogueCard } from "./TGA3Workspace";
@@ -45,13 +46,13 @@ function Conversation({ snapshot, agent, onChanged }: { snapshot: TGA3RuntimeSna
   const messages = useMemo(() => snapshot.dialogue.filter((message) => message.channel_agent_id === agent.agent_id || message.actor.agent_id === agent.agent_id || message.payload.agent_id === agent.agent_id), [snapshot.dialogue, agent.agent_id]);
   const terminal = ["completed", "failed", "cancelled", "stopped"].includes(snapshot.task.state);
   async function addFiles(files: File[]) { setBusy(true); setNotice(null); try { const uploaded = await Promise.all(files.map((file) => stageInput(file))); setAssets((current) => [...current, ...uploaded]); } catch (reason) { setNotice(errorText(reason)); } finally { setBusy(false); } }
-  async function removeAsset(asset: StagedAsset) { setAssets((current) => current.filter((item) => item.id !== asset.id)); await deleteStagedInput(asset.id).catch(() => undefined); }
+  async function removeAsset(asset: StagedAsset) { setAssets((current) => current.filter((item) => item.id !== asset.id)); deleteStagedInput(asset.id); }
   async function send() {
     if ((!text.trim() && !assets.length) || busy || terminal) return;
     setBusy(true); setNotice(null);
     try {
-      if (isQuestionChannel && question) await runtimeApi.answerQuestion(snapshot.task.id, String(question.payload.question_id), text.trim(), assets);
-      else await runtimeApi.solverMessage(snapshot.task.id, agent.agent_id, text.trim(), assets);
+      if (isQuestionChannel && question) await tga3RuntimeApi.answerQuestion(snapshot.task.id, String(question.payload.question_id), text.trim(), assets);
+      else await tga3RuntimeApi.sendAgentPrompt(snapshot.task.id, agent.agent_id, text.trim(), assets);
       setText(""); setAssets([]); setNotice(isQuestionChannel ? "回答已写入共享黑板，任务将继续运行。" : "提示已写入共享黑板并发送到该 Agent 通道。"); onChanged();
     } catch (reason) { setNotice(errorText(reason)); } finally { setBusy(false); }
   }
@@ -77,8 +78,8 @@ function Controls({ snapshot, agent, onChanged }: { snapshot: TGA3RuntimeSnapsho
   const [selected, setSelected] = useState(`${agent.provider_id}::${agent.model_id}::${agent.protocol}`); const [busy, setBusy] = useState(false); const [notice, setNotice] = useState<string | null>(null);
   useEffect(() => { let active = true; void fetchAgentModelOptions(snapshot.task.scene_id as TaskMode).then((value) => { if (!active) return; setModels(value.models.filter((model) => model.ready && (agent.sdk === "claude_agent" ? model.protocol === "anthropic" : model.protocol !== "anthropic"))); }).catch((reason) => active && setNotice(errorText(reason))); return () => { active = false; }; }, [snapshot.task.scene_id, agent.sdk]);
   useEffect(() => setSelected(`${agent.provider_id}::${agent.model_id}::${agent.protocol}`), [agent.provider_id, agent.model_id, agent.protocol]);
-  async function change(value: string) { setSelected(value); const [provider, model, protocol] = value.split("::"); if (!provider || !model || !protocol) return; setBusy(true); setNotice(null); try { await runtimeApi.solverModel(snapshot.task.id, agent.agent_id, provider, model, protocol as ProviderProtocol); setNotice("模型已切换，将用于该 Agent 的后续周期。"); onChanged(); } catch (reason) { setNotice(errorText(reason)); } finally { setBusy(false); } }
-  async function control(action: "pause" | "resume") { setBusy(true); setNotice(null); try { await runtimeApi.solverControl(snapshot.task.id, agent.agent_id, action); setNotice(action === "pause" ? "暂停请求已提交，将在下一个周期检查点生效。" : "Agent 已恢复运行。"); onChanged(); } catch (reason) { setNotice(errorText(reason)); } finally { setBusy(false); } }
+  async function change(value: string) { setSelected(value); const [provider, model, protocol] = value.split("::"); if (!provider || !model || !protocol) return; setBusy(true); setNotice(null); try { await tga3RuntimeApi.setWorkerModel(snapshot.task.id, agent.agent_id, provider, model, protocol as ProviderProtocol); setNotice("模型已切换，将用于该 Agent 的后续周期。"); onChanged(); } catch (reason) { setNotice(errorText(reason)); } finally { setBusy(false); } }
+  async function control(action: "pause" | "resume") { setBusy(true); setNotice(null); try { await tga3RuntimeApi.setWorkerState(snapshot.task.id, agent.agent_id, action); setNotice(action === "pause" ? "暂停请求已提交，将在下一个周期检查点生效。" : "Agent 已恢复运行。"); onChanged(); } catch (reason) { setNotice(errorText(reason)); } finally { setBusy(false); } }
   const worker = agent.role === "worker" && agent.runtime_location === "container"; const paused = ["paused", "pause_requested"].includes(agent.actual_state);
   return <div className="tga3-controls"><section><header><Settings2 size={17} /><h3>后续模型</h3></header><label>供应商 / 模型 / 协议<select value={selected} disabled={busy || !models.length} onChange={(event) => void change(event.target.value)}>{!models.length ? <option value={selected}>没有可用的兼容模型</option> : null}{models.map((model) => <option key={`${model.provider_id}::${model.model_id}::${model.protocol}`} value={`${model.provider_id}::${model.model_id}::${model.protocol}`}>{model.provider_name} / {model.model_name} / {protocolLabel(model.protocol)}</option>)}</select></label></section>
     <section><header><Box size={17} /><h3>执行控制</h3></header>{worker ? <button type="button" disabled={busy} onClick={() => void control(paused ? "resume" : "pause")}>{paused ? <CirclePlay size={16} /> : <CirclePause size={16} />}{paused ? "恢复 Worker" : "暂停 Worker"}</button> : <p className="tga3-muted">该 Agent 运行在主服务，由任务生命周期统一管理，不提供独立暂停。</p>}</section>{notice ? <p className="tga3-notice" role="status">{notice}</p> : null}

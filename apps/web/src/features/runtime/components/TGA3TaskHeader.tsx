@@ -1,5 +1,5 @@
 import { Download, RefreshCw, Square } from "lucide-react";
-import { runtimeApi } from "../../../runtime/api-v2";
+import { tga3RuntimeApi } from "../../../api/tga3-runtime-control";
 import type { TGA3RuntimeSnapshot } from "../../../runtime/tga3-runtime";
 import type { TGA3Connection } from "../use-tga3-runtime";
 import { formatTime, stateLabel, stateTone } from "../tga3-view";
@@ -16,7 +16,7 @@ export function TGA3TaskHeader({ snapshot, connection, busy, onRefresh, onStop }
       <div><span>TGA3 / BLACKBOARD RUNTIME</span><h1>{task.title}</h1><p>场景：{task.scene_id} · 创建于 {formatTime(task.created_at)}</p></div>
       <div className="tga3-task-actions">
         <button type="button" className="ref-secondary-button" onClick={onRefresh}><RefreshCw size={15} />刷新</button>
-        {task.state === "completed" ? <a className="ref-secondary-button" href={runtimeApi.reportUrl(task.id)} target="_blank" rel="noreferrer"><Download size={15} />下载报告</a> : null}
+        {task.state === "completed" ? <a className="ref-secondary-button" href={tga3RuntimeApi.reportUrl(task.id)} target="_blank" rel="noreferrer"><Download size={15} />下载报告</a> : null}
         {!terminal ? <button type="button" className="tga3-danger-button" disabled={busy} onClick={onStop}><Square size={14} />停止任务</button> : null}
       </div>
     </div>

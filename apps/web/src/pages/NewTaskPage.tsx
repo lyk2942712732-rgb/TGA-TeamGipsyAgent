@@ -1,38 +1,22 @@
 import { type ChangeEvent, type ClipboardEvent, type DragEvent, useEffect, useMemo, useRef, useState } from "react";
 import { Check, FileText, Image, Paperclip, Play, X } from "lucide-react";
 import {
-  createTask, deleteStagedInput, fetchAgentModelOptions, fetchModeProfiles, stageInput,
-  type AgentModelOptions, type CreateTaskRequest, type ModeProfileContract, type ProviderProtocol, type StagedAsset,
-} from "../api/tasks";
+  createTask, deleteStagedInput, fetchAgentModelOptions, listScenes, stageInput,
+  type AgentModelOptions, type StagedAsset,
+} from "../api/tga3-tasks";
+import type { ProviderProtocol, SceneConfig } from "../api/tga3-config";
 import { TASK_MODES, type TaskMode } from "../modes";
-
-export function newTaskId(): string {
-  const uuid = globalThis.crypto?.randomUUID;
-  if (typeof uuid === "function") return `task_${uuid.call(globalThis.crypto).replace(/-/g, "").slice(0, 12)}`;
-  return `task_${`${Date.now().toString(16)}${Math.random().toString(16).slice(2)}`.slice(0, 12).padEnd(12, "0")}`;
-}
 
 const SCENE_ICONS: Record<TaskMode, string> = {
   penetration_test: "WEB", incident_response: "IR", vulnerability_research: "VR", reverse_engineering: "RE",
   pwn: "PWN", security_misc: "MISC", cryptography: "CRYPTO", forensics: "FORENSICS",
 };
 
-const emptyPolicy: CreateTaskRequest["executionPolicy"] = {
-  preset: "autonomous_ctf",
-  network: {
-    access: "public_internet", interaction: "interact", seed_origins: [], custom_origins: [], custom_domains: [], custom_cidrs: [],
-    deny_private_networks: false, deny_loopback: false, deny_link_local: false, deny_cloud_metadata: true,
-    rate_limit_per_minute: 120, concurrency: 8, request_timeout_seconds: 60,
-  },
-  local_compute: { mode: "isolated", timeout_seconds: 900, concurrency: 2, network_inheritance: "task_network_policy" },
-  high_impact: { mode: "approval_required", allowed_actions: [] },
-};
-
 export function NewTaskPage({ onCreated, onCancel = () => history.back() }: { onCreated: (id: string) => void; onCancel?: () => void }) {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [sceneId, setSceneId] = useState<TaskMode>("penetration_test");
-  const [profiles, setProfiles] = useState<ModeProfileContract[]>([]);
+  const [scenes, setScenes] = useState<SceneConfig[]>([]);
   const [assets, setAssets] = useState<StagedAsset[]>([]);
   const [agentOptions, setAgentOptions] = useState<AgentModelOptions | null>(null);
   const [agentModels, setAgentModels] = useState<Record<string, { provider_id: string; model_id: string; protocol: ProviderProtocol }>>({});
@@ -41,7 +25,7 @@ export function NewTaskPage({ onCreated, onCancel = () => history.back() }: { on
   const inputRef = useRef<HTMLInputElement>(null);
   const assetsRef = useRef<StagedAsset[]>([]);
 
-  useEffect(() => { void fetchModeProfiles().then((value) => setProfiles(value.profiles)).catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "无法读取场景")); }, []);
+  useEffect(() => { void listScenes().then((value) => setScenes(value.scenes)).catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "无法读取场景")); }, []);
   useEffect(() => {
     void fetchAgentModelOptions(sceneId).then((value) => {
       setAgentOptions(value);
@@ -51,8 +35,8 @@ export function NewTaskPage({ onCreated, onCancel = () => history.back() }: { on
   assetsRef.current = assets;
   useEffect(() => () => assetsRef.current.forEach((asset) => { if (asset.previewUrl) URL.revokeObjectURL(asset.previewUrl); }), []);
 
-  const selected = useMemo(() => profiles.find((profile) => profile.id === sceneId), [profiles, sceneId]);
-  const ready = Boolean(name.trim() && description.trim() && profiles.length && agentOptions && agentOptions.agents.every((agent) => {
+  const selected = useMemo(() => scenes.find((scene) => scene.id === sceneId), [scenes, sceneId]);
+  const ready = Boolean(name.trim() && description.trim() && scenes.length && agentOptions && agentOptions.agents.every((agent) => {
     const selectedModel = agentModels[agent.id];
     return selectedModel && agentOptions.models.some((model) => model.provider_id === selectedModel.provider_id && model.model_id === selectedModel.model_id && model.protocol === selectedModel.protocol && model.ready && modelCompatible(agent.runtime, model.protocol));
   }) && !busy && assets.every((asset) => asset.status === "uploaded"));
@@ -71,7 +55,7 @@ export function NewTaskPage({ onCreated, onCancel = () => history.back() }: { on
   }
 
   async function remove(asset: StagedAsset) {
-    await deleteStagedInput(asset.id).catch(() => undefined);
+    deleteStagedInput(asset.id);
     if (asset.previewUrl) URL.revokeObjectURL(asset.previewUrl);
     setAssets((current) => current.filter((item) => item.id !== asset.id));
   }
@@ -79,11 +63,13 @@ export function NewTaskPage({ onCreated, onCancel = () => history.back() }: { on
   async function submit() {
     if (!ready) { setError("请填写任务名称和描述，并等待附件处理完成。"); return; }
     setBusy(true); setError("");
-    const request: CreateTaskRequest = {
-      id: newTaskId(), name: name.trim(), mode: sceneId, goal: description.trim(), modeOptions: { mode: sceneId },
-      input: { text: "", fileIds: assets.map((asset) => asset.id) }, executionPolicy: emptyPolicy, agentModels,
-    };
-    try { const task = await createTask(request); onCreated(task.task_id); }
+    try {
+      const task = await createTask({
+        title: name.trim(), sceneId, prompt: description.trim(),
+        fileIds: assets.map((asset) => asset.id), agentModels,
+      });
+      onCreated(task.id);
+    }
     catch (reason) { setError(reason instanceof Error ? reason.message : "创建任务失败"); setBusy(false); }
   }
 
@@ -100,7 +86,7 @@ export function NewTaskPage({ onCreated, onCancel = () => history.back() }: { on
       <div className="new-task-modal-body">
         <label className="wide">任务名称<input autoFocus maxLength={100} value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：JWT 密钥泄露" /></label>
         <fieldset className="scene-picker"><legend>题目类型：场景</legend><div className="scene-card-grid">
-          {profiles.filter((profile) => TASK_MODES.includes(profile.id)).map((profile) => <button type="button" key={profile.id} className={sceneId === profile.id ? "selected" : ""} onClick={() => setSceneId(profile.id)}><span className="scene-code">{SCENE_ICONS[profile.id]}</span><strong>{profile.label}</strong><small>{profile.description}</small>{sceneId === profile.id ? <Check size={17} /> : null}</button>)}
+          {scenes.filter((scene): scene is SceneConfig & { id: TaskMode } => TASK_MODES.includes(scene.id as TaskMode)).map((scene) => <button type="button" key={scene.id} className={sceneId === scene.id ? "selected" : ""} onClick={() => setSceneId(scene.id)}><span className="scene-code">{SCENE_ICONS[scene.id]}</span><strong>{scene.name}</strong><small>{scene.description}</small>{sceneId === scene.id ? <Check size={17} /> : null}</button>)}
         </div></fieldset>
         <label className="wide task-description-field">描述<span>用户初始提示词</span><textarea rows={7} value={description} onChange={(event) => setDescription(event.target.value)} onPaste={onPaste} placeholder="粘贴题目描述、授权目标、已知信息和期望结果；也可以直接粘贴图片。" /></label>
         <div className="task-attachment-zone" onDragOver={(event) => event.preventDefault()} onDrop={onDrop}><input ref={inputRef} type="file" multiple hidden onChange={onFiles} /><button type="button" className="ref-secondary-button" onClick={() => inputRef.current?.click()}><Paperclip size={16} />添加文件或图片</button><span>支持拖放、文件选择以及在描述框粘贴图片</span></div>
@@ -112,7 +98,7 @@ export function NewTaskPage({ onCreated, onCancel = () => history.back() }: { on
             {compatible.map((model) => <option key={`${model.provider_id}::${model.model_id}::${model.protocol}`} value={`${model.provider_id}::${model.model_id}::${model.protocol}`} disabled={!model.ready}>{model.provider_name} / {model.model_name} / {protocolName(model.protocol)}{model.ready ? "" : "（密钥不可用）"}</option>)}
           </select></label>;
         })}</div></fieldset> : null}
-        <aside className="new-task-config-note"><strong>{selected?.label ?? "场景"}提示词将自动进入黑板</strong><p>任务启动时写入场景提示词、当前描述和附件索引；上面的模型选择会保存为本任务 Agent 快照。</p></aside>
+        <aside className="new-task-config-note"><strong>{selected?.name ?? "场景"}提示词将自动进入黑板</strong><p>任务启动时写入场景提示词、当前描述和附件索引；上面的模型选择会保存为本任务 Agent 快照。</p></aside>
         {error ? <p className="inline-error" role="alert">{error}</p> : null}
       </div>
       <footer className="new-task-modal-actions"><button type="button" className="ref-secondary-button" disabled={busy} onClick={onCancel}>取消</button><button type="button" className="ref-primary-button" disabled={!ready} onClick={() => void submit()}><Play size={16} />{busy ? "创建中…" : "创建并启动"}</button></footer>

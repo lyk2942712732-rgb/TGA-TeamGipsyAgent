@@ -23,7 +23,7 @@ export type TGA3DialogueMessage = {
 export type TGA3RuntimeSnapshot = { task: TGA3Task; agents: TGA3Agent[]; blackboard: TGA3BoardEntry[]; dialogue: TGA3DialogueMessage[] };
 type TaskDetail = { task: TGA3Task; agents: TGA3Agent[] };
 
-/** Load native TGA3 contracts. No legacy RuntimeStore projection is performed. */
+/** Load the native TGA3 task, agent, blackboard, and dialogue contracts. */
 export async function loadTGA3Snapshot(taskId: string): Promise<TGA3RuntimeSnapshot> {
   const encoded = encodeURIComponent(taskId);
   const [detail, board, dialogue] = await Promise.all([

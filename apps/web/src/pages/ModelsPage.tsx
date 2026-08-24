@@ -2,9 +2,9 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import { Check, ChevronRight, Cpu, KeyRound, Plus, RefreshCw, Server, ShieldCheck, Trash2, X } from "lucide-react";
 import {
   addProviderAPIKey, createModelProvider, deleteModelProvider, discoverProviderModels, fetchProviderCatalog,
-  selectProviderAPIKey, updateProviderEndpoint,
-  type ModelProvider, type ProviderCatalog, type ProviderProtocol,
-} from "../api/tasks";
+  selectProviderAPIKey, updateProviderEndpoint, type ModelProvider, type ProviderCatalog,
+} from "../api/tga3-models";
+import type { ProviderProtocol } from "../api/tga3-config";
 
 type ProviderDraft = { preset_id: string; name: string; protocols: ProviderProtocol[]; base_url: string; api_key: string };
 

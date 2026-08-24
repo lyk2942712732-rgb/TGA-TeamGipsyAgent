@@ -5,7 +5,7 @@ import type { TGA3RuntimeSnapshot } from "../../runtime/tga3-runtime";
 
 const useTGA3Runtime = vi.hoisted(() => vi.fn());
 vi.mock("./use-tga3-runtime", () => ({ useTGA3Runtime: (...args: unknown[]) => useTGA3Runtime(...args) }));
-vi.mock("../../api/tasks", async (original) => ({ ...await original<typeof import("../../api/tasks")>(), fetchAgentModelOptions: vi.fn(async () => ({ mode: "pwn", agents: [], models: [] })) }));
+vi.mock("../../api/tga3-tasks", async (original) => ({ ...await original<typeof import("../../api/tga3-tasks")>(), fetchAgentModelOptions: vi.fn(async () => ({ scene_id: "pwn", agents: [], models: [] })) }));
 import { TaskRuntimePage } from "./TaskRuntimePage";
 
 const snapshot: TGA3RuntimeSnapshot = {
@@ -32,8 +32,6 @@ describe("TaskRuntimePage", () => {
     expect(screen.getByRole("navigation", { name: "任务 Agent" })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: /共享黑板/ })).toBeInTheDocument();
     expect(screen.getByText("已发现入口")).toBeInTheDocument();
-    expect(screen.queryByText("Intent Board")).not.toBeInTheDocument();
-    expect(screen.queryByText("Reviewer")).not.toBeInTheDocument();
   });
   it("selects an agent and opens its native inspector", () => {
     render(<MemoryRouter initialEntries={["/tasks/task/runtime"]}><TaskRuntimePage taskId="task" /></MemoryRouter>);

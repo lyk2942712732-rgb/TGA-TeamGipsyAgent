@@ -1,35 +1,34 @@
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
-import { fetchSystemHealth } from "../api/catalog-query-adapter";
-import { fetchDashboard } from "../api/operations-query-adapter";
+import { attentionApi } from "../api/tga3-attention";
+import { fetchSystemHealth } from "../api/tga3-system";
+import { listTasks } from "../api/tga3-tasks";
 import { ErrorState } from "../components/ui/ErrorState";
 import { LoadingSkeleton } from "../components/ui/LoadingSkeleton";
 import { DashboardPage } from "./DashboardPage";
 
 export function DashboardRoute() {
   const navigate = useNavigate();
-  const dashboard = useQuery({ queryKey: ["dashboard"], queryFn: fetchDashboard });
-  // Shares the system page's key.  The dashboard aggregate never probes MCP or
-  // the runtime process, so the system card reads those from the same health
-  // fan-out the system page uses; a failure here only softens that one card.
+  const tasks = useQuery({ queryKey: ["tga3", "tasks"], queryFn: listTasks });
+  const attention = useQuery({ queryKey: ["tga3", "attention"], queryFn: attentionApi.list });
   const health = useQuery({ queryKey: ["system", "health"], queryFn: fetchSystemHealth });
 
-  if (dashboard.isLoading) return <LoadingSkeleton label="正在读取运营摘要" rows={8} />;
-  if (dashboard.isError || !dashboard.data) return <ErrorState
-    title="运营 Dashboard 加载失败"
-    description={dashboard.error instanceof Error ? dashboard.error.message : "无法读取运营聚合数据"}
+  if (tasks.isLoading || attention.isLoading) return <LoadingSkeleton label="正在读取 TGA3 状态" rows={8} />;
+  if (tasks.isError || attention.isError || !tasks.data || !attention.data) return <ErrorState
+    title="TGA3 Dashboard 加载失败"
+    description={(tasks.error ?? attention.error) instanceof Error ? (tasks.error ?? attention.error as Error).message : "无法读取任务和待处理事项"}
     actionLabel="重试"
-    onAction={() => void dashboard.refetch()}
+    onAction={() => { void tasks.refetch(); void attention.refetch(); }}
   />;
 
   return <DashboardPage
-    value={dashboard.data}
+    tasks={tasks.data}
+    attention={attention.data}
     health={health.data}
     onNew={() => navigate("/tasks/new")}
     onTask={(taskId) => navigate(`/tasks/${encodeURIComponent(taskId)}`)}
     onTasks={() => navigate("/tasks")}
-    onRuntime={(taskId) => navigate(`/tasks/${encodeURIComponent(taskId)}/runtime`)}
-    onApprovals={(taskId) => navigate(taskId ? `/approvals?status=pending&task_id=${encodeURIComponent(taskId)}` : "/approvals?status=pending")}
+    onApprovals={() => navigate("/approvals")}
     onSystem={() => navigate("/system")}
     onReports={() => navigate("/reports")}
   />;

@@ -1,7 +1,7 @@
 import { CircleStop, MessageSquareText, ShieldQuestion } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { runtimeApi } from "../../runtime/api-v2";
+import { tga3RuntimeApi } from "../../api/tga3-runtime-control";
 import { TGA3AgentInspector } from "./components/TGA3AgentInspector";
 import { TGA3AgentRail } from "./components/TGA3AgentRail";
 import { TGA3TaskHeader } from "./components/TGA3TaskHeader";
@@ -42,7 +42,7 @@ export function TaskRuntimePage({ taskId }: { taskId: string }) {
   const selectedAgent = current.agents.find((agent) => agent.agent_id === selectedAgentId) ?? null;
   const question = latestPendingQuestion(current.dialogue, current.task.state);
   const terminal = ["completed", "failed", "cancelled", "stopped"].includes(current.task.state);
-  async function stop() { if (busy) return; setBusy(true); setNotice(null); try { await runtimeApi.control(taskId, "cancel"); setNotice("停止请求已提交。"); refresh(); } catch (reason) { setNotice(reason instanceof Error ? reason.message : "停止任务失败"); } finally { setBusy(false); } }
+  async function stop() { if (busy) return; setBusy(true); setNotice(null); try { await tga3RuntimeApi.stopTask(taskId); setNotice("停止请求已提交。"); refresh(); } catch (reason) { setNotice(reason instanceof Error ? reason.message : "停止任务失败"); } finally { setBusy(false); } }
   function openConversation() { if (!selectedAgentId) setSelectedAgentId(current.agents.find((agent) => agent.role === "supervisor")?.agent_id ?? current.agents[0]?.agent_id ?? null); setConversationNonce((value) => value + 1); setDrawer("inspector"); }
 
   return <section className="task-runtime-page tga3-runtime-page">
