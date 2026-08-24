@@ -4,7 +4,7 @@ import type { TGA3Agent, TGA3BoardEntry, TGA3DialogueMessage, TGA3RuntimeSnapsho
 import { stateLabel, stateTone } from "../tga3-view";
 
 type GraphPoint = { x: number; y: number };
-type GraphFlash = { id: string; from: string; to?: string; label: string };
+type GraphFlash = { id: string; from: string; to?: string; label: string; at: number };
 
 export function TGA3RuntimeGraph({ snapshot }: { snapshot: TGA3RuntimeSnapshot }) {
   const canvasRef = useRef<HTMLDivElement>(null);
@@ -40,18 +40,19 @@ export function TGA3RuntimeGraph({ snapshot }: { snapshot: TGA3RuntimeSnapshot }
     const next = [
       ...snapshot.blackboard.filter((entry) => entry.seq > (boardCursor.current ?? 0)).map(boardFlash),
       ...snapshot.dialogue.filter((message) => message.seq > (dialogueCursor.current ?? 0)).map(dialogueFlash).filter((item): item is GraphFlash => item !== null),
-    ].slice(-6);
+    ].sort((a, b) => a.at - b.at);
     dialogueCursor.current = latestDialogue;
     boardCursor.current = latestBoard;
     if (!next.length) return;
-    setFlashes((current) => [...current, ...next].slice(-6));
-    next.forEach((flash) => {
-      const timer = window.setTimeout(() => {
-        setFlashes((current) => current.filter((item) => item.id !== flash.id));
-        timers.current.delete(flash.id);
-      }, 2100);
-      timers.current.set(flash.id, timer);
-    });
+    const latest = next[next.length - 1];
+    timers.current.forEach((timer) => window.clearTimeout(timer));
+    timers.current.clear();
+    setFlashes([latest]);
+    const timer = window.setTimeout(() => {
+      setFlashes((current) => current.filter((item) => item.id !== latest.id));
+      timers.current.delete(latest.id);
+    }, 2100);
+    timers.current.set(latest.id, timer);
   }, [snapshot.blackboard, snapshot.dialogue]);
 
   useLayoutEffect(() => {
@@ -115,24 +116,25 @@ function AgentNode({ agent, active }: { agent: TGA3Agent; active: boolean }) {
 
 function boardFlash(entry: TGA3BoardEntry): GraphFlash {
   const from = entry.actor.role === "user" ? "user" : agentNode(entry.actor.agent_id);
-  return { id: `board-${entry.seq}`, from, to: "blackboard", label: `${entry.actor.display_name} 写入 ${boardLabel(entry.kind)}` };
+  return { id: `board-${entry.seq}`, from, to: "blackboard", label: `${entry.actor.display_name} 写入 ${boardLabel(entry.kind)}`, at: timestamp(entry.created_at) };
 }
 
 function dialogueFlash(message: TGA3DialogueMessage): GraphFlash | null {
   const agentId = String(message.payload.agent_id ?? message.actor.agent_id);
   const source = agentNode(agentId);
-  if (message.kind === "blackboard_progress") return { id: `dialogue-${message.seq}`, from: "blackboard", to: agentNode("supervisor"), label: "Supervisor 读取黑板更新" };
-  if (message.kind === "user_message") return { id: `dialogue-${message.seq}`, from: "user", to: message.channel_agent_id === "supervisor" ? "blackboard" : agentNode(message.channel_agent_id), label: "用户发送提示" };
-  if (message.kind === "question") return { id: `dialogue-${message.seq}`, from: source, to: "user", label: `${message.actor.display_name} 请求用户输入` };
-  if (message.kind === "model_changed") return { id: `dialogue-${message.seq}`, from: source, to: "models", label: `${message.actor.display_name} 切换模型` };
-  if (message.kind === "assistant_delta") return { id: `dialogue-${message.seq}`, from: "models", to: source, label: `${message.actor.display_name} 返回进度` };
-  if (message.kind === "agent_status") return { id: `dialogue-${message.seq}`, from: source, label: `${message.actor.display_name}：${String(message.payload.state ?? "状态更新")}` };
+  const base = { id: `dialogue-${message.seq}`, at: timestamp(message.created_at) };
+  if (message.kind === "blackboard_progress") return { ...base, from: "blackboard", to: agentNode("supervisor"), label: "Supervisor 读取黑板更新" };
+  if (message.kind === "user_message") return { ...base, from: "user", to: message.channel_agent_id === "supervisor" ? "blackboard" : agentNode(message.channel_agent_id), label: "用户发送提示" };
+  if (message.kind === "question") return { ...base, from: source, to: "user", label: `${message.actor.display_name} 请求用户输入` };
+  if (message.kind === "model_changed") return { ...base, from: source, to: "models", label: `${message.actor.display_name} 切换模型` };
+  if (message.kind === "assistant_delta") return { ...base, from: "models", to: source, label: `${message.actor.display_name} 返回进度` };
+  if (message.kind === "agent_status") return { ...base, from: source, label: `${message.actor.display_name}：${String(message.payload.state ?? "状态更新")}` };
   if (message.kind !== "action_started") return null;
   const tool = String(message.payload.tool ?? message.text ?? "执行动作");
-  if (/skills?_list|skills?_read|skill/i.test(tool)) return { id: `dialogue-${message.seq}`, from: source, to: "skills", label: `${message.actor.display_name} 读取 Skill` };
-  if (/blackboard|artifact_register/i.test(tool)) return { id: `dialogue-${message.seq}`, from: source, to: "blackboard", label: `${message.actor.display_name} ${shortAction(message.text)}` };
-  if (/工作周期|work cycle/i.test(message.text)) return { id: `dialogue-${message.seq}`, from: source, to: "models", label: `${message.actor.display_name} 开始推理` };
-  return { id: `dialogue-${message.seq}`, from: source, label: `${message.actor.display_name} ${shortAction(message.text)}` };
+  if (/skills?_list|skills?_read|skill/i.test(tool)) return { ...base, from: source, to: "skills", label: `${message.actor.display_name} 读取 Skill` };
+  if (/blackboard|artifact_register/i.test(tool)) return { ...base, from: source, to: "blackboard", label: `${message.actor.display_name} ${shortAction(message.text)}` };
+  if (/工作周期|work cycle/i.test(message.text)) return { ...base, from: source, to: "models", label: `${message.actor.display_name} 开始推理` };
+  return { ...base, from: source, label: `${message.actor.display_name} ${shortAction(message.text)}` };
 }
 
 function orderedAgents(agents: TGA3Agent[]): TGA3Agent[] {
@@ -141,5 +143,6 @@ function orderedAgents(agents: TGA3Agent[]): TGA3Agent[] {
 }
 function distinctModels(agents: TGA3Agent[]): string[] { return [...new Set(agents.map((agent) => `${agent.provider_id}/${agent.model_name ?? agent.model_id}`))]; }
 function agentNode(agentId: string): string { return `agent:${agentId}`; }
+function timestamp(value: string): number { const parsed = Date.parse(value); return Number.isNaN(parsed) ? 0 : parsed; }
 function shortAction(value: string): string { const compact = value.replace(/\s+/g, " ").trim(); return compact.length > 30 ? `${compact.slice(0, 30)}…` : compact; }
 function boardLabel(kind: TGA3BoardEntry["kind"]): string { return ({ user_prompt: "用户提示", user_file: "用户文件", supervisor_advice: "建议", finding: "Finding", qa: "Q&A", final_candidate: "最终候选" })[kind]; }

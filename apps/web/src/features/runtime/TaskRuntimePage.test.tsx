@@ -97,5 +97,22 @@ describe("TaskRuntimePage", () => {
     });
     view.rerender(<MemoryRouter initialEntries={["/tasks/task/runtime?tab=report"]}><TaskRuntimePage taskId="task" /></MemoryRouter>);
     expect(within(screen.getByRole("region", { name: "实时运行图" })).getByText("OpenAI Worker 读取 Skill")).toBeInTheDocument();
+
+    useTGA3Runtime.mockReturnValue({
+      snapshot: {
+        ...snapshot,
+        dialogue: [...snapshot.dialogue,
+          { id: "skill-action", seq: 3, channel_agent_id: "worker-openai", actor: { agent_id: "worker-openai", display_name: "OpenAI Worker", role: "worker" }, kind: "action_started", text: "mcp__blackboard__skills_list", payload: { tool: "mcp__blackboard__skills_list" }, created_at: "2026-01-01T00:01:10Z" },
+          { id: "shell-action", seq: 4, channel_agent_id: "worker-openai", actor: { agent_id: "worker-openai", display_name: "OpenAI Worker", role: "worker" }, kind: "action_started", text: "id; pwd", payload: { tool: "shell" }, created_at: "2026-01-01T00:01:11Z" },
+        ],
+      },
+      connection: "live",
+      error: null,
+      refresh: vi.fn(),
+    });
+    view.rerender(<MemoryRouter initialEntries={["/tasks/task/runtime?tab=report"]}><TaskRuntimePage taskId="task" /></MemoryRouter>);
+    const updatedGraph = screen.getByRole("region", { name: "实时运行图" });
+    expect(within(updatedGraph).queryByText("OpenAI Worker 读取 Skill")).not.toBeInTheDocument();
+    expect(within(updatedGraph).getByText("OpenAI Worker id; pwd")).toBeInTheDocument();
   });
 });
