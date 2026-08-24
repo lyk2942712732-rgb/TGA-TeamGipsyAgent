@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import hashlib
 from typing import Any
+from urllib.parse import urlsplit
 from uuid import UUID
 
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 
 from .blackboard import Blackboard
 from .config import TGA3Config
@@ -15,12 +17,30 @@ from .skills import SkillCatalog
 
 
 def build_mcp(config: TGA3Config, blackboard: Blackboard, skills: SkillCatalog) -> FastMCP:
+    hostname = urlsplit(config.runtime.blackboard_mcp_url).hostname
+    if not hostname:
+        raise ValueError("blackboard_mcp_url must be an absolute URL with a hostname")
+    configured_host = f"[{hostname}]:*" if ":" in hostname else f"{hostname}:*"
     mcp = FastMCP(
         "tga3-blackboard",
         instructions=config.runtime.mcp_instructions,
         streamable_http_path="/",
         stateless_http=True,
         json_response=True,
+        transport_security=TransportSecuritySettings(
+            enable_dns_rebinding_protection=True,
+            allowed_hosts=[
+                "127.0.0.1:*",
+                "localhost:*",
+                "[::1]:*",
+                configured_host,
+            ],
+            allowed_origins=[
+                "http://127.0.0.1:*",
+                "http://localhost:*",
+                "http://[::1]:*",
+            ],
+        ),
     )
 
     @mcp.tool()
