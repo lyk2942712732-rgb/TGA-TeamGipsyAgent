@@ -193,6 +193,7 @@ def create_app(
                     **item.model_dump(mode="json"),
                     "display_name": config.agents.agents[item.agent_id].display_name,
                     "role": config.agents.agents[item.agent_id].role,
+                    "model_name": config.models.provider(item.provider_id).model(item.model_id).name,
                     "runtime_location": (
                         "container" if config.agents.agents[item.agent_id].role == "worker" else "host"
                     ),

@@ -6,7 +6,7 @@ export type TGA3Task = {
 };
 export type TGA3Agent = {
   agent_id: string; sdk: string; desired_state: string; actual_state: string; provider_id: string; model_id: string;
-  protocol: string; display_name: string; role: string; runtime_location: string; container_id?: string | null;
+  model_name?: string; protocol: string; display_name: string; role: string; runtime_location: string; container_id?: string | null;
   session_id?: string | null; updated_at: string; last_error?: string | null;
 };
 export type TGA3Actor = { agent_id: string; display_name: string; role: string; sdk?: string | null; model?: string | null };

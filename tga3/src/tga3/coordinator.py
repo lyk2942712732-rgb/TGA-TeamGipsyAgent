@@ -337,6 +337,11 @@ class TaskCoordinator:
     async def finish_task_workers(self, task_id: UUID) -> None:
         workers = await self._worker_runs(task_id)
         for run in workers:
+            await self.storage.update_agent(
+                task_id,
+                run.agent_id,
+                desired_state=AgentState.STOPPING,
+            )
             await self.gateway.notify(task_id, run.agent_id, "session.stop")
         await asyncio.gather(*(self.containers.stop(task_id, run.agent_id) for run in workers), return_exceptions=True)
         for run in workers:
@@ -345,6 +350,7 @@ class TaskCoordinator:
                 run.agent_id,
                 desired_state=AgentState.STOPPED,
                 actual_state=AgentState.STOPPED,
+                last_error=None,
             )
 
     async def stop_task(self, task_id: UUID) -> None:

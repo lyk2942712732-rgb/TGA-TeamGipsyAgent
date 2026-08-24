@@ -148,6 +148,9 @@ def test_frontend_api_uses_safe_catalog_and_page_owned_config_documents(tmp_path
         assert next(agent for agent in detail["agents"] if agent["agent_id"] == "worker-openai")["model_id"] == (
             "gpt-task-override"
         )
+        assert next(agent for agent in detail["agents"] if agent["agent_id"] == "worker-openai")["model_name"] == (
+            "gpt-task-override"
+        )
         assert next(agent for agent in detail["agents"] if agent["agent_id"] == "worker-openai")["protocol"] == (
             "openai_chat_completions"
         )

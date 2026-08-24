@@ -18,7 +18,7 @@ export function TGA3AgentRail({ agents, selectedAgentId, onSelect }: { agents: T
           <small>{agent.runtime_location === "container" ? "隔离容器" : "主服务"} · {sdkLabel(agent.sdk)}</small>
           <small className="tga3-agent-model">{agent.provider_id}/{agent.model_id}<em>{protocolLabel(agent.protocol)}</em></small>
           <span className={`tga3-state-pill tone-${stateTone(agent.actual_state)}`}><i />{stateLabel(agent.actual_state)}</span>
-          {agent.last_error ? <strong className="tga3-agent-error">{agent.last_error}</strong> : null}
+          {agent.actual_state === "failed" && agent.last_error ? <strong className="tga3-agent-error">{agent.last_error}</strong> : null}
         </span>
       </button>)}
     </div>

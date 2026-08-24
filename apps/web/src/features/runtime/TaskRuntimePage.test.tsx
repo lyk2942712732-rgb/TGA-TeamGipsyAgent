@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { TGA3RuntimeSnapshot } from "../../runtime/tga3-runtime";
@@ -39,5 +39,63 @@ describe("TaskRuntimePage", () => {
     expect(screen.getByRole("heading", { name: "OpenAI Worker" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("tab", { name: "活动" }));
     expect(screen.getByText("开始执行")).toBeInTheDocument();
+  });
+  it("opens a square Finding as a focused message", () => {
+    render(<MemoryRouter initialEntries={["/tasks/task/runtime?tab=findings"]}><TaskRuntimePage taskId="task" /></MemoryRouter>);
+    const tile = screen.getByRole("button", { name: "查看 Finding #2：已发现入口" });
+    fireEvent.click(tile);
+    const dialog = screen.getByRole("dialog", { name: "Finding #2 详情" });
+    expect(within(dialog).getByRole("heading", { name: "已发现入口" })).toBeInTheDocument();
+    expect(within(dialog).getByText("该 Finding 没有补充详情。")).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole("button", { name: "关闭 Finding 详情" }));
+    expect(screen.queryByRole("dialog", { name: "Finding #2 详情" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "详情" }));
+    expect(screen.getByText("已发现入口")).toBeInTheDocument();
+  });
+  it("does not show stale errors for a stopped worker", () => {
+    useTGA3Runtime.mockReturnValue({
+      snapshot: {
+        ...snapshot,
+        task: { ...snapshot.task, state: "completed" },
+        agents: snapshot.agents.map((agent) => agent.agent_id === "worker-openai"
+          ? { ...agent, desired_state: "stopped", actual_state: "stopped", last_error: "控制通道意外断开" }
+          : agent),
+      },
+      connection: "live",
+      error: null,
+      refresh: vi.fn(),
+    });
+    render(<MemoryRouter initialEntries={["/tasks/task/runtime"]}><TaskRuntimePage taskId="task" /></MemoryRouter>);
+    expect(screen.queryByText("控制通道意外断开")).not.toBeInTheDocument();
+  });
+  it("shows live graph nodes and flashes only new interactions", () => {
+    const view = render(<MemoryRouter initialEntries={["/tasks/task/runtime?tab=report"]}><TaskRuntimePage taskId="task" /></MemoryRouter>);
+    const graph = screen.getByRole("region", { name: "实时运行图" });
+    expect(within(graph).getByText("用户")).toBeInTheDocument();
+    expect(within(graph).getByText("Skills")).toBeInTheDocument();
+    expect(within(graph).getByText("黑板")).toBeInTheDocument();
+    expect(within(graph).getAllByText("openai/gpt").length).toBeGreaterThan(0);
+    expect(within(graph).queryByText(/读取 Skill/)).not.toBeInTheDocument();
+
+    useTGA3Runtime.mockReturnValue({
+      snapshot: {
+        ...snapshot,
+        dialogue: [...snapshot.dialogue, {
+          id: "skill-action",
+          seq: 3,
+          channel_agent_id: "worker-openai",
+          actor: { agent_id: "worker-openai", display_name: "OpenAI Worker", role: "worker" },
+          kind: "action_started",
+          text: "mcp__blackboard__skills_list",
+          payload: { tool: "mcp__blackboard__skills_list" },
+          created_at: "2026-01-01T00:01:10Z",
+        }],
+      },
+      connection: "live",
+      error: null,
+      refresh: vi.fn(),
+    });
+    view.rerender(<MemoryRouter initialEntries={["/tasks/task/runtime?tab=report"]}><TaskRuntimePage taskId="task" /></MemoryRouter>);
+    expect(within(screen.getByRole("region", { name: "实时运行图" })).getByText("OpenAI Worker 读取 Skill")).toBeInTheDocument();
   });
 });

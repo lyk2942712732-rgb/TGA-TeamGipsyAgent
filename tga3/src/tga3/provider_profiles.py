@@ -6,7 +6,6 @@ from dataclasses import dataclass
 from typing import Literal
 from urllib.parse import urlsplit
 
-
 ProviderProtocol = Literal["openai_responses", "openai_chat_completions", "anthropic"]
 
 

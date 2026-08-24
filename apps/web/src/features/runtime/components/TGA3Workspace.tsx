@@ -1,8 +1,10 @@
-import { Download, File, FileText, Flag, Lightbulb, MessageSquareText, Search, ShieldCheck } from "lucide-react";
-import { useMemo, useState, type ReactNode } from "react";
+import { Download, File, FileText, Flag, Grid2X2, Lightbulb, List, Maximize2, MessageSquareText, Search, ShieldCheck, X } from "lucide-react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { tga3RuntimeApi } from "../../../api/tga3-runtime-control";
 import type { TGA3BoardEntry, TGA3DialogueMessage, TGA3RuntimeSnapshot } from "../../../runtime/tga3-runtime";
 import { BOARD_KIND_LABELS, DIALOGUE_KIND_LABELS, bodyText, formatTime, listStrings } from "../tga3-view";
+import { TGA3RuntimeGraph } from "./TGA3RuntimeGraph";
 
 export type TGA3WorkspaceTab = "blackboard" | "dialogue" | "findings" | "inputs" | "report";
 const TABS: Array<[TGA3WorkspaceTab, string]> = [["blackboard", "共享黑板"], ["dialogue", "任务对话"], ["findings", "Findings"], ["inputs", "输入与文件"], ["report", "报告"]];
@@ -50,7 +52,59 @@ export function DialogueCard({ message, compact = false }: { message: TGA3Dialog
 
 function FindingsPanel({ entries }: { entries: TGA3BoardEntry[] }) {
   const findings = entries.filter((entry) => entry.kind === "finding"); const finals = entries.filter((entry) => entry.kind === "final_candidate");
-  return <div className="tga3-findings-panel">{finals.length ? <section className="tga3-final-candidates"><header><Flag size={17} /><h3>最终候选</h3></header>{[...finals].reverse().map((entry) => <BoardCard key={entry.id} entry={entry} />)}</section> : null}<section><header className="tga3-section-heading"><div><ShieldCheck size={17} /><h3>已验证 Findings</h3></div><small>{findings.length}</small></header>{findings.length ? <div className="tga3-finding-grid">{[...findings].reverse().map((entry) => <BoardCard key={entry.id} entry={entry} />)}</div> : <Empty icon={<ShieldCheck />} title="尚无 Finding" detail="Worker 只有在关联对象可定位并通过写入关隘后，才能把 Finding 发布到黑板。" />}</section></div>;
+  const [view, setView] = useState<"tiles" | "details">("tiles");
+  const [focused, setFocused] = useState<TGA3BoardEntry | null>(null);
+  const ordered = [...findings].reverse();
+  return <div className="tga3-findings-panel">
+    <section>
+      <header className="tga3-section-heading tga3-findings-heading">
+        <div><ShieldCheck size={17} /><h3>已验证 Findings</h3><small>{findings.length}</small></div>
+        <div className="tga3-view-switch" role="group" aria-label="Finding 展示方式">
+          <button type="button" aria-pressed={view === "tiles"} onClick={() => setView("tiles")}><Grid2X2 size={14} />方块</button>
+          <button type="button" aria-pressed={view === "details"} onClick={() => setView("details")}><List size={14} />详情</button>
+        </div>
+      </header>
+      {findings.length ? view === "tiles"
+        ? <div className="tga3-finding-tile-grid">{ordered.map((entry) => <FindingTile key={entry.id} entry={entry} onOpen={() => setFocused(entry)} />)}</div>
+        : <div className="tga3-finding-detail-list">{ordered.map((entry) => <BoardCard key={entry.id} entry={entry} />)}</div>
+        : <Empty icon={<ShieldCheck />} title="尚无 Finding" detail="Worker 只有在关联对象可定位并通过写入关隘后，才能把 Finding 发布到黑板。" />}
+    </section>
+    {finals.length ? <section className="tga3-final-candidates"><header><Flag size={17} /><h3>最终候选</h3></header>{[...finals].reverse().map((entry) => <BoardCard key={entry.id} entry={entry} />)}</section> : null}
+    {focused ? <FindingFocus entry={focused} onClose={() => setFocused(null)} /> : null}
+  </div>;
+}
+
+function FindingTile({ entry, onOpen, focused = false }: { entry: TGA3BoardEntry; onOpen?: () => void; focused?: boolean }) {
+  const claim = String(entry.body.claim ?? entry.topic);
+  const detail = String(entry.body.detail ?? "");
+  return <button type="button" className="tga3-finding-tile" data-focused={focused} aria-label={`查看 Finding #${entry.seq}：${claim}`} onClick={onOpen}>
+    <header><span>#{entry.seq}</span><Maximize2 size={14} /></header>
+    <strong>{claim}</strong>
+    <p>{detail || "点击查看完整 Finding"}</p>
+    <footer><span>{entry.actor.display_name}</span><em>{entry.topic}</em></footer>
+  </button>;
+}
+
+function FindingFocus({ entry, onClose }: { entry: TGA3BoardEntry; onClose: () => void }) {
+  useEffect(() => {
+    function closeOnEscape(event: KeyboardEvent) { if (event.key === "Escape") onClose(); }
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [onClose]);
+  const claim = String(entry.body.claim ?? entry.topic);
+  const detail = String(entry.body.detail ?? "");
+  return createPortal(<div className="tga3-finding-focus-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+    <div className="tga3-finding-focus-composition" role="dialog" aria-modal="true" aria-label={`Finding #${entry.seq} 详情`}>
+      <FindingTile entry={entry} focused />
+      <article className="tga3-finding-message">
+        <button type="button" className="tga3-finding-close" aria-label="关闭 Finding 详情" onClick={onClose}><X size={18} /></button>
+        <header><div><b>{entry.actor.display_name}</b><span>{entry.actor.agent_id}</span></div><time>{formatTime(entry.created_at)}</time></header>
+        <h3>{claim}</h3>
+        {detail ? <p>{detail}</p> : <p className="tga3-finding-no-detail">该 Finding 没有补充详情。</p>}
+        <footer><span>Finding #{entry.seq}</span><em>{entry.topic}</em><code>{entry.id}</code></footer>
+      </article>
+    </div>
+  </div>, document.body);
 }
 function InputsPanel({ entries }: { entries: TGA3BoardEntry[] }) {
   const prompts = entries.filter((entry) => entry.kind === "user_prompt"); const files = entries.filter((entry) => entry.kind === "user_file");
@@ -58,7 +112,7 @@ function InputsPanel({ entries }: { entries: TGA3BoardEntry[] }) {
 }
 function ReportPanel({ snapshot }: { snapshot: TGA3RuntimeSnapshot }) {
   const finals = snapshot.blackboard.filter((entry) => entry.kind === "final_candidate"); const ready = snapshot.task.state === "completed";
-  return <div className="tga3-report-panel"><FileText size={34} /><span>REPORTER</span><h3>{ready ? "Markdown Writeup 已生成" : finals.length ? "Reporter 正在固定黑板快照并生成报告" : "等待最终候选"}</h3><p>{ready ? "报告只基于 final_candidate 触发时固定的黑板内容生成。" : "Worker 发布引用既有 Finding 的 final_candidate 后，Reporter 才会被唤醒。"}</p>{ready ? <a className="ref-primary-button" href={tga3RuntimeApi.reportUrl(snapshot.task.id)} target="_blank" rel="noreferrer"><Download size={15} />下载 writeup.md</a> : null}</div>;
+  return <div className="tga3-report-runtime"><div className="tga3-report-panel"><FileText size={34} /><span>REPORTER</span><h3>{ready ? "Markdown Writeup 已生成" : finals.length ? "Reporter 正在固定黑板快照并生成报告" : "等待最终候选"}</h3><p>{ready ? "报告只基于 final_candidate 触发时固定的黑板内容生成。" : "Worker 发布引用既有 Finding 的 final_candidate 后，Reporter 才会被唤醒。"}</p>{ready ? <a className="ref-primary-button" href={tga3RuntimeApi.reportUrl(snapshot.task.id)} target="_blank" rel="noreferrer"><Download size={15} />下载 writeup.md</a> : null}</div><TGA3RuntimeGraph snapshot={snapshot} /></div>;
 }
 function Meta({ label, values }: { label: string; values: string[] }) { return values.length ? <footer className="tga3-entry-meta"><span>{label}</span>{values.map((value, index) => <em key={`${value}-${index}`}>{value}</em>)}</footer> : null; }
 function Empty({ icon, title, detail }: { icon: ReactNode; title: string; detail: string }) { return <div className="tga3-empty">{icon}<h3>{title}</h3><p>{detail}</p></div>; }
