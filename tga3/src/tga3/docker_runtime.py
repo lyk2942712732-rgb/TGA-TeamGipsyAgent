@@ -66,6 +66,7 @@ class DockerContainerRuntime:
         binding = spec.agent
         workspace, inputs, artifacts = self._task_paths(spec.task_id, binding.agent_id)
         image = runtime.worker_images[binding.agent_id]
+        blackboard_mcp_url = f"{runtime.blackboard_mcp_url.rstrip('/')}/"
         environment = {
             "HOME": "/home/tga3",
             "TGA3_TASK_ID": str(spec.task_id),
@@ -74,7 +75,7 @@ class DockerContainerRuntime:
             "TGA3_AGENT_RUNTIME": binding.runtime,
             "TGA3_SYSTEM_PROMPT": binding.system_prompt,
             "TGA3_CONTROL_WS_URL": runtime.control_ws_url,
-            "TGA3_BLACKBOARD_MCP_URL": runtime.blackboard_mcp_url,
+            "TGA3_BLACKBOARD_MCP_URL": blackboard_mcp_url,
             "TGA3_PROVIDER_ID": binding.provider.id,
             "TGA3_PROVIDER_PROTOCOL": binding.protocol,
             "TGA3_MODEL_ID": binding.model.id,

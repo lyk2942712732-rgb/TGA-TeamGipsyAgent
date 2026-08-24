@@ -36,5 +36,6 @@ def test_worker_container_uses_stable_non_root_identity(tmp_path: Path):
     assert runtime._launch_sync(LaunchSpec(task_id=uuid4(), agent=worker)) == "container-id"
     assert containers.kwargs["user"] == "1000:1000"
     assert containers.kwargs["environment"]["HOME"] == "/home/tga3"
+    assert containers.kwargs["environment"]["TGA3_BLACKBOARD_MCP_URL"].endswith("/mcp/")
     assert containers.kwargs["volumes"][str(workspace)] == {"bind": "/workspace", "mode": "rw"}
     assert containers.kwargs["volumes"][str(artifacts)] == {"bind": "/artifacts", "mode": "rw"}

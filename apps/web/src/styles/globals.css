@@ -122,5 +122,12 @@ label { display: grid; gap: 6px; color: #475569; font-size: 13px; font-weight: 6
   .global-search { flex: 1; width: auto; }
   .topbar-status, .topbar-user b, .topbar-user > svg { display: none; }
   .app-main { padding: 18px 14px; }
-  .runtime-main { padding: 0; }
+  .runtime-main { height: auto; min-height: calc(100vh - 68px); padding: 0; overflow: visible; }
+}
+
+@media (max-width: 520px) {
+  .app-topbar { gap: 8px; padding: 0 10px; }
+  .global-search { min-width: 0; }
+  .global-search kbd, .topbar-user, .topbar-icon:not(.topbar-bell) { display: none; }
+  .app-topbar-actions { flex: 0 0 auto; gap: 4px; }
 }

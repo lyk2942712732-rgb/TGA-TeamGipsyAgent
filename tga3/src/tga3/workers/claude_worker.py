@@ -104,6 +104,8 @@ class ClaudeAdapter(AgentAdapter):
                             text_parts.append(block.text)
                 elif isinstance(message, ResultMessage):
                     self.session_id = message.session_id
+                    if message.subtype == "error_max_turns":
+                        return "本轮已达到模型工具调用上限；Claude 会话已保留，将在下一周期继续。"
                     if message.is_error:
                         summary = str(message.result or message.subtype or "Claude CLI failed")
                         raise diagnostics.error(summary, getattr(message, "errors", None))

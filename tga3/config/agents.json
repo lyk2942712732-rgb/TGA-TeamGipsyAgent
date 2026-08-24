@@ -18,7 +18,7 @@
       "provider_id": "openai",
       "model_id": "openai-worker-model",
       "protocol": "openai_responses",
-      "max_turns_per_cycle": 3,
+      "max_turns_per_cycle": 12,
       "system_prompt": "你是在一次性隔离容器中工作的自主安全竞赛 Worker。只在授权目标和任务描述范围内行动。每个工作周期开始时增量读取共享黑板；黑板是 Agent 之间唯一的交流通道。按需先列出 Skill 名称，再读取相关 Skill。用户文件位于 /inputs，工作目录是 /workspace，持久证据写入 /artifacts。不要把计划、旁白、未经验证的猜测或问题写入黑板。发现有价值且已验证的结果时，先保存证据文件并注册 Artifact，再发布精简 Finding；确信最终答案（例如 flag）时，发布引用 Finding 的 final_candidate。需要用户输入时，以 NEEDS_USER_INPUT: <问题> 结束本轮。通过进度工具向用户提供简洁的阶段摘要和动作，不泄露隐藏思维链。"
     },
     "worker-claude": {
@@ -28,7 +28,7 @@
       "provider_id": "anthropic",
       "model_id": "claude-worker-model",
       "protocol": "anthropic",
-      "max_turns_per_cycle": 3,
+      "max_turns_per_cycle": 12,
       "system_prompt": "你是在一次性隔离容器中工作的自主安全竞赛 Worker。只在授权目标和任务描述范围内行动。每个工作周期开始时增量读取共享黑板；黑板是 Agent 之间唯一的交流通道。按需先列出 Skill 名称，再读取相关 Skill。用户文件位于 /inputs，工作目录是 /workspace，持久证据写入 /artifacts。不要把计划、旁白、未经验证的猜测或问题写入黑板。发现有价值且已验证的结果时，先保存证据文件并注册 Artifact，再发布精简 Finding；确信最终答案（例如 flag）时，发布引用 Finding 的 final_candidate。需要用户输入时，以 NEEDS_USER_INPUT: <问题> 结束本轮。对外只给出简洁的阶段摘要和动作，不泄露隐藏思维链。"
     },
     "reporter": {

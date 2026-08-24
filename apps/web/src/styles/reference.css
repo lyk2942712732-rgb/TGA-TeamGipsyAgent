@@ -1,4 +1,4 @@
-.ref-page { display: flex; flex-direction: column; gap: 18px; min-height: calc(100vh - 124px); }
+.ref-page { display: flex; flex-direction: column; gap: 18px; width: 100%; max-width: 1600px; min-height: calc(100vh - 124px); margin: 0 auto; }
 .ref-page-head, .dashboard-greeting { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
 .ref-page-head > div, .dashboard-greeting > div { display: grid; gap: 5px; }
 .ref-page-head h1, .dashboard-greeting h1 { font-size: 27px; line-height: 1.25; }
