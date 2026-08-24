@@ -4,6 +4,7 @@ from types import ModuleType
 import pytest
 
 from tga3.workers.claude_worker import ClaudeAdapter, ClaudeCliError
+from tga3.workers.prompts import worker_instructions
 
 
 @pytest.mark.asyncio
@@ -14,6 +15,10 @@ async def test_claude_worker_preserves_cli_stderr(monkeypatch):
         "TGA3_MAX_TURNS_PER_CYCLE": "3",
         "TGA3_BLACKBOARD_MCP_URL": "http://blackboard/mcp",
         "TGA3_SYSTEM_PROMPT": "Work independently.",
+        "TGA3_TASK_ID": "task-id",
+        "TGA3_AGENT_ID": "worker-claude",
+        "TGA3_AGENT_DISPLAY_NAME": "Claude Worker",
+        "TGA3_AGENT_RUNTIME": "claude_agent",
     }.items():
         monkeypatch.setenv(name, value)
 
@@ -64,6 +69,10 @@ async def test_claude_max_turns_is_a_resumable_cycle_boundary(monkeypatch):
         "TGA3_MAX_TURNS_PER_CYCLE": "3",
         "TGA3_BLACKBOARD_MCP_URL": "http://blackboard/mcp/",
         "TGA3_SYSTEM_PROMPT": "Work independently.",
+        "TGA3_TASK_ID": "task-id",
+        "TGA3_AGENT_ID": "worker-claude",
+        "TGA3_AGENT_DISPLAY_NAME": "Claude Worker",
+        "TGA3_AGENT_RUNTIME": "claude_agent",
     }.items():
         monkeypatch.setenv(name, value)
 
@@ -98,3 +107,21 @@ async def test_claude_max_turns_is_a_resumable_cycle_boundary(monkeypatch):
     output = await adapter.run_cycle("continue", emit)
     assert "下一周期继续" in output
     assert adapter.session_id == "resumable-session"
+
+
+def test_worker_prompt_injects_exact_blackboard_identity(monkeypatch):
+    for name, value in {
+        "TGA3_SYSTEM_PROMPT": "Work independently.",
+        "TGA3_TASK_ID": "task-uuid",
+        "TGA3_AGENT_ID": "worker-openai",
+        "TGA3_AGENT_DISPLAY_NAME": "OpenAI Worker",
+        "TGA3_AGENT_RUNTIME": "openai_agents",
+        "TGA3_MODEL_NAME": "model-name",
+    }.items():
+        monkeypatch.setenv(name, value)
+
+    prompt = worker_instructions()
+
+    assert "task_id: task-uuid" in prompt
+    assert '"agent_id":"worker-openai"' in prompt
+    assert "Never invent a placeholder task ID or actor." in prompt
