@@ -19,7 +19,7 @@ describe("SkillsPage", () => {
     const user = userEvent.setup();
     render(<SkillsPage />);
     const editor = await screen.findByLabelText("Skill 内容");
-    expect(editor).toHaveValue("# Web\n\nInspect inputs.");
+    await waitFor(() => expect(editor).toHaveValue("# Web\n\nInspect inputs."));
     await user.clear(editor);
     await user.type(editor, "# Updated");
     await user.click(screen.getByRole("button", { name: "保存" }));
