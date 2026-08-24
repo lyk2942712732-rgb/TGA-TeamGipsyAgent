@@ -109,7 +109,7 @@ describe("TaskRuntimePage", () => {
       refresh: vi.fn(),
     });
     view.rerender(<MemoryRouter initialEntries={["/tasks/task/runtime?tab=runtime"]}><TaskRuntimePage taskId="task" /></MemoryRouter>);
-    expect(within(screen.getByRole("region", { name: "实时运行图" })).getByText("OpenAI Worker 读取 Skill")).toBeInTheDocument();
+    expect(within(screen.getByRole("region", { name: "实时运行图" })).getByText("OpenAI Worker 读取 Skill")).toHaveClass("interaction");
 
     useTGA3Runtime.mockReturnValue({
       snapshot: {
@@ -145,5 +145,8 @@ describe("TaskRuntimePage", () => {
     const concurrentGraph = screen.getByRole("region", { name: "实时运行图" });
     expect(within(concurrentGraph).getByText("OpenAI Worker id; pwd")).toBeInTheDocument();
     expect(within(concurrentGraph).getByText("Supervisor review findings")).toBeInTheDocument();
+    view.rerender(<MemoryRouter initialEntries={["/tasks/task/runtime?tab=runtime"]}><TaskRuntimePage taskId="task" /></MemoryRouter>);
+    expect(within(screen.getByRole("region", { name: "实时运行图" })).getByText("OpenAI Worker id; pwd")).toBeInTheDocument();
+    expect(within(screen.getByRole("region", { name: "实时运行图" })).getByText("Supervisor review findings")).toBeInTheDocument();
   });
 });
