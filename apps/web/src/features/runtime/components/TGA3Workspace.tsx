@@ -6,8 +6,8 @@ import type { TGA3BoardEntry, TGA3DialogueMessage, TGA3RuntimeSnapshot } from ".
 import { BOARD_KIND_LABELS, DIALOGUE_KIND_LABELS, bodyText, formatTime, listStrings } from "../tga3-view";
 import { TGA3RuntimeGraph } from "./TGA3RuntimeGraph";
 
-export type TGA3WorkspaceTab = "blackboard" | "dialogue" | "findings" | "inputs" | "report";
-const TABS: Array<[TGA3WorkspaceTab, string]> = [["blackboard", "共享黑板"], ["dialogue", "任务对话"], ["findings", "Findings"], ["inputs", "输入与文件"], ["report", "报告"]];
+export type TGA3WorkspaceTab = "blackboard" | "dialogue" | "findings" | "inputs" | "report" | "runtime";
+const TABS: Array<[TGA3WorkspaceTab, string]> = [["blackboard", "共享黑板"], ["dialogue", "任务对话"], ["findings", "Findings"], ["inputs", "输入与文件"], ["report", "报告"], ["runtime", "运行图"]];
 
 export function TGA3Workspace({ snapshot, tab, selectedAgentId, onTab }: { snapshot: TGA3RuntimeSnapshot; tab: TGA3WorkspaceTab; selectedAgentId: string | null; onTab: (tab: TGA3WorkspaceTab) => void }) {
   const effectiveTab = TABS.some(([value]) => value === tab) ? tab : "blackboard";
@@ -22,14 +22,59 @@ export function TGA3Workspace({ snapshot, tab, selectedAgentId, onTab }: { snaps
       {effectiveTab === "findings" ? <FindingsPanel entries={snapshot.blackboard} /> : null}
       {effectiveTab === "inputs" ? <InputsPanel entries={snapshot.blackboard} /> : null}
       {effectiveTab === "report" ? <ReportPanel snapshot={snapshot} /> : null}
+      {effectiveTab === "runtime" ? <TGA3RuntimeGraph snapshot={snapshot} /> : null}
     </div>
   </section>;
 }
 
 function BlackboardPanel({ entries }: { entries: TGA3BoardEntry[] }) {
   const [kind, setKind] = useState(""); const [query, setQuery] = useState("");
+  const [view, setView] = useState<"tiles" | "details">("details");
+  const [focused, setFocused] = useState<TGA3BoardEntry | null>(null);
   const visible = useMemo(() => [...entries].reverse().filter((entry) => (!kind || entry.kind === kind) && (!query.trim() || `${entry.topic} ${bodyText(entry)} ${entry.actor.display_name}`.toLowerCase().includes(query.trim().toLowerCase()))), [entries, kind, query]);
-  return <div className="tga3-board-panel"><div className="tga3-panel-toolbar"><label><Search size={14} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索黑板内容" /></label><select aria-label="黑板类型" value={kind} onChange={(event) => setKind(event.target.value)}><option value="">全部类型</option>{Object.entries(BOARD_KIND_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></div>{visible.length ? <div className="tga3-entry-list">{visible.map((entry) => <BoardCard key={entry.id} entry={entry} />)}</div> : <Empty icon={<ShieldCheck />} title="黑板尚无匹配内容" detail="场景提示、用户输入、Supervisor 建议、Finding、Q&A 和最终候选会按顺序写入这里。" />}</div>;
+  return <div className="tga3-board-panel">
+    <div className="tga3-panel-toolbar tga3-board-toolbar">
+      <label><Search size={14} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索黑板内容" /></label>
+      <div className="tga3-board-toolbar-actions">
+        <select aria-label="黑板类型" value={kind} onChange={(event) => setKind(event.target.value)}><option value="">全部类型</option>{Object.entries(BOARD_KIND_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
+        <div className="tga3-view-switch" role="group" aria-label="共享黑板展示方式">
+          <button type="button" aria-pressed={view === "tiles"} onClick={() => setView("tiles")}><Grid2X2 size={14} />方块</button>
+          <button type="button" aria-pressed={view === "details"} onClick={() => setView("details")}><List size={14} />详情</button>
+        </div>
+      </div>
+    </div>
+    {visible.length ? view === "tiles"
+      ? <div className="tga3-board-tile-grid">{visible.map((entry) => <BoardTile key={entry.id} entry={entry} onOpen={() => setFocused(entry)} />)}</div>
+      : <div className="tga3-entry-list">{visible.map((entry) => <BoardCard key={entry.id} entry={entry} />)}</div>
+      : <Empty icon={<ShieldCheck />} title="黑板尚无匹配内容" detail="场景提示、用户输入、Supervisor 建议、Finding、Q&A 和最终候选会按顺序写入这里。" />}
+    {focused ? <BoardFocus entry={focused} onClose={() => setFocused(null)} /> : null}
+  </div>;
+}
+
+function BoardTile({ entry, onOpen, focused = false }: { entry: TGA3BoardEntry; onOpen?: () => void; focused?: boolean }) {
+  return <button type="button" className={`tga3-board-tile kind-${entry.kind}`} data-focused={focused} aria-label={`查看黑板 #${entry.seq}：${BOARD_KIND_LABELS[entry.kind]}`} onClick={onOpen}>
+    <header><span>#{entry.seq} · {BOARD_KIND_LABELS[entry.kind]}</span><Maximize2 size={14} /></header>
+    <strong>{boardTileTitle(entry)}</strong>
+    <p>{bodyText(entry) || "点击查看完整内容"}</p>
+    <footer><span>{entry.actor.display_name}</span><em>{entry.topic}</em></footer>
+  </button>;
+}
+
+function BoardFocus({ entry, onClose }: { entry: TGA3BoardEntry; onClose: () => void }) {
+  useEffect(() => {
+    function closeOnEscape(event: KeyboardEvent) { if (event.key === "Escape") onClose(); }
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [onClose]);
+  return createPortal(<div className="tga3-finding-focus-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+    <div className="tga3-board-focus-composition" role="dialog" aria-modal="true" aria-label={`黑板 #${entry.seq} 详情`}>
+      <BoardTile entry={entry} focused />
+      <article className="tga3-board-message">
+        <button type="button" className="tga3-finding-close" aria-label="关闭黑板详情" onClick={onClose}><X size={18} /></button>
+        <BoardCard entry={entry} />
+      </article>
+    </div>
+  </div>, document.body);
 }
 
 function BoardCard({ entry }: { entry: TGA3BoardEntry }) { return <article className={`tga3-board-card kind-${entry.kind}`}><header><span>#{entry.seq} · {BOARD_KIND_LABELS[entry.kind]}</span><small>{formatTime(entry.created_at)}</small></header><div className="tga3-entry-author"><b>{entry.actor.display_name}</b><span>{entry.actor.agent_id}</span><em>{entry.topic}</em></div><BoardBody entry={entry} /></article>; }
@@ -112,8 +157,16 @@ function InputsPanel({ entries }: { entries: TGA3BoardEntry[] }) {
 }
 function ReportPanel({ snapshot }: { snapshot: TGA3RuntimeSnapshot }) {
   const finals = snapshot.blackboard.filter((entry) => entry.kind === "final_candidate"); const ready = snapshot.task.state === "completed";
-  return <div className="tga3-report-runtime"><div className="tga3-report-panel"><FileText size={34} /><span>REPORTER</span><h3>{ready ? "Markdown Writeup 已生成" : finals.length ? "Reporter 正在固定黑板快照并生成报告" : "等待最终候选"}</h3><p>{ready ? "报告只基于 final_candidate 触发时固定的黑板内容生成。" : "Worker 发布引用既有 Finding 的 final_candidate 后，Reporter 才会被唤醒。"}</p>{ready ? <a className="ref-primary-button" href={tga3RuntimeApi.reportUrl(snapshot.task.id)} target="_blank" rel="noreferrer"><Download size={15} />下载 writeup.md</a> : null}</div><TGA3RuntimeGraph snapshot={snapshot} /></div>;
+  return <div className="tga3-report-panel"><FileText size={34} /><span>REPORTER</span><h3>{ready ? "Markdown Writeup 已生成" : finals.length ? "Reporter 正在固定黑板快照并生成报告" : "等待最终候选"}</h3><p>{ready ? "报告只基于 final_candidate 触发时固定的黑板内容生成。" : "Worker 发布引用既有 Finding 的 final_candidate 后，Reporter 才会被唤醒。"}</p>{ready ? <a className="ref-primary-button" href={tga3RuntimeApi.reportUrl(snapshot.task.id)} target="_blank" rel="noreferrer"><Download size={15} />下载 writeup.md</a> : null}</div>;
 }
 function Meta({ label, values }: { label: string; values: string[] }) { return values.length ? <footer className="tga3-entry-meta"><span>{label}</span>{values.map((value, index) => <em key={`${value}-${index}`}>{value}</em>)}</footer> : null; }
 function Empty({ icon, title, detail }: { icon: ReactNode; title: string; detail: string }) { return <div className="tga3-empty">{icon}<h3>{title}</h3><p>{detail}</p></div>; }
-function tabCount(tab: TGA3WorkspaceTab, snapshot: TGA3RuntimeSnapshot) { if (tab === "blackboard") return snapshot.blackboard.length; if (tab === "dialogue") return snapshot.dialogue.length; if (tab === "findings") return snapshot.blackboard.filter((entry) => ["finding", "final_candidate"].includes(entry.kind)).length; if (tab === "inputs") return snapshot.blackboard.filter((entry) => ["user_prompt", "user_file"].includes(entry.kind)).length; return snapshot.task.state === "completed" ? 1 : 0; }
+function boardTileTitle(entry: TGA3BoardEntry): string {
+  if (entry.kind === "finding") return String(entry.body.claim ?? entry.topic);
+  if (entry.kind === "supervisor_advice") return "Supervisor 建议";
+  if (entry.kind === "final_candidate") return String(entry.body.conclusion ?? "最终候选");
+  if (entry.kind === "user_file") return String(entry.body.name ?? "用户文件");
+  if (entry.kind === "qa") return String(entry.body.question ?? "Q&A");
+  return entry.topic || "用户提示";
+}
+function tabCount(tab: TGA3WorkspaceTab, snapshot: TGA3RuntimeSnapshot) { if (tab === "blackboard") return snapshot.blackboard.length; if (tab === "dialogue") return snapshot.dialogue.length; if (tab === "findings") return snapshot.blackboard.filter((entry) => ["finding", "final_candidate"].includes(entry.kind)).length; if (tab === "inputs") return snapshot.blackboard.filter((entry) => ["user_prompt", "user_file"].includes(entry.kind)).length; if (tab === "report") return snapshot.task.state === "completed" ? 1 : 0; return 0; }

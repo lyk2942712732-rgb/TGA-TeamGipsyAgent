@@ -33,6 +33,18 @@ describe("TaskRuntimePage", () => {
     expect(screen.getByRole("tab", { name: /共享黑板/ })).toBeInTheDocument();
     expect(screen.getByText("已发现入口")).toBeInTheDocument();
   });
+  it("switches shared blackboard entries between details and square tiles", () => {
+    render(<MemoryRouter initialEntries={["/tasks/task/runtime?tab=blackboard"]}><TaskRuntimePage taskId="task" /></MemoryRouter>);
+    const switcher = screen.getByRole("group", { name: "共享黑板展示方式" });
+    fireEvent.click(within(switcher).getByRole("button", { name: "方块" }));
+    const tile = screen.getByRole("button", { name: "查看黑板 #2：Finding" });
+    fireEvent.click(tile);
+    expect(screen.getByRole("dialog", { name: "黑板 #2 详情" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "关闭黑板详情" }));
+    expect(screen.queryByRole("dialog", { name: "黑板 #2 详情" })).not.toBeInTheDocument();
+    fireEvent.click(within(switcher).getByRole("button", { name: "详情" }));
+    expect(screen.getByText("已发现入口")).toBeInTheDocument();
+  });
   it("selects an agent and opens its native inspector", () => {
     render(<MemoryRouter initialEntries={["/tasks/task/runtime"]}><TaskRuntimePage taskId="task" /></MemoryRouter>);
     fireEvent.click(screen.getByRole("option", { name: /OpenAI Worker/ }));
@@ -68,13 +80,14 @@ describe("TaskRuntimePage", () => {
     render(<MemoryRouter initialEntries={["/tasks/task/runtime"]}><TaskRuntimePage taskId="task" /></MemoryRouter>);
     expect(screen.queryByText("控制通道意外断开")).not.toBeInTheDocument();
   });
-  it("shows live graph nodes and flashes only new interactions", () => {
-    const view = render(<MemoryRouter initialEntries={["/tasks/task/runtime?tab=report"]}><TaskRuntimePage taskId="task" /></MemoryRouter>);
+  it("shows the standalone runtime graph with per-agent models and concurrent owner flashes", () => {
+    const view = render(<MemoryRouter initialEntries={["/tasks/task/runtime?tab=runtime"]}><TaskRuntimePage taskId="task" /></MemoryRouter>);
     const graph = screen.getByRole("region", { name: "实时运行图" });
     expect(within(graph).getByText("用户")).toBeInTheDocument();
     expect(within(graph).getByText("Skills")).toBeInTheDocument();
     expect(within(graph).getByText("黑板")).toBeInTheDocument();
-    expect(within(graph).getAllByText("openai/gpt").length).toBeGreaterThan(0);
+    expect(within(graph).getAllByText("gpt")).toHaveLength(2);
+    expect(within(graph).queryByText("大模型")).not.toBeInTheDocument();
     expect(within(graph).queryByText(/读取 Skill/)).not.toBeInTheDocument();
 
     useTGA3Runtime.mockReturnValue({
@@ -95,7 +108,7 @@ describe("TaskRuntimePage", () => {
       error: null,
       refresh: vi.fn(),
     });
-    view.rerender(<MemoryRouter initialEntries={["/tasks/task/runtime?tab=report"]}><TaskRuntimePage taskId="task" /></MemoryRouter>);
+    view.rerender(<MemoryRouter initialEntries={["/tasks/task/runtime?tab=runtime"]}><TaskRuntimePage taskId="task" /></MemoryRouter>);
     expect(within(screen.getByRole("region", { name: "实时运行图" })).getByText("OpenAI Worker 读取 Skill")).toBeInTheDocument();
 
     useTGA3Runtime.mockReturnValue({
@@ -110,9 +123,27 @@ describe("TaskRuntimePage", () => {
       error: null,
       refresh: vi.fn(),
     });
-    view.rerender(<MemoryRouter initialEntries={["/tasks/task/runtime?tab=report"]}><TaskRuntimePage taskId="task" /></MemoryRouter>);
+    view.rerender(<MemoryRouter initialEntries={["/tasks/task/runtime?tab=runtime"]}><TaskRuntimePage taskId="task" /></MemoryRouter>);
     const updatedGraph = screen.getByRole("region", { name: "实时运行图" });
     expect(within(updatedGraph).queryByText("OpenAI Worker 读取 Skill")).not.toBeInTheDocument();
     expect(within(updatedGraph).getByText("OpenAI Worker id; pwd")).toBeInTheDocument();
+
+    useTGA3Runtime.mockReturnValue({
+      snapshot: {
+        ...snapshot,
+        dialogue: [...snapshot.dialogue,
+          { id: "skill-action", seq: 3, channel_agent_id: "worker-openai", actor: { agent_id: "worker-openai", display_name: "OpenAI Worker", role: "worker" }, kind: "action_started", text: "mcp__blackboard__skills_list", payload: { tool: "mcp__blackboard__skills_list" }, created_at: "2026-01-01T00:01:10Z" },
+          { id: "shell-action", seq: 4, channel_agent_id: "worker-openai", actor: { agent_id: "worker-openai", display_name: "OpenAI Worker", role: "worker" }, kind: "action_started", text: "id; pwd", payload: { tool: "shell" }, created_at: "2026-01-01T00:01:11Z" },
+          { id: "supervisor-action", seq: 5, channel_agent_id: "supervisor", actor: { agent_id: "supervisor", display_name: "Supervisor", role: "supervisor" }, kind: "action_started", text: "review findings", payload: { tool: "review" }, created_at: "2026-01-01T00:01:12Z" },
+        ],
+      },
+      connection: "live",
+      error: null,
+      refresh: vi.fn(),
+    });
+    view.rerender(<MemoryRouter initialEntries={["/tasks/task/runtime?tab=runtime"]}><TaskRuntimePage taskId="task" /></MemoryRouter>);
+    const concurrentGraph = screen.getByRole("region", { name: "实时运行图" });
+    expect(within(concurrentGraph).getByText("OpenAI Worker id; pwd")).toBeInTheDocument();
+    expect(within(concurrentGraph).getByText("Supervisor review findings")).toBeInTheDocument();
   });
 });

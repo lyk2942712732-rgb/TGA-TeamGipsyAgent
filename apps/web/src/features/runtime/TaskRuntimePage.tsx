@@ -9,7 +9,7 @@ import { TGA3Workspace, type TGA3WorkspaceTab } from "./components/TGA3Workspace
 import { latestPendingQuestion } from "./tga3-view";
 import { useTGA3Runtime } from "./use-tga3-runtime";
 
-const VALID_TABS: TGA3WorkspaceTab[] = ["blackboard", "dialogue", "findings", "inputs", "report"];
+const VALID_TABS: TGA3WorkspaceTab[] = ["blackboard", "dialogue", "findings", "inputs", "report", "runtime"];
 
 export function TaskRuntimePage({ taskId }: { taskId: string }) {
   const { snapshot, connection, error, refresh } = useTGA3Runtime(taskId);
