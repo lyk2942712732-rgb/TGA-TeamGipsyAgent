@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
@@ -34,12 +35,29 @@ class DockerContainerRuntime:
         except Exception as exc:
             raise RuntimeUnavailableError(f"Docker SDK/daemon unavailable: {exc}") from exc
 
+    def _ensure_worker_directory(self, path: Path) -> None:
+        docker_cfg = self.config.runtime.docker
+        path.mkdir(parents=True, exist_ok=True)
+        if os.name != "nt":
+            current = path.stat()
+            if (current.st_uid, current.st_gid) != (docker_cfg.worker_uid, docker_cfg.worker_gid):
+                try:
+                    os.chown(path, docker_cfg.worker_uid, docker_cfg.worker_gid)
+                except PermissionError as exc:
+                    raise RuntimeUnavailableError(
+                        f"cannot assign {path} to worker uid/gid "
+                        f"{docker_cfg.worker_uid}:{docker_cfg.worker_gid}; "
+                        "run the control plane with matching ownership or sufficient permission"
+                    ) from exc
+        path.chmod(0o770)
+
     def _task_paths(self, task_id: UUID, agent_id: str) -> tuple[Path, Path, Path]:
         workspace = self.config.resolve_path(self.config.runtime.workspace_root) / str(task_id) / agent_id
         inputs = self.config.resolve_path(self.config.runtime.input_root) / str(task_id)
         artifacts = self.config.resolve_path(self.config.runtime.artifact_root) / str(task_id)
-        for path in (workspace, inputs, artifacts):
-            path.mkdir(parents=True, exist_ok=True)
+        inputs.mkdir(parents=True, exist_ok=True)
+        self._ensure_worker_directory(workspace)
+        self._ensure_worker_directory(artifacts)
         return workspace, inputs, artifacts
 
     def _launch_sync(self, spec: LaunchSpec) -> str:
@@ -49,6 +67,7 @@ class DockerContainerRuntime:
         workspace, inputs, artifacts = self._task_paths(spec.task_id, binding.agent_id)
         image = runtime.worker_images[binding.agent_id]
         environment = {
+            "HOME": "/home/tga3",
             "TGA3_TASK_ID": str(spec.task_id),
             "TGA3_AGENT_ID": binding.agent_id,
             "TGA3_AGENT_DISPLAY_NAME": binding.display_name,
@@ -74,6 +93,7 @@ class DockerContainerRuntime:
             detach=True,
             auto_remove=False,
             environment=environment,
+            user=f"{docker_cfg.worker_uid}:{docker_cfg.worker_gid}",
             labels={"tga3.task_id": str(spec.task_id), "tga3.agent_id": binding.agent_id},
             volumes={
                 str(workspace): {"bind": "/workspace", "mode": "rw"},

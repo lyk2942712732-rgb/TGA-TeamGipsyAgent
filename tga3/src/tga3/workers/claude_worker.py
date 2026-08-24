@@ -4,11 +4,36 @@ from __future__ import annotations
 
 import asyncio
 import os
+import sys
+from collections import deque
 from pathlib import Path
 from typing import Any
 
 from .prompts import worker_instructions
 from .runtime import AgentAdapter, Emit, WorkerSession
+
+
+class ClaudeCliError(RuntimeError):
+    pass
+
+
+class ClaudeCliDiagnostics:
+    def __init__(self) -> None:
+        self.lines: deque[str] = deque(maxlen=200)
+
+    def capture(self, line: str) -> None:
+        text = str(line).rstrip()
+        if not text:
+            return
+        self.lines.append(text[-4000:])
+        print(text, file=sys.stderr, flush=True)
+
+    def error(self, summary: str, errors: list[str] | None = None) -> ClaudeCliError:
+        details = [str(item).strip() for item in errors or [] if str(item).strip()]
+        details.extend(self.lines)
+        joined = "\n".join(details)
+        suffix = f"\nClaude CLI stderr:\n{joined}" if joined else ""
+        return ClaudeCliError(f"{summary}{suffix}")
 
 
 class ClaudeAdapter(AgentAdapter):
@@ -41,6 +66,7 @@ class ClaudeAdapter(AgentAdapter):
         os.environ["ANTHROPIC_API_KEY"] = self.api_key
         if self.base_url:
             os.environ["ANTHROPIC_BASE_URL"] = self.base_url
+        diagnostics = ClaudeCliDiagnostics()
         options = ClaudeAgentOptions(
             cwd="/workspace",
             model=self.model_name,
@@ -53,27 +79,40 @@ class ClaudeAdapter(AgentAdapter):
             permission_mode="bypassPermissions",
             max_turns=self.max_turns,
             resume=self.session_id,
+            stderr=diagnostics.capture,
         )
         text_parts: list[str] = []
-        async for message in query(prompt=prompt, options=options):
-            if isinstance(message, AssistantMessage):
-                for block in message.content:
-                    if isinstance(block, ToolUseBlock):
-                        await emit(
-                            "agent.action.started",
-                            {"summary": block.name, "tool": block.name, "input": block.input},
-                        )
-                    elif isinstance(block, ToolResultBlock):
-                        await emit(
-                            "agent.action.completed",
-                            {"summary": "工具执行完成", "tool_use_id": block.tool_use_id, "error": block.is_error},
-                        )
-                    elif isinstance(block, TextBlock):
-                        text_parts.append(block.text)
-            elif isinstance(message, ResultMessage):
-                self.session_id = message.session_id
-                if getattr(message, "result", None):
-                    text_parts.append(str(message.result))
+        try:
+            async for message in query(prompt=prompt, options=options):
+                if isinstance(message, AssistantMessage):
+                    for block in message.content:
+                        if isinstance(block, ToolUseBlock):
+                            await emit(
+                                "agent.action.started",
+                                {"summary": block.name, "tool": block.name, "input": block.input},
+                            )
+                        elif isinstance(block, ToolResultBlock):
+                            await emit(
+                                "agent.action.completed",
+                                {
+                                    "summary": "工具执行完成",
+                                    "tool_use_id": block.tool_use_id,
+                                    "error": block.is_error,
+                                },
+                            )
+                        elif isinstance(block, TextBlock):
+                            text_parts.append(block.text)
+                elif isinstance(message, ResultMessage):
+                    self.session_id = message.session_id
+                    if message.is_error:
+                        summary = str(message.result or message.subtype or "Claude CLI failed")
+                        raise diagnostics.error(summary, getattr(message, "errors", None))
+                    if getattr(message, "result", None):
+                        text_parts.append(str(message.result))
+        except ClaudeCliError:
+            raise
+        except Exception as exc:
+            raise diagnostics.error(str(exc) or type(exc).__name__) from exc
         output = "\n".join(text_parts).strip()
         marker = "NEEDS_USER_INPUT:"
         if marker in output:

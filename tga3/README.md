@@ -40,6 +40,9 @@ TGA3 是新的双 Worker 黑板运行时，不兼容旧数据库或旧任务。`
 
 PostgreSQL 用每任务 advisory transaction lock 分配黑板和对话序号，允许两个 Worker 并发写入；所有写入均带幂等键。
 
+共享状态与 SDK 私有会话彼此独立：PostgreSQL/黑板保存所有 Agent 可见的任务事实，OpenAI Worker 的
+`/workspace/.tga3-openai-session.db` 只保存该 Worker 自己的 Agents SDK 对话记忆，不作为公共情报源。
+
 ## 配置唯一数据源
 
 - `config/models.json`：Provider、支持的兼容协议、自动发现的模型、Base URL 和密钥。
@@ -78,7 +81,9 @@ sudo chmod -R u+rwX,go-rwx /opt/TGA-TeamGipsyAgent/tga3/config
 - 应急响应 / 取证：TShark、EWF tools、Foremost、Plaso（Kali 命令名为 `plaso-log2timeline`）、YARA、Volatility 3 和 oletools。
 - 密码 / Misc：PyCryptodome、SymPy、Z3、Steghide、Stegseek、ZBar、PNGCheck、ImageMagick、FFmpeg 和 SoX。
 
-这些 Python 库安装在 Worker 实际使用的 `/opt/tga3-venv`，不是只放进系统 Python。容器默认增加 `SYS_PTRACE` 供本任务空间内的二进制动态调试使用，但不增加 `SYS_ADMIN` 或宿主设备访问权限；磁盘镜像优先使用用户态取证工具处理。
+这些 Python 库安装在 Worker 实际使用的 `/opt/tga3-venv`，不是只放进系统 Python。两个 Worker 均以固定的
+`1000:1000` 非 root 身份运行，宿主任务 workspace 与 artifact 目录按同一 UID/GID 创建为 `0770`。容器默认增加
+`SYS_PTRACE` 供本任务空间内的二进制动态调试使用，但不增加 `SYS_ADMIN` 或宿主设备访问权限；磁盘镜像优先使用用户态取证工具处理。
 
 镜像构建默认直接使用 Kali HTTPS CDN，并为 APT 启用重试。官方最小容器尚无 CA bundle，Dockerfile 会先仅引导安装经过 Kali 仓库签名验证的 `ca-certificates`，之后所有软件包恢复正常 HTTPS 证书验证。构建脚本默认使用宿主网络，避免虚拟机代理或 Fake-IP DNS 只在宿主可用、Docker bridge 不可用的问题。需要切换镜像或网络时无需编辑 Dockerfile：
 

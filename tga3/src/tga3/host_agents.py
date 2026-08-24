@@ -6,7 +6,7 @@ import asyncio
 import hashlib
 import json
 from collections.abc import Awaitable, Callable
-from typing import Protocol
+from typing import Any, Protocol
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -49,6 +49,35 @@ class OpenAIHostModel:
             return OpenAIChatCompletionsModel(model=binding.model.name, openai_client=client)
         return OpenAIResponsesModel(model=binding.model.name, openai_client=client)
 
+    @staticmethod
+    def _supervisor_instructions(binding: ResolvedAgent) -> str:
+        if binding.protocol != "openai_chat_completions":
+            return binding.system_prompt
+        schema = json.dumps(SupervisorDecision.model_json_schema(), ensure_ascii=False, separators=(",", ":"))
+        return (
+            f"{binding.system_prompt}\n\n"
+            "你的最终回复必须是一个 JSON 对象，不要使用 Markdown 代码块，也不要添加 JSON 之外的文字。"
+            f"JSON 必须严格符合这个 schema：{schema}"
+        )
+
+    @staticmethod
+    def _parse_supervisor_decision(value: Any) -> SupervisorDecision:
+        if isinstance(value, SupervisorDecision):
+            return value
+        if isinstance(value, dict):
+            return SupervisorDecision.model_validate(value)
+        text = str(value or "").strip()
+        decoder = json.JSONDecoder()
+        for index, character in enumerate(text):
+            if character != "{":
+                continue
+            try:
+                payload, _ = decoder.raw_decode(text[index:])
+            except json.JSONDecodeError:
+                continue
+            return SupervisorDecision.model_validate(payload)
+        raise ValueError("Supervisor did not return a valid JSON decision")
+
     async def supervisor(self, snapshot: str, binding: ResolvedAgent | None = None) -> SupervisorDecision:
         from agents import Agent, Runner, function_tool, set_tracing_disabled
 
@@ -65,15 +94,19 @@ class OpenAIHostModel:
             """Read one selected skill completely."""
             return self.skills.read(name)
 
+        agent_kwargs: dict[str, Any] = {
+            "name": binding.display_name,
+            "model": self._model(binding),
+            "tools": [skills_list, skill_read],
+            "instructions": self._supervisor_instructions(binding),
+        }
+        if binding.protocol != "openai_chat_completions":
+            agent_kwargs["output_type"] = SupervisorDecision
         agent = Agent(
-            name=binding.display_name,
-            model=self._model(binding),
-            output_type=SupervisorDecision,
-            tools=[skills_list, skill_read],
-            instructions=binding.system_prompt,
+            **agent_kwargs,
         )
         result = await Runner.run(agent, snapshot, max_turns=binding.max_turns_per_cycle)
-        return SupervisorDecision.model_validate(result.final_output)
+        return self._parse_supervisor_decision(result.final_output)
 
     async def report(self, snapshot: str, binding: ResolvedAgent | None = None) -> str:
         from agents import Agent, Runner, function_tool, set_tracing_disabled

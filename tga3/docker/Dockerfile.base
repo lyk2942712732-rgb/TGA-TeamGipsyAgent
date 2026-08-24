@@ -85,4 +85,11 @@ RUN python3 -m venv /opt/tga3-venv \
     && /opt/tga3-venv/bin/pip install --no-cache-dir --upgrade pip setuptools wheel \
     && /opt/tga3-venv/bin/pip install --no-cache-dir -r /opt/tga3/ctf-python-requirements.txt
 
+ARG TGA3_WORKER_UID=1000
+ARG TGA3_WORKER_GID=1000
+RUN groupadd --gid "${TGA3_WORKER_GID}" tga3 \
+    && useradd --uid "${TGA3_WORKER_UID}" --gid "${TGA3_WORKER_GID}" --create-home --shell /bin/bash tga3 \
+    && install -d -o "${TGA3_WORKER_UID}" -g "${TGA3_WORKER_GID}" /workspace /artifacts /home/tga3/.cache
+
+ENV HOME=/home/tga3
 WORKDIR /workspace
