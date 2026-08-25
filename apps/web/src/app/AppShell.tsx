@@ -1,8 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
-import { Bell, ChevronDown, ChevronLeft, ChevronRight, CirclePlay, CircleHelp, Menu, Shield } from "lucide-react";
+import { ChevronLeft, ChevronRight, CirclePlay, Menu, Shield } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
-import { attentionApi } from "../api/tga3-attention";
 import { listTasks } from "../api/tga3-tasks";
 import { NAVIGATION_GROUPS, isNavigationItemActive } from "./navigation";
 import { isRuntimePage, type AppRoute } from "./router";
@@ -13,9 +12,7 @@ export function AppShell({ route, children }: { route: AppRoute; children: React
   const [mobileOpen, setMobileOpen] = useState(false);
 
   const tasks = useQuery({ queryKey: ["tga3", "tasks"], queryFn: listTasks });
-  const attention = useQuery({ queryKey: ["tga3", "attention"], queryFn: attentionApi.list });
   const running = (tasks.data ?? []).filter((task) => ["starting", "running", "finalizing", "reporting"].includes(task.state)).slice(0, 3);
-  const pending = attention.data?.length ?? 0;
 
   const go = (path: string) => {
     setMobileOpen(false);
@@ -77,26 +74,7 @@ export function AppShell({ route, children }: { route: AppRoute; children: React
     {mobileOpen ? <button className="app-sidebar-backdrop" aria-label="关闭导航" onClick={() => setMobileOpen(false)} /> : null}
 
     <div className="app-content">
-      <header className="app-topbar">
-        <button className="app-mobile-menu" aria-label="打开导航" onClick={() => setMobileOpen(true)}><Menu size={19} /></button>
-        <div className="app-topbar-actions">
-          <span className="topbar-status" title="当前是否有运行中的任务">
-            <i className={running.length ? "running-dot" : "idle-dot"} aria-hidden="true" />
-            {running.length ? "运行中" : "空闲"}
-            <ChevronDown size={14} aria-hidden="true" />
-          </span>
-          <button className="topbar-icon topbar-bell" aria-label={`通知，${pending} 条待处理`} title="审批中心" onClick={() => go("/approvals")}>
-            <Bell size={18} />
-            {pending > 0 ? <b className="topbar-badge">{pending}</b> : null}
-          </button>
-          <button className="topbar-icon" aria-label="帮助" title="帮助" disabled><CircleHelp size={18} /></button>
-          <button className="topbar-user" aria-label="用户菜单" title="本地控制台，暂无登录体系">
-            <span className="topbar-avatar" aria-hidden="true">A</span>
-            <b>Admin</b>
-            <ChevronDown size={14} aria-hidden="true" />
-          </button>
-        </div>
-      </header>
+      <button className="app-mobile-menu" aria-label="打开导航" onClick={() => setMobileOpen(true)}><Menu size={19} /></button>
       <main className={`app-main app-page ${isRuntimePage(route.page) ? "runtime-main" : ""}`}>
         {children}
       </main>

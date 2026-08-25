@@ -29,16 +29,18 @@ export function TGA3RuntimeGraph({ snapshot }: { snapshot: TGA3RuntimeSnapshot }
     if (!canvas) return;
     const measure = () => {
       const canvasRect = canvas.getBoundingClientRect();
+      const scaleX = canvas.offsetWidth ? canvasRect.width / canvas.offsetWidth : 1;
+      const scaleY = canvas.offsetHeight ? canvasRect.height / canvas.offsetHeight : 1;
       const next: Record<string, NodeBox> = {};
       canvas.querySelectorAll<HTMLElement>("[data-graph-node]").forEach((element) => {
         const rect = element.getBoundingClientRect();
         const id = element.dataset.graphNode;
         if (!id) return;
         next[id] = {
-          x: (rect.left - canvasRect.left + rect.width / 2) / zoom,
-          y: (rect.top - canvasRect.top + rect.height / 2) / zoom,
-          width: rect.width / zoom,
-          height: rect.height / zoom,
+          x: (rect.left - canvasRect.left + rect.width / 2) / scaleX,
+          y: (rect.top - canvasRect.top + rect.height / 2) / scaleY,
+          width: rect.width / scaleX,
+          height: rect.height / scaleY,
         };
       });
       setBoxes(next);
@@ -49,7 +51,7 @@ export function TGA3RuntimeGraph({ snapshot }: { snapshot: TGA3RuntimeSnapshot }
     observer.observe(canvas);
     canvas.querySelectorAll<HTMLElement>("[data-graph-node]").forEach((node) => observer.observe(node));
     return () => observer.disconnect();
-  }, [agents, zoom]);
+  }, [agents]);
 
   const staticEdges: Array<[string, string, "shared" | "model"]> = [
     ["user", "blackboard", "shared"],

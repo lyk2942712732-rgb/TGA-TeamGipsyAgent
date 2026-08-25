@@ -918,7 +918,7 @@
 @media (max-width: 900px) {
   .tga3-runtime-page {
     height: auto;
-    min-height: calc(100vh - 52px);
+    min-height: 100vh;
     overflow: visible;
   }
   .tga3-runtime-layout {
@@ -1670,10 +1670,10 @@
   z-index: 2;
   display: flex;
   align-items: center;
-  gap: clamp(6px, 0.8vw, 10px);
+  gap: clamp(5px, 0.7vw, 9px);
   min-width: 0;
-  min-height: 58px;
-  padding: clamp(7px, 0.8vw, 11px);
+  min-height: 50px;
+  padding: clamp(5px, 0.65vw, 9px);
   border: 1px solid #c7d5e6;
   border-radius: 11px;
   background: rgba(255, 255, 255, 0.96);
@@ -1687,8 +1687,8 @@
   display: grid;
   place-items: center;
   flex: 0 0 auto;
-  width: clamp(28px, 3vw, 38px);
-  height: clamp(28px, 3vw, 38px);
+  width: clamp(24px, 2.6vw, 34px);
+  height: clamp(24px, 2.6vw, 34px);
   color: #2563eb;
   border-radius: 12px;
   background: #eaf2ff;
@@ -1726,19 +1726,19 @@
 .tga3-graph-node.user {
   top: 3%;
   left: 50%;
-  width: clamp(118px, 20%, 210px);
+  width: clamp(100px, 17%, 180px);
   transform: translateX(-50%);
 }
 .tga3-graph-node.skills {
   bottom: 3%;
   left: 50%;
-  width: clamp(110px, 18%, 190px);
+  width: clamp(96px, 15%, 160px);
   transform: translateX(-50%);
 }
 .tga3-graph-node.blackboard {
   top: 50%;
   left: 50%;
-  width: clamp(132px, 23%, 235px);
+  width: clamp(112px, 19%, 195px);
   transform: translate(-50%, -50%);
 }
 .tga3-graph-node.skills > span {
@@ -1760,25 +1760,25 @@
   display: grid;
   grid-template-columns: 1fr 1fr;
   align-items: center;
-  gap: clamp(8px, 1.3vw, 18px);
-  width: 39%;
+  gap: clamp(9px, 1.5vw, 20px);
+  width: 36.5%;
   min-width: 0;
   pointer-events: auto;
 }
 .tga3-graph-lane:nth-child(1) {
   top: 22%;
-  left: 2%;
+  left: 1.5%;
 }
 .tga3-graph-lane:nth-child(2) {
   top: 22%;
-  right: 2%;
+  right: 1.5%;
 }
 .tga3-graph-lane:nth-child(3) {
   bottom: 22%;
-  left: 2%;
+  left: 1.5%;
 }
 .tga3-graph-lane:nth-child(4) {
-  right: 2%;
+  right: 1.5%;
   bottom: 22%;
 }
 .tga3-graph-lane:nth-child(even) .model {
@@ -1791,7 +1791,20 @@
 .tga3-graph-lane .tga3-graph-node {
   position: relative;
   width: 100%;
-  min-height: 62px;
+  max-width: 125px;
+  min-height: 54px;
+}
+.tga3-graph-lane .model {
+  justify-self: start;
+}
+.tga3-graph-lane .agent {
+  justify-self: end;
+}
+.tga3-graph-lane:nth-child(even) .model {
+  justify-self: end;
+}
+.tga3-graph-lane:nth-child(even) .agent {
+  justify-self: start;
 }
 .tga3-graph-node.model {
   border-color: #fdba74;
@@ -1878,7 +1891,7 @@
 .tga3-graph-activity {
   position: absolute;
   z-index: 6;
-  max-width: min(240px, 30%);
+  max-width: min(120px, 22%);
   padding: 6px 9px;
   color: #fff;
   border: 2px solid rgba(255, 255, 255, 0.9);
@@ -1897,6 +1910,7 @@
   transform: translate(-50%, -50%);
 }
 .tga3-graph-activity.action {
+  max-width: min(220px, 28%);
   background: #172554;
   box-shadow: 0 10px 24px rgba(23, 37, 84, 0.32);
   transform: translateY(-50%);

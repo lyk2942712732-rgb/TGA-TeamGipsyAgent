@@ -205,87 +205,17 @@ pre {
 }
 .app-content {
   min-width: 0;
-}
-.app-topbar {
-  position: sticky;
-  top: 0;
-  z-index: 15;
-  display: flex;
-  align-items: center;
-  gap: 18px;
-  height: 52px;
-  padding: 0 24px;
-  border-bottom: 1px solid var(--c-border);
-  background: rgba(255, 255, 255, 0.94);
-  backdrop-filter: blur(12px);
+  min-height: 100vh;
 }
 .app-mobile-menu {
   display: none;
-}
-.app-topbar-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-left: auto;
-}
-.topbar-status,
-.topbar-user {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-}
-.topbar-status {
-  color: var(--c-text-muted);
-  font-size: 13px;
-}
-.topbar-icon,
-.topbar-user {
-  min-height: 38px;
-  color: var(--c-text);
-  border: 1px solid transparent;
-  border-radius: 9px;
-  background: transparent;
-}
-.topbar-icon {
-  position: relative;
-  display: grid;
-  place-items: center;
-  width: 38px;
-}
-.topbar-icon:hover,
-.topbar-user:hover {
-  border-color: var(--c-border);
-  background: var(--c-surface-muted);
-}
-.topbar-user {
-  padding: 0 8px;
-}
-.topbar-avatar {
-  display: grid;
-  place-items: center;
-  width: 30px;
-  height: 30px;
-  color: #fff;
-  border-radius: 50%;
-  background: var(--c-accent);
-}
-.topbar-badge {
-  position: absolute;
-  top: -3px;
-  right: -3px;
-  min-width: 18px;
-  padding: 2px 4px;
-  color: #fff;
-  border-radius: 99px;
-  background: var(--c-danger);
-  font-size: 10px;
 }
 .app-main {
   min-width: 0;
   padding: 28px;
 }
 .runtime-main {
-  height: calc(100vh - 52px);
+  height: 100vh;
   padding: 0;
   overflow: hidden;
 }
@@ -544,6 +474,10 @@ label {
     background: rgba(15, 23, 42, 0.4);
   }
   .app-mobile-menu {
+    position: fixed;
+    z-index: 21;
+    bottom: 14px;
+    left: 14px;
     display: grid;
     place-items: center;
     width: 38px;
@@ -551,37 +485,15 @@ label {
     border: 1px solid var(--c-border);
     border-radius: 8px;
     background: #fff;
-  }
-  .app-topbar {
-    padding: 0 14px;
-  }
-  .topbar-status,
-  .topbar-user b,
-  .topbar-user > svg {
-    display: none;
+    box-shadow: 0 8px 22px rgba(15, 23, 42, 0.2);
   }
   .app-main {
     padding: 18px 14px;
   }
   .runtime-main {
     height: auto;
-    min-height: calc(100vh - 52px);
+    min-height: 100vh;
     padding: 0;
     overflow: visible;
-  }
-}
-
-@media (max-width: 520px) {
-  .app-topbar {
-    gap: 8px;
-    padding: 0 10px;
-  }
-  .topbar-user,
-  .topbar-icon:not(.topbar-bell) {
-    display: none;
-  }
-  .app-topbar-actions {
-    flex: 0 0 auto;
-    gap: 4px;
   }
 }
