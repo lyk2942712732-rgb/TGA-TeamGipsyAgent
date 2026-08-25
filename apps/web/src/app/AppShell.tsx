@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { Bell, ChevronDown, ChevronLeft, ChevronRight, CirclePlay, CircleHelp, Menu, Search, Shield } from "lucide-react";
+import { Bell, ChevronDown, ChevronLeft, ChevronRight, CirclePlay, CircleHelp, Menu, Shield } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import { attentionApi } from "../api/tga3-attention";
@@ -79,11 +79,6 @@ export function AppShell({ route, children }: { route: AppRoute; children: React
     <div className="app-content">
       <header className="app-topbar">
         <button className="app-mobile-menu" aria-label="打开导航" onClick={() => setMobileOpen(true)}><Menu size={19} /></button>
-        <label className="global-search" title="全局搜索">
-          <Search size={16} aria-hidden="true" />
-          <input aria-label="全局搜索" placeholder="全局搜索（Ctrl+K）" disabled />
-          <kbd>Ctrl K</kbd>
-        </label>
         <div className="app-topbar-actions">
           <span className="topbar-status" title="当前是否有运行中的任务">
             <i className={running.length ? "running-dot" : "idle-dot"} aria-hidden="true" />

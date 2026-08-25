@@ -89,6 +89,11 @@ describe("TaskRuntimePage", () => {
     expect(within(graph).getAllByText("gpt")).toHaveLength(2);
     expect(within(graph).queryByText("大模型")).not.toBeInTheDocument();
     expect(within(graph).queryByText(/读取 Skill/)).not.toBeInTheDocument();
+    expect(within(graph).getByRole("button", { name: "缩小运行图" })).toBeInTheDocument();
+    fireEvent.click(within(graph).getByRole("button", { name: "放大运行图" }));
+    expect(within(graph).getByRole("button", { name: "还原运行图" })).toHaveTextContent("125%");
+    fireEvent.click(within(graph).getByRole("button", { name: "还原运行图" }));
+    expect(within(graph).getByRole("button", { name: "还原运行图" })).toHaveTextContent("100%");
 
     useTGA3Runtime.mockReturnValue({
       snapshot: {
@@ -126,7 +131,7 @@ describe("TaskRuntimePage", () => {
     view.rerender(<MemoryRouter initialEntries={["/tasks/task/runtime?tab=runtime"]}><TaskRuntimePage taskId="task" /></MemoryRouter>);
     const updatedGraph = screen.getByRole("region", { name: "实时运行图" });
     expect(within(updatedGraph).queryByText("OpenAI Worker 读取 Skill")).not.toBeInTheDocument();
-    expect(within(updatedGraph).getByText("OpenAI Worker id; pwd")).toBeInTheDocument();
+    expect(within(updatedGraph).getByText("OpenAI Worker 执行 id; pwd")).toBeInTheDocument();
 
     useTGA3Runtime.mockReturnValue({
       snapshot: {
@@ -143,10 +148,34 @@ describe("TaskRuntimePage", () => {
     });
     view.rerender(<MemoryRouter initialEntries={["/tasks/task/runtime?tab=runtime"]}><TaskRuntimePage taskId="task" /></MemoryRouter>);
     const concurrentGraph = screen.getByRole("region", { name: "实时运行图" });
-    expect(within(concurrentGraph).getByText("OpenAI Worker id; pwd")).toBeInTheDocument();
+    expect(within(concurrentGraph).getByText("OpenAI Worker 执行 id; pwd")).toBeInTheDocument();
     expect(within(concurrentGraph).getByText("Supervisor review findings")).toBeInTheDocument();
     view.rerender(<MemoryRouter initialEntries={["/tasks/task/runtime?tab=runtime"]}><TaskRuntimePage taskId="task" /></MemoryRouter>);
-    expect(within(screen.getByRole("region", { name: "实时运行图" })).getByText("OpenAI Worker id; pwd")).toBeInTheDocument();
+    expect(within(screen.getByRole("region", { name: "实时运行图" })).getByText("OpenAI Worker 执行 id; pwd")).toBeInTheDocument();
     expect(within(screen.getByRole("region", { name: "实时运行图" })).getByText("Supervisor review findings")).toBeInTheDocument();
+  });
+
+  it("shows and truncates the concrete shell command from the action payload", () => {
+    const command = "curl -sS https://target.example/api/v1/debug?token=temporary-token-value --header 'Accept: application/json'";
+    useTGA3Runtime.mockReturnValue({
+      snapshot: {
+        ...snapshot,
+        dialogue: [...snapshot.dialogue, {
+          id: "long-shell-action",
+          seq: 3,
+          channel_agent_id: "worker-openai",
+          actor: { agent_id: "worker-openai", display_name: "OpenAI Worker", role: "worker" },
+          kind: "action_started",
+          text: "shell_exec",
+          payload: { tool: "shell_exec", input: { command } },
+          created_at: "2026-01-01T00:01:10Z",
+        }],
+      },
+      connection: "live",
+      error: null,
+      refresh: vi.fn(),
+    });
+    render(<MemoryRouter initialEntries={["/tasks/task/runtime?tab=runtime"]}><TaskRuntimePage taskId="task" /></MemoryRouter>);
+    expect(within(screen.getByRole("region", { name: "实时运行图" })).getByText("OpenAI Worker 执行 curl -sS https://target.example/api/v1/debug?token=tempora…")).toBeInTheDocument();
   });
 });

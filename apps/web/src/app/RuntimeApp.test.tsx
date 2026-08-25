@@ -39,6 +39,7 @@ describe("RuntimeApp TGA3 shell", () => {
     expect(navigation.querySelectorAll("button")).toHaveLength(9);
     expect(screen.getByText("reports")).toBeInTheDocument();
     expect(await screen.findByRole("button", { name: "任务" })).toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "全局搜索" })).not.toBeInTheDocument();
   });
 
   it("navigates to a current configuration page", async () => {
