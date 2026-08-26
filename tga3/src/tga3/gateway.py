@@ -120,5 +120,20 @@ class AgentGateway:
             return_exceptions=True,
         )
 
+    async def disconnect_task(self, task_id: UUID) -> None:
+        """Detach a task before its persistent state is deleted."""
+        async with self._lock:
+            connections = [
+                connection
+                for (candidate, _), connection in tuple(self.connections.items())
+                if candidate == task_id
+            ]
+            for connection in connections:
+                self.connections.pop((connection.task_id, connection.agent_id), None)
+        await asyncio.gather(
+            *(connection.socket.close(code=1001) for connection in connections),
+            return_exceptions=True,
+        )
+
 
 __all__ = ["AgentGateway"]

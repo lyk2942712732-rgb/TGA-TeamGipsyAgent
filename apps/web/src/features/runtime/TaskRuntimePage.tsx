@@ -2,6 +2,8 @@ import { CircleStop, MessageSquareText, ShieldQuestion } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { tga3RuntimeApi } from "../../api/tga3-runtime-control";
+import { deleteTask } from "../../api/tga3-tasks";
+import { ConfirmDialog } from "../../components/ui/ConfirmDialog";
 import { TGA3AgentInspector } from "./components/TGA3AgentInspector";
 import { TGA3AgentRail } from "./components/TGA3AgentRail";
 import { TGA3TaskHeader } from "./components/TGA3TaskHeader";
@@ -20,6 +22,7 @@ export function TaskRuntimePage({ taskId }: { taskId: string }) {
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(params.get("agent"));
   const [drawer, setDrawer] = useState<"agents" | "inspector" | null>(null);
   const [conversationNonce, setConversationNonce] = useState(0); const [busy, setBusy] = useState(false); const [notice, setNotice] = useState<string | null>(null);
+  const [remove, setRemove] = useState(false);
 
   useEffect(() => {
     if (!snapshot?.agents.length) return;
@@ -43,10 +46,11 @@ export function TaskRuntimePage({ taskId }: { taskId: string }) {
   const question = latestPendingQuestion(current.dialogue, current.task.state);
   const terminal = ["completed", "failed", "cancelled", "stopped"].includes(current.task.state);
   async function stop() { if (busy) return; setBusy(true); setNotice(null); try { await tga3RuntimeApi.stopTask(taskId); setNotice("停止请求已提交。"); refresh(); } catch (reason) { setNotice(reason instanceof Error ? reason.message : "停止任务失败"); } finally { setBusy(false); } }
+  async function confirmDelete() { if (busy) return; setBusy(true); setNotice(null); try { await deleteTask(taskId); navigate("/tasks", { replace: true }); } catch (reason) { setNotice(reason instanceof Error ? reason.message : "删除任务失败"); setBusy(false); setRemove(false); } }
   function openConversation() { if (!selectedAgentId) setSelectedAgentId(current.agents.find((agent) => agent.role === "supervisor")?.agent_id ?? current.agents[0]?.agent_id ?? null); setConversationNonce((value) => value + 1); setDrawer("inspector"); }
 
   return <section className="task-runtime-page tga3-runtime-page">
-    <TGA3TaskHeader snapshot={snapshot} connection={connection} busy={busy} onRefresh={refresh} onStop={() => void stop()} />
+    <TGA3TaskHeader snapshot={snapshot} connection={connection} busy={busy} onRefresh={refresh} onStop={() => void stop()} onDelete={() => setRemove(true)} />
     {error ? <div className="runtime-sync-error" role="alert">实时同步暂时中断：{error}<button onClick={refresh}>重试</button></div> : null}
     {notice ? <div className="runtime-sync-notice" role="status">{notice}<button onClick={() => setNotice(null)}>关闭</button></div> : null}
     <div className="runtime-mobile-switches"><button aria-expanded={drawer === "agents"} onClick={() => setDrawer(drawer === "agents" ? null : "agents")}>Agent</button><button aria-expanded={drawer === "inspector"} onClick={() => setDrawer(drawer === "inspector" ? null : "inspector")}>Agent 面板</button></div>
@@ -60,5 +64,6 @@ export function TaskRuntimePage({ taskId }: { taskId: string }) {
       <button type="button" className={question ? "needs-attention" : ""} onClick={() => navigate(`/approvals?task_id=${encodeURIComponent(taskId)}`)}><ShieldQuestion size={16} />{question ? "处理待回答问题" : "Q&A 中心"}</button>
       {!terminal ? <button type="button" className="danger" disabled={busy} onClick={() => void stop()}><CircleStop size={16} />停止任务</button> : null}
     </footer>
+    <ConfirmDialog open={remove} title={`删除任务 ${current.task.title}`} description="将停止仍在运行的 Agent，并永久删除该任务的数据库记录、工作区、输入、产物和报告。" confirmLabel="彻底删除" danger busy={busy} onCancel={() => setRemove(false)} onConfirm={() => void confirmDelete()} />
   </section>;
 }

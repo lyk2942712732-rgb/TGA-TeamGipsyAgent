@@ -85,14 +85,14 @@ class OpenAIHostModel:
         binding = binding or self.config.resolve_agent("supervisor")
 
         @function_tool
-        def skills_list() -> list[dict[str, str]]:
-            """List role-neutral skills available by name."""
+        def skills_list() -> list[dict[str, Any]]:
+            """List role-neutral skill packages by name and summary."""
             return [item.__dict__ for item in self.skills.list()]
 
         @function_tool
-        def skill_read(name: str) -> str:
-            """Read one selected skill completely."""
-            return self.skills.read(name)
+        def skill_read(name: str, path: str = "SKILL.md") -> str:
+            """Read one package document. Start with SKILL.md and load referenced Markdown only as needed."""
+            return self.skills.read(name, path)
 
         agent_kwargs: dict[str, Any] = {
             "name": binding.display_name,
@@ -115,14 +115,14 @@ class OpenAIHostModel:
         binding = binding or self.config.resolve_agent("reporter")
 
         @function_tool
-        def skills_list() -> list[dict[str, str]]:
-            """List role-neutral skills available by name, including writeup guidance."""
+        def skills_list() -> list[dict[str, Any]]:
+            """List role-neutral skill packages by name, including writeup guidance."""
             return [item.__dict__ for item in self.skills.list()]
 
         @function_tool
-        def skill_read(name: str) -> str:
-            """Read one selected reporting skill completely."""
-            return self.skills.read(name)
+        def skill_read(name: str, path: str = "SKILL.md") -> str:
+            """Read one package document. Start with SKILL.md and load referenced Markdown only as needed."""
+            return self.skills.read(name, path)
 
         agent = Agent(
             name=binding.display_name,
@@ -180,6 +180,19 @@ class Automation:
         if old and not old.done():
             old.cancel()
         self._supervisor_jobs[task_id] = asyncio.create_task(self._advise(task_id, latest_seq))
+
+    async def cancel(self, task_id: UUID) -> None:
+        jobs = [
+            job
+            for job in (self._supervisor_jobs.pop(task_id, None), self._reporter_jobs.pop(task_id, None))
+            if job is not None and not job.done()
+        ]
+        for job in jobs:
+            job.cancel()
+        if jobs:
+            await asyncio.gather(*jobs, return_exceptions=True)
+        self._last_supervisor_seq.pop(task_id, None)
+        self._last_supervisor_at.pop(task_id, None)
 
     async def _advise(self, task_id: UUID, trigger_seq: int) -> None:
         await asyncio.sleep(self.config.runtime.cadence.supervisor_debounce_seconds)

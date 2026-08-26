@@ -1,10 +1,10 @@
-import { Download, RefreshCw, Square } from "lucide-react";
+import { Download, RefreshCw, Square, Trash2 } from "lucide-react";
 import { tga3RuntimeApi } from "../../../api/tga3-runtime-control";
 import type { TGA3RuntimeSnapshot } from "../../../runtime/tga3-runtime";
 import type { TGA3Connection } from "../use-tga3-runtime";
 import { formatTime, stateLabel, stateTone } from "../tga3-view";
 
-export function TGA3TaskHeader({ snapshot, connection, busy, onRefresh, onStop }: { snapshot: TGA3RuntimeSnapshot; connection: TGA3Connection; busy: boolean; onRefresh: () => void; onStop: () => void }) {
+export function TGA3TaskHeader({ snapshot, connection, busy, onRefresh, onStop, onDelete }: { snapshot: TGA3RuntimeSnapshot; connection: TGA3Connection; busy: boolean; onRefresh: () => void; onStop: () => void; onDelete: () => void }) {
   const { task, agents, blackboard } = snapshot;
   const active = agents.filter((agent) => ["starting", "running"].includes(agent.actual_state)).length;
   const findings = blackboard.filter((entry) => entry.kind === "finding").length;
@@ -18,6 +18,7 @@ export function TGA3TaskHeader({ snapshot, connection, busy, onRefresh, onStop }
         <button type="button" className="ref-secondary-button" onClick={onRefresh}><RefreshCw size={15} />刷新</button>
         {task.state === "completed" ? <a className="ref-secondary-button" href={tga3RuntimeApi.reportUrl(task.id)} target="_blank" rel="noreferrer"><Download size={15} />下载报告</a> : null}
         {!terminal ? <button type="button" className="tga3-danger-button" disabled={busy} onClick={onStop}><Square size={14} />停止任务</button> : null}
+        <button type="button" className="ref-secondary-button tga3-delete-task-button" disabled={busy} onClick={onDelete}><Trash2 size={14} />删除任务</button>
       </div>
     </div>
     <div className="tga3-task-facts">

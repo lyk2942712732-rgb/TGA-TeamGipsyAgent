@@ -5,6 +5,7 @@ import { stateLabel, stateTone } from "../tga3-view";
 
 type NodeBox = { x: number; y: number; width: number; height: number };
 type Activity = { id: string; owner: string; from: string; to?: string; label: string; at: number };
+type ActivityPlacement = { x: number; y: number; align: "left" | "center" | "right" };
 type DragState = { pointerId: number; x: number; y: number; panX: number; panY: number };
 
 const MIN_ZOOM = 0.75;
@@ -129,8 +130,8 @@ export function TGA3RuntimeGraph({ snapshot }: { snapshot: TGA3RuntimeSnapshot }
         </div>
 
         {activities.map((activity) => {
-          const position = activityPosition(activity, boxes);
-          return position ? <span key={activity.id} aria-live="polite" className={`tga3-graph-activity ${activity.to ? "interaction" : "action"}`} style={{ left: position.x, top: position.y } as CSSProperties}>{activity.label}</span> : null;
+          const position = activityPosition(activity, boxes, canvasSize);
+          return position ? <span key={activity.id} aria-live="polite" data-align={position.align} className={`tga3-graph-activity ${activity.to ? "interaction" : "action"}`} style={{ left: position.x, top: position.y } as CSSProperties}>{activity.label}</span> : null;
         })}
         {!activities.length ? <small className="tga3-runtime-graph-idle">{terminal ? "本次运行交互已完成" : "等待新的动作与交互"}</small> : null}
       </div>
@@ -201,11 +202,49 @@ function shellCommand(message: TGA3DialogueMessage): string {
 
 function isShellTool(tool: string): boolean { return /(^|[_.:-])(bash|shell|shell_exec|execute_command|exec_command)([_.:-]|$)/i.test(tool); }
 
-function activityPosition(activity: Activity, boxes: Record<string, NodeBox>): { x: number; y: number } | null {
+function activityPosition(activity: Activity, boxes: Record<string, NodeBox>, canvas: { width: number; height: number }): ActivityPlacement | null {
   const from = boxes[activity.from];
   if (!from) return null;
-  if (!activity.to || !boxes[activity.to]) return { x: from.x + from.width / 2 + 12, y: from.y };
-  return activityRoute(activity, boxes)?.label ?? null;
+  const size = activityTextSize(activity.label);
+  if (!activity.to || !boxes[activity.to]) {
+    const candidates: ActivityPlacement[] = [
+      { x: from.x + from.width / 2 + 10, y: from.y, align: "left" },
+      { x: from.x - from.width / 2 - 10, y: from.y, align: "right" },
+      { x: from.x, y: from.y - from.height / 2 - 13, align: "center" },
+      { x: from.x, y: from.y + from.height / 2 + 13, align: "center" },
+    ];
+    return candidates.find((candidate) => placementFits(candidate, size, boxes, canvas)) ?? candidates[0];
+  }
+  const route = activityRoute(activity, boxes);
+  if (!route) return null;
+  const target = boxes[activity.to];
+  const dx = target.x - from.x;
+  const dy = target.y - from.y;
+  const length = Math.hypot(dx, dy) || 1;
+  const normal = { x: -dy / length, y: dx / length };
+  const candidates = [0, 14, -14, 26, -26].map((offset): ActivityPlacement => ({
+    x: route.label.x + normal.x * offset,
+    y: route.label.y + normal.y * offset,
+    align: "center",
+  }));
+  return candidates.find((candidate) => placementFits(candidate, size, boxes, canvas)) ?? candidates[0];
+}
+
+function activityTextSize(label: string): { width: number; height: number } {
+  return { width: Math.min(220, Math.max(62, label.length * 6)), height: 18 };
+}
+
+function placementFits(placement: ActivityPlacement, size: { width: number; height: number }, boxes: Record<string, NodeBox>, canvas: { width: number; height: number }): boolean {
+  const left = placement.align === "left" ? placement.x : placement.align === "right" ? placement.x - size.width : placement.x - size.width / 2;
+  const right = left + size.width;
+  const top = placement.y - size.height / 2;
+  const bottom = top + size.height;
+  if (left < 4 || right > canvas.width - 4 || top < 4 || bottom > canvas.height - 4) return false;
+  return !Object.values(boxes).some((box) => {
+    const margin = 5;
+    return right > box.x - box.width / 2 - margin && left < box.x + box.width / 2 + margin
+      && bottom > box.y - box.height / 2 - margin && top < box.y + box.height / 2 + margin;
+  });
 }
 
 function activityRoute(activity: Activity, boxes: Record<string, NodeBox>): { d: string; label: { x: number; y: number } } | null {

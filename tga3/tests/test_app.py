@@ -119,9 +119,17 @@ def test_frontend_api_uses_safe_catalog_and_page_owned_config_documents(tmp_path
         assert len(client.get("/api/v3/scenes").json()) == 8
         assert client.get("/api/v3/attention").json() == []
         assert client.get("/api/v3/skills").status_code == 200
-        skill = client.put("/api/v3/skills/web", json={"content": "# Web\n\n检查输入边界。"})
-        assert skill.status_code == 200
-        assert client.get("/api/v3/skills/web").json()["content"].startswith("# Web")
+        skill = client.post("/api/v3/skills/web", json={"files": {
+            "SKILL.md": "# Web\n\n按需读取 sql.md。",
+            "sql.md": "# SQL\n\n检查输入边界。",
+        }})
+        assert skill.status_code == 201
+        package = client.get("/api/v3/skills/web").json()
+        assert [item["path"] for item in package["files"]] == ["SKILL.md", "sql.md"]
+        assert next(item for item in client.get("/api/v3/skills").json() if item["name"] == "web")["file_count"] == 2
+        updated = client.put("/api/v3/skills/web", json={"files": {"SKILL.md": "# Web\n\n已更新。"}})
+        assert updated.status_code == 200
+        assert [item["path"] for item in updated.json()["files"]] == ["SKILL.md"]
         assert client.delete("/api/v3/skills/web").status_code == 204
         created = client.post(
             "/api/v3/tasks",
@@ -178,3 +186,5 @@ def test_frontend_api_uses_safe_catalog_and_page_owned_config_documents(tmp_path
         )
         assert answered.status_code == 200
         assert client.get("/api/v3/attention").json() == []
+        assert client.delete(f"/api/v3/tasks/{task_id}").status_code == 204
+        assert client.get(f"/api/v3/tasks/{task_id}").status_code == 404

@@ -71,6 +71,13 @@
   border: 1px solid var(--c-danger-border);
   background: var(--c-danger-soft);
 }
+.tga3-delete-task-button {
+  color: #b91c1c;
+  border-color: #fecaca;
+}
+.tga3-delete-task-button:hover {
+  background: #fff1f2;
+}
 .tga3-task-facts {
   flex-wrap: wrap;
   padding-top: 12px;
@@ -1891,29 +1898,41 @@
 .tga3-graph-activity {
   position: absolute;
   z-index: 6;
-  max-width: min(120px, 22%);
-  padding: 6px 9px;
-  color: #fff;
-  border: 2px solid rgba(255, 255, 255, 0.9);
-  border-radius: 999px;
-  background: #2563eb;
-  box-shadow: 0 10px 24px rgba(37, 99, 235, 0.32);
-  font-size: clamp(8px, 0.7vw, 10px);
-  font-weight: 750;
-  line-height: 1.35;
+  max-width: min(220px, 34%);
+  padding: 0;
+  overflow: hidden;
+  color: #1d4ed8;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  font-size: clamp(8px, 0.72vw, 10px);
+  font-weight: 800;
+  line-height: 18px;
   text-align: center;
+  text-overflow: ellipsis;
+  text-shadow:
+    -1px -1px 0 rgba(255, 255, 255, 0.98),
+    1px -1px 0 rgba(255, 255, 255, 0.98),
+    -1px 1px 0 rgba(255, 255, 255, 0.98),
+    1px 1px 0 rgba(255, 255, 255, 0.98),
+    0 0 6px #fff;
   pointer-events: none;
-  white-space: normal;
+  white-space: nowrap;
   animation: tga3-activity-arrive 0.62s ease both;
 }
-.tga3-graph-activity.interaction {
+.tga3-graph-activity[data-align="center"] {
   transform: translate(-50%, -50%);
 }
-.tga3-graph-activity.action {
-  max-width: min(220px, 28%);
-  background: #172554;
-  box-shadow: 0 10px 24px rgba(23, 37, 84, 0.32);
+.tga3-graph-activity[data-align="left"] {
+  text-align: left;
   transform: translateY(-50%);
+}
+.tga3-graph-activity[data-align="right"] {
+  text-align: right;
+  transform: translate(-100%, -50%);
+}
+.tga3-graph-activity.action {
+  color: #172554;
 }
 .tga3-runtime-graph-idle {
   position: absolute;

@@ -102,14 +102,17 @@ def build_mcp(config: TGA3Config, blackboard: Blackboard, skills: SkillCatalog) 
         return (await blackboard.register_artifact(artifact)).model_dump(mode="json")
 
     @mcp.tool()
-    def skills_list() -> list[dict[str, str]]:
-        """List universal skills by name and short description."""
-        return [{"name": item.name, "description": item.description} for item in skills.list()]
+    def skills_list() -> list[dict[str, Any]]:
+        """List skill packages by name, summary and Markdown document count."""
+        return [
+            {"name": item.name, "description": item.description, "file_count": item.file_count}
+            for item in skills.list()
+        ]
 
     @mcp.tool()
-    def skill_read(name: str) -> str:
-        """Read the complete SKILL.md for a selected skill name."""
-        return skills.read(name)
+    def skill_read(name: str, path: str = "SKILL.md") -> str:
+        """Read one document from a skill package. Start with SKILL.md, then follow its routing guidance."""
+        return skills.read(name, path)
 
     return mcp
 

@@ -36,15 +36,24 @@ def test_json_rpc_shapes():
     assert RpcMessage.success("1", {"accepted": True}).result == {"accepted": True}
 
 
-def test_skills_are_managed_and_read_only_by_name(tmp_path: Path):
+def test_skills_are_managed_as_packages_and_read_on_demand(tmp_path: Path):
     folder = tmp_path / "pwn"
     folder.mkdir()
-    (folder / "SKILL.md").write_text("# Pwn\n\nUse pwntools.", encoding="utf-8")
+    (folder / "SKILL.md").write_text("# Pwn\n\nRead references/heap.md when needed.", encoding="utf-8")
+    references = folder / "references"
+    references.mkdir()
+    (references / "heap.md").write_text("# Heap\n\nUse pwntools.", encoding="utf-8")
     catalog = SkillCatalog(tmp_path)
     assert [item.name for item in catalog.list()] == ["pwn"]
-    assert "pwntools" in catalog.read("pwn")
-    catalog.write("web", "# Web\n\nInspect inputs.")
+    assert catalog.list()[0].file_count == 2
+    assert "pwntools" not in catalog.read("pwn")
+    assert "pwntools" in catalog.read("pwn", "references/heap.md")
+    assert [item.path for item in catalog.package("pwn").files] == ["SKILL.md", "references/heap.md"]
+    catalog.create("web", {"SKILL.md": "# Web\n\nInspect inputs.", "sql.md": "# SQL\n\nTest injection."})
     assert "Inspect inputs" in catalog.read("web")
+    assert "Test injection" in catalog.read("web", "sql.md")
+    catalog.write_package("web", {"SKILL.md": "# Web\n\nUpdated."})
+    assert [item.path for item in catalog.package("web").files] == ["SKILL.md"]
     catalog.delete("web")
     with pytest.raises(NotFoundError):
         catalog.read("web")

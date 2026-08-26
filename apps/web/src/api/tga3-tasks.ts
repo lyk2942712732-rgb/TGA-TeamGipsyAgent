@@ -75,6 +75,10 @@ export async function listTasks(): Promise<TGA3TaskListItem[]> {
   return requestJson<TGA3TaskListItem[]>("/api/v3/tasks");
 }
 
+export async function deleteTask(taskId: string): Promise<void> {
+  return requestJson<void>(`/api/v3/tasks/${encodeURIComponent(taskId)}`, { method: "DELETE" });
+}
+
 export async function listScenes(): Promise<ScenesConfig> {
   return requestJson<ScenesConfig>("/api/v3/config/scenes");
 }

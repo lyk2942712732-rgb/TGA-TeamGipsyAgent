@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import shutil
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
@@ -367,6 +368,28 @@ class TaskCoordinator:
                 actual_state=AgentState.STOPPED,
             )
         await self.storage.update_task(task_id, state=RunState.CANCELLED)
+
+    async def delete_task(self, task_id: UUID) -> None:
+        task = await self.storage.get_task(task_id)
+        terminal = task.state in {RunState.COMPLETED, RunState.FAILED, RunState.CANCELLED}
+        if not terminal:
+            await self.stop_task(task_id)
+        else:
+            workers = await self._worker_runs(task_id)
+            await asyncio.gather(
+                *(self.containers.stop(task_id, run.agent_id) for run in workers),
+                return_exceptions=True,
+            )
+        await self.gateway.disconnect_task(task_id)
+        for raw_root in (
+            self.config.runtime.workspace_root,
+            self.config.runtime.input_root,
+            self.config.runtime.artifact_root,
+            self.config.runtime.writeup_root,
+        ):
+            path = self.config.resolve_path(raw_root) / str(task_id)
+            await asyncio.to_thread(shutil.rmtree, path, True)
+        await self.storage.delete_task(task_id)
 
 
 __all__ = ["TaskCoordinator"]

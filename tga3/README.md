@@ -49,7 +49,7 @@ PostgreSQL 用每任务 advisory transaction lock 分配黑板和对话序号，
 - `config/agents.json`：四个 Agent 的身份、SDK、模型与实际调用协议绑定、轮次和完整系统提示词。
 - `config/scenes.json`：八种任务场景及进入黑板的场景提示词。
 - `config/runtime.json`：Docker 资源、镜像、目录、通信地址、运行节奏、MCP 指令和 Worker 周期提示。
-- `config/skills/<name>/SKILL.md`：不分角色与场景的通用 Skill；Agent 先列名称再按需读取。
+- `config/skills/<name>/`：不分角色与场景的通用 Skill 包；Agent 先列包名，选中后只读 `SKILL.md`，再依据其中的指引按需读取包内其他 Markdown。
 
 生产代码不从环境变量覆盖 Provider、模型、密钥或 Agent 提示词。环境变量只用于把上述已解析配置传给动态 Worker 容器。前端各配置页面通过 `/api/v3/config` 读写自己的 JSON；Skills 页面直接管理 `config/skills`。Models 页面按供应商预设补全模型发现路径，Solver 页面按 Agent SDK 选择实际推理协议；同一供应商可同时为不同 Agent 暴露多种协议。保存时后端先执行完整的跨文件校验，校验失败不会替换现有配置。
 
@@ -116,7 +116,7 @@ docker compose up -d --wait postgres
 - `GET /api/v3/scenes`：返回 `scenes.json` 中的真实场景目录。
 - `GET /api/v3/models`：返回无密钥、无系统提示词的 Agent 默认模型绑定与模型目录。
 - `GET|PUT /api/v3/config`：读取、校验并原子写回完整的 models、agents、scenes 和 runtime 配置。
-- `GET|PUT|DELETE /api/v3/skills/{name}`：直接管理 `config/skills/<name>/SKILL.md`。
+- `GET|POST|PUT|DELETE /api/v3/skills/{name}`：以 `config/skills/<name>/` 目录包为单位管理其中全部 Markdown；Agent 默认先读 `SKILL.md`，再按需读取包内具体文档。
 - `GET /api/v3/tasks`：任务列表。
 - `POST /api/v3/tasks`：multipart 创建任务；字段为 `title`、`scene_id`、`prompt` 和零到多个 `files`，写完初始黑板后启动 Worker。
 - `POST /api/v3/tasks/{id}/files`、`POST /api/v3/tasks/{id}/prompts`：后续多模态文件与提示。

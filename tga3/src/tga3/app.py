@@ -47,9 +47,9 @@ class ModelRequest(BaseModel):
     protocol: ProviderProtocol
 
 
-class SkillRequest(BaseModel):
+class SkillPackageRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    content: str = Field(min_length=1)
+    files: dict[str, str] = Field(min_length=1)
 
 
 def create_app(
@@ -277,6 +277,11 @@ def create_app(
     async def stop_task(task_id: UUID) -> None:
         await coordinator.stop_task(task_id)
 
+    @api.delete("/tasks/{task_id}", status_code=204)
+    async def delete_task(task_id: UUID) -> None:
+        await automation.cancel(task_id)
+        await coordinator.delete_task(task_id)
+
     @api.get("/models")
     async def models() -> dict[str, Any]:
         return {
@@ -445,17 +450,38 @@ def create_app(
         ]
 
     @api.get("/skills")
-    async def skill_index() -> list[dict[str, str]]:
-        return [{"name": item.name, "description": item.description} for item in skills.list()]
+    async def skill_index() -> list[dict[str, Any]]:
+        return [
+            {"name": item.name, "description": item.description, "file_count": item.file_count}
+            for item in skills.list()
+        ]
 
     @api.get("/skills/{name}")
-    async def skill_document(name: str) -> dict[str, str]:
-        return {"name": name, "content": skills.read(name)}
+    async def skill_package(name: str) -> dict[str, Any]:
+        package = skills.package(name)
+        return {
+            "name": package.name,
+            "description": package.description,
+            "files": [item.__dict__ for item in package.files],
+        }
 
     @api.put("/skills/{name}")
-    async def write_skill(name: str, body: SkillRequest) -> dict[str, str]:
-        item = skills.write(name, body.content)
-        return {"name": item.name, "description": item.description, "content": skills.read(name)}
+    async def write_skill(name: str, body: SkillPackageRequest) -> dict[str, Any]:
+        package = skills.write_package(name, body.files)
+        return {
+            "name": package.name,
+            "description": package.description,
+            "files": [item.__dict__ for item in package.files],
+        }
+
+    @api.post("/skills/{name}", status_code=201)
+    async def create_skill(name: str, body: SkillPackageRequest) -> dict[str, Any]:
+        package = skills.create(name, body.files)
+        return {
+            "name": package.name,
+            "description": package.description,
+            "files": [item.__dict__ for item in package.files],
+        }
 
     @api.delete("/skills/{name}", status_code=204)
     async def delete_skill(name: str) -> None:

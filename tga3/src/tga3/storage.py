@@ -36,6 +36,7 @@ class Storage(Protocol):
     async def create_task(self, title: str, scene_id: str, task_id: UUID | None = None) -> TaskRun: ...
     async def get_task(self, task_id: UUID) -> TaskRun: ...
     async def list_tasks(self, *, limit: int = 200) -> list[TaskRun]: ...
+    async def delete_task(self, task_id: UUID) -> None: ...
     async def update_task(
         self, task_id: UUID, *, state: RunState | None = None, final_snapshot_seq: int | None = None
     ) -> TaskRun: ...
@@ -134,6 +135,32 @@ class InMemoryStorage:
 
     async def list_tasks(self, *, limit: int = 200) -> list[TaskRun]:
         return sorted(self.tasks.values(), key=lambda item: item.created_at, reverse=True)[:limit]
+
+    async def delete_task(self, task_id: UUID) -> None:
+        await self.get_task(task_id)
+        agent_keys = [key for key in self.agents if key[0] == task_id]
+        artifact_ids = [item.id for item in self.artifacts.values() if item.task_id == task_id]
+        input_ids = [item.id for item in self.input_files.values() if item.task_id == task_id]
+        question_ids = [item.id for item in self.questions.values() if item.task_id == task_id]
+        writeup_ids = [item.id for item in self.writeups.values() if item.task_id == task_id]
+        finding_ids = [item.id for item in self.entries.get(task_id, [])]
+        for key in agent_keys:
+            self.agents.pop(key, None)
+        for item_id in artifact_ids:
+            self.artifacts.pop(item_id, None)
+        for item_id in input_ids:
+            self.input_files.pop(item_id, None)
+        for item_id in question_ids:
+            self.questions.pop(item_id, None)
+            self.answers.pop(item_id, None)
+        for item_id in writeup_ids:
+            self.writeups.pop(item_id, None)
+        for item_id in finding_ids:
+            self.links.pop(item_id, None)
+        self.entries.pop(task_id, None)
+        self.dialogue.pop(task_id, None)
+        self._locks.pop(task_id, None)
+        self.tasks.pop(task_id, None)
 
     async def update_task(
         self, task_id: UUID, *, state: RunState | None = None, final_snapshot_seq: int | None = None
@@ -415,6 +442,11 @@ class PostgresStorage:
             limit,
         )
         return [_task(row) for row in rows]
+
+    async def delete_task(self, task_id: UUID) -> None:
+        result = await self.pool.execute("DELETE FROM task_runs WHERE id=$1", task_id)
+        if result == "DELETE 0":
+            raise NotFoundError(f"task not found: {task_id}")
 
     async def update_task(
         self, task_id: UUID, *, state: RunState | None = None, final_snapshot_seq: int | None = None
