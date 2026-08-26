@@ -186,7 +186,10 @@ class TaskCoordinator:
             await self.dialogue.announce_status(task_id, self.actor_for(run), AgentState.RUNNING.value)
         elif method == "agent.status":
             state = AgentState(str(params["state"]))
-            run = await self.storage.update_agent(task_id, agent_id, actual_state=state)
+            changes = {"actual_state": state}
+            if state in {AgentState.RUNNING, AgentState.IDLE}:
+                changes["last_error"] = None
+            run = await self.storage.update_agent(task_id, agent_id, **changes)
             await self.dialogue.announce_status(
                 task_id, self.actor_for(run), state.value, str(params.get("detail", ""))
             )

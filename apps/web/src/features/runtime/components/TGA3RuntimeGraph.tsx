@@ -6,12 +6,13 @@ import { stateLabel, stateTone } from "../tga3-view";
 type NodeBox = { x: number; y: number; width: number; height: number };
 type Activity = { id: string; owner: string; from: string; to?: string; label: string; at: number };
 type RuntimeEvent = { id: string; at: number; activity?: Activity; clearOwner?: string };
-type ActivityPlacement = { x: number; y: number; align: "left" | "center" | "right" };
+type ActivityPlacement = { x: number; y: number; align: "left" | "center" | "right"; side: "left" | "right" | "above" | "below" | "route" };
 type DragState = { pointerId: number; x: number; y: number; panX: number; panY: number };
 
 const MIN_ZOOM = 0.75;
 const MAX_ZOOM = 1.75;
 const ZOOM_STEP = 0.25;
+const ACTIVITY_MIN_MS = 200;
 const ACTIVITY_FLASH_MS = 2100;
 
 export function TGA3RuntimeGraph({ snapshot }: { snapshot: TGA3RuntimeSnapshot }) {
@@ -21,6 +22,9 @@ export function TGA3RuntimeGraph({ snapshot }: { snapshot: TGA3RuntimeSnapshot }
   const taskRef = useRef(snapshot.task.id);
   const seenEventIdsRef = useRef(new Set<string>());
   const activityTimersRef = useRef(new Map<string, number>());
+  const activityQueuesRef = useRef(new Map<string, Activity[]>());
+  const activityShownAtRef = useRef(new Map<string, number>());
+  const activitySlotsRef = useRef<Record<string, Activity>>({});
   const [boxes, setBoxes] = useState<Record<string, NodeBox>>({});
   const [canvasSize, setCanvasSize] = useState({ width: 1, height: 1 });
   const [zoom, setZoom] = useState(1);
@@ -34,21 +38,84 @@ export function TGA3RuntimeGraph({ snapshot }: { snapshot: TGA3RuntimeSnapshot }
   );
   const activeNodes = useMemo(() => new Set(activities.flatMap((activity) => [activity.from, activity.to].filter((value): value is string => Boolean(value)))), [activities]);
 
+  function updateActivitySlots(next: Record<string, Activity>) {
+    activitySlotsRef.current = next;
+    setActivitySlots(next);
+  }
+
+  function clearActivityTimer(owner: string) {
+    const timer = activityTimersRef.current.get(owner);
+    if (timer !== undefined) window.clearTimeout(timer);
+    activityTimersRef.current.delete(owner);
+  }
+
+  function removeActivity(owner: string, clearQueue = true) {
+    clearActivityTimer(owner);
+    if (clearQueue) activityQueuesRef.current.delete(owner);
+    activityShownAtRef.current.delete(owner);
+    if (!(owner in activitySlotsRef.current)) return;
+    const next = { ...activitySlotsRef.current };
+    delete next[owner];
+    updateActivitySlots(next);
+  }
+
+  function scheduleActivity(owner: string, delay: number) {
+    clearActivityTimer(owner);
+    const timer = window.setTimeout(() => {
+      activityTimersRef.current.delete(owner);
+      const queue = activityQueuesRef.current.get(owner) ?? [];
+      const next = queue.shift();
+      if (!queue.length) activityQueuesRef.current.delete(owner);
+      if (next) showActivity(next);
+      else removeActivity(owner, false);
+    }, delay);
+    activityTimersRef.current.set(owner, timer);
+  }
+
+  function showActivity(activity: Activity) {
+    clearActivityTimer(activity.owner);
+    updateActivitySlots({ ...activitySlotsRef.current, [activity.owner]: activity });
+    activityShownAtRef.current.set(activity.owner, Date.now());
+    const hasQueued = Boolean(activityQueuesRef.current.get(activity.owner)?.length);
+    scheduleActivity(activity.owner, hasQueued ? ACTIVITY_MIN_MS : ACTIVITY_FLASH_MS);
+  }
+
+  function enqueueActivity(activity: Activity) {
+    const current = activitySlotsRef.current[activity.owner];
+    if (!current) {
+      showActivity(activity);
+      return;
+    }
+    const shownFor = Date.now() - (activityShownAtRef.current.get(activity.owner) ?? 0);
+    const queue = activityQueuesRef.current.get(activity.owner) ?? [];
+    if (shownFor >= ACTIVITY_MIN_MS && !queue.length) {
+      showActivity(activity);
+      return;
+    }
+    queue.push(activity);
+    activityQueuesRef.current.set(activity.owner, queue);
+    scheduleActivity(activity.owner, Math.max(0, ACTIVITY_MIN_MS - shownFor));
+  }
+
+  function clearActivities() {
+    activityTimersRef.current.forEach((timer) => window.clearTimeout(timer));
+    activityTimersRef.current.clear();
+    activityQueuesRef.current.clear();
+    activityShownAtRef.current.clear();
+    updateActivitySlots({});
+  }
+
   useEffect(() => {
     if (taskRef.current !== snapshot.task.id) {
-      activityTimersRef.current.forEach((timer) => window.clearTimeout(timer));
-      activityTimersRef.current.clear();
+      clearActivities();
       seenEventIdsRef.current.clear();
-      setActivitySlots({});
       taskRef.current = snapshot.task.id;
     }
     const events = runtimeEvents(snapshot);
     const firstLoad = seenEventIdsRef.current.size === 0;
     if (terminal) {
       events.forEach((event) => seenEventIdsRef.current.add(event.id));
-      activityTimersRef.current.forEach((timer) => window.clearTimeout(timer));
-      activityTimersRef.current.clear();
-      setActivitySlots({});
+      clearActivities();
       return;
     }
     const now = Date.now();
@@ -57,40 +124,14 @@ export function TGA3RuntimeGraph({ snapshot }: { snapshot: TGA3RuntimeSnapshot }
       seenEventIdsRef.current.add(event.id);
       if (firstLoad && now - event.at > ACTIVITY_FLASH_MS) return;
       if (event.clearOwner) {
-        const timer = activityTimersRef.current.get(event.clearOwner);
-        if (timer !== undefined) window.clearTimeout(timer);
-        activityTimersRef.current.delete(event.clearOwner);
-        setActivitySlots((current) => {
-          if (!(event.clearOwner! in current)) return current;
-          const next = { ...current };
-          delete next[event.clearOwner!];
-          return next;
-        });
+        removeActivity(event.clearOwner);
       }
       if (!event.activity) return;
-      const activity = event.activity;
-      const previousTimer = activityTimersRef.current.get(activity.owner);
-      if (previousTimer !== undefined) window.clearTimeout(previousTimer);
-      setActivitySlots((current) => ({ ...current, [activity.owner]: activity }));
-      const timer = window.setTimeout(() => {
-        setActivitySlots((current) => {
-          if (current[activity.owner]?.id !== activity.id) return current;
-          const next = { ...current };
-          delete next[activity.owner];
-          return next;
-        });
-        if (activityTimersRef.current.get(activity.owner) === timer) {
-          activityTimersRef.current.delete(activity.owner);
-        }
-      }, ACTIVITY_FLASH_MS);
-      activityTimersRef.current.set(activity.owner, timer);
+      enqueueActivity(event.activity);
     });
   }, [snapshot, terminal]);
 
-  useEffect(() => () => {
-    activityTimersRef.current.forEach((timer) => window.clearTimeout(timer));
-    activityTimersRef.current.clear();
-  }, []);
+  useEffect(() => () => clearActivities(), []);
 
   useLayoutEffect(() => {
     const canvas = canvasRef.current;
@@ -198,7 +239,7 @@ export function TGA3RuntimeGraph({ snapshot }: { snapshot: TGA3RuntimeSnapshot }
 
         {activities.map((activity) => {
           const position = activityPosition(activity, boxes, canvasSize);
-          return position ? <span key={activity.id} aria-live="polite" data-align={position.align} className={`tga3-graph-activity ${activity.to ? "interaction" : "action"}`} style={{ left: position.x, top: position.y } as CSSProperties}>{activity.label}</span> : null;
+          return position ? <span key={activity.id} aria-live="polite" data-align={position.align} data-placement={position.side} className={`tga3-graph-activity ${activity.to ? "interaction" : "action"}`} style={{ left: position.x, top: position.y } as CSSProperties}>{activity.label}</span> : null;
         })}
         {!activities.length ? <small className="tga3-runtime-graph-idle">{terminal ? "本次运行交互已完成" : "等待新的动作与交互"}</small> : null}
       </div>
@@ -241,10 +282,10 @@ function boardActivity(entry: TGA3BoardEntry): Activity | null {
 function dialogueRuntimeEvent(message: TGA3DialogueMessage): RuntimeEvent {
   const owner = dialogueOwner(message);
   const base = { id: `dialogue-${message.id}`, at: timestamp(message.created_at) };
-  if (["action_completed", "error", "paused"].includes(message.kind)) return { ...base, clearOwner: owner };
+  if (["error", "paused"].includes(message.kind)) return { ...base, clearOwner: owner };
   if (message.kind === "agent_status") {
     const state = String(message.payload.state ?? "");
-    return ["idle", "paused", "completed", "failed", "stopped"].includes(state)
+    return ["paused", "completed", "failed", "stopped"].includes(state)
       ? { ...base, clearOwner: owner }
       : base;
   }
@@ -269,7 +310,7 @@ function dialogueActivity(message: TGA3DialogueMessage): Activity | null {
   if (message.kind === "question") return { ...base, from: owner, to: "user", label: `${message.actor.display_name} 请求用户输入` };
   if (message.kind === "model_changed") return { ...base, from: owner, to: model, label: `${message.actor.display_name} 切换模型` };
   if (message.kind === "assistant_delta") return { ...base, from: model, to: owner, label: `${message.actor.display_name} 收到模型响应` };
-  if (message.kind !== "action_started") return null;
+  if (message.kind !== "action_completed") return null;
   const tool = String(message.payload.tool ?? message.text ?? "执行动作");
   if (/skills?_list|skills?_read|skill/i.test(tool)) return { ...base, from: owner, to: "skills", label: `${message.actor.display_name} 读取 Skill` };
   if (/blackboard|artifact_register/i.test(tool)) return { ...base, from: owner, to: "blackboard", label: `${message.actor.display_name} ${shortAction(message.text)}` };
@@ -296,12 +337,16 @@ function activityPosition(activity: Activity, boxes: Record<string, NodeBox>, ca
   if (!from) return null;
   const size = activityTextSize(activity.label);
   if (!activity.to || !boxes[activity.to]) {
-    const candidates: ActivityPlacement[] = [
-      { x: from.x + from.width / 2 + 10, y: from.y, align: "left" },
-      { x: from.x - from.width / 2 - 10, y: from.y, align: "right" },
-      { x: from.x, y: from.y - from.height / 2 - 13, align: "center" },
-      { x: from.x, y: from.y + from.height / 2 + 13, align: "center" },
-    ];
+    const around: Record<"left" | "right" | "above" | "below", ActivityPlacement> = {
+      right: { x: from.x + from.width / 2 + 10, y: from.y, align: "left", side: "right" },
+      left: { x: from.x - from.width / 2 - 10, y: from.y, align: "right", side: "left" },
+      above: { x: from.x, y: from.y - from.height / 2 - 13, align: "center", side: "above" },
+      below: { x: from.x, y: from.y + from.height / 2 + 13, align: "center", side: "below" },
+    };
+    const order: Array<keyof typeof around> = activity.owner === agentNode("worker-claude")
+      ? ["below", "left", "above", "right"]
+      : ["right", "left", "above", "below"];
+    const candidates = order.map((side) => around[side]);
     return candidates.find((candidate) => placementFits(candidate, size, boxes, canvas)) ?? candidates[0];
   }
   const route = activityRoute(activity, boxes);
@@ -315,6 +360,7 @@ function activityPosition(activity: Activity, boxes: Record<string, NodeBox>, ca
     x: route.label.x + normal.x * offset,
     y: route.label.y + normal.y * offset,
     align: "center",
+    side: "route",
   }));
   return candidates.find((candidate) => placementFits(candidate, size, boxes, canvas)) ?? candidates[0];
 }

@@ -233,7 +233,12 @@ class Automation:
             sdk=configured.runtime,
             model=run.model_id,
         )
-        await self.storage.update_agent(task_id, "supervisor", actual_state=AgentState.RUNNING)
+        await self.storage.update_agent(
+            task_id,
+            "supervisor",
+            actual_state=AgentState.RUNNING,
+            last_error=None,
+        )
         await self.dialogue.announce_status(task_id, supervisor, AgentState.RUNNING.value)
         try:
             sync = await self.blackboard.sync(task_id, after_seq=0)
@@ -255,7 +260,12 @@ class Automation:
         finally:
             current = await self.storage.get_agent(task_id, "supervisor")
             if current.actual_state != AgentState.FAILED:
-                await self.storage.update_agent(task_id, "supervisor", actual_state=AgentState.IDLE)
+                await self.storage.update_agent(
+                    task_id,
+                    "supervisor",
+                    actual_state=AgentState.IDLE,
+                    last_error=None,
+                )
                 await self.dialogue.announce_status(task_id, supervisor, AgentState.IDLE.value)
         await self.dialogue.announce_blackboard(task_id, sync.latest_seq, decision.progress)
         if decision.advice:

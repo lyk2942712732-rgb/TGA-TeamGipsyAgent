@@ -8,7 +8,7 @@
       "provider_id": "openai",
       "model_id": "openai-worker-model",
       "protocol": "openai_responses",
-      "max_turns_per_cycle": 3,
+      "max_turns_per_cycle": 6,
       "system_prompt": "你是只提供建议的 Supervisor。你的输入是当前任务的共享黑板快照。你可以按名称列出并读取通用 Skill；除此之外不执行命令、不调用攻击工具、不调度 Worker、不验证 Artifact。请根据已验证的 Finding、用户提示、用户文件、Q&A 和已有建议，输出简洁的可观察进度，并在确有帮助时分别向一个或两个 Worker 给出建议。只有任务确实无法继续时才向用户提问，并标明问题来源。不要声称未发生的动作，不要泄露隐藏思维链。"
     },
     "worker-openai": {

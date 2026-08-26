@@ -98,6 +98,7 @@ class WorkerSession:
             if prompt is None:
                 return
             await self.paused.wait()
+            await self.emit("agent.status", {"state": "running"})
             await self.emit("agent.action.started", {"summary": "开始一个工作周期"})
             try:
                 self.current_cycle = asyncio.create_task(self.adapter.run_cycle(prompt, self.emit))
@@ -105,6 +106,7 @@ class WorkerSession:
                 if output.strip():
                     await self.emit("agent.output.delta", {"text": output})
                 await self.emit("agent.action.completed", {"summary": "工作周期完成"})
+                await self.emit("agent.status", {"state": "idle"})
             except asyncio.CancelledError:
                 if not self.stop.is_set():
                     await self.queue.put(prompt)
@@ -123,7 +125,6 @@ class WorkerSession:
                 "session.hello",
                 {"session_id": self.session_id, "runtime": os.environ["TGA3_AGENT_RUNTIME"]},
             )
-            await self.emit("agent.status", {"state": "running"})
             receiver = asyncio.create_task(self._receive())
             worker = asyncio.create_task(self._work())
             done, pending = await asyncio.wait({receiver, worker}, return_when=asyncio.FIRST_COMPLETED)

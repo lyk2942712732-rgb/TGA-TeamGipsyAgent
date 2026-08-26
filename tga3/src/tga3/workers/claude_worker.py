@@ -60,6 +60,7 @@ class ClaudeAdapter(AgentAdapter):
             TextBlock,
             ToolResultBlock,
             ToolUseBlock,
+            UserMessage,
             query,
         )
 
@@ -82,25 +83,39 @@ class ClaudeAdapter(AgentAdapter):
             stderr=diagnostics.capture,
         )
         text_parts: list[str] = []
+        pending_tools: dict[str, tuple[str, dict[str, Any]]] = {}
         try:
             async for message in query(prompt=prompt, options=options):
-                if isinstance(message, AssistantMessage):
-                    for block in message.content:
+                if isinstance(message, (AssistantMessage, UserMessage)):
+                    blocks = message.content if isinstance(message.content, list) else []
+                    for block in blocks:
                         if isinstance(block, ToolUseBlock):
+                            pending_tools[block.id] = (block.name, block.input)
                             await emit(
                                 "agent.action.started",
-                                {"summary": block.name, "tool": block.name, "input": block.input},
+                                {
+                                    "summary": block.name,
+                                    "tool": block.name,
+                                    "tool_use_id": block.id,
+                                    "input": block.input,
+                                },
                             )
                         elif isinstance(block, ToolResultBlock):
+                            tool_name, tool_input = pending_tools.pop(
+                                block.tool_use_id,
+                                ("Claude tool", {}),
+                            )
                             await emit(
                                 "agent.action.completed",
                                 {
-                                    "summary": "工具执行完成",
+                                    "summary": tool_name,
+                                    "tool": tool_name,
                                     "tool_use_id": block.tool_use_id,
+                                    "input": tool_input,
                                     "error": block.is_error,
                                 },
                             )
-                        elif isinstance(block, TextBlock):
+                        elif isinstance(message, AssistantMessage) and isinstance(block, TextBlock):
                             text_parts.append(block.text)
                 elif isinstance(message, ResultMessage):
                     self.session_id = message.session_id
