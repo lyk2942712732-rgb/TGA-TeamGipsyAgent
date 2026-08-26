@@ -1,5 +1,7 @@
 import json
+from io import BytesIO
 from pathlib import Path
+from zipfile import ZipFile
 
 import pytest
 
@@ -59,6 +61,34 @@ def test_skills_are_managed_as_packages_and_read_on_demand(tmp_path: Path):
         catalog.read("web")
     with pytest.raises(NotFoundError):
         catalog.read("../pwn")
+
+
+def test_skill_zip_import_uses_the_root_directory_and_preserves_markdown_layout(tmp_path: Path):
+    payload = BytesIO()
+    with ZipFile(payload, "w") as archive:
+        archive.writestr("ctf-crypto/SKILL.md", "# CTF Crypto\n\nRead references/rsa.md when needed.")
+        archive.writestr("ctf-crypto/references/rsa.md", "# RSA\n\nFactor small moduli.")
+        archive.writestr("ctf-crypto/ignored.txt", "not part of the Skill package")
+
+    package = SkillCatalog(tmp_path).import_archive("upload.zip", payload.getvalue())
+
+    assert package.name == "ctf-crypto"
+    assert [item.path for item in package.files] == ["SKILL.md", "references/rsa.md"]
+    assert (tmp_path / "ctf-crypto" / "references" / "rsa.md").is_file()
+
+
+def test_skill_zip_import_rejects_unsafe_or_incomplete_packages(tmp_path: Path):
+    unsafe = BytesIO()
+    with ZipFile(unsafe, "w") as archive:
+        archive.writestr("../SKILL.md", "# Escape")
+    with pytest.raises(ValueError, match="invalid Markdown file path"):
+        SkillCatalog(tmp_path).import_archive("unsafe.zip", unsafe.getvalue())
+
+    incomplete = BytesIO()
+    with ZipFile(incomplete, "w") as archive:
+        archive.writestr("notes.md", "# Notes")
+    with pytest.raises(ValueError, match="must contain SKILL.md"):
+        SkillCatalog(tmp_path).import_archive("incomplete.zip", incomplete.getvalue())
 
 
 def test_config_separates_secrets_from_agent_bindings():

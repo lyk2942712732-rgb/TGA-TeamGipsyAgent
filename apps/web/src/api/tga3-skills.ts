@@ -15,6 +15,11 @@ export const tga3SkillsApi = {
     headers: json,
     body: JSON.stringify({ files }),
   }),
+  importArchive: (file: File) => {
+    const body = new FormData();
+    body.append("file", file);
+    return requestJson<SkillPackage>("/api/v3/skills/import", { method: "POST", body });
+  },
   save: (name: string, files: Record<string, string>) => requestJson<SkillPackage>(url(name), {
     method: "PUT",
     headers: json,

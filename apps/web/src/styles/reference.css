@@ -217,14 +217,30 @@
 .skills-native-editor { display: flex; flex-direction: column; gap: 14px; }
 .skills-native-editor > header { display: flex; align-items: center; justify-content: space-between; }
 .skills-native-editor textarea { flex: 1; min-height: 420px; resize: none; font: 13px/1.6 monospace; }
+.skills-page { position: relative; }
 .skill-package-files { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px; border: 1px solid var(--c-border); border-radius: 9px; background: var(--c-surface-muted); }
 .skill-package-files > div { display: flex; align-items: center; max-width: 230px; border: 1px solid transparent; border-radius: 7px; background: #fff; }
 .skill-package-files > div.active { color: var(--c-accent-strong); border-color: #93c5fd; background: var(--c-accent-soft); }
 .skill-package-files > div > button:first-child, .skill-file-add { display: inline-flex; align-items: center; gap: 5px; min-width: 0; min-height: 30px; padding: 0 8px; color: inherit; background: transparent; }
 .skill-package-files > div > button:first-child span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.skill-file-remove { display: grid; place-items: center; width: 24px; height: 24px; margin-right: 3px; color: var(--c-text-muted); border-radius: 6px; background: transparent; }
-.skill-file-remove:hover { color: var(--c-danger); background: #fee2e2; }
 .skill-file-add { color: var(--c-accent); border: 1px dashed #93c5fd; border-radius: 7px; }
+.skill-file-toolbar { display: flex; align-items: end; gap: 8px; padding: 10px 12px; border: 1px solid var(--c-border); border-radius: 9px; background: #fff; }
+.skill-file-toolbar label { display: grid; flex: 1; gap: 5px; color: var(--c-text-muted); font-size: 10px; }
+.skill-file-toolbar label input { color: var(--c-text); }
+.skill-file-toolbar > span { align-self: center; color: var(--c-text-muted); font-size: 11px; }
+.skill-current-delete { display: inline-flex; align-items: center; gap: 5px; min-height: 36px; padding: 0 10px; color: var(--c-danger); border: 1px solid var(--c-danger-border); border-radius: 7px; background: var(--c-danger-soft); }
+.skill-package-dialog { width: min(560px,calc(100vw - 30px)); }
+.skill-package-dialog > header p { margin-top: 5px; color: var(--c-text-muted); font-size: 11px; }
+.skill-package-create-row { display: grid; grid-template-columns: minmax(0,1fr) auto; align-items: end; gap: 10px; }
+.skill-package-create-row label { display: grid; gap: 7px; }
+.skill-dialog-divider { display: flex; align-items: center; gap: 10px; color: var(--c-text-muted); font-size: 10px; }
+.skill-dialog-divider::before, .skill-dialog-divider::after { content: ""; flex: 1; height: 1px; background: var(--c-border); }
+.skill-archive-dropzone { display: grid !important; place-items: center; gap: 6px !important; min-height: 150px; padding: 20px; color: var(--c-accent-strong); border: 1px dashed #60a5fa; border-radius: 11px; background: #f8fbff; cursor: pointer; text-align: center; transition: .16s ease; }
+.skill-archive-dropzone[data-dragging="true"], .skill-archive-dropzone:hover { border-color: var(--c-accent); background: var(--c-accent-soft); transform: translateY(-1px); }
+.skill-archive-dropzone span { max-width: 360px; color: var(--c-text-muted); font-size: 10px; }
+.skill-page-drop-overlay { position: absolute; z-index: 80; inset: 0; display: grid; place-content: center; justify-items: center; gap: 7px; color: var(--c-accent-strong); border: 2px dashed #3b82f6; border-radius: 14px; background: rgba(239,246,255,.94); pointer-events: none; }
+.skill-page-drop-overlay span { color: var(--c-text-muted); font-size: 11px; }
+.visually-hidden { position: absolute !important; width: 1px !important; height: 1px !important; padding: 0 !important; margin: -1px !important; overflow: hidden !important; clip: rect(0,0,0,0) !important; white-space: nowrap !important; border: 0 !important; }
 .task-delete-button { display: inline-grid; place-items: center; width: 32px; height: 32px; color: #b91c1c; border-radius: 7px; background: transparent; }
 .task-delete-button:hover { background: #fee2e2; }
 .runtime-modal label { display: grid; gap: 7px; }
@@ -305,6 +321,8 @@
   .new-task-modal-body, .provider-create-card form, .task-agent-models > div, .solver-readonly-grid { grid-template-columns: 1fr; }
   .scene-card-grid { grid-template-columns: 1fr; }
   .provider-endpoint-form, .provider-detail-head { flex-direction: column; }
+  .skills-native-editor > header, .skill-file-toolbar { align-items: stretch; flex-direction: column; }
+  .skill-package-create-row { grid-template-columns: 1fr; }
   .provider-key-form { grid-template-columns: 1fr; }
   .solver-head-actions { width: 100%; }
   .solver-head-actions button { flex: 1; }

@@ -5,11 +5,19 @@ from __future__ import annotations
 import os
 import re
 import shutil
+import stat
 from dataclasses import dataclass
+from io import BytesIO
 from pathlib import Path, PurePosixPath
 from uuid import uuid4
+from zipfile import BadZipFile, ZipFile
 
 from .errors import ConflictError, NotFoundError
+
+MAX_ARCHIVE_BYTES = 20 * 1024 * 1024
+MAX_ARCHIVE_FILES = 250
+MAX_MARKDOWN_BYTES = 5 * 1024 * 1024
+MAX_EXTRACTED_BYTES = 40 * 1024 * 1024
 
 
 @dataclass(frozen=True)
@@ -167,6 +175,64 @@ class SkillCatalog:
                 shutil.rmtree(folder)
             raise
 
+    def import_archive(self, archive_name: str, content: bytes, preferred_name: str | None = None) -> SkillPackage:
+        """Create one package from a ZIP while preserving its Markdown layout."""
+        if not content or len(content) > MAX_ARCHIVE_BYTES:
+            raise ValueError("Skill ZIP must be between 1 byte and 20 MB")
+        try:
+            with ZipFile(BytesIO(content)) as archive:
+                markdown: list[tuple[PurePosixPath, str]] = []
+                total_size = 0
+                for entry in archive.infolist():
+                    normalized_name = entry.filename.replace("\\", "/")
+                    if entry.is_dir() or normalized_name.startswith("__MACOSX/"):
+                        continue
+                    if PurePosixPath(normalized_name).suffix.lower() != ".md":
+                        continue
+                    source_path = self._relative_markdown_path(entry.filename)
+                    if stat.S_ISLNK((entry.external_attr >> 16) & 0o170000):
+                        raise ValueError(f"symbolic links are not allowed in Skill ZIP: {entry.filename}")
+                    if entry.file_size > MAX_MARKDOWN_BYTES:
+                        raise ValueError(f"Markdown file exceeds 5 MB: {entry.filename}")
+                    total_size += entry.file_size
+                    if total_size > MAX_EXTRACTED_BYTES:
+                        raise ValueError("Skill ZIP expands beyond 40 MB")
+                    try:
+                        text = archive.read(entry).decode("utf-8-sig")
+                    except UnicodeDecodeError as exc:
+                        raise ValueError(f"Markdown file must be UTF-8: {entry.filename}") from exc
+                    markdown.append((source_path, text))
+                    if len(markdown) > MAX_ARCHIVE_FILES:
+                        raise ValueError("Skill ZIP contains more than 250 Markdown files")
+        except BadZipFile as exc:
+            raise ValueError("invalid Skill ZIP archive") from exc
+
+        if not markdown:
+            raise ValueError("Skill ZIP contains no Markdown files")
+        shared_root = markdown[0][0].parts[0]
+        has_package_root = all(len(path.parts) > 1 and path.parts[0] == shared_root for path, _ in markdown)
+        package_name = preferred_name or (shared_root if has_package_root else Path(archive_name).stem)
+        package_name = self._archive_skill_name(package_name)
+
+        documents: dict[str, str] = {}
+        seen: set[str] = set()
+        for source_path, text in markdown:
+            relative = PurePosixPath(*source_path.parts[1:]) if has_package_root else source_path
+            normalized = self._relative_markdown_path(relative.as_posix()).as_posix()
+            folded = normalized.casefold()
+            if folded in seen:
+                raise ValueError(f"duplicate Markdown file in Skill ZIP: {normalized}")
+            seen.add(folded)
+            documents[normalized] = text
+        return self.create(package_name, documents)
+
+    @staticmethod
+    def _archive_skill_name(raw: str) -> str:
+        name = re.sub(r"[^A-Za-z0-9._-]+", "-", raw.strip()).strip(".-_").lower()
+        if not name:
+            raise ValueError("Skill ZIP does not provide a valid package directory name")
+        return name[:100]
+
     def delete(self, name: str) -> None:
         folder = self._skill_dir(name)
         if not folder.is_dir():
@@ -174,4 +240,4 @@ class SkillCatalog:
         shutil.rmtree(folder)
 
 
-__all__ = ["SkillCatalog", "SkillFile", "SkillInfo", "SkillPackage"]
+__all__ = ["MAX_ARCHIVE_BYTES", "SkillCatalog", "SkillFile", "SkillInfo", "SkillPackage"]

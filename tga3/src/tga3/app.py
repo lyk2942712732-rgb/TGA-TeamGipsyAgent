@@ -21,7 +21,7 @@ from .host_agents import Automation, HostModel, OpenAIHostModel
 from .mcp_server import build_mcp
 from .model_discovery import discover_provider_models
 from .provider_profiles import PROVIDER_PROFILES, ProviderProtocol
-from .skills import SkillCatalog
+from .skills import MAX_ARCHIVE_BYTES, SkillCatalog
 from .storage import Storage
 
 
@@ -468,6 +468,19 @@ def create_app(
     @api.put("/skills/{name}")
     async def write_skill(name: str, body: SkillPackageRequest) -> dict[str, Any]:
         package = skills.write_package(name, body.files)
+        return {
+            "name": package.name,
+            "description": package.description,
+            "files": [item.__dict__ for item in package.files],
+        }
+
+    @api.post("/skills/import", status_code=201)
+    async def import_skill_archive(
+        file: Annotated[UploadFile, File()],
+        name: Annotated[str | None, Form()] = None,
+    ) -> dict[str, Any]:
+        content = await file.read(MAX_ARCHIVE_BYTES + 1)
+        package = skills.import_archive(file.filename or "skill.zip", content, name)
         return {
             "name": package.name,
             "description": package.description,

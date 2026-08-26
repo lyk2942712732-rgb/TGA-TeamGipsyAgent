@@ -1,9 +1,11 @@
 import json
 from copy import deepcopy
+from io import BytesIO
 from pathlib import Path
 from shutil import copytree
 from unittest.mock import AsyncMock, patch
 from uuid import UUID
+from zipfile import ZipFile
 
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
@@ -131,6 +133,17 @@ def test_frontend_api_uses_safe_catalog_and_page_owned_config_documents(tmp_path
         assert updated.status_code == 200
         assert [item["path"] for item in updated.json()["files"]] == ["SKILL.md"]
         assert client.delete("/api/v3/skills/web").status_code == 204
+        archive_payload = BytesIO()
+        with ZipFile(archive_payload, "w") as archive:
+            archive.writestr("ctf-crypto/SKILL.md", "# Crypto\n\n按需读取 rsa.md。")
+            archive.writestr("ctf-crypto/rsa.md", "# RSA\n\n检查小因数。")
+        imported = client.post(
+            "/api/v3/skills/import",
+            files={"file": ("ctf-crypto.zip", archive_payload.getvalue(), "application/zip")},
+        )
+        assert imported.status_code == 201
+        assert imported.json()["name"] == "ctf-crypto"
+        assert [item["path"] for item in imported.json()["files"]] == ["SKILL.md", "rsa.md"]
         created = client.post(
             "/api/v3/tasks",
             data={
