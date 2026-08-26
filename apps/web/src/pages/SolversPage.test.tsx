@@ -50,4 +50,20 @@ describe("SolversPage", () => {
     await user.click(within(panel).getByRole("button", { name: "保存配置" }));
     await waitFor(() => expect(mocks.saveAgents).toHaveBeenCalledWith(expect.objectContaining({ agents: expect.objectContaining({ "worker-openai": expect.objectContaining({ system_prompt: "updated prompt" }) }) })));
   });
+
+  it("only shows model protocols compatible with the selected Agent SDK", async () => {
+    const user = userEvent.setup();
+    render(<SolversPage />);
+
+    await user.click(await screen.findByRole("button", { name: "配置 OpenAI Worker" }));
+    let modelSelect = within(screen.getByLabelText("OpenAI Worker Solver 配置")).getByRole("combobox");
+    expect(within(modelSelect).getByRole("option", { name: /OpenAI Chat/ })).toBeInTheDocument();
+    expect(within(modelSelect).queryByRole("option", { name: /Anthropic Messages/ })).not.toBeInTheDocument();
+    expect(within(modelSelect).queryByText(/SDK 协议不兼容/)).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "配置 Claude Worker" }));
+    modelSelect = within(screen.getByLabelText("Claude Worker Solver 配置")).getByRole("combobox");
+    expect(within(modelSelect).getByRole("option", { name: /Anthropic Messages/ })).toBeInTheDocument();
+    expect(within(modelSelect).queryByRole("option", { name: /OpenAI Chat/ })).not.toBeInTheDocument();
+  });
 });
