@@ -1,11 +1,13 @@
 import json
 from io import BytesIO
 from pathlib import Path
+from uuid import uuid4
 from zipfile import ZipFile
 
 import pytest
+from pydantic import TypeAdapter, ValidationError
 
-from tga3.domain import EntryKind, PublishRequest
+from tga3.domain import EntryKind, PublishRequest, WorkerPublishRequest, worker_publish_contract
 from tga3.errors import NotFoundError
 from tga3.protocol import RpcMessage
 from tga3.skills import SkillCatalog
@@ -29,6 +31,50 @@ def test_finding_requires_artifact_but_does_not_put_it_in_body():
             body={"claim": "unsupported"},
             idempotency_key="no-artifact",
         )
+
+
+def test_worker_publication_contract_is_discriminated_strict_and_generated_from_models():
+    adapter = TypeAdapter(WorkerPublishRequest)
+    task_id = uuid4()
+    finding = adapter.validate_python({
+        "kind": "finding",
+        "task_id": task_id,
+        "actor": {"agent_id": "worker-openai", "display_name": "OpenAI Worker", "role": "worker"},
+        "body": {"claim": "verified", "detail": "reproduced"},
+        "artifact_refs": [{"artifact_id": uuid4(), "locator": "stdout:1"}],
+        "idempotency_key": "finding-1",
+    })
+    assert finding.publish_request().body == {"claim": "verified", "detail": "reproduced"}
+
+    with pytest.raises(ValidationError):
+        adapter.validate_python({
+            "kind": "finding",
+            "task_id": task_id,
+            "actor": {"agent_id": "worker-openai", "display_name": "OpenAI Worker", "role": "worker"},
+            "body": {"title": "wrong", "summary": "wrong"},
+            "artifact_refs": [{"artifact_id": uuid4(), "locator": "stdout:1"}],
+            "idempotency_key": "finding-wrong",
+        })
+    with pytest.raises(ValidationError):
+        adapter.validate_python({
+            "kind": "final_candidate",
+            "task_id": task_id,
+            "actor": {"agent_id": "worker-openai", "display_name": "OpenAI Worker", "role": "worker"},
+            "body": {
+                "conclusion": "flag{ok}",
+                "rationale": "verified",
+                "finding_ids": [uuid4()],
+            },
+            "artifact_refs": [{"artifact_id": uuid4(), "locator": "stdout:1"}],
+            "idempotency_key": "final-wrong",
+        })
+
+    schema = adapter.json_schema()
+    assert schema["discriminator"]["propertyName"] == "kind"
+    assert set(schema["discriminator"]["mapping"]) == {"finding", "final_candidate"}
+    summary = worker_publish_contract()
+    assert "body={claim, detail?}" in summary
+    assert "body={conclusion, rationale, answer_type?, finding_ids}" in summary
 
 
 def test_json_rpc_shapes():

@@ -3,6 +3,8 @@
 import json
 import os
 
+from ..domain import worker_publish_contract
+
 
 def worker_instructions() -> str:
     actor = {
@@ -19,7 +21,12 @@ def worker_instructions() -> str:
         "For every blackboard tool call, use the exact task_id and actor above. "
         "Never invent a placeholder task ID or actor."
     )
-    return f"{os.environ['TGA3_SYSTEM_PROMPT'].rstrip()}\n\n{runtime_context}"
+    publication_contract = (
+        "Blackboard publication contract (authoritative and generated from the runtime models):\n"
+        f"{worker_publish_contract()}\n"
+        "The blackboard_publish tool accepts one request object. Follow the schema branch selected by request.kind."
+    )
+    return f"{os.environ['TGA3_SYSTEM_PROMPT'].rstrip()}\n\n{runtime_context}\n\n{publication_contract}"
 
 
 __all__ = ["worker_instructions"]

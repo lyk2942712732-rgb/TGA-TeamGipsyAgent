@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Any, Literal
+from typing import Annotated, Any, Literal, TypeAlias, get_args
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -65,9 +65,13 @@ SYSTEM_ACTOR = Actor(agent_id="system", display_name="TGA3", role="system")
 
 class ArtifactRef(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
-    artifact_id: UUID
-    locator: str = Field(min_length=1, max_length=1000)
-    description: str = Field(default="", max_length=2000)
+    artifact_id: UUID = Field(description="UUID returned by artifact_register for evidence in this task.")
+    locator: str = Field(
+        min_length=1,
+        max_length=1000,
+        description="Precise evidence location inside the artifact, such as stdout:1-20 or solve.txt:3.",
+    )
+    description: str = Field(default="", max_length=2000, description="Brief explanation of this evidence.")
 
 
 class UserPromptBody(BaseModel):
@@ -97,8 +101,8 @@ class FindingBody(BaseModel):
     """Compact, already-gated shared knowledge. Artifact details stay hidden."""
 
     model_config = ConfigDict(extra="forbid")
-    claim: str = Field(min_length=1)
-    detail: str = Field(default="", max_length=8000)
+    claim: str = Field(min_length=1, description="Concise verified fact; do not use title, summary, or flag fields.")
+    detail: str = Field(default="", max_length=8000, description="Reproducible supporting detail for the claim.")
 
 
 class QABody(BaseModel):
@@ -112,10 +116,84 @@ class QABody(BaseModel):
 
 class FinalCandidateBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    conclusion: str = Field(min_length=1)
-    rationale: str = Field(min_length=1)
-    answer_type: str = Field(default="result", min_length=1, max_length=80)
-    finding_ids: list[UUID] = Field(min_length=1)
+    conclusion: str = Field(min_length=1, description="The proposed final answer, for example the exact flag.")
+    rationale: str = Field(min_length=1, description="Why the referenced verified Findings support the conclusion.")
+    answer_type: str = Field(default="result", min_length=1, max_length=80, description="Answer category, e.g. flag.")
+    finding_ids: list[UUID] = Field(
+        min_length=1,
+        description="Existing blackboard entry UUIDs whose kind is finding; never use Artifact UUIDs here.",
+    )
+
+
+class WorkerActor(Actor):
+    """Actor identity accepted by the Worker-only MCP publication tool."""
+
+    role: Literal["worker"] = "worker"
+
+
+class WorkerPublicationBase(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    task_id: UUID = Field(description="Exact task UUID injected into the Worker system prompt.")
+    actor: WorkerActor = Field(description="Exact Worker actor object injected into the system prompt.")
+    topic: str = Field(default="general", min_length=1, max_length=200)
+    idempotency_key: str = Field(
+        min_length=1,
+        max_length=200,
+        description="Stable unique key for this logical publication; reuse it only when retrying the same entry.",
+    )
+
+    def publish_request(self) -> PublishRequest:
+        payload = self.model_dump(mode="json")
+        return PublishRequest(
+            kind=payload["kind"],
+            topic=payload["topic"],
+            body=payload["body"],
+            artifact_refs=payload.get("artifact_refs", []),
+            idempotency_key=payload["idempotency_key"],
+        )
+
+
+class WorkerFindingPublication(WorkerPublicationBase):
+    kind: Literal[EntryKind.FINDING]
+    body: FindingBody
+    artifact_refs: list[ArtifactRef] = Field(
+        min_length=1,
+        description="One or more registered evidence references. Required only for finding.",
+    )
+
+
+class WorkerFinalCandidatePublication(WorkerPublicationBase):
+    kind: Literal[EntryKind.FINAL_CANDIDATE]
+    body: FinalCandidateBody
+
+
+WorkerPublishRequest: TypeAlias = Annotated[
+    WorkerFindingPublication | WorkerFinalCandidatePublication,
+    Field(discriminator="kind"),
+]
+
+
+def worker_publish_contract() -> str:
+    """Generate the compact prompt/tool description from the authoritative Pydantic models."""
+
+    parts: list[str] = []
+    for model in (WorkerFindingPublication, WorkerFinalCandidatePublication):
+        literal_kind = get_args(model.model_fields["kind"].annotation)[0]
+        kind = literal_kind.value
+        body_model = model.model_fields["body"].annotation
+        body_fields = ", ".join(
+            f"{name}{'' if field.is_required() else '?'}" for name, field in body_model.model_fields.items()
+        )
+        artifact_rule = (
+            "artifact_refs=required non-empty"
+            if "artifact_refs" in model.model_fields
+            else "artifact_refs=forbidden"
+        )
+        parts.append(f"{kind}: body={{{body_fields}}}; {artifact_rule}")
+    return (
+        "Worker blackboard publication contract generated from Pydantic. Select the request branch by kind; "
+        "extra fields are forbidden. " + " | ".join(parts)
+    )
 
 
 BODY_BY_KIND: dict[EntryKind, type[BaseModel]] = {
@@ -297,6 +375,11 @@ __all__ = [
     "USER_ACTOR",
     "UserFileBody",
     "UserPromptBody",
+    "WorkerActor",
+    "WorkerFinalCandidatePublication",
+    "WorkerFindingPublication",
+    "WorkerPublishRequest",
     "Writeup",
     "utc_now",
+    "worker_publish_contract",
 ]

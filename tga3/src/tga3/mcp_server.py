@@ -12,7 +12,7 @@ from mcp.server.transport_security import TransportSecuritySettings
 
 from .blackboard import Blackboard
 from .config import TGA3Config
-from .domain import Actor, Artifact, ArtifactRef, PublishRequest
+from .domain import Actor, Artifact, WorkerPublishRequest, worker_publish_contract
 from .skills import SkillCatalog
 
 
@@ -49,27 +49,15 @@ def build_mcp(config: TGA3Config, blackboard: Blackboard, skills: SkillCatalog) 
         result = await blackboard.sync(UUID(task_id), after_seq=after_seq, limit=limit)
         return result.model_dump(mode="json")
 
-    @mcp.tool()
+    @mcp.tool(description=worker_publish_contract())
     async def blackboard_publish(
-        task_id: str,
-        actor: dict[str, Any],
-        kind: str,
-        body: dict[str, Any],
-        idempotency_key: str,
-        topic: str = "general",
-        artifact_refs: list[dict[str, Any]] | None = None,
+        request: WorkerPublishRequest,
     ) -> dict[str, Any]:
-        """Publish one contract-checked entry; Finding references are checked atomically."""
+        """Publish one strictly typed Worker entry; the request schema is authoritative."""
         entry = await blackboard.publish(
-            UUID(task_id),
-            Actor.model_validate(actor),
-            PublishRequest(
-                kind=kind,
-                body=body,
-                topic=topic,
-                artifact_refs=[ArtifactRef.model_validate(item) for item in artifact_refs or []],
-                idempotency_key=idempotency_key,
-            ),
+            request.task_id,
+            Actor.model_validate(request.actor),
+            request.publish_request(),
         )
         return entry.model_dump(mode="json")
 
