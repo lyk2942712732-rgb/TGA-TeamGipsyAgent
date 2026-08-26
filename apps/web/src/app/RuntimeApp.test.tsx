@@ -4,8 +4,10 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const mocks = vi.hoisted(() => ({ listTasks: vi.fn() }));
+const mocks = vi.hoisted(() => ({ listTasks: vi.fn(), listAttention: vi.fn(), fetchSystemHealth: vi.fn() }));
 vi.mock("../api/tga3-tasks", () => ({ listTasks: mocks.listTasks }));
+vi.mock("../api/tga3-attention", () => ({ attentionApi: { list: mocks.listAttention } }));
+vi.mock("../api/tga3-system", () => ({ fetchSystemHealth: mocks.fetchSystemHealth }));
 vi.mock("../pages/DashboardRoute", () => ({ DashboardRoute: () => <div>dashboard route</div> }));
 vi.mock("../pages/ApprovalsPage", () => ({ ApprovalsPage: () => <div>global approvals</div> }));
 vi.mock("../pages/NewTaskPage", () => ({ NewTaskPage: () => <div>new task</div> }));
@@ -29,6 +31,8 @@ describe("RuntimeApp TGA3 shell", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.listTasks.mockResolvedValue([]);
+    mocks.listAttention.mockResolvedValue([]);
+    mocks.fetchSystemHealth.mockResolvedValue({ components: [{ id: "runtime", label: "TGA3", status: "healthy", detail: "ok", latencyMs: 1 }] });
   });
 
   it("contains only the current TGA3 navigation", async () => {
@@ -38,6 +42,24 @@ describe("RuntimeApp TGA3 shell", () => {
     expect(screen.getByText("reports")).toBeInTheDocument();
     expect(await screen.findByRole("button", { name: "任务" })).toBeInTheDocument();
     expect(screen.queryByRole("textbox", { name: "全局搜索" })).not.toBeInTheDocument();
+    expect(document.querySelector(".app-topbar")).toBeInTheDocument();
+    expect(await screen.findByText("空闲")).toBeInTheDocument();
+    expect(await screen.findByText("健康")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "审批中心，0 条待处理" })).toBeInTheDocument();
+  });
+
+  it("shows active state and a red approval dot from live data", async () => {
+    mocks.listTasks.mockResolvedValue([{ id: "running", title: "Active", scene_id: "penetration_test", state: "running", created_at: "2026-01-01", updated_at: "2026-01-01" }]);
+    mocks.listAttention.mockResolvedValue([{ id: "q1" }]);
+    renderShell("/reports");
+    expect(await screen.findByText("运行中")).toBeInTheDocument();
+    const approvals = await screen.findByRole("button", { name: "审批中心，1 条待处理" });
+    expect(approvals.querySelector(".topbar-notification-dot")).toBeInTheDocument();
+  });
+
+  it("keeps the task runtime page free of the global topbar", () => {
+    renderShell("/tasks/task-1/runtime");
+    expect(screen.getByText("task runtime")).toBeInTheDocument();
     expect(document.querySelector(".app-topbar")).not.toBeInTheDocument();
   });
 

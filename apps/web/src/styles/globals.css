@@ -207,6 +207,69 @@ pre {
   min-width: 0;
   min-height: 100vh;
 }
+.app-topbar {
+  position: sticky;
+  top: 0;
+  z-index: 15;
+  display: flex;
+  align-items: center;
+  min-height: 54px;
+  padding: 0 24px;
+  border-bottom: 1px solid var(--c-border);
+  background: rgba(255, 255, 255, 0.94);
+  backdrop-filter: blur(12px);
+}
+.app-topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-left: auto;
+}
+.topbar-state,
+.topbar-health,
+.topbar-icon {
+  min-height: 36px;
+  color: var(--c-text-muted);
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: transparent;
+}
+.topbar-state,
+.topbar-health {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 10px;
+  font-size: 12px;
+  font-weight: 650;
+}
+.topbar-icon {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 36px;
+}
+.topbar-state:hover,
+.topbar-health:hover,
+.topbar-icon:hover {
+  color: var(--c-text);
+  border-color: var(--c-border);
+  background: var(--c-surface-muted);
+}
+.topbar-health.health-healthy { color: var(--c-success); }
+.topbar-health.health-degraded { color: var(--c-warning); }
+.topbar-health.health-unavailable { color: var(--c-danger); }
+.topbar-notification-dot {
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  width: 7px;
+  height: 7px;
+  border: 1.5px solid #fff;
+  border-radius: 50%;
+  background: var(--c-danger);
+  box-shadow: 0 0 0 1px rgba(197,57,69,.15);
+}
 .app-mobile-menu {
   display: none;
 }
@@ -487,6 +550,9 @@ label {
     background: #fff;
     box-shadow: 0 8px 22px rgba(15, 23, 42, 0.2);
   }
+  .app-topbar { min-height: 50px; padding: 0 12px; }
+  .app-topbar .app-mobile-menu { position: static; width: 34px; height: 34px; border: 0; background: transparent; box-shadow: none; }
+  .topbar-state, .topbar-health { padding: 0 7px; }
   .app-main {
     padding: 18px 14px;
   }
@@ -496,4 +562,11 @@ label {
     padding: 0;
     overflow: visible;
   }
+}
+
+@media (max-width: 520px) {
+  .app-topbar { padding: 0 8px; }
+  .app-topbar-actions { gap: 2px; }
+  .topbar-state span, .topbar-health span { display: none; }
+  .topbar-state, .topbar-health { width: 34px; justify-content: center; padding: 0; }
 }
