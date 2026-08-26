@@ -444,7 +444,22 @@ class PostgresStorage:
         return [_task(row) for row in rows]
 
     async def delete_task(self, task_id: UUID) -> None:
-        result = await self.pool.execute("DELETE FROM task_runs WHERE id=$1", task_id)
+        async with self.pool.acquire() as conn:
+            async with conn.transaction():
+                await self._lock(conn, task_id)
+                # Existing installations may still have the pre-cascade artifact
+                # foreign key. Remove the join rows explicitly so task deletion is
+                # safe both before and after the schema constraint is upgraded.
+                await conn.execute(
+                    """DELETE FROM finding_artifact_links
+                       WHERE finding_entry_id IN (
+                           SELECT id FROM blackboard_entries WHERE task_id=$1
+                       ) OR artifact_id IN (
+                           SELECT id FROM artifacts WHERE task_id=$1
+                       )""",
+                    task_id,
+                )
+                result = await conn.execute("DELETE FROM task_runs WHERE id=$1", task_id)
         if result == "DELETE 0":
             raise NotFoundError(f"task not found: {task_id}")
 

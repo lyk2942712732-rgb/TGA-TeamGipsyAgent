@@ -381,6 +381,10 @@ class TaskCoordinator:
                 return_exceptions=True,
             )
         await self.gateway.disconnect_task(task_id)
+        # Keep task data recoverable if the database deletion fails. Filesystem
+        # cleanup is intentionally best-effort and only begins after the database
+        # transaction has committed.
+        await self.storage.delete_task(task_id)
         for raw_root in (
             self.config.runtime.workspace_root,
             self.config.runtime.input_root,
@@ -389,7 +393,6 @@ class TaskCoordinator:
         ):
             path = self.config.resolve_path(raw_root) / str(task_id)
             await asyncio.to_thread(shutil.rmtree, path, True)
-        await self.storage.delete_task(task_id)
 
 
 __all__ = ["TaskCoordinator"]

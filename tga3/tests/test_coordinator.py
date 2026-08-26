@@ -87,3 +87,32 @@ async def test_finishing_workers_treats_control_disconnect_as_expected():
     assert all(agent.last_error is None for agent in workers)
     dialogue = await storage.list_dialogue(task.id)
     assert not any(message.payload.get("state") == AgentState.FAILED for message in dialogue)
+
+
+@pytest.mark.asyncio
+async def test_delete_task_keeps_files_when_database_delete_fails(tmp_path):
+    class FailingDeleteStorage(InMemoryStorage):
+        async def delete_task(self, task_id):
+            raise RuntimeError("database delete failed")
+
+    config = configured()
+    roots = [tmp_path / name for name in ("workspaces", "inputs", "artifacts", "writeups")]
+    (
+        config.runtime.workspace_root,
+        config.runtime.input_root,
+        config.runtime.artifact_root,
+        config.runtime.writeup_root,
+    ) = tuple(str(root) for root in roots)
+    storage = FailingDeleteStorage()
+    coordinator = TaskCoordinator(config, storage, FakeContainerRuntime())
+    task = await storage.create_task("delete", "penetration_test")
+    await storage.update_task(task.id, state=RunState.CANCELLED)
+    task_paths = [root / str(task.id) for root in roots]
+    for path in task_paths:
+        path.mkdir(parents=True)
+        (path / "keep.txt").write_text("recoverable", encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="database delete failed"):
+        await coordinator.delete_task(task.id)
+
+    assert all((path / "keep.txt").is_file() for path in task_paths)
