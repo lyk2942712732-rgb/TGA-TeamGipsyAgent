@@ -78,3 +78,11 @@ async def test_responses_supervisor_keeps_native_structured_output(monkeypatch):
 def test_supervisor_text_json_must_match_schema():
     with pytest.raises(ValueError):
         OpenAIHostModel._parse_supervisor_decision('{"advice":"missing progress"}')
+
+
+def test_supervisor_normalizes_nullable_addressed_to():
+    decision = OpenAIHostModel._parse_supervisor_decision(
+        '{"progress":"done","advice":null,"addressed_to":null,"question":null}'
+    )
+
+    assert decision.addressed_to == []

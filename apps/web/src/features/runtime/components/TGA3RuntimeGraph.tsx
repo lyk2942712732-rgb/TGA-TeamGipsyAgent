@@ -1,29 +1,96 @@
 import { Bot, BrainCircuit, Database, Focus, Lightbulb, Library, Minus, Plus, UserRound } from "lucide-react";
-import { useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import type { TGA3Agent, TGA3BoardEntry, TGA3DialogueMessage, TGA3RuntimeSnapshot } from "../../../runtime/tga3-runtime";
 import { stateLabel, stateTone } from "../tga3-view";
 
 type NodeBox = { x: number; y: number; width: number; height: number };
 type Activity = { id: string; owner: string; from: string; to?: string; label: string; at: number };
+type RuntimeEvent = { id: string; at: number; activity?: Activity; clearOwner?: string };
 type ActivityPlacement = { x: number; y: number; align: "left" | "center" | "right" };
 type DragState = { pointerId: number; x: number; y: number; panX: number; panY: number };
 
 const MIN_ZOOM = 0.75;
 const MAX_ZOOM = 1.75;
 const ZOOM_STEP = 0.25;
+const ACTIVITY_FLASH_MS = 2100;
 
 export function TGA3RuntimeGraph({ snapshot }: { snapshot: TGA3RuntimeSnapshot }) {
   const viewportRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<DragState | null>(null);
+  const taskRef = useRef(snapshot.task.id);
+  const seenEventIdsRef = useRef(new Set<string>());
+  const activityTimersRef = useRef(new Map<string, number>());
   const [boxes, setBoxes] = useState<Record<string, NodeBox>>({});
   const [canvasSize, setCanvasSize] = useState({ width: 1, height: 1 });
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [activitySlots, setActivitySlots] = useState<Record<string, Activity>>({});
   const agents = useMemo(() => orderedAgents(snapshot.agents), [snapshot.agents]);
   const terminal = ["completed", "failed", "cancelled", "stopped"].includes(snapshot.task.state);
-  const activities = useMemo(() => terminal ? [] : latestActivities(snapshot), [snapshot, terminal]);
+  const activities = useMemo(
+    () => terminal ? [] : Object.values(activitySlots).sort((a, b) => a.at - b.at || a.id.localeCompare(b.id)),
+    [activitySlots, terminal],
+  );
   const activeNodes = useMemo(() => new Set(activities.flatMap((activity) => [activity.from, activity.to].filter((value): value is string => Boolean(value)))), [activities]);
+
+  useEffect(() => {
+    if (taskRef.current !== snapshot.task.id) {
+      activityTimersRef.current.forEach((timer) => window.clearTimeout(timer));
+      activityTimersRef.current.clear();
+      seenEventIdsRef.current.clear();
+      setActivitySlots({});
+      taskRef.current = snapshot.task.id;
+    }
+    const events = runtimeEvents(snapshot);
+    const firstLoad = seenEventIdsRef.current.size === 0;
+    if (terminal) {
+      events.forEach((event) => seenEventIdsRef.current.add(event.id));
+      activityTimersRef.current.forEach((timer) => window.clearTimeout(timer));
+      activityTimersRef.current.clear();
+      setActivitySlots({});
+      return;
+    }
+    const now = Date.now();
+    events.forEach((event) => {
+      if (seenEventIdsRef.current.has(event.id)) return;
+      seenEventIdsRef.current.add(event.id);
+      if (firstLoad && now - event.at > ACTIVITY_FLASH_MS) return;
+      if (event.clearOwner) {
+        const timer = activityTimersRef.current.get(event.clearOwner);
+        if (timer !== undefined) window.clearTimeout(timer);
+        activityTimersRef.current.delete(event.clearOwner);
+        setActivitySlots((current) => {
+          if (!(event.clearOwner! in current)) return current;
+          const next = { ...current };
+          delete next[event.clearOwner!];
+          return next;
+        });
+      }
+      if (!event.activity) return;
+      const activity = event.activity;
+      const previousTimer = activityTimersRef.current.get(activity.owner);
+      if (previousTimer !== undefined) window.clearTimeout(previousTimer);
+      setActivitySlots((current) => ({ ...current, [activity.owner]: activity }));
+      const timer = window.setTimeout(() => {
+        setActivitySlots((current) => {
+          if (current[activity.owner]?.id !== activity.id) return current;
+          const next = { ...current };
+          delete next[activity.owner];
+          return next;
+        });
+        if (activityTimersRef.current.get(activity.owner) === timer) {
+          activityTimersRef.current.delete(activity.owner);
+        }
+      }, ACTIVITY_FLASH_MS);
+      activityTimersRef.current.set(activity.owner, timer);
+    });
+  }, [snapshot, terminal]);
+
+  useEffect(() => () => {
+    activityTimersRef.current.forEach((timer) => window.clearTimeout(timer));
+    activityTimersRef.current.clear();
+  }, []);
 
   useLayoutEffect(() => {
     const canvas = canvasRef.current;
@@ -155,24 +222,46 @@ function AgentModelLane({ agent, activeNodes }: { agent: TGA3Agent; activeNodes:
   </section>;
 }
 
-function latestActivities(snapshot: TGA3RuntimeSnapshot): Activity[] {
-  const all = [
-    ...snapshot.blackboard.map(boardActivity),
-    ...snapshot.dialogue.map(dialogueActivity).filter((activity): activity is Activity => activity !== null),
+function runtimeEvents(snapshot: TGA3RuntimeSnapshot): RuntimeEvent[] {
+  return [
+    ...snapshot.blackboard.map((entry): RuntimeEvent => {
+      const activity = boardActivity(entry);
+      return { id: `board-${entry.id}`, at: timestamp(entry.created_at), ...(activity ? { activity } : {}) };
+    }),
+    ...snapshot.dialogue.map(dialogueRuntimeEvent),
   ].sort((a, b) => a.at - b.at || a.id.localeCompare(b.id));
-  const latest = new Map<string, Activity>();
-  all.forEach((activity) => latest.set(activity.owner, activity));
-  return [...latest.values()].sort((a, b) => a.at - b.at);
 }
 
-function boardActivity(entry: TGA3BoardEntry): Activity {
+function boardActivity(entry: TGA3BoardEntry): Activity | null {
+  if (entry.actor.role === "system") return null;
   const owner = entry.actor.role === "user" ? "user" : agentNode(entry.actor.agent_id);
   return { id: `board-${entry.id}`, owner, from: owner, to: "blackboard", label: `${entry.actor.display_name} 写入 ${boardLabel(entry.kind)}`, at: timestamp(entry.created_at) };
 }
 
+function dialogueRuntimeEvent(message: TGA3DialogueMessage): RuntimeEvent {
+  const owner = dialogueOwner(message);
+  const base = { id: `dialogue-${message.id}`, at: timestamp(message.created_at) };
+  if (["action_completed", "error", "paused"].includes(message.kind)) return { ...base, clearOwner: owner };
+  if (message.kind === "agent_status") {
+    const state = String(message.payload.state ?? "");
+    return ["idle", "paused", "completed", "failed", "stopped"].includes(state)
+      ? { ...base, clearOwner: owner }
+      : base;
+  }
+  const activity = dialogueActivity(message);
+  return { ...base, ...(activity ? { activity } : {}) };
+}
+
+function dialogueOwner(message: TGA3DialogueMessage): string {
+  const ownerAgentId = message.actor.agent_id !== "system"
+    ? message.actor.agent_id
+    : String(message.payload.agent_id ?? message.channel_agent_id);
+  return ownerAgentId === "user" ? "user" : agentNode(ownerAgentId);
+}
+
 function dialogueActivity(message: TGA3DialogueMessage): Activity | null {
-  const ownerAgentId = message.actor.agent_id !== "system" ? message.actor.agent_id : String(message.payload.agent_id ?? message.channel_agent_id);
-  const owner = ownerAgentId === "user" ? "user" : agentNode(ownerAgentId);
+  const owner = dialogueOwner(message);
+  const ownerAgentId = owner === "user" ? "user" : owner.slice("agent:".length);
   const model = modelNode(ownerAgentId);
   const base = { id: `dialogue-${message.id}`, owner, at: timestamp(message.created_at) };
   if (message.kind === "blackboard_progress") return { ...base, owner: agentNode("supervisor"), from: "blackboard", to: agentNode("supervisor"), label: "Supervisor 读取黑板更新" };

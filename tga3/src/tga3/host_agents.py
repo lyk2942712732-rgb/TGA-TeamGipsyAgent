@@ -6,10 +6,11 @@ import asyncio
 import hashlib
 import json
 from collections.abc import Awaitable, Callable
+from contextlib import suppress
 from typing import Any, Protocol
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .blackboard import Blackboard
 from .config import ResolvedAgent, TGA3Config
@@ -25,6 +26,13 @@ class SupervisorDecision(BaseModel):
     advice: str | None = None
     addressed_to: list[str] = Field(default_factory=list)
     question: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_nullable_addressed_to(cls, value: Any) -> Any:
+        if isinstance(value, dict) and value.get("addressed_to") is None:
+            return {**value, "addressed_to": []}
+        return value
 
 
 class HostModel(Protocol):
@@ -154,20 +162,23 @@ class Automation:
         blackboard: Blackboard,
         dialogue: SolverDialogue,
         model: HostModel,
-        on_reported: Callable[[UUID], Awaitable[None]] | None = None,
+        on_reporter_finished: Callable[[UUID], Awaitable[None]] | None = None,
     ) -> None:
         self.config = config
         self.storage = storage
         self.blackboard = blackboard
         self.dialogue = dialogue
         self.model = model
-        self.on_reported = on_reported
+        self.on_reporter_finished = on_reporter_finished
         self._supervisor_jobs: dict[UUID, asyncio.Task[None]] = {}
         self._reporter_jobs: dict[UUID, asyncio.Task[None]] = {}
         self._last_supervisor_seq: dict[UUID, int] = {}
         self._last_supervisor_at: dict[UUID, float] = {}
 
     async def changed(self, task_id: UUID, latest_seq: int) -> None:
+        task = await self.storage.get_task(task_id)
+        if task.state in {RunState.COMPLETED, RunState.FAILED, RunState.CANCELLED}:
+            return
         entries = await self.storage.list_entries(task_id, after_seq=max(0, latest_seq - 1), limit=1)
         if not entries:
             return
@@ -204,6 +215,9 @@ class Automation:
         )
         if remaining > 0:
             await asyncio.sleep(remaining)
+        task = await self.storage.get_task(task_id)
+        if task.state in {RunState.COMPLETED, RunState.FAILED, RunState.CANCELLED}:
+            return
         last = self._last_supervisor_seq.get(task_id, 0)
         if trigger_seq <= last:
             return
@@ -289,8 +303,33 @@ class Automation:
         snapshot = json.dumps([entry.model_dump(mode="json") for entry in entries], ensure_ascii=False, indent=2)
         try:
             markdown = await self.model.report(snapshot, binding)
+            root = self.config.resolve_path(self.config.runtime.writeup_root) / str(task_id)
+            root.mkdir(parents=True, exist_ok=True)
+            path = root / "writeup.md"
+            path.write_text(markdown, encoding="utf-8")
+            digest = hashlib.sha256(path.read_bytes()).hexdigest()
+            await self.storage.save_writeup(task_id, snapshot_seq, str(path), digest)
+            if self.on_reporter_finished:
+                await self.on_reporter_finished(task_id)
         except Exception as exc:
-            await self.storage.update_agent(task_id, "reporter", actual_state=AgentState.FAILED, last_error=str(exc))
+            if self.on_reporter_finished:
+                with suppress(Exception):
+                    await self.on_reporter_finished(task_id)
+            await self.storage.update_agent(
+                task_id,
+                "reporter",
+                desired_state=AgentState.FAILED,
+                actual_state=AgentState.FAILED,
+                last_error=str(exc),
+            )
+            supervisor_run = await self.storage.get_agent(task_id, "supervisor")
+            if supervisor_run.actual_state != AgentState.FAILED:
+                await self.storage.update_agent(
+                    task_id,
+                    "supervisor",
+                    desired_state=AgentState.STOPPED,
+                    actual_state=AgentState.STOPPED,
+                )
             await self.storage.update_task(task_id, state=RunState.FAILED)
             await self.dialogue.emit(
                 task_id,
@@ -300,14 +339,6 @@ class Automation:
                 channel_agent_id="reporter",
             )
             return
-        root = self.config.resolve_path(self.config.runtime.writeup_root) / str(task_id)
-        root.mkdir(parents=True, exist_ok=True)
-        path = root / "writeup.md"
-        path.write_text(markdown, encoding="utf-8")
-        digest = hashlib.sha256(path.read_bytes()).hexdigest()
-        await self.storage.save_writeup(task_id, snapshot_seq, str(path), digest)
-        if self.on_reported:
-            await self.on_reported(task_id)
         await self.storage.update_agent(
             task_id,
             "reporter",

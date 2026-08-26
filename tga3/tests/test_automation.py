@@ -79,3 +79,56 @@ async def test_final_candidate_freezes_snapshot_and_generates_writeup(tmp_path: 
     writeup = await storage.latest_writeup(task.id)
     assert writeup.task_id == task.id
     assert writeup.snapshot_seq == 2
+
+
+@pytest.mark.asyncio
+async def test_reporter_failure_stops_workers_and_finishes_host_states(tmp_path: Path):
+    class FailingReporter(DeterministicHostModel):
+        async def report(self, snapshot: str, binding=None) -> str:
+            raise RuntimeError("Max turns (2) exceeded")
+
+    config = TGA3Config(Path(__file__).parents[1] / "config")
+    config.runtime.writeup_root = str(tmp_path)
+    config.runtime.cadence.finalization_grace_seconds = 0
+    storage = InMemoryStorage()
+    task = await storage.create_task("report failure", "penetration_test")
+    for agent_id in ("supervisor", "reporter"):
+        configured_agent = config.agents.agents[agent_id]
+        state = AgentState.IDLE if agent_id == "supervisor" else AgentState.CREATED
+        await storage.upsert_agent(
+            AgentRun(
+                task_id=task.id,
+                agent_id=agent_id,
+                sdk=configured_agent.runtime,
+                desired_state=state,
+                actual_state=state,
+                provider_id=configured_agent.provider_id,
+                model_id=configured_agent.model_id,
+                protocol=configured_agent.protocol,
+            )
+        )
+    finished: list = []
+
+    async def finish_workers(task_id):
+        finished.append(task_id)
+
+    automation = Automation(
+        config,
+        storage,
+        Blackboard(storage),
+        SolverDialogue(storage),
+        FailingReporter(),
+        finish_workers,
+    )
+
+    await automation._report(task.id)
+
+    assert finished == [task.id]
+    assert (await storage.get_task(task.id)).state == RunState.FAILED
+    reporter = await storage.get_agent(task.id, "reporter")
+    assert reporter.desired_state == AgentState.FAILED
+    assert reporter.actual_state == AgentState.FAILED
+    assert reporter.last_error == "Max turns (2) exceeded"
+    supervisor = await storage.get_agent(task.id, "supervisor")
+    assert supervisor.desired_state == AgentState.STOPPED
+    assert supervisor.actual_state == AgentState.STOPPED
