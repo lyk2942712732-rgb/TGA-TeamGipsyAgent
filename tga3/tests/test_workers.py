@@ -224,6 +224,7 @@ def test_worker_prompt_injects_exact_blackboard_identity(monkeypatch):
     assert "task_id: task-uuid" in prompt
     assert '"agent_id":"worker-openai"' in prompt
     assert "Never invent a placeholder task ID or actor." in prompt
+    assert "intel: body={claim, detail?}; artifact_refs=optional" in prompt
     assert "body={claim, detail?}; artifact_refs=required non-empty" in prompt
     assert "body={conclusion, rationale, answer_type?, finding_ids}; artifact_refs=forbidden" in prompt
     assert "blackboard_publish tool accepts one request object" in prompt
@@ -268,3 +269,34 @@ async def test_worker_reports_idle_between_work_cycles(monkeypatch):
         ("agent.action.completed", {"summary": "工作周期完成"}),
         ("agent.status", {"state": "idle"}),
     ]
+
+
+@pytest.mark.asyncio
+async def test_worker_coalesces_blackboard_notifications_to_the_latest_sequence(monkeypatch):
+    for name, value in {
+        "TGA3_TASK_ID": "task-id",
+        "TGA3_AGENT_ID": "worker-openai",
+        "TGA3_CONTROL_WS_URL": "ws://control",
+        "TGA3_SYNC_SECONDS": "90",
+        "TGA3_STARTUP_PROMPT": "start",
+        "TGA3_PERIODIC_PROMPT": "continue",
+        "TGA3_BLACKBOARD_CHANGED_PROMPT": "sync through {latest_seq}",
+    }.items():
+        monkeypatch.setenv(name, value)
+
+    class Adapter(AgentAdapter):
+        async def run_cycle(self, prompt, emit):
+            return ""
+
+        async def set_model(self, params):
+            return None
+
+    session = WorkerSession(Adapter())
+    await session._queue_blackboard_update(4)
+    await session._queue_blackboard_update(7)
+    await session._queue_blackboard_update(6)
+
+    assert session.queue.qsize() == 1
+    marker = await session.queue.get()
+    assert marker is not None and not isinstance(marker, str)
+    assert session.pending_blackboard_seq == 7

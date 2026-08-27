@@ -45,7 +45,13 @@ async def test_chat_compatible_supervisor_uses_text_json_and_pydantic(monkeypatc
     monkeypatch.setitem(sys.modules, "agents", fake_agents_module())
     monkeypatch.setattr(OpenAIHostModel, "_model", staticmethod(lambda _binding: "model"))
     FakeRunner.final_output = """```json
-    {"progress":"working","advice":"check input","addressed_to":["worker-openai"],"question":null}
+    {
+      "progress":"working",
+      "advice":"check input",
+      "advice_reason":"user_request",
+      "addressed_to":["worker-openai"],
+      "question":null
+    }
     ```"""
     model = OpenAIHostModel(SimpleNamespace(), SimpleNamespace(list=lambda: [], read=lambda _name: ""))
 
@@ -54,6 +60,7 @@ async def test_chat_compatible_supervisor_uses_text_json_and_pydantic(monkeypatc
     assert decision == SupervisorDecision(
         progress="working",
         advice="check input",
+        advice_reason="user_request",
         addressed_to=["worker-openai"],
     )
     assert "output_type" not in FakeAgent.last_kwargs
@@ -86,3 +93,8 @@ def test_supervisor_normalizes_nullable_addressed_to():
     )
 
     assert decision.addressed_to == []
+
+
+def test_supervisor_requires_a_reason_for_each_advice():
+    with pytest.raises(ValueError, match="advice and advice_reason"):
+        SupervisorDecision(progress="working", advice="change direction")

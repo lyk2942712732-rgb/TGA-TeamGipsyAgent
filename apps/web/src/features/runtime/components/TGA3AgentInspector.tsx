@@ -5,7 +5,7 @@ import { deleteStagedInput, fetchAgentModelOptions, stageInput, type StagedAsset
 import type { ProviderProtocol } from "../../../api/tga3-config";
 import type { TaskMode } from "../../../modes";
 import type { TGA3Agent, TGA3RuntimeSnapshot } from "../../../runtime/tga3-runtime";
-import { formatTime, latestPendingQuestion, protocolLabel, roleLabel, sdkLabel, stateLabel, stateTone } from "../tga3-view";
+import { BOARD_KIND_LABELS, bodyText, formatTime, latestPendingQuestion, protocolLabel, roleLabel, sdkLabel, stateLabel, stateTone } from "../tga3-view";
 import { DialogueCard } from "./TGA3Workspace";
 
 type InspectorTab = "overview" | "conversation" | "activity" | "control";
@@ -70,7 +70,7 @@ function Conversation({ snapshot, agent, onChanged }: { snapshot: TGA3RuntimeSna
 function Activity({ snapshot, agent }: { snapshot: TGA3RuntimeSnapshot; agent: TGA3Agent }) {
   const dialogue = snapshot.dialogue.filter((item) => item.channel_agent_id === agent.agent_id || item.actor.agent_id === agent.agent_id || item.payload.agent_id === agent.agent_id);
   const board = snapshot.blackboard.filter((item) => item.actor.agent_id === agent.agent_id || (Array.isArray(item.body.addressed_to) && item.body.addressed_to.includes(agent.agent_id)));
-  return <div className="tga3-activity"><section><h3>对话事件 <small>{dialogue.length}</small></h3>{dialogue.length ? [...dialogue].reverse().map((message) => <DialogueCard key={message.id} message={message} compact />) : <p className="tga3-muted">暂无事件</p>}</section><section><h3>黑板写入 <small>{board.length}</small></h3>{board.length ? [...board].reverse().map((entry) => <article key={entry.id}><b>#{entry.seq} · {entry.kind}</b><p>{entry.topic}</p><small>{formatTime(entry.created_at)}</small></article>) : <p className="tga3-muted">暂无写入</p>}</section></div>;
+  return <div className="tga3-activity"><section><h3>对话事件 <small>{dialogue.length}</small></h3>{dialogue.length ? [...dialogue].reverse().map((message) => <DialogueCard key={message.id} message={message} compact />) : <p className="tga3-muted">暂无事件</p>}</section><section><h3>黑板写入 <small>{board.length}</small></h3>{board.length ? [...board].reverse().map((entry) => <article key={entry.id}><b>#{entry.seq} · {BOARD_KIND_LABELS[entry.kind]}</b><p>{bodyText(entry)}</p><small>{formatTime(entry.created_at)}</small></article>) : <p className="tga3-muted">暂无写入</p>}</section></div>;
 }
 
 function Controls({ snapshot, agent, onChanged }: { snapshot: TGA3RuntimeSnapshot; agent: TGA3Agent; onChanged: () => void }) {

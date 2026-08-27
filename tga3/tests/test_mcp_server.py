@@ -35,11 +35,14 @@ async def test_mcp_publish_tool_exposes_one_discriminated_worker_contract():
     request = publish.inputSchema["properties"]["request"]
 
     assert request["discriminator"]["propertyName"] == "kind"
-    assert set(request["discriminator"]["mapping"]) == {"finding", "final_candidate"}
-    assert len(request["oneOf"]) == 2
+    assert set(request["discriminator"]["mapping"]) == {"intel", "finding", "final_candidate"}
+    assert len(request["oneOf"]) == 3
     assert "body={claim, detail?}" in publish.description
+    intel_schema = publish.inputSchema["$defs"]["WorkerIntelPublication"]
     finding_schema = publish.inputSchema["$defs"]["WorkerFindingPublication"]
     final_schema = publish.inputSchema["$defs"]["WorkerFinalCandidatePublication"]
     assert "kind" in finding_schema["required"]
     assert "artifact_refs" in finding_schema["required"]
+    assert "artifact_refs" in intel_schema["properties"]
+    assert "artifact_refs" not in intel_schema["required"]
     assert "artifact_refs" not in final_schema["properties"]

@@ -232,7 +232,7 @@ export function TGA3RuntimeGraph({ snapshot }: { snapshot: TGA3RuntimeSnapshot }
 
         <GraphNode id="user" className="user" active={activeNodes.has("user")} icon={<UserRound size={20} />} title="用户" meta="任务 · 提示 · Q&A" />
         <GraphNode id="skills" className="skills" active={activeNodes.has("skills")} icon={<Library size={20} />} title="Skills" meta="按需读取能力" />
-        <GraphNode id="blackboard" className="blackboard" active={activeNodes.has("blackboard")} icon={<Database size={21} />} title="黑板" meta={`${snapshot.task.blackboard_seq} 条 · ${snapshot.blackboard.filter((entry) => entry.kind === "finding").length} Findings`} />
+        <GraphNode id="blackboard" className="blackboard" active={activeNodes.has("blackboard")} icon={<Database size={21} />} title="黑板" meta={`${snapshot.blackboard.filter((entry) => entry.kind === "intel").length} Intel · ${snapshot.blackboard.filter((entry) => entry.kind === "finding").length} Findings`} />
         <div className="tga3-runtime-graph-lanes">
           {agents.map((agent) => <AgentModelLane key={agent.agent_id} agent={agent} activeNodes={activeNodes} />)}
         </div>
@@ -438,4 +438,4 @@ function agentNode(agentId: string): string { return `agent:${agentId}`; }
 function modelNode(agentId: string): string { return `model:${agentId}`; }
 function timestamp(value: string): number { const parsed = Date.parse(value); return Number.isNaN(parsed) ? 0 : parsed; }
 function shortAction(value: string): string { const compact = value.replace(/\s+/g, " ").trim(); return compact.length > 34 ? `${compact.slice(0, 34)}…` : compact; }
-function boardLabel(kind: TGA3BoardEntry["kind"]): string { return ({ user_prompt: "用户提示", user_file: "用户文件", supervisor_advice: "建议", finding: "Finding", qa: "Q&A", final_candidate: "最终候选" })[kind]; }
+function boardLabel(kind: TGA3BoardEntry["kind"]): string { return ({ user_prompt: "用户提示", user_file: "用户文件", supervisor_advice: "建议", intel: "Intel", finding: "Finding", qa: "Q&A", final_candidate: "最终候选" })[kind]; }

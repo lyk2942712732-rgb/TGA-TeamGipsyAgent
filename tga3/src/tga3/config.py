@@ -135,7 +135,9 @@ class CadenceConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
     worker_sync_seconds: int = Field(default=90, ge=5, le=3600)
     supervisor_debounce_seconds: int = Field(default=2, ge=0, le=60)
-    supervisor_cooldown_seconds: int = Field(default=20, ge=0, le=3600)
+    supervisor_intel_max_wait_seconds: int = Field(default=10, ge=1, le=300)
+    supervisor_advice_interval_seconds: int = Field(default=60, ge=1, le=3600)
+    supervisor_silence_seconds: int = Field(default=90, ge=15, le=3600)
     finalization_grace_seconds: int = Field(default=30, ge=0, le=600)
 
 

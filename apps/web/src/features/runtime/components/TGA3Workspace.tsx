@@ -46,7 +46,7 @@ function BlackboardPanel({ entries }: { entries: TGA3BoardEntry[] }) {
     {visible.length ? view === "tiles"
       ? <div className="tga3-board-tile-grid">{visible.map((entry) => <BoardTile key={entry.id} entry={entry} onOpen={() => setFocused(entry)} />)}</div>
       : <div className="tga3-entry-list">{visible.map((entry) => <BoardCard key={entry.id} entry={entry} />)}</div>
-      : <Empty icon={<ShieldCheck />} title="黑板尚无匹配内容" detail="场景提示、用户输入、Supervisor 建议、Finding、Q&A 和最终候选会按顺序写入这里。" />}
+      : <Empty icon={<ShieldCheck />} title="黑板尚无匹配内容" detail="场景提示、用户输入、Supervisor 建议、Intel、Finding、Q&A 和最终候选会按顺序写入这里。" />}
     {focused ? <BoardFocus entry={focused} onClose={() => setFocused(null)} /> : null}
   </div>;
 }
@@ -81,7 +81,7 @@ function BoardCard({ entry }: { entry: TGA3BoardEntry }) { return <article class
 function BoardBody({ entry }: { entry: TGA3BoardEntry }) {
   const body = entry.body;
   if (entry.kind === "supervisor_advice") return <><p>{String(body.advice ?? "")}</p><Meta label="建议对象" values={listStrings(body.addressed_to)} /></>;
-  if (entry.kind === "finding") return <><h3>{String(body.claim ?? entry.topic)}</h3>{body.detail ? <p>{String(body.detail)}</p> : null}</>;
+  if (entry.kind === "intel" || entry.kind === "finding") return <><h3>{String(body.claim ?? entry.topic)}</h3>{body.detail ? <p>{String(body.detail)}</p> : null}</>;
   if (entry.kind === "qa") return <><dl className="tga3-qa"><div><dt>问题</dt><dd>{String(body.question ?? "")}</dd></div><div><dt>回答</dt><dd>{String(body.answer ?? "")}</dd></div></dl><Meta label="问题来源" values={[String(body.origin_agent_id ?? body.origin_type ?? "supervisor")]} /></>;
   if (entry.kind === "final_candidate") return <><h3><Flag size={16} />{String(body.conclusion ?? "最终候选")}</h3><p>{String(body.rationale ?? "")}</p><Meta label="引用 Finding" values={listStrings(body.finding_ids)} /></>;
   if (entry.kind === "user_file") return <><h3><File size={16} />{String(body.name ?? "用户文件")}</h3><p>{String(body.media_type ?? "")}</p><code>{String(body.sha256 ?? "")}</code></>;
@@ -162,7 +162,7 @@ function ReportPanel({ snapshot }: { snapshot: TGA3RuntimeSnapshot }) {
 function Meta({ label, values }: { label: string; values: string[] }) { return values.length ? <footer className="tga3-entry-meta"><span>{label}</span>{values.map((value, index) => <em key={`${value}-${index}`}>{value}</em>)}</footer> : null; }
 function Empty({ icon, title, detail }: { icon: ReactNode; title: string; detail: string }) { return <div className="tga3-empty">{icon}<h3>{title}</h3><p>{detail}</p></div>; }
 function boardTileTitle(entry: TGA3BoardEntry): string {
-  if (entry.kind === "finding") return String(entry.body.claim ?? entry.topic);
+  if (entry.kind === "intel" || entry.kind === "finding") return String(entry.body.claim ?? entry.topic);
   if (entry.kind === "supervisor_advice") return "Supervisor 建议";
   if (entry.kind === "final_candidate") return String(entry.body.conclusion ?? "最终候选");
   if (entry.kind === "user_file") return String(entry.body.name ?? "用户文件");

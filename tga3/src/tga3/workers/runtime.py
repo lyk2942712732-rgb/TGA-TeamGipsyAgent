@@ -12,6 +12,7 @@ from uuid import uuid4
 from tga3.protocol import CONTROL_METHODS, RpcMessage
 
 Emit = Callable[[str, dict[str, Any]], Awaitable[None]]
+_BLACKBOARD_WAKE = object()
 
 
 class AgentAdapter(ABC):
@@ -30,13 +31,21 @@ class WorkerSession:
         self.control_url = f"{os.environ['TGA3_CONTROL_WS_URL'].rstrip('/')}/{self.task_id}/{self.agent_id}"
         self.sync_seconds = int(os.environ["TGA3_SYNC_SECONDS"])
         self.session_id = str(uuid4())
-        self.queue: asyncio.Queue[str | None] = asyncio.Queue()
+        self.queue: asyncio.Queue[str | object | None] = asyncio.Queue()
         self.paused = asyncio.Event()
         self.paused.set()
         self.stop = asyncio.Event()
         self.socket: Any = None
         self.send_lock = asyncio.Lock()
         self.current_cycle: asyncio.Task[str] | None = None
+        self.pending_blackboard_seq = 0
+        self.blackboard_wake_queued = False
+
+    async def _queue_blackboard_update(self, latest_seq: int) -> None:
+        self.pending_blackboard_seq = max(self.pending_blackboard_seq, latest_seq)
+        if not self.blackboard_wake_queued:
+            self.blackboard_wake_queued = True
+            await self.queue.put(_BLACKBOARD_WAKE)
 
     async def emit(self, method: str, params: dict[str, Any]) -> None:
         if self.socket is None:
@@ -83,7 +92,7 @@ class WorkerSession:
                 elif message.method == "session.add_prompt":
                     await self.queue.put(str(params["text"]))
                 elif message.method == "blackboard.changed":
-                    await self.queue.put(os.environ["TGA3_BLACKBOARD_CHANGED_PROMPT"].format(**params))
+                    await self._queue_blackboard_update(int(params["latest_seq"]))
                 await self._reply(message, {"accepted": True})
             except Exception as exc:
                 await self._reply(message, error=str(exc))
@@ -97,6 +106,12 @@ class WorkerSession:
                 prompt = os.environ["TGA3_PERIODIC_PROMPT"]
             if prompt is None:
                 return
+            if prompt is _BLACKBOARD_WAKE:
+                latest_seq = self.pending_blackboard_seq
+                self.pending_blackboard_seq = 0
+                self.blackboard_wake_queued = False
+                prompt = os.environ["TGA3_BLACKBOARD_CHANGED_PROMPT"].format(latest_seq=latest_seq)
+            assert isinstance(prompt, str)
             await self.paused.wait()
             await self.emit("agent.status", {"state": "running"})
             await self.emit("agent.action.started", {"summary": "开始一个工作周期"})

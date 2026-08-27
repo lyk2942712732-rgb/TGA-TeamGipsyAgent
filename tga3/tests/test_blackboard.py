@@ -86,6 +86,55 @@ async def test_finding_gate_hides_artifact_links_and_is_idempotent():
 
 
 @pytest.mark.asyncio
+async def test_intel_reuses_finding_body_and_accepts_optional_evidence():
+    storage = InMemoryStorage()
+    task = await storage.create_task("intel", "penetration_test")
+    board = Blackboard(storage)
+    actor = worker()
+
+    without_evidence = await board.publish(
+        task.id,
+        actor,
+        PublishRequest(
+            kind=EntryKind.INTEL,
+            body={"claim": "Flask is in use", "detail": "confirmed from response headers"},
+            idempotency_key="intel-no-evidence",
+        ),
+    )
+    proof = await storage.register_artifact(artifact(task.id, actor))
+    with_evidence = await board.publish(
+        task.id,
+        actor,
+        PublishRequest(
+            kind=EntryKind.INTEL,
+            body={"claim": "Git metadata is exposed"},
+            artifact_refs=[ArtifactRef(artifact_id=proof.id, locator="stdout:1")],
+            idempotency_key="intel-with-evidence",
+        ),
+    )
+
+    assert without_evidence.kind == EntryKind.INTEL
+    assert storage.links[with_evidence.id][0].artifact_id == proof.id
+
+
+@pytest.mark.asyncio
+async def test_intel_rejects_an_unavailable_optional_artifact():
+    storage = InMemoryStorage()
+    task = await storage.create_task("bad intel", "penetration_test")
+    with pytest.raises(FindingRejectedError):
+        await Blackboard(storage).publish(
+            task.id,
+            worker(),
+            PublishRequest(
+                kind=EntryKind.INTEL,
+                body={"claim": "unsupported intel"},
+                artifact_refs=[ArtifactRef(artifact_id=uuid4(), locator="stdout:1")],
+                idempotency_key="bad-intel",
+            ),
+        )
+
+
+@pytest.mark.asyncio
 async def test_finding_rejects_unknown_artifact_and_final_requires_known_finding():
     storage = InMemoryStorage()
     task = await storage.create_task("reject", "penetration_test")

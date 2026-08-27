@@ -18,6 +18,7 @@ def test_blackboard_vocabulary_has_no_legacy_worker_messages():
         "user_prompt",
         "user_file",
         "supervisor_advice",
+        "intel",
         "finding",
         "qa",
         "final_candidate",
@@ -46,6 +47,15 @@ def test_worker_publication_contract_is_discriminated_strict_and_generated_from_
     })
     assert finding.publish_request().body == {"claim": "verified", "detail": "reproduced"}
 
+    intel = adapter.validate_python({
+        "kind": "intel",
+        "task_id": task_id,
+        "actor": {"agent_id": "worker-openai", "display_name": "OpenAI Worker", "role": "worker"},
+        "body": {"claim": "Flask is in use", "detail": "confirmed from response headers"},
+        "idempotency_key": "intel-1",
+    })
+    assert intel.publish_request().artifact_refs == []
+
     with pytest.raises(ValidationError):
         adapter.validate_python({
             "kind": "finding",
@@ -71,9 +81,10 @@ def test_worker_publication_contract_is_discriminated_strict_and_generated_from_
 
     schema = adapter.json_schema()
     assert schema["discriminator"]["propertyName"] == "kind"
-    assert set(schema["discriminator"]["mapping"]) == {"finding", "final_candidate"}
+    assert set(schema["discriminator"]["mapping"]) == {"intel", "finding", "final_candidate"}
     summary = worker_publish_contract()
-    assert "body={claim, detail?}" in summary
+    assert "intel: body={claim, detail?}; artifact_refs=optional" in summary
+    assert "finding: body={claim, detail?}; artifact_refs=required non-empty" in summary
     assert "body={conclusion, rationale, answer_type?, finding_ids}" in summary
 
 

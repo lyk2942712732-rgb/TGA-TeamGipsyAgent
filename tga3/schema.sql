@@ -72,12 +72,12 @@ CREATE TABLE blackboard_entries (
 
 CREATE INDEX blackboard_task_seq_idx ON blackboard_entries(task_id, seq);
 
-CREATE TABLE finding_artifact_links (
-    finding_entry_id UUID NOT NULL REFERENCES blackboard_entries(id) ON DELETE CASCADE,
+CREATE TABLE blackboard_artifact_links (
+    entry_id UUID NOT NULL REFERENCES blackboard_entries(id) ON DELETE CASCADE,
     artifact_id UUID NOT NULL REFERENCES artifacts(id) ON DELETE CASCADE,
     locator TEXT NOT NULL,
     description TEXT NOT NULL DEFAULT '',
-    PRIMARY KEY (finding_entry_id, artifact_id, locator)
+    PRIMARY KEY (entry_id, artifact_id, locator)
 );
 
 CREATE TABLE dialogue_messages (

@@ -5,9 +5,12 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import re
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
-from typing import Any, Protocol
+from dataclasses import dataclass, field
+from difflib import SequenceMatcher
+from typing import Any, Literal, Protocol
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -15,7 +18,17 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from .blackboard import Blackboard
 from .config import ResolvedAgent, TGA3Config
 from .dialogue import SolverDialogue
-from .domain import SYSTEM_ACTOR, Actor, AgentState, DialogueKind, EntryKind, PublishRequest, RunState
+from .domain import (
+    SYSTEM_ACTOR,
+    Actor,
+    AgentState,
+    BlackboardEntry,
+    DialogueKind,
+    EntryKind,
+    PublishRequest,
+    RunState,
+    utc_now,
+)
 from .skills import SkillCatalog
 from .storage import Storage
 
@@ -24,6 +37,14 @@ class SupervisorDecision(BaseModel):
     model_config = ConfigDict(extra="forbid")
     progress: str = Field(min_length=1)
     advice: str | None = None
+    advice_reason: Literal[
+        "conflict",
+        "duplicate_work",
+        "stalled",
+        "finding_coordination",
+        "worker_blocked",
+        "user_request",
+    ] | None = None
     addressed_to: list[str] = Field(default_factory=list)
     question: str | None = None
 
@@ -33,6 +54,12 @@ class SupervisorDecision(BaseModel):
         if isinstance(value, dict) and value.get("addressed_to") is None:
             return {**value, "addressed_to": []}
         return value
+
+    @model_validator(mode="after")
+    def require_reason_only_for_advice(self) -> SupervisorDecision:
+        if bool(self.advice) != bool(self.advice_reason):
+            raise ValueError("advice and advice_reason must either both be present or both be absent")
+        return self
 
 
 class HostModel(Protocol):
@@ -152,6 +179,29 @@ class DeterministicHostModel:
         return f"# TGA3 Writeup\n\n## 固定黑板快照\n\n```json\n{snapshot}\n```\n"
 
 
+@dataclass
+class _SupervisorPending:
+    latest_seq: int = 0
+    first_intel_at: float | None = None
+    last_change_at: float = 0
+    immediate: bool = False
+    event: asyncio.Event = field(default_factory=asyncio.Event)
+
+
+def _similar_advice(left: str, right: str) -> bool:
+    normalized_left = re.sub(r"[\W_]+", "", left.casefold())
+    normalized_right = re.sub(r"[\W_]+", "", right.casefold())
+    if not normalized_left or not normalized_right:
+        return False
+    if normalized_left == normalized_right:
+        return True
+    if min(len(normalized_left), len(normalized_right)) >= 12 and (
+        normalized_left in normalized_right or normalized_right in normalized_left
+    ):
+        return True
+    return SequenceMatcher(None, normalized_left, normalized_right).ratio() >= 0.82
+
+
 class Automation:
     """Debounced advisor plus one-shot reporter. No graph scheduler is involved."""
 
@@ -173,7 +223,7 @@ class Automation:
         self._supervisor_jobs: dict[UUID, asyncio.Task[None]] = {}
         self._reporter_jobs: dict[UUID, asyncio.Task[None]] = {}
         self._last_supervisor_seq: dict[UUID, int] = {}
-        self._last_supervisor_at: dict[UUID, float] = {}
+        self._supervisor_pending: dict[UUID, _SupervisorPending] = {}
 
     async def changed(self, task_id: UUID, latest_seq: int) -> None:
         task = await self.storage.get_task(task_id)
@@ -183,14 +233,26 @@ class Automation:
         if not entries:
             return
         latest = entries[-1]
-        if latest.kind == EntryKind.FINAL_CANDIDATE and task_id not in self._reporter_jobs:
-            self._reporter_jobs[task_id] = asyncio.create_task(self._report(task_id))
-        if latest.kind == EntryKind.SUPERVISOR_ADVICE:
+        if latest.kind == EntryKind.FINAL_CANDIDATE:
+            if task_id not in self._reporter_jobs:
+                self._reporter_jobs[task_id] = asyncio.create_task(self._report(task_id))
             return
-        old = self._supervisor_jobs.get(task_id)
-        if old and not old.done():
-            old.cancel()
-        self._supervisor_jobs[task_id] = asyncio.create_task(self._advise(task_id, latest_seq))
+        if latest.kind == EntryKind.SUPERVISOR_ADVICE or (
+            latest.kind == EntryKind.USER_PROMPT and latest.topic == "scene"
+        ):
+            return
+        loop = asyncio.get_running_loop()
+        pending = self._supervisor_pending.setdefault(task_id, _SupervisorPending())
+        pending.latest_seq = max(pending.latest_seq, latest_seq)
+        pending.last_change_at = loop.time()
+        if latest.kind == EntryKind.INTEL:
+            pending.first_intel_at = pending.first_intel_at or pending.last_change_at
+        if latest.kind in {EntryKind.FINDING, EntryKind.QA}:
+            pending.immediate = True
+        pending.event.set()
+        job = self._supervisor_jobs.get(task_id)
+        if job is None or job.done():
+            self._supervisor_jobs[task_id] = asyncio.create_task(self._supervise(task_id, pending))
 
     async def cancel(self, task_id: UUID) -> None:
         jobs = [
@@ -203,24 +265,58 @@ class Automation:
         if jobs:
             await asyncio.gather(*jobs, return_exceptions=True)
         self._last_supervisor_seq.pop(task_id, None)
-        self._last_supervisor_at.pop(task_id, None)
+        self._supervisor_pending.pop(task_id, None)
 
-    async def _advise(self, task_id: UUID, trigger_seq: int) -> None:
-        await asyncio.sleep(self.config.runtime.cadence.supervisor_debounce_seconds)
+    async def _supervise(self, task_id: UUID, pending: _SupervisorPending) -> None:
         loop = asyncio.get_running_loop()
-        remaining = (
-            self._last_supervisor_at.get(task_id, 0)
-            + self.config.runtime.cadence.supervisor_cooldown_seconds
-            - loop.time()
-        )
-        if remaining > 0:
-            await asyncio.sleep(remaining)
+        cadence = self.config.runtime.cadence
+        while True:
+            if pending.latest_seq == 0:
+                pending.event.clear()
+                try:
+                    await asyncio.wait_for(pending.event.wait(), timeout=cadence.supervisor_silence_seconds)
+                except TimeoutError:
+                    task = await self.storage.get_task(task_id)
+                    if task.state in {RunState.COMPLETED, RunState.FAILED, RunState.CANCELLED}:
+                        return
+                    if task.state == RunState.RUNNING:
+                        await self._advise(task_id, task.blackboard_seq, silence=True)
+                continue
+
+            now = loop.time()
+            if pending.immediate:
+                ready_at = now
+            else:
+                ready_at = pending.last_change_at + cadence.supervisor_debounce_seconds
+                if pending.first_intel_at is not None:
+                    ready_at = min(ready_at, pending.first_intel_at + cadence.supervisor_intel_max_wait_seconds)
+            delay = max(0.0, ready_at - now)
+            if delay:
+                pending.event.clear()
+                try:
+                    await asyncio.wait_for(pending.event.wait(), timeout=delay)
+                    continue
+                except TimeoutError:
+                    pass
+
+            trigger_seq = pending.latest_seq
+            pending.latest_seq = 0
+            pending.first_intel_at = None
+            pending.immediate = False
+            processed_seq = await self._advise(task_id, trigger_seq)
+            if pending.latest_seq and pending.latest_seq <= processed_seq:
+                pending.latest_seq = 0
+                pending.first_intel_at = None
+                pending.immediate = False
+
+    async def _advise(self, task_id: UUID, trigger_seq: int, *, silence: bool = False) -> int:
+        processed_seq = trigger_seq
         task = await self.storage.get_task(task_id)
         if task.state in {RunState.COMPLETED, RunState.FAILED, RunState.CANCELLED}:
-            return
+            return task.blackboard_seq
         last = self._last_supervisor_seq.get(task_id, 0)
-        if trigger_seq <= last:
-            return
+        if trigger_seq <= last and not silence:
+            return last
         configured = self.config.agents.agents["supervisor"]
         run = await self.storage.get_agent(task_id, "supervisor")
         binding = self.config.resolve_agent(
@@ -242,7 +338,41 @@ class Automation:
         await self.dialogue.announce_status(task_id, supervisor, AgentState.RUNNING.value)
         try:
             sync = await self.blackboard.sync(task_id, after_seq=0)
-            snapshot = json.dumps([entry.model_dump(mode="json") for entry in sync.entries], ensure_ascii=False)
+            processed_seq = sync.latest_seq
+            delta = [
+                entry
+                for entry in sync.entries
+                if entry.seq > last and entry.kind != EntryKind.SUPERVISOR_ADVICE
+            ]
+            durable = [
+                entry
+                for entry in sync.entries
+                if entry.kind
+                in {
+                    EntryKind.USER_PROMPT,
+                    EntryKind.USER_FILE,
+                    EntryKind.FINDING,
+                    EntryKind.QA,
+                    EntryKind.FINAL_CANDIDATE,
+                }
+            ]
+            recent_intel = [entry for entry in sync.entries if entry.kind == EntryKind.INTEL][-20:]
+            advice_entries = [entry for entry in sync.entries if entry.kind == EntryKind.SUPERVISOR_ADVICE]
+            recent_advice = advice_entries[-20:]
+            agents = await self.storage.list_agents(task_id)
+            snapshot = json.dumps(
+                {
+                    "latest_seq": sync.latest_seq,
+                    "reason": "silence_check" if silence else "blackboard_changed",
+                    "new_entries": [entry.model_dump(mode="json") for entry in delta],
+                    "context": [
+                        entry.model_dump(mode="json")
+                        for entry in durable + recent_intel + advice_entries[-4:]
+                    ],
+                    "agents": [agent.model_dump(mode="json") for agent in agents],
+                },
+                ensure_ascii=False,
+            )
             decision = await self.model.supervisor(snapshot, binding)
         except asyncio.CancelledError:
             raise
@@ -256,7 +386,8 @@ class Automation:
                 kind=DialogueKind.ERROR,
                 text=f"Supervisor 运行失败：{exc}",
             )
-            return
+            self._last_supervisor_seq[task_id] = processed_seq
+            return processed_seq
         finally:
             current = await self.storage.get_agent(task_id, "supervisor")
             if current.actual_state != AgentState.FAILED:
@@ -267,8 +398,17 @@ class Automation:
                     last_error=None,
                 )
                 await self.dialogue.announce_status(task_id, supervisor, AgentState.IDLE.value)
-        await self.dialogue.announce_blackboard(task_id, sync.latest_seq, decision.progress)
-        if decision.advice:
+        advice = decision.advice
+        suppression = self._advice_suppression(
+            advice,
+            recent_advice,
+            bypass_interval=any(
+                entry.kind in {EntryKind.USER_PROMPT, EntryKind.FINDING} for entry in delta
+            ),
+        )
+        progress = decision.progress if suppression is None else f"{decision.progress}（建议未写入：{suppression}）"
+        await self.dialogue.announce_blackboard(task_id, sync.latest_seq, progress)
+        if advice and suppression is None:
             await self.blackboard.publish(
                 task_id,
                 supervisor,
@@ -276,18 +416,40 @@ class Automation:
                     kind=EntryKind.SUPERVISOR_ADVICE,
                     topic="advice",
                     body={
-                        "advice": decision.advice,
+                        "advice": advice,
                         "addressed_to": decision.addressed_to,
                         "based_on_seq": sync.latest_seq,
                     },
-                    idempotency_key=f"advice-{sync.latest_seq}",
+                    idempotency_key=(
+                        f"advice-{sync.latest_seq}-"
+                        f"{hashlib.sha256(advice.encode('utf-8')).hexdigest()[:12]}"
+                    ),
                 ),
             )
         if decision.question:
             await self.dialogue.ask(task_id, supervisor=supervisor, question=decision.question)
             await self.storage.update_task(task_id, state=RunState.WAITING_USER)
         self._last_supervisor_seq[task_id] = sync.latest_seq
-        self._last_supervisor_at[task_id] = loop.time()
+        return sync.latest_seq
+
+    def _advice_suppression(
+        self,
+        advice: str | None,
+        recent_advice: list[BlackboardEntry],
+        *,
+        bypass_interval: bool,
+    ) -> str | None:
+        if not advice:
+            return None
+        if any(_similar_advice(advice, str(entry.body.get("advice", ""))) for entry in recent_advice):
+            return "与近期建议相同或近似"
+        if bypass_interval or not recent_advice:
+            return None
+        elapsed = (utc_now() - recent_advice[-1].created_at).total_seconds()
+        interval = self.config.runtime.cadence.supervisor_advice_interval_seconds
+        if elapsed < interval:
+            return f"Intel 建议间隔尚余 {max(1, int(interval - elapsed))} 秒"
+        return None
 
     async def _report(self, task_id: UUID) -> None:
         await self.storage.update_task(task_id, state=RunState.FINALIZING)

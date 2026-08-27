@@ -22,7 +22,7 @@ ChangeHook = Callable[[UUID, int], Awaitable[None]]
 _WRITE_POLICY: dict[str, frozenset[EntryKind]] = {
     "user": frozenset({EntryKind.USER_PROMPT, EntryKind.USER_FILE}),
     "supervisor": frozenset({EntryKind.SUPERVISOR_ADVICE}),
-    "worker": frozenset({EntryKind.FINDING, EntryKind.FINAL_CANDIDATE}),
+    "worker": frozenset({EntryKind.INTEL, EntryKind.FINDING, EntryKind.FINAL_CANDIDATE}),
     "reporter": frozenset(),
     "system": frozenset({EntryKind.USER_PROMPT, EntryKind.USER_FILE}),
 }

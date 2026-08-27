@@ -275,6 +275,7 @@ def create_app(
 
     @api.post("/tasks/{task_id}/stop", status_code=204)
     async def stop_task(task_id: UUID) -> None:
+        await automation.cancel(task_id)
         await coordinator.stop_task(task_id)
 
     @api.delete("/tasks/{task_id}", status_code=204)

@@ -57,7 +57,7 @@ async def test_postgres_delete_removes_artifact_links_inside_transaction():
     await storage.delete_task(task_id)
 
     queries = [query for query, _args in connection.calls]
-    link_delete = next(index for index, query in enumerate(queries) if "DELETE FROM finding_artifact_links" in query)
+    link_delete = next(index for index, query in enumerate(queries) if "DELETE FROM blackboard_artifact_links" in query)
     task_delete = next(index for index, query in enumerate(queries) if "DELETE FROM task_runs" in query)
     assert link_delete < task_delete
     assert connection.calls[link_delete][1] == (task_id,)

@@ -9,7 +9,7 @@ vi.mock("../../api/tga3-tasks", async (original) => ({ ...await original<typeof 
 import { TaskRuntimePage } from "./TaskRuntimePage";
 
 const snapshot: TGA3RuntimeSnapshot = {
-  task: { id: "task", title: "Native TGA3 task", scene_id: "pwn", state: "running", blackboard_seq: 2, dialogue_seq: 2, created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:01:00Z" },
+  task: { id: "task", title: "Native TGA3 task", scene_id: "pwn", state: "running", blackboard_seq: 3, dialogue_seq: 2, created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:01:00Z" },
   agents: [
     { agent_id: "supervisor", sdk: "openai_agents", desired_state: "running", actual_state: "running", provider_id: "openai", model_id: "gpt", protocol: "openai_responses", display_name: "Supervisor", role: "supervisor", runtime_location: "host", updated_at: "2026-01-01T00:01:00Z" },
     { agent_id: "worker-openai", sdk: "openai_agents", desired_state: "running", actual_state: "running", provider_id: "openai", model_id: "gpt", protocol: "openai_responses", display_name: "OpenAI Worker", role: "worker", runtime_location: "container", updated_at: "2026-01-01T00:01:00Z" },
@@ -17,6 +17,7 @@ const snapshot: TGA3RuntimeSnapshot = {
   blackboard: [
     { id: "prompt", seq: 1, actor: { agent_id: "user", display_name: "用户", role: "user" }, kind: "user_prompt", topic: "initial", body: { text: "拿到 flag" }, created_at: "2026-01-01T00:00:00Z" },
     { id: "finding", seq: 2, actor: { agent_id: "worker-openai", display_name: "OpenAI Worker", role: "worker" }, kind: "finding", topic: "flag", body: { claim: "已发现入口" }, created_at: "2026-01-01T00:01:00Z" },
+    { id: "intel", seq: 3, actor: { agent_id: "worker-openai", display_name: "OpenAI Worker", role: "worker" }, kind: "intel", topic: "stack", body: { claim: "确认目标使用 Flask", detail: "响应头与错误页已经交叉验证" }, created_at: "2026-01-01T00:01:10Z" },
   ],
   dialogue: [
     { id: "status", seq: 1, channel_agent_id: "worker-openai", actor: { agent_id: "worker-openai", display_name: "OpenAI Worker", role: "worker" }, kind: "agent_status", text: "开始执行", payload: {}, created_at: "2026-01-01T00:00:30Z" },
@@ -44,6 +45,12 @@ describe("TaskRuntimePage", () => {
     expect(screen.queryByRole("dialog", { name: "黑板 #2 详情" })).not.toBeInTheDocument();
     fireEvent.click(within(switcher).getByRole("button", { name: "详情" }));
     expect(screen.getByText("已发现入口")).toBeInTheDocument();
+  });
+  it("renders and filters Intel as a first-class blackboard kind", () => {
+    render(<MemoryRouter initialEntries={["/tasks/task/runtime?tab=blackboard"]}><TaskRuntimePage taskId="task" /></MemoryRouter>);
+    fireEvent.change(screen.getByRole("combobox", { name: "黑板类型" }), { target: { value: "intel" } });
+    expect(screen.getByRole("heading", { name: "确认目标使用 Flask" })).toBeInTheDocument();
+    expect(screen.queryByText("已发现入口")).not.toBeInTheDocument();
   });
   it("selects an agent and opens its native inspector", () => {
     render(<MemoryRouter initialEntries={["/tasks/task/runtime"]}><TaskRuntimePage taskId="task" /></MemoryRouter>);

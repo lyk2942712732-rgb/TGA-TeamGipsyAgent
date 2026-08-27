@@ -18,6 +18,7 @@ class EntryKind(StrEnum):
     USER_PROMPT = "user_prompt"
     USER_FILE = "user_file"
     SUPERVISOR_ADVICE = "supervisor_advice"
+    INTEL = "intel"
     FINDING = "finding"
     QA = "qa"
     FINAL_CANDIDATE = "final_candidate"
@@ -162,13 +163,22 @@ class WorkerFindingPublication(WorkerPublicationBase):
     )
 
 
+class WorkerIntelPublication(WorkerPublicationBase):
+    kind: Literal[EntryKind.INTEL]
+    body: FindingBody
+    artifact_refs: list[ArtifactRef] = Field(
+        default_factory=list,
+        description="Optional registered evidence references supporting this verified intermediate intelligence.",
+    )
+
+
 class WorkerFinalCandidatePublication(WorkerPublicationBase):
     kind: Literal[EntryKind.FINAL_CANDIDATE]
     body: FinalCandidateBody
 
 
 WorkerPublishRequest: TypeAlias = Annotated[
-    WorkerFindingPublication | WorkerFinalCandidatePublication,
+    WorkerIntelPublication | WorkerFindingPublication | WorkerFinalCandidatePublication,
     Field(discriminator="kind"),
 ]
 
@@ -177,18 +187,19 @@ def worker_publish_contract() -> str:
     """Generate the compact prompt/tool description from the authoritative Pydantic models."""
 
     parts: list[str] = []
-    for model in (WorkerFindingPublication, WorkerFinalCandidatePublication):
+    for model in (WorkerIntelPublication, WorkerFindingPublication, WorkerFinalCandidatePublication):
         literal_kind = get_args(model.model_fields["kind"].annotation)[0]
         kind = literal_kind.value
         body_model = model.model_fields["body"].annotation
         body_fields = ", ".join(
             f"{name}{'' if field.is_required() else '?'}" for name, field in body_model.model_fields.items()
         )
-        artifact_rule = (
-            "artifact_refs=required non-empty"
-            if "artifact_refs" in model.model_fields
-            else "artifact_refs=forbidden"
-        )
+        artifact_field = model.model_fields.get("artifact_refs")
+        artifact_rule = "artifact_refs=forbidden"
+        if artifact_field is not None:
+            artifact_rule = (
+                "artifact_refs=required non-empty" if artifact_field.is_required() else "artifact_refs=optional"
+            )
         parts.append(f"{kind}: body={{{body_fields}}}; {artifact_rule}")
     return (
         "Worker blackboard publication contract generated from Pydantic. Select the request branch by kind; "
@@ -200,6 +211,7 @@ BODY_BY_KIND: dict[EntryKind, type[BaseModel]] = {
     EntryKind.USER_PROMPT: UserPromptBody,
     EntryKind.USER_FILE: UserFileBody,
     EntryKind.SUPERVISOR_ADVICE: SupervisorAdviceBody,
+    EntryKind.INTEL: FindingBody,
     EntryKind.FINDING: FindingBody,
     EntryKind.QA: QABody,
     EntryKind.FINAL_CANDIDATE: FinalCandidateBody,
@@ -219,8 +231,8 @@ class PublishRequest(BaseModel):
         BODY_BY_KIND[self.kind].model_validate(self.body)
         if self.kind == EntryKind.FINDING and not self.artifact_refs:
             raise ValueError("finding requires at least one artifact reference")
-        if self.kind != EntryKind.FINDING and self.artifact_refs:
-            raise ValueError("artifact references are accepted only for finding")
+        if self.kind not in {EntryKind.INTEL, EntryKind.FINDING} and self.artifact_refs:
+            raise ValueError("artifact references are accepted only for intel and finding")
         return self
 
     def validated_body(self) -> BaseModel:
@@ -378,6 +390,7 @@ __all__ = [
     "WorkerActor",
     "WorkerFinalCandidatePublication",
     "WorkerFindingPublication",
+    "WorkerIntelPublication",
     "WorkerPublishRequest",
     "Writeup",
     "utc_now",

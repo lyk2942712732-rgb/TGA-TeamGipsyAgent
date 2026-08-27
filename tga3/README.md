@@ -31,12 +31,15 @@ TGA3 是新的双 Worker 黑板运行时，不兼容旧数据库或旧任务。`
 
 ## 数据边界
 
-黑板公开条目为 `user_prompt`、`user_file`、`supervisor_advice`、`finding`、`qa` 和 `final_candidate`。场景提示使用 `user_prompt` 条目、`topic=scene`，在用户描述之前写入。
+黑板公开条目为 `user_prompt`、`user_file`、`supervisor_advice`、`intel`、`finding`、`qa` 和 `final_candidate`。场景提示使用 `user_prompt` 条目、`topic=scene`，在用户描述之前写入。
 
 - Worker 先把持久证据写到 `/artifacts`，再调用 `artifact_register`。
-- `finding` 写入事务验证 Artifact 存在、属于同一任务且仍可用；公开黑板只保留 Finding，关联存入 `finding_artifact_links`。
+- `intel` 与 `finding` 共用严格的 `claim/detail` 正文：Intel 表示会影响其他 Agent 下一步行动的已验证中间情报，Artifact 可选；Finding 表示关键突破或重要结果，Artifact 必填。
+- 非空 Artifact 引用在写入事务中验证其存在、属于同一任务且仍可用；公开黑板不暴露关联，统一存入 `blackboard_artifact_links`。
 - Worker 的问题作为运行事件交给 Supervisor。只有 Supervisor 在对话流提问并标明来源；回答后问题与答案合并为一个 `qa` 条目。
 - `final_candidate` 必须引用已有 Finding。宽限期后 Reporter 固定 `snapshot_seq`，之后的内容不会混入报告。
+- Worker 对黑板变更按最新序号合并，在当前工具/SDK 周期结束后的安全点增量读取；90 秒周期同步负责漏事件兜底。
+- Supervisor 对 Intel 使用 2 秒静默合并和 10 秒批次上限进行审阅；由 Intel 触发的建议至少间隔 60 秒，相同或近似建议直接抑制。用户提示和 Finding 绕过时间限制，90 秒无共享进展时执行一次沉默检查；没有建议时只把审阅进度写入任务对话。
 
 PostgreSQL 用每任务 advisory transaction lock 分配黑板和对话序号，允许两个 Worker 并发写入；所有写入均带幂等键。
 

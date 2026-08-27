@@ -10,7 +10,7 @@ export const AGENT_STATE_LABELS: Record<string, string> = {
 };
 export const ROLE_LABELS: Record<string, string> = { supervisor: "顾问", worker: "执行", reporter: "报告" };
 export const BOARD_KIND_LABELS: Record<TGA3BoardEntry["kind"], string> = {
-  user_prompt: "用户提示", user_file: "用户文件", supervisor_advice: "Supervisor 建议", finding: "Finding", qa: "Q&A", final_candidate: "最终候选",
+  user_prompt: "用户提示", user_file: "用户文件", supervisor_advice: "Supervisor 建议", intel: "Intel", finding: "Finding", qa: "Q&A", final_candidate: "最终候选",
 };
 export const DIALOGUE_KIND_LABELS: Record<TGA3DialogueMessage["kind"], string> = {
   assistant_delta: "进度", blackboard_progress: "黑板进度", agent_status: "状态", action_started: "动作开始",

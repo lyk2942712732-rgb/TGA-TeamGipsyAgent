@@ -12,7 +12,7 @@ export type TGA3Agent = {
 export type TGA3Actor = { agent_id: string; display_name: string; role: string; sdk?: string | null; model?: string | null };
 export type TGA3BoardEntry = {
   id: string; seq: number; actor: TGA3Actor;
-  kind: "user_prompt" | "user_file" | "supervisor_advice" | "finding" | "qa" | "final_candidate";
+  kind: "user_prompt" | "user_file" | "supervisor_advice" | "intel" | "finding" | "qa" | "final_candidate";
   topic: string; body: Record<string, unknown>; idempotency_key?: string; created_at: string;
 };
 export type TGA3DialogueMessage = {

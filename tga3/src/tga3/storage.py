@@ -84,7 +84,7 @@ def _validate_publish(
     artifacts: Sequence[Artifact],
     request: PublishRequest,
 ) -> None:
-    if request.kind == EntryKind.FINDING:
+    if request.artifact_refs:
         by_id = {a.id: a for a in artifacts}
         bad = [
             str(ref.artifact_id)
@@ -236,7 +236,7 @@ class InMemoryStorage:
                 idempotency_key=request.idempotency_key,
             )
             self.entries[task_id].append(entry)
-            if request.kind == EntryKind.FINDING:
+            if request.artifact_refs:
                 self.links[entry.id] = list(request.artifact_refs)
             self.tasks[task_id] = task.model_copy(update={"blackboard_seq": entry.seq, "updated_at": utc_now()})
             return entry
@@ -448,11 +448,11 @@ class PostgresStorage:
             async with conn.transaction():
                 await self._lock(conn, task_id)
                 # Existing installations may still have the pre-cascade artifact
-                # foreign key. Remove the join rows explicitly so task deletion is
-                # safe both before and after the schema constraint is upgraded.
+                # Remove association rows before their task-owned entries so the
+                # deletion order remains explicit and transactional.
                 await conn.execute(
-                    """DELETE FROM finding_artifact_links
-                       WHERE finding_entry_id IN (
+                    """DELETE FROM blackboard_artifact_links
+                       WHERE entry_id IN (
                            SELECT id FROM blackboard_entries WHERE task_id=$1
                        ) OR artifact_id IN (
                            SELECT id FROM artifacts WHERE task_id=$1
@@ -567,7 +567,7 @@ class PostgresStorage:
             )
             if existing:
                 return _entry(existing)
-            if request.kind == EntryKind.FINDING:
+            if request.artifact_refs:
                 ids = [ref.artifact_id for ref in request.artifact_refs]
                 rows = await conn.fetch(
                     "SELECT id FROM artifacts WHERE task_id=$1 AND available AND id=ANY($2::uuid[])", task_id, ids
@@ -606,8 +606,8 @@ class PostgresStorage:
             )
             for ref in request.artifact_refs:
                 await conn.execute(
-                    """INSERT INTO finding_artifact_links(
-                           finding_entry_id,artifact_id,locator,description
+                    """INSERT INTO blackboard_artifact_links(
+                           entry_id,artifact_id,locator,description
                        ) VALUES($1,$2,$3,$4)""",
                     entry_id,
                     ref.artifact_id,
@@ -632,8 +632,8 @@ class PostgresStorage:
 
     async def finding_links(self, task_id: UUID, finding_id: UUID) -> list[ArtifactRef]:
         rows = await self.pool.fetch(
-            """SELECT l.artifact_id,l.locator,l.description FROM finding_artifact_links l
-               JOIN blackboard_entries b ON b.id=l.finding_entry_id
+            """SELECT l.artifact_id,l.locator,l.description FROM blackboard_artifact_links l
+               JOIN blackboard_entries b ON b.id=l.entry_id
                WHERE b.task_id=$1 AND b.id=$2 AND b.kind='finding'""",
             task_id,
             finding_id,

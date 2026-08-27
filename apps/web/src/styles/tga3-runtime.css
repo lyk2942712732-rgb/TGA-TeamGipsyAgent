@@ -395,6 +395,10 @@
 .tga3-board-card.kind-finding {
   border-left-color: #16a34a;
 }
+.tga3-board-card.kind-intel {
+  border-left-color: #0284c7;
+  background: #f7fcff;
+}
 .tga3-board-card.kind-final_candidate {
   border-left-color: #7c3aed;
   background: #faf8ff;
@@ -1442,6 +1446,10 @@
 .tga3-board-tile.kind-finding {
   border-color: #bbd6c5;
   background: linear-gradient(145deg, #f4fff7, #eaf8ef);
+}
+.tga3-board-tile.kind-intel {
+  border-color: #b7d9ed;
+  background: linear-gradient(145deg, #f5fcff, #e9f7ff);
 }
 .tga3-board-tile.kind-supervisor_advice {
   border-color: #ead29d;

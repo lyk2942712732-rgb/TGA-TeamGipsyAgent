@@ -10,15 +10,15 @@
   "artifact_root": "./data/artifacts",
   "writeup_root": "./data/writeups",
   "skills_root": "./config/skills",
-  "mcp_instructions": "共享任务记忆执行器：按序号增量读取黑板，只发布精简且已验证的知识，并仅在需要时按名称读取通用 Skill。",
+  "mcp_instructions": "共享任务记忆执行器：首次读取完整黑板，之后按序号增量读取；用 Intel 分享已验证且对其他 Agent 有用的中间情报，用 Finding 分享带证据的关键突破，并仅在需要时按名称读取通用 Skill。",
   "worker_images": {
     "worker-openai": "tga3-worker-openai:local",
     "worker-claude": "tga3-worker-claude:local"
   },
   "worker_cycle_prompts": {
-    "startup": "开始任务：先增量读取共享黑板中的场景提示、用户描述和文件，再自主推进。",
+    "startup": "开始任务：先读取完整共享黑板中的场景提示、用户描述和文件，记住最新序号，再自主推进。",
     "periodic": "进入周期工作：先增量读取共享黑板，再从当前会话状态继续推进任务。",
-    "blackboard_changed": "共享黑板已更新，请读取上次序号之后的条目并继续。latest_seq={latest_seq}"
+    "blackboard_changed": "共享黑板已更新且同一工作阶段的通知已合并。请在本周期开始时读取你记住的上次序号之后的全部条目，处理到 latest_seq={latest_seq} 后再继续；不要重新读取完整黑板。"
   },
   "docker": {
     "network": "bridge",
@@ -30,7 +30,9 @@
   "cadence": {
     "worker_sync_seconds": 90,
     "supervisor_debounce_seconds": 2,
-    "supervisor_cooldown_seconds": 20,
+    "supervisor_intel_max_wait_seconds": 10,
+    "supervisor_advice_interval_seconds": 60,
+    "supervisor_silence_seconds": 90,
     "finalization_grace_seconds": 30
   }
 }
