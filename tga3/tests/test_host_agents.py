@@ -3,7 +3,7 @@ from types import ModuleType, SimpleNamespace
 
 import pytest
 
-from tga3.host_agents import OpenAIHostModel, SupervisorDecision
+from tga3.host_agents import OpenAIHostModel, SupervisorAdvice, SupervisorDecision
 
 
 class FakeAgent:
@@ -47,9 +47,11 @@ async def test_chat_compatible_supervisor_uses_text_json_and_pydantic(monkeypatc
     FakeRunner.final_output = """```json
     {
       "progress":"working",
-      "advice":"check input",
-      "advice_reason":"user_request",
-      "addressed_to":["worker-openai"],
+      "advice":{
+        "text":"check input",
+        "reason":"user_request",
+        "addressed_to":["worker-openai"]
+      },
       "question":null
     }
     ```"""
@@ -59,9 +61,11 @@ async def test_chat_compatible_supervisor_uses_text_json_and_pydantic(monkeypatc
 
     assert decision == SupervisorDecision(
         progress="working",
-        advice="check input",
-        advice_reason="user_request",
-        addressed_to=["worker-openai"],
+        advice=SupervisorAdvice(
+            text="check input",
+            reason="user_request",
+            addressed_to=["worker-openai"],
+        ),
     )
     assert "output_type" not in FakeAgent.last_kwargs
     assert "最终回复必须是一个 JSON 对象" in FakeAgent.last_kwargs["instructions"]
@@ -89,12 +93,32 @@ def test_supervisor_text_json_must_match_schema():
 
 def test_supervisor_normalizes_nullable_addressed_to():
     decision = OpenAIHostModel._parse_supervisor_decision(
-        '{"progress":"done","advice":null,"addressed_to":null,"question":null}'
+        """{
+          "progress":"done",
+          "advice":{"text":"coordinate","reason":"conflict","addressed_to":null},
+          "question":null
+        }"""
     )
 
-    assert decision.addressed_to == []
+    assert decision.advice is not None
+    assert decision.advice.addressed_to == []
 
 
-def test_supervisor_requires_a_reason_for_each_advice():
-    with pytest.raises(ValueError, match="advice and advice_reason"):
-        SupervisorDecision(progress="working", advice="change direction")
+def test_supervisor_advice_is_an_atomic_object():
+    schema = SupervisorDecision.model_json_schema()
+
+    assert "SupervisorAdvice" in schema["$defs"]
+    assert "advice_reason" not in schema["properties"]
+    assert "addressed_to" not in schema["properties"]
+    with pytest.raises(ValueError):
+        OpenAIHostModel._parse_supervisor_decision(
+            '{"progress":"working","advice":{"text":"change direction"}}'
+        )
+
+
+def test_supervisor_accepts_observation_without_advice():
+    decision = OpenAIHostModel._parse_supervisor_decision(
+        '{"progress":"reviewed","advice":null,"question":null}'
+    )
+
+    assert decision.advice is None

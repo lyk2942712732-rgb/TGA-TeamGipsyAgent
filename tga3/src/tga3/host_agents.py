@@ -32,21 +32,21 @@ from .domain import (
 from .skills import SkillCatalog
 from .storage import Storage
 
+AdviceReason = Literal[
+    "conflict",
+    "duplicate_work",
+    "stalled",
+    "finding_coordination",
+    "worker_blocked",
+    "user_request",
+]
 
-class SupervisorDecision(BaseModel):
+
+class SupervisorAdvice(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    progress: str = Field(min_length=1)
-    advice: str | None = None
-    advice_reason: Literal[
-        "conflict",
-        "duplicate_work",
-        "stalled",
-        "finding_coordination",
-        "worker_blocked",
-        "user_request",
-    ] | None = None
+    text: str = Field(min_length=1)
+    reason: AdviceReason
     addressed_to: list[str] = Field(default_factory=list)
-    question: str | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -55,11 +55,12 @@ class SupervisorDecision(BaseModel):
             return {**value, "addressed_to": []}
         return value
 
-    @model_validator(mode="after")
-    def require_reason_only_for_advice(self) -> SupervisorDecision:
-        if bool(self.advice) != bool(self.advice_reason):
-            raise ValueError("advice and advice_reason must either both be present or both be absent")
-        return self
+
+class SupervisorDecision(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    progress: str = Field(min_length=1)
+    advice: SupervisorAdvice | None = None
+    question: str | None = None
 
 
 class HostModel(Protocol):
@@ -398,7 +399,7 @@ class Automation:
                     last_error=None,
                 )
                 await self.dialogue.announce_status(task_id, supervisor, AgentState.IDLE.value)
-        advice = decision.advice
+        advice = decision.advice.text if decision.advice else None
         suppression = self._advice_suppression(
             advice,
             recent_advice,
@@ -417,7 +418,7 @@ class Automation:
                     topic="advice",
                     body={
                         "advice": advice,
-                        "addressed_to": decision.addressed_to,
+                        "addressed_to": decision.advice.addressed_to,
                         "based_on_seq": sync.latest_seq,
                     },
                     idempotency_key=(
@@ -534,4 +535,10 @@ class Automation:
         )
 
 
-__all__ = ["Automation", "DeterministicHostModel", "OpenAIHostModel", "SupervisorDecision"]
+__all__ = [
+    "Automation",
+    "DeterministicHostModel",
+    "OpenAIHostModel",
+    "SupervisorAdvice",
+    "SupervisorDecision",
+]
