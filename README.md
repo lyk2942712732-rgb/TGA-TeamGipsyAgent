@@ -21,7 +21,7 @@ apps/web  ── /api/v3 + SSE ──>  tga3 control plane
 - `tga3/config/runtime.json`：容器、存储路径、运行节奏和周期提示。
 - `tga3/config/skills/<name>/SKILL.md`：所有 Agent 按名称读取的通用 Skills。
 
-前端各配置页面读写各自的配置文件。Models 页面填写供应商根地址和密钥后自动发现模型；Solver 页面再为每个 Agent 选择模型及其实际调用协议，不需要在 Ubuntu 上手工编辑 JSON。
+前端各配置页面读写各自的配置文件。Models 页面填写供应商根地址和密钥后自动发现模型；Solver 页面再为每个 Agent 选择模型及其实际调用协议，不需要在 Linux 服务器上手工编辑 JSON。
 
 ## 验证
 
@@ -37,4 +37,4 @@ npm test
 npm run build
 ```
 
-Ubuntu 部署、通信拓扑、数据边界和 API 说明见 [`tga3/README.md`](tga3/README.md)。
+Linux 部署的唯一入口位于仓库内的 [`部署手册`](部署手册/README.md)；通信拓扑、数据边界和 API 说明见 [`tga3/README.md`](tga3/README.md)。

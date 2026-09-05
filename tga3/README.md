@@ -8,7 +8,7 @@ TGA3 是新的双 Worker 黑板运行时，不兼容旧数据库或旧任务。`
 用户 / apps/web
        │ HTTP + SSE
        ▼
-┌──────────────────────── Ubuntu 主服务 ────────────────────────┐
+┌──────────────────────── Linux 主服务 ─────────────────────────┐
 │ TaskCoordinator：创建/暂停/恢复/停止，不做解题规划              │
 │ SolverDialogue：真实状态、动作摘要、进度、Supervisor 提问        │
 │ Supervisor：只读黑板/按名读 Skill，只写建议                     │
@@ -58,61 +58,21 @@ PostgreSQL 用每任务 advisory transaction lock 分配黑板和对话序号，
 
 新任务立即使用保存后的 Provider、模型、Agent 提示词、场景和容器参数。运行中的任务保留 PostgreSQL 中的运行状态；监听地址和 PostgreSQL DSN 保存后需要重启主服务。`GET /api/v3/models` 仍是供普通任务界面使用的无密钥目录，只有配置中心接口返回可编辑的完整配置。
 
-## Ubuntu 部署
+## Linux 部署
 
-Windows 仓库只负责开发和提交；镜像在 Ubuntu 测试机拉取代码后构建：
-
-```bash
-cd tga3
-chmod +x scripts/*.sh
-./scripts/ubuntu-bootstrap.sh
-```
-
-启动主服务后直接进入前端“配置中心”填写供应商、模型和密钥。若使用示例 systemd unit，确保服务用户可以写配置目录：
+完整部署支持通用 Linux，唯一部署编排维护在仓库内的 [`部署手册/deploy.py`](../部署手册/deploy.py)。从仓库根目录执行：
 
 ```bash
-sudo chown -R tga3:docker /opt/TGA-TeamGipsyAgent/tga3/config
-sudo chmod -R u+rwX,go-rwx /opt/TGA-TeamGipsyAgent/tga3/config
+cd 部署手册
+chmod +x deploy.sh
+./deploy.sh
 ```
 
-脚本通过 Compose 启动长期 PostgreSQL，构建共享 Kali 基础镜像和两个 SDK 增量镜像，安装主服务，并构建 `apps/web/dist`。Worker 不在 Compose 中常驻；创建任务时由 Docker SDK 动态启动，停止任务时回收。
+`scripts/ubuntu-bootstrap.sh` 仅为旧命令兼容入口，会转交给上述部署手册，不再包含独立部署逻辑。镜像构建仍复用 `scripts/build-images.sh` 这一项目构建组件。
 
-共享基础镜像使用官方 `kalilinux/kali-rolling` 和无桌面的 `kali-linux-headless` meta package。两个 Worker 共享 Docker layer，不复制两份桌面镜像。基础层在通用渗透工具之外补充以下比赛与实战分析能力：
+部署完成后，按 [`部署手册/生产环境部署.md`](../部署手册/生产环境部署.md) 配置运行账户、systemd 或发行版对应的服务管理器，以及 Nginx。启动控制面后，在前端“配置中心”填写供应商、模型和密钥。
 
-- Pwn / 漏洞挖掘：GDB、gdb-multiarch、checksec、patchelf、strace、ltrace、QEMU user mode、AFL++、pwntools 和 angr。
-- 逆向：Ghidra（含 `analyzeHeadless`）、radare2、JADX、APKTool、Capstone、Unicorn 和 Ropper。
-- 应急响应 / 取证：TShark、EWF tools、Foremost、Plaso（Kali 命令名为 `plaso-log2timeline`）、YARA、Volatility 3 和 oletools。
-- 密码 / Misc：PyCryptodome、SymPy、Z3、Steghide、Stegseek、ZBar、PNGCheck、ImageMagick、FFmpeg 和 SoX。
-
-这些 Python 库安装在 Worker 实际使用的 `/opt/tga3-venv`，不是只放进系统 Python。两个 Worker 均以固定的
-`1000:1000` 非 root 身份运行，宿主任务 workspace 与 artifact 目录按同一 UID/GID 创建为 `0770`。容器默认增加
-`SYS_PTRACE` 供本任务空间内的二进制动态调试使用，但不增加 `SYS_ADMIN` 或宿主设备访问权限；磁盘镜像优先使用用户态取证工具处理。
-
-镜像构建默认直接使用 Kali HTTPS CDN，并为 APT 启用重试。官方最小容器尚无 CA bundle，Dockerfile 会先仅引导安装经过 Kali 仓库签名验证的 `ca-certificates`，之后所有软件包恢复正常 HTTPS 证书验证。构建脚本默认使用宿主网络，避免虚拟机代理或 Fake-IP DNS 只在宿主可用、Docker bridge 不可用的问题。需要切换镜像或网络时无需编辑 Dockerfile：
-
-Kali rolling 当前使用 Python 3.14；Ropper 依赖的 `filebytes` PyPI 发布包尚未适配，因此 CTF Python 依赖固定到该项目已经合并的 Python 3.14 兼容提交。Unicorn 当前也没有 Python 3.14 wheel，基础镜像会先安装 CMake 再从源码构建。以上均为可复现的镜像构建输入，不需要在测试机手工修改。
-
-```bash
-KALI_MIRROR=https://mirrors.tuna.tsinghua.edu.cn/kali ./scripts/ubuntu-bootstrap.sh
-DOCKER_BUILD_NETWORK=bridge ./scripts/build-images.sh
-```
-
-不要同时启动多次 bootstrap。只有脚本输出 `Bootstrap complete` 后，才启动 `.venv/bin/tga3`；构建失败时不会生成完整的虚拟环境和 Worker 镜像。
-
-首次数据库由 PostgreSQL 容器执行 `schema.sql`。项目不提供迁移；schema 变化后删除测试数据卷并重建：
-
-```bash
-docker compose down -v
-docker compose up -d --wait postgres
-```
-
-主服务可直接启动：
-
-```bash
-.venv/bin/tga3 --config-dir config serve
-```
-
-生产运行可采用 `deploy/tga3.service` 和 `deploy/nginx-tga3.conf`。Worker 容器仍由任务生命周期管理，无需手工启动。
+Worker 不在 Compose 中常驻；创建任务时由 Docker SDK 动态启动，停止任务时回收。首次数据库由 PostgreSQL 容器执行 `schema.sql`，项目不提供自动迁移。数据库重建、生产备份、UID/GID、网络和故障排除均以部署手册为准。
 
 ## 前端 API
 
