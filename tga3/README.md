@@ -24,7 +24,7 @@ CLI 管理私有会话、工具执行和上下文压缩；不再使用 Agents SD
 - Claude 会话：每个 Worker 工作目录的 `.claude/`。
 - `.tga3/*-session.json` 只保存 CLI 会话指针；PG `agent_runs.metadata.cli_session_id` 保存对应标识。
 - `agent_runs.session_id` 仍是控制通道标识，不用于 CLI resume。
-- PostgreSQL 保存任务、共享黑板、对话事件、用户问答和证据/报告索引。
+- PostgreSQL 保存任务、共享黑板、只读执行事件和证据/报告索引。
 - `/inputs` 只读、Worker `/artifacts` 可写、Reporter `/artifacts` 与快照只读。
 - Worker 通过 HTTP MCP 访问黑板、注册证据和读取 Skills。发布协议维持 Intel / Finding / final_candidate。
 - CLI 周期在安全点消费合并后的黑板更新；暂停、停止和超时会回收 CLI 的工具进程组。
