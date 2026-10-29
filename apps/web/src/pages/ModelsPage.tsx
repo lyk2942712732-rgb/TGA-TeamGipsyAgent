@@ -141,7 +141,9 @@ function EndpointModels({ protocol, endpoint, busy, onRefresh, onEnabled }: { pr
   const [expanded, setExpanded] = useState(true);
   const [search, setSearch] = useState("");
   const query = search.trim().toLocaleLowerCase();
-  const visible = endpoint.models.filter((model) => `${model.name} ${model.id}`.toLocaleLowerCase().includes(query));
+  const visible = endpoint.models
+    .filter((model) => `${model.name} ${model.id}`.toLocaleLowerCase().includes(query))
+    .sort((a, b) => Number(b.enabled && b.available) - Number(a.enabled && a.available));
   const enabled = endpoint.models.filter((model) => model.enabled && model.available).length;
   return <section className="endpoint-models" aria-label={`${protocolName(protocol)} 模型`}>
     <header><button type="button" className="endpoint-models-toggle" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>

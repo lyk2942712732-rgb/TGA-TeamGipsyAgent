@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -79,24 +80,29 @@ async def discover_provider_models(
     *,
     transport: httpx.AsyncBaseTransport | None = None,
 ) -> list[str]:
-    """Discover only the selected endpoint; never probe another protocol's path."""
+    """Read the selected endpoint's catalog using its service's discovery API."""
 
     base_url = provider.endpoint(protocol).base_url
     suffix = "/v1/models" if protocol == "anthropic" and not base_url.endswith("/v1") else "/models"
-    urls = (base_url + suffix,)
-    failures: list[str] = []
+    url = base_url + suffix
+    discovery_protocol = protocol
+    parsed = urlsplit(base_url)
+    if (
+        protocol == "anthropic"
+        and (parsed.hostname or "").endswith(".maas.aliyuncs.com")
+        and parsed.path == "/apps/anthropic"
+    ):
+        # Model Studio's Messages adapter has no /models route. Its shared
+        # same-workspace catalog requires Bearer auth, not x-api-key.
+        url = f"{parsed.scheme}://{parsed.netloc}/compatible-mode/v1/models"
+        discovery_protocol = "openai_chat_completions"
     async with httpx.AsyncClient(transport=transport, timeout=httpx.Timeout(20.0)) as client:
-        for url in urls:
-            try:
-                found = await _discover_at(client, provider, protocol, url)
-                return found
-            except httpx.HTTPStatusError as exc:
-                failures.append(f"{url}: HTTP {exc.response.status_code}")
-            except httpx.HTTPError as exc:
-                failures.append(f"{url}: {exc}")
-            except ValueError as exc:
-                failures.append(f"{url}: {exc}")
-    detail = "；".join(failures)
+        try:
+            return await _discover_at(client, provider, discovery_protocol, url)
+        except httpx.HTTPStatusError as exc:
+            detail = f"{url}: HTTP {exc.response.status_code}"
+        except (httpx.HTTPError, ValueError) as exc:
+            detail = f"{url}: {exc}"
     raise ValueError(f"读取模型列表失败：{detail}")
 
 

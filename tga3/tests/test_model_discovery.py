@@ -162,3 +162,50 @@ async def test_multi_protocol_provider_uses_anthropic_auth_and_accepts_empty_cat
         return httpx.Response(200, json={"data": [], "has_more": False})
 
     assert await discover_provider_models(provider, "anthropic", transport=httpx.MockTransport(handler)) == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("host", [
+    "workspace.cn-beijing.maas.aliyuncs.com",
+    "workspace.ap-southeast-1.maas.aliyuncs.com",
+])
+async def test_aliyun_messages_uses_shared_catalog_with_bearer_auth_without_changing_runtime(host):
+    from tga3.config import ProviderConfig
+
+    provider = ProviderConfig(id="aliyun", name="Aliyun", api_keys=[{"id": "key", "api_key": "test-only"}],
+                              selected_api_key_id="key", endpoints={
+                                  "anthropic": {"base_url": f"https://{host}/apps/anthropic"},
+                              })
+    calls = []
+
+    def handler(request):
+        calls.append(str(request.url))
+        assert request.headers["authorization"] == "Bearer test-only"
+        assert "x-api-key" not in request.headers
+        assert "anthropic-version" not in request.headers
+        assert not request.url.params
+        return httpx.Response(200, json={"data": [{"id": "qwen-model"}]})
+
+    result = await discover_provider_models(provider, "anthropic", transport=httpx.MockTransport(handler))
+    assert result == ["qwen-model"]
+    assert calls == [f"https://{host}/compatible-mode/v1/models"]
+    assert provider.sdk_base_url("anthropic") == f"https://{host}/apps/anthropic"
+
+
+@pytest.mark.asyncio
+async def test_non_aliyun_messages_endpoint_does_not_use_aliyun_catalog_mapping():
+    from tga3.config import ProviderConfig
+
+    base = "https://maas.aliyuncs.com.example.test/apps/anthropic"
+    provider = ProviderConfig(id="gateway", name="Gateway", api_keys=[{"id": "key", "api_key": "test-only"}],
+                              selected_api_key_id="key", endpoints={"anthropic": {"base_url": base}})
+    calls = []
+
+    def handler(request):
+        calls.append(request.url.path)
+        assert request.headers["x-api-key"] == "test-only"
+        return httpx.Response(404)
+
+    with pytest.raises(ValueError, match="HTTP 404"):
+        await discover_provider_models(provider, "anthropic", transport=httpx.MockTransport(handler))
+    assert calls == ["/apps/anthropic/v1/models"]

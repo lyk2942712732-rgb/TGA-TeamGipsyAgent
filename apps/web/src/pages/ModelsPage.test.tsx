@@ -13,7 +13,7 @@ const model = (name: string, enabled: boolean) => ({ id: name, name, enabled, av
 const provider = {
   id: "gateway", name: "团队网关", preset_id: "custom", built_in: false,
   endpoints: {
-    openai_responses: { base_url: "https://api.test/compatible-mode/v1", models: [model("qwen-enabled", true), model("qwen-disabled", false)] },
+    openai_responses: { base_url: "https://api.test/compatible-mode/v1", models: [model("qwen-disabled", false), model("qwen-enabled", true)] },
     anthropic: { base_url: "https://api.test/apps/anthropic", models: [model("claude-model", true)] },
   }, selected_api_key_id: "primary",
   api_keys: [{ id: "primary", label: "Production", masked: "sk-••••1234", selected: true, configured: true },
@@ -57,6 +57,30 @@ describe("ModelsPage protocol endpoints", () => {
     fireEvent.submit(screen.getByRole("button", { name: "保存供应商" }).closest("form")!);
     expect(await screen.findByRole("status")).toHaveTextContent("至少填写一个协议端点");
     expect(mocks.createModelProvider).not.toHaveBeenCalled();
+  });
+
+  it("puts enabled models first and reorders after toggling while preserving search", async () => {
+    let current = structuredClone(catalog);
+    mocks.fetchProviderCatalog.mockImplementation(async () => structuredClone(current));
+    mocks.setProviderModelsEnabled.mockImplementation(async (_id, _protocol, ids, enabled) => {
+      current = structuredClone(current);
+      current.providers[0].endpoints.openai_responses.models.forEach((model) => {
+        if (ids.includes(model.id)) model.enabled = enabled;
+      });
+    });
+    render(<ModelsPage />);
+    const responses = await screen.findByRole("region", { name: "OpenAI Responses 模型" });
+    expect(within(responses).getAllByRole("switch").map((item) => item.getAttribute("aria-label"))).toEqual([
+      "启用 qwen-enabled", "启用 qwen-disabled",
+    ]);
+    fireEvent.change(within(responses).getByRole("searchbox"), { target: { value: "qwen" } });
+    fireEvent.click(within(responses).getByRole("switch", { name: "启用 qwen-disabled" }));
+    await waitFor(() => expect(within(responses).getAllByRole("switch")[0]).toHaveAttribute("aria-checked", "true"));
+    await waitFor(() => expect(within(responses).getAllByRole("switch")[0]).toHaveAttribute("aria-label", "启用 qwen-disabled"));
+    expect(within(responses).getByRole("searchbox")).toHaveValue("qwen");
+    fireEvent.click(within(responses).getByRole("switch", { name: "启用 qwen-disabled" }));
+    await waitFor(() => expect(within(responses).getAllByRole("switch")[0]).toHaveAttribute("aria-label", "启用 qwen-enabled"));
+    expect(within(responses).getAllByRole("switch")[1]).toHaveAttribute("aria-checked", "false");
   });
 
   it("collapses models, searches them, and toggles only the selected endpoint model", async () => {
