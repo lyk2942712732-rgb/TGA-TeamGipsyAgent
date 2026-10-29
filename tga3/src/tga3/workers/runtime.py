@@ -90,8 +90,6 @@ class WorkerSession:
                         self.current_cycle.cancel()
                         await asyncio.gather(self.current_cycle, return_exceptions=True)
                     await self.adapter.set_model(params)
-                elif message.method == "session.add_prompt":
-                    await self.queue.put(str(params["text"]))
                 elif message.method == "blackboard.changed":
                     await self._queue_blackboard_update(int(params["latest_seq"]))
                 await self._reply(message, {"accepted": True})

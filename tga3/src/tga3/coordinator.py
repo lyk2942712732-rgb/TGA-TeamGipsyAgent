@@ -12,7 +12,6 @@ from uuid import UUID, uuid4
 
 from .blackboard import Blackboard
 from .config import TGA3Config
-from .dialogue import SolverDialogue
 from .docker_runtime import ContainerRuntime, LaunchSpec
 from .domain import (
     SYSTEM_ACTOR,
@@ -20,13 +19,14 @@ from .domain import (
     Actor,
     AgentRun,
     AgentState,
-    DialogueKind,
     EntryKind,
+    EventKind,
     InputFile,
     PublishRequest,
     RunState,
     UserFileBody,
 )
+from .events import TaskEvents
 from .gateway import AgentGateway
 from .provider_profiles import ProviderProtocol
 from .storage import Storage
@@ -38,7 +38,7 @@ class TaskCoordinator:
         self.storage = storage
         self.containers = containers
         self.gateway = AgentGateway(self.handle_agent_event)
-        self.dialogue = SolverDialogue(storage)
+        self.events = TaskEvents(storage)
         self.blackboard = Blackboard(storage, self.blackboard_changed)
         self.change_handlers: list[Callable[[UUID, int], Awaitable[None]]] = []
 
@@ -69,18 +69,14 @@ class TaskCoordinator:
         resolved_agents = {
             agent_id: self.config.resolve_agent(
                 agent_id, *(model_overrides.get(agent_id) or (None, None, None)),
-                require_api_key=configured.role != "supervisor" or self.config.runtime.supervisor_enabled,
             )
             for agent_id, configured in self.config.agents.agents.items()
-            if configured.role != "supervisor" or self.config.runtime.supervisor_enabled
         }
         task = await self.storage.create_task(title, scene.id, task_id)
         await self.storage.update_task(task.id, state=RunState.STARTING)
         for agent_id, configured in self.config.agents.agents.items():
             resolved = resolved_agents.get(agent_id)
-            state = AgentState.IDLE if configured.role == "supervisor" else AgentState.CREATED
-            if configured.role == "supervisor" and not self.config.runtime.supervisor_enabled:
-                state = AgentState.STOPPED
+            state = AgentState.CREATED
             await self.storage.upsert_agent(
                 AgentRun(
                     task_id=task.id,
@@ -126,7 +122,7 @@ class TaskCoordinator:
                 )
                 container_id = await self.containers.launch(LaunchSpec(task_id=task.id, agent=resolved))
                 run = await self.storage.update_agent(task.id, agent_id, container_id=container_id)
-                await self.dialogue.announce_status(task.id, self.actor_for(run), AgentState.STARTING.value)
+                await self.events.announce_status(task.id, self.actor_for(run), AgentState.STARTING.value)
             return await self.storage.update_task(task.id, state=RunState.RUNNING)
         except Exception:
             await self.storage.update_task(task.id, state=RunState.FAILED)
@@ -189,29 +185,29 @@ class TaskCoordinator:
             run = await self.storage.update_agent(
                 task_id, agent_id, session_id=session_id, actual_state=AgentState.RUNNING
             )
-            await self.dialogue.announce_status(task_id, self.actor_for(run), AgentState.RUNNING.value)
+            await self.events.announce_status(task_id, self.actor_for(run), AgentState.RUNNING.value)
         elif method == "agent.status":
             state = AgentState(str(params["state"]))
             changes = {"actual_state": state}
             if state in {AgentState.RUNNING, AgentState.IDLE}:
                 changes["last_error"] = None
             run = await self.storage.update_agent(task_id, agent_id, **changes)
-            await self.dialogue.announce_status(
+            await self.events.announce_status(
                 task_id, self.actor_for(run), state.value, str(params.get("detail", ""))
             )
         elif method == "agent.session":
             await self.storage.update_agent(task_id, agent_id, metadata={**run.metadata, **params})
         elif method == "agent.output.delta":
-            await self.dialogue.emit(
+            await self.events.emit(
                 task_id,
                 actor=actor,
-                kind=DialogueKind.ASSISTANT_DELTA,
+                kind=EventKind.ASSISTANT_DELTA,
                 text=str(params.get("text", " ")),
                 channel_agent_id=agent_id,
             )
         elif method in {"agent.action.started", "agent.action.completed"}:
-            kind = DialogueKind.ACTION_STARTED if method.endswith("started") else DialogueKind.ACTION_COMPLETED
-            await self.dialogue.emit(
+            kind = EventKind.ACTION_STARTED if method.endswith("started") else EventKind.ACTION_COMPLETED
+            await self.events.emit(
                 task_id,
                 actor=actor,
                 kind=kind,
@@ -219,19 +215,11 @@ class TaskCoordinator:
                 channel_agent_id=agent_id,
                 payload=params,
             )
-        elif method == "agent.needs_user_input":
-            await self.dialogue.ask(
-                task_id,
-                supervisor=self.supervisor_actor(),
-                origin=actor,
-                question=str(params["question"]),
-            )
-            await self.storage.update_task(task_id, state=RunState.WAITING_USER)
         elif method == "agent.error":
             detail = str(params.get("message", "agent error"))
             await self.storage.update_agent(task_id, agent_id, actual_state=AgentState.FAILED, last_error=detail)
-            await self.dialogue.emit(
-                task_id, actor=actor, kind=DialogueKind.ERROR, text=detail, channel_agent_id=agent_id
+            await self.events.emit(
+                task_id, actor=actor, kind=EventKind.ERROR, text=detail, channel_agent_id=agent_id
             )
         elif method == "session.disconnected":
             state = (
@@ -246,46 +234,9 @@ class TaskCoordinator:
                 actual_state=state,
                 last_error=None if state == AgentState.STOPPED else detail,
             )
-            await self.dialogue.announce_status(task_id, self.actor_for(run), state.value, detail)
+            await self.events.announce_status(task_id, self.actor_for(run), state.value, detail)
 
-    def supervisor_actor(self) -> Actor:
-        binding = self.config.agents.agents["supervisor"]
-        return Actor(
-            agent_id="supervisor",
-            display_name=binding.display_name,
-            role="supervisor",
-            sdk=binding.runtime,
-            model=binding.model_id,
-        )
 
-    async def add_prompt(
-        self,
-        task_id: UUID,
-        text: str,
-        *,
-        addressed_to: list[str] | None = None,
-        attachment_ids: list[UUID] | None = None,
-        idempotency_key: str,
-    ):
-        entry = await self.blackboard.publish(
-            task_id,
-            USER_ACTOR,
-            PublishRequest(
-                kind=EntryKind.USER_PROMPT,
-                topic="follow-up",
-                body={"text": text, "addressed_to": addressed_to or [], "attachment_ids": attachment_ids or []},
-                idempotency_key=idempotency_key,
-            ),
-        )
-        await self.dialogue.emit(
-            task_id,
-            actor=USER_ACTOR,
-            kind=DialogueKind.USER_MESSAGE,
-            text=text,
-            channel_agent_id=(addressed_to or ["supervisor"])[0],
-            payload={"addressed_to": addressed_to or []},
-        )
-        return entry
 
     async def pause_agent(self, task_id: UUID, agent_id: str) -> AgentRun:
         await self._worker_run(task_id, agent_id)
@@ -321,10 +272,10 @@ class TaskCoordinator:
         run = await self.storage.update_agent(
             task_id, agent_id, provider_id=provider_id, model_id=model_id, protocol=protocol
         )
-        await self.dialogue.emit(
+        await self.events.emit(
             task_id,
             actor=SYSTEM_ACTOR,
-            kind=DialogueKind.MODEL_CHANGED,
+            kind=EventKind.MODEL_CHANGED,
             text=f"{agent_id} 已切换到 {provider_id}/{model_id}（{protocol}）",
             channel_agent_id=agent_id,
         )
@@ -341,7 +292,7 @@ class TaskCoordinator:
         return [
             run
             for run in await self.storage.list_agents(task_id)
-            if self.config.agents.agents[run.agent_id].role == "worker"
+            if run.agent_id in self.config.agents.agents and self.config.agents.agents[run.agent_id].role == "worker"
         ]
 
     async def finish_task_workers(self, task_id: UUID) -> None:

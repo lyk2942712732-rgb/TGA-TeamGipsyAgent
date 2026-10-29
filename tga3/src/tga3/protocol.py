@@ -53,7 +53,6 @@ CONTROL_METHODS = frozenset(
         "session.resume",
         "session.stop",
         "session.set_model",
-        "session.add_prompt",
         "blackboard.changed",
     }
 )
@@ -67,7 +66,6 @@ EVENT_METHODS = frozenset(
         "agent.output.delta",
         "agent.action.started",
         "agent.action.completed",
-        "agent.needs_user_input",
         "agent.error",
     }
 )

@@ -19,9 +19,6 @@ def test_removed_providers_leave_unconfigured_solvers_and_readable_history(tmp_p
         provider.api_keys[0].api_key = SecretStr("test-key")
     for name in ("workspace_root", "input_root", "artifact_root", "writeup_root"):
         setattr(config.runtime, name, str(tmp_path / name))
-    # The reserved Supervisor must not prevent launching configured Workers.
-    supervisor = config.agents.agents["supervisor"]
-    supervisor.provider_id = supervisor.model_id = ""
     app = create_app(config, InMemoryStorage(), FakeContainerRuntime(), host_model=DeterministicHostModel())
     with TestClient(app) as client:
         created = client.post("/api/v3/tasks", data={

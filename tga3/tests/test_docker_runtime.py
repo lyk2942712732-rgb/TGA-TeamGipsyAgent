@@ -17,6 +17,35 @@ class FakeContainers:
         return SimpleNamespace(id="container-id")
 
 
+def test_workers_get_private_workspaces_and_evidence_reporter_gets_read_only_union(tmp_path):
+    config = TGA3Config(Path(__file__).parents[1] / "config")
+    config.runtime.workspace_root = str(tmp_path / "workspaces")
+    config.runtime.input_root = str(tmp_path / "inputs")
+    config.runtime.artifact_root = str(tmp_path / "artifacts")
+    for provider in config.models.providers:
+        provider.api_keys[0].api_key = SecretStr("test-key")
+    containers = FakeContainers()
+    runtime = DockerContainerRuntime.__new__(DockerContainerRuntime)
+    runtime.config, runtime.client = config, SimpleNamespace(containers=containers)
+    task_id = uuid4()
+    paths = {}
+    for agent_id in ("worker-openai", "worker-claude", "reporter"):
+        runtime._launch_sync(LaunchSpec(task_id=task_id, agent=config.resolve_agent(agent_id)))
+        args = containers.kwargs
+        mounts = {value["bind"]: (Path(key), value["mode"]) for key, value in args["volumes"].items()}
+        paths[agent_id] = mounts
+        assert args["working_dir"] == "/workspace"
+        assert mounts["/inputs"][1] == "ro"
+    first, second, reporter = (paths[key] for key in ("worker-openai", "worker-claude", "reporter"))
+    assert len({paths[key]["/workspace"][0] for key in paths}) == 3
+    assert first["/inputs"] == second["/inputs"] == reporter["/inputs"]
+    assert first["/artifacts"][0] != second["/artifacts"][0]
+    for key, content in (("worker-openai", "first"), ("worker-claude", "second")):
+        (paths[key]["/artifacts"][0] / "proof.txt").write_text(content)
+        assert (reporter["/artifacts"][0] / key / "proof.txt").read_text() == content
+    assert reporter["/artifacts"][1] == "ro"
+
+
 def test_worker_container_uses_stable_non_root_identity(tmp_path: Path):
     config = TGA3Config(Path(__file__).parents[1] / "config")
     for provider in config.models.providers:

@@ -20,6 +20,9 @@ def worker_instructions() -> str:
         f"- actor: {json.dumps(actor, ensure_ascii=False, separators=(',', ':'))}\n"
         "For every blackboard tool call, use the exact task_id and actor above. "
         "Never invent a placeholder task ID or actor."
+        " Your CLI working directory is /workspace. Your private output directory is /artifacts; "
+        "only your own evidence files are mounted there. Use native CLI file/list/search tools "
+        "to discover /skills and read each package's SKILL.md, then follow its referenced documents."
     )
     publication_contract = (
         "Blackboard publication contract (authoritative and generated from the runtime models):\n"

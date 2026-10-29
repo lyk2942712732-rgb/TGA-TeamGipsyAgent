@@ -2,7 +2,7 @@
 
 两个 Worker 使用 `codex_cli`（OpenAI Responses）和 `claude_cli`（Anthropic Messages）。
 Reporter 使用 `codex_cli`，`runtime.worker_images.reporter` 必须与 Codex Worker 指向相同镜像。
-Supervisor 定义暂时保留，`runtime.supervisor_enabled=false`，不发起推理。
+运行角色固定为这三个执行智能体，不再加载 Supervisor。
 
 ## 构建与启动
 
@@ -18,7 +18,6 @@ docker compose up -d --wait postgres
 构建安装固定版本的官方 npm CLI 包，不复制宿主账号登录信息。
 Kali 工具基础镜像保持不变。Dockerfile 的 `CLI_VERSION` build arg 可用于经过验证的版本升级。
 主服务与 Worker 不再依赖 `openai-agents`、`claude-agent-sdk` 或项目维护的 SQLiteSession。
-`supervisor` 可选依赖仅供预留的旧顾问实现使用，不包含在生产 `control` 安装中。
 
 ## 认证与协议
 
@@ -43,7 +42,7 @@ Anthropic 的实际推理地址及各端点的启用开关仍独立保存。认�
 
 迁移已有部署时先备份配置，保留原有供应商、密钥、Skills 和数据；将三个执行角色 runtime 分别改为
 `codex_cli`、`claude_cli`、`codex_cli`，配置正确的协议及供应商，再增加 Reporter 镜像映射。
-Supervisor 配置不需要重写，但保持停用。旧 SDK 的私有会话不能直接导入 CLI；已有公共黑板和证据保留。
+加载旧配置时移除 Supervisor 及其调度字段；保存后持久化三角色配置。旧 SDK 的私有会话不能直接导入 CLI；已有公共黑板和证据保留。
 
 ## 会话与运行
 
@@ -59,6 +58,32 @@ Codex 的工具循环由 CLI 自己管理，不再模拟 SDK max_turns。暂停/
 出现最终候选后，项目等待宽限期、停止并回收两个 Worker，然后固定黑板快照，启动一次性 Reporter。
 Reporter 的快照、证据、输入和 Skills 只读挂载，不连接可写黑板 MCP；使用全新 Codex 会话，
 输出非空 Markdown 后由控制层保存文件及哈希。成功、失败、超时或取消均回收 Reporter 容器。
+
+## 目录与工具边界
+
+CLI 使用控制层传入的工作目录（当前均为容器内 `/workspace`），不会自动创建容器间隔离。
+宿主机为每个任务维护以下目录；两个 Worker 的相同容器内路径指向不同宿主目录：
+
+```text
+workspaces/<task-id>/worker-openai/   → Codex /workspace（读写）
+workspaces/<task-id>/worker-claude/   → Claude /workspace（读写）
+workspaces/<task-id>/reporter/        → Reporter /workspace（读写）
+artifacts/<task-id>/worker-openai/    → Codex /artifacts（读写）
+artifacts/<task-id>/worker-claude/    → Claude /artifacts（读写）
+artifacts/<task-id>/                  → Reporter /artifacts（只读）
+inputs/<task-id>/                    → 全部 /inputs（只读）
+skills/                             → 全部 /skills（只读）
+```
+
+Worker 无法通过挂载访问对方工作目录或证据目录；双方通过公共黑板共享已验证结论。
+Reporter 从 `/artifacts/<worker-id>/` 汇总证据，只向自己的工作目录写入报告。
+旧任务根目录已有证据保持原位置，登记过的绝对路径继续有效。
+
+文件读写、搜索、Shell 与 Skills 文档读取直接使用 CLI 原生能力，删除重复的 Skills MCP 工具。
+MCP 只保留 `blackboard_sync`、`blackboard_publish`、`artifact_register`；证据登记按发布 Worker
+定位私有目录并拒绝目录穿越。Skills 配置中心仍负责管理文档包。
+执行页面仅保留状态、活动和控制，不提供 Worker/Reporter 聊天或问答转发。
+PostgreSQL 的旧事件表名保留以兼容历史数据，不再向客户端暴露对话写入接口。
 
 ## 验证
 

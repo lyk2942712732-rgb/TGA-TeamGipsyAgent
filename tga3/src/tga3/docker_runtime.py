@@ -58,6 +58,8 @@ class DockerContainerRuntime:
         workspace = self.config.resolve_path(self.config.runtime.workspace_root) / str(task_id) / agent_id
         inputs = self.config.resolve_path(self.config.runtime.input_root) / str(task_id)
         artifacts = self.config.resolve_path(self.config.runtime.artifact_root) / str(task_id)
+        if self.config.agents.agents[agent_id].role == "worker":
+            artifacts = artifacts / agent_id
         inputs.mkdir(parents=True, exist_ok=True)
         self._ensure_worker_directory(workspace)
         self._ensure_worker_directory(artifacts)

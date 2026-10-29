@@ -1,8 +1,8 @@
-import { Bot, Boxes, FileText, Lightbulb } from "lucide-react";
+import { Bot, Boxes, FileText } from "lucide-react";
 import type { TGA3Agent } from "../../../runtime/tga3-runtime";
 import { protocolLabel, roleLabel, sdkLabel, stateLabel, stateTone } from "../tga3-view";
 
-const ORDER: Record<string, number> = { supervisor: 0, worker: 1, reporter: 2 };
+const ORDER: Record<string, number> = { worker: 1, reporter: 2 };
 
 export function TGA3AgentRail({ agents, selectedAgentId, onSelect }: { agents: TGA3Agent[]; selectedAgentId: string | null; onSelect: (agentId: string) => void }) {
   const ordered = [...agents].sort((a, b) => (ORDER[a.role] ?? 9) - (ORDER[b.role] ?? 9) || a.agent_id.localeCompare(b.agent_id));
@@ -26,7 +26,6 @@ export function TGA3AgentRail({ agents, selectedAgentId, onSelect }: { agents: T
 }
 
 function roleIcon(agent: TGA3Agent) {
-  if (agent.role === "supervisor") return <Lightbulb size={17} />;
   if (agent.role === "reporter") return <FileText size={17} />;
   return (agent.sdk === "claude_cli" || agent.sdk === "claude_agent") ? <Boxes size={17} /> : <Bot size={17} />;
 }

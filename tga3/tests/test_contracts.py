@@ -156,7 +156,6 @@ def test_config_separates_secrets_from_agent_bindings():
     assert "providers" not in bindings
     assert all(item["system_prompt"] for item in bindings["agents"].values())
     assert set(bindings["agents"]) == {
-        "supervisor",
         "worker-openai",
         "worker-claude",
         "reporter",

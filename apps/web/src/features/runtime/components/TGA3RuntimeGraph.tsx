@@ -1,6 +1,6 @@
 import { Bot, BrainCircuit, Database, Focus, Lightbulb, Library, Minus, Plus, UserRound } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
-import type { TGA3Agent, TGA3BoardEntry, TGA3DialogueMessage, TGA3RuntimeSnapshot } from "../../../runtime/tga3-runtime";
+import type { TGA3Agent, TGA3BoardEntry, TGA3TaskEvent, TGA3RuntimeSnapshot } from "../../../runtime/tga3-runtime";
 import { stateLabel, stateTone } from "../tga3-view";
 
 type NodeBox = { x: number; y: number; width: number; height: number };
@@ -230,7 +230,7 @@ export function TGA3RuntimeGraph({ snapshot }: { snapshot: TGA3RuntimeSnapshot }
           })}
         </svg>
 
-        <GraphNode id="user" className="user" active={activeNodes.has("user")} icon={<UserRound size={20} />} title="用户" meta="任务 · 提示 · Q&A" />
+        <GraphNode id="user" className="user" active={activeNodes.has("user")} icon={<UserRound size={20} />} title="用户" meta="任务与原始附件" />
         <GraphNode id="skills" className="skills" active={activeNodes.has("skills")} icon={<Library size={20} />} title="Skills" meta="按需读取能力" />
         <GraphNode id="blackboard" className="blackboard" active={activeNodes.has("blackboard")} icon={<Database size={21} />} title="黑板" meta={`${snapshot.blackboard.filter((entry) => entry.kind === "intel").length} Intel · ${snapshot.blackboard.filter((entry) => entry.kind === "finding").length} Findings`} />
         <div className="tga3-runtime-graph-lanes">
@@ -254,7 +254,7 @@ function GraphNode({ id, className, active, icon, title, meta }: { id: string; c
 function AgentModelLane({ agent, activeNodes }: { agent: TGA3Agent; activeNodes: Set<string> }) {
   const agentId = agentNode(agent.agent_id);
   const configuredModelId = modelNode(agent.agent_id);
-  const icon = agent.role === "supervisor" ? <Lightbulb size={19} /> : <Bot size={19} />;
+  const icon = <Bot size={19} />;
   return <section className="tga3-graph-lane">
     <GraphNode id={configuredModelId} className="model" active={activeNodes.has(configuredModelId)} icon={<BrainCircuit size={19} />} title={agent.model_name ?? agent.model_id} meta={agent.provider_id} />
     <article className={`tga3-graph-node agent role-${agent.role}`} data-graph-node={agentId} data-active={activeNodes.has(agentId)}>
@@ -269,7 +269,7 @@ function runtimeEvents(snapshot: TGA3RuntimeSnapshot): RuntimeEvent[] {
       const activity = boardActivity(entry);
       return { id: `board-${entry.id}`, at: timestamp(entry.created_at), ...(activity ? { activity } : {}) };
     }),
-    ...snapshot.dialogue.map(dialogueRuntimeEvent),
+    ...snapshot.events.map(eventRuntimeEvent),
   ].sort((a, b) => a.at - b.at || a.id.localeCompare(b.id));
 }
 
@@ -279,9 +279,9 @@ function boardActivity(entry: TGA3BoardEntry): Activity | null {
   return { id: `board-${entry.id}`, owner, from: owner, to: "blackboard", label: `${entry.actor.display_name} 写入 ${boardLabel(entry.kind)}`, at: timestamp(entry.created_at) };
 }
 
-function dialogueRuntimeEvent(message: TGA3DialogueMessage): RuntimeEvent {
-  const owner = dialogueOwner(message);
-  const base = { id: `dialogue-${message.id}`, at: timestamp(message.created_at) };
+function eventRuntimeEvent(message: TGA3TaskEvent): RuntimeEvent {
+  const owner = eventOwner(message);
+  const base = { id: `events-${message.id}`, at: timestamp(message.created_at) };
   if (["error", "paused"].includes(message.kind)) return { ...base, clearOwner: owner };
   if (message.kind === "agent_status") {
     const state = String(message.payload.state ?? "");
@@ -289,37 +289,34 @@ function dialogueRuntimeEvent(message: TGA3DialogueMessage): RuntimeEvent {
       ? { ...base, clearOwner: owner }
       : base;
   }
-  const activity = dialogueActivity(message);
+  const activity = eventActivity(message);
   return { ...base, ...(activity ? { activity } : {}) };
 }
 
-function dialogueOwner(message: TGA3DialogueMessage): string {
+function eventOwner(message: TGA3TaskEvent): string {
   const ownerAgentId = message.actor.agent_id !== "system"
     ? message.actor.agent_id
     : String(message.payload.agent_id ?? message.channel_agent_id);
   return ownerAgentId === "user" ? "user" : agentNode(ownerAgentId);
 }
 
-function dialogueActivity(message: TGA3DialogueMessage): Activity | null {
-  const owner = dialogueOwner(message);
+function eventActivity(message: TGA3TaskEvent): Activity | null {
+  const owner = eventOwner(message);
   const ownerAgentId = owner === "user" ? "user" : owner.slice("agent:".length);
   const model = modelNode(ownerAgentId);
-  const base = { id: `dialogue-${message.id}`, owner, at: timestamp(message.created_at) };
-  if (message.kind === "blackboard_progress") return { ...base, owner: agentNode("supervisor"), from: "blackboard", to: agentNode("supervisor"), label: "Supervisor 读取黑板更新" };
-  if (message.kind === "user_message") return { ...base, owner: "user", from: "user", to: message.channel_agent_id === "supervisor" ? "blackboard" : agentNode(message.channel_agent_id), label: "用户发送提示" };
-  if (message.kind === "question") return { ...base, from: owner, to: "user", label: `${message.actor.display_name} 请求用户输入` };
+  const base = { id: `events-${message.id}`, owner, at: timestamp(message.created_at) };
   if (message.kind === "model_changed") return { ...base, from: owner, to: model, label: `${message.actor.display_name} 切换模型` };
   if (message.kind === "assistant_delta") return { ...base, from: model, to: owner, label: `${message.actor.display_name} 收到模型响应` };
   if (message.kind !== "action_completed") return null;
   const tool = String(message.payload.tool ?? message.text ?? "执行动作");
-  if (/skills?_list|skills?_read|skill/i.test(tool)) return { ...base, from: owner, to: "skills", label: `${message.actor.display_name} 读取 Skill` };
+  if (/\/skills(?:\/|\b)/.test(`${message.text} ${JSON.stringify(message.payload)}`)) return { ...base, from: owner, to: "skills", label: `${message.actor.display_name} 读取 Skill` };
   if (/blackboard|artifact_register/i.test(tool)) return { ...base, from: owner, to: "blackboard", label: `${message.actor.display_name} ${shortAction(message.text)}` };
   if (/工作周期|work cycle/i.test(message.text)) return { ...base, from: owner, to: model, label: `${message.actor.display_name} 请求模型推理` };
   if (isShellTool(tool)) return { ...base, from: owner, label: `${message.actor.display_name} 执行 ${shellCommand(message)}` };
   return { ...base, from: owner, label: `${message.actor.display_name} ${shortAction(message.text)}` };
 }
 
-function shellCommand(message: TGA3DialogueMessage): string {
+function shellCommand(message: TGA3TaskEvent): string {
   const payload = message.payload;
   const nested = [payload.input, payload.arguments, payload.args, payload.tool_input, payload.parameters]
     .filter((value): value is Record<string, unknown> => Boolean(value) && typeof value === "object" && !Array.isArray(value));
@@ -433,9 +430,9 @@ function polylineMidpoint(points: Array<{ x: number; y: number }>): { x: number;
 }
 
 function line(from: NodeBox, to: NodeBox) { return { x1: from.x, y1: from.y, x2: to.x, y2: to.y }; }
-function orderedAgents(agents: TGA3Agent[]): TGA3Agent[] { const order: Record<string, number> = { supervisor: 0, "worker-claude": 1, "worker-openai": 2, reporter: 3 }; return [...agents].sort((a, b) => (order[a.agent_id] ?? 9) - (order[b.agent_id] ?? 9)).slice(0, 4); }
+function orderedAgents(agents: TGA3Agent[]): TGA3Agent[] { const order: Record<string, number> = { "worker-claude": 0, "worker-openai": 1, reporter: 2 }; return [...agents].sort((a, b) => (order[a.agent_id] ?? 9) - (order[b.agent_id] ?? 9)).slice(0, 3); }
 function agentNode(agentId: string): string { return `agent:${agentId}`; }
 function modelNode(agentId: string): string { return `model:${agentId}`; }
 function timestamp(value: string): number { const parsed = Date.parse(value); return Number.isNaN(parsed) ? 0 : parsed; }
 function shortAction(value: string): string { const compact = value.replace(/\s+/g, " ").trim(); return compact.length > 34 ? `${compact.slice(0, 34)}…` : compact; }
-function boardLabel(kind: TGA3BoardEntry["kind"]): string { return ({ user_prompt: "用户提示", user_file: "用户文件", supervisor_advice: "建议", intel: "Intel", finding: "Finding", qa: "Q&A", final_candidate: "最终候选" })[kind]; }
+function boardLabel(kind: TGA3BoardEntry["kind"]): string { return ({ user_prompt: "用户提示", user_file: "用户文件", intel: "Intel", finding: "Finding", final_candidate: "最终候选" })[kind]; }

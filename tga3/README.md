@@ -3,7 +3,7 @@
 两个 Worker 在独立 Kali 容器中并行运行 Codex CLI 和 Claude Code CLI。
 出现最终候选后，控制层等待收尾宽限期、停止并回收 Worker，固定黑板快照，
 再用与 Codex Worker 相同的镜像启动一次性 Reporter 容器。
-Supervisor 暂时不参与任务，原有定义保留供后续改造。
+运行角色仅有两个 Worker 和 Reporter；不包含 Supervisor 或执行智能体聊天入口。
 
 ```text
 Web UI → FastAPI 控制层 → PostgreSQL / 共享黑板 / MCP
@@ -68,10 +68,9 @@ Worker 不在 Compose 中常驻；创建任务时由 Docker SDK 动态启动，�
 - `POST /api/v3/skills/import`：上传 ZIP Skill 包；安全校验后按顶层目录名（或 ZIP 文件名）创建目录并保留其中的 Markdown 布局。
 - `GET /api/v3/tasks`：任务列表。
 - `POST /api/v3/tasks`：multipart 创建任务；字段为 `title`、`scene_id`、`prompt` 和零到多个 `files`，写完初始黑板后启动 Worker。
-- `POST /api/v3/tasks/{id}/files`、`POST /api/v3/tasks/{id}/prompts`：后续多模态文件与提示。
+- `POST /api/v3/tasks/{id}/files`：追加共享只读输入文件。
 - `GET /api/v3/tasks/{id}/blackboard`：黑板增量。
-- `GET /api/v3/tasks/{id}/dialogue` 与 `/dialogue/stream`：历史和 SSE 对话流。
-- `POST /api/v3/questions/{id}/answer`：回答 Supervisor 的问题并写入 Q&A。
+- `GET /api/v3/tasks/{id}/events` 与 `/events/stream`：只读执行事件和 SSE。
 - `POST /api/v3/tasks/{id}/agents/{agent}/pause|resume|model`：单独控制容器 Worker。
 - `GET /api/v3/tasks/{id}/writeup/download`：下载最终 Markdown writeup。
 - `WS /internal/agents/{task}/{agent}`：Worker 主动建立的 JSON-RPC 通道。

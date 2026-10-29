@@ -12,24 +12,24 @@ export type TGA3Agent = {
 export type TGA3Actor = { agent_id: string; display_name: string; role: string; sdk?: string | null; model?: string | null };
 export type TGA3BoardEntry = {
   id: string; seq: number; actor: TGA3Actor;
-  kind: "user_prompt" | "user_file" | "supervisor_advice" | "intel" | "finding" | "qa" | "final_candidate";
+  kind: "user_prompt" | "user_file" | "intel" | "finding" | "final_candidate";
   topic: string; body: Record<string, unknown>; idempotency_key?: string; created_at: string;
 };
-export type TGA3DialogueMessage = {
+export type TGA3TaskEvent = {
   id: string; seq: number; channel_agent_id: string; actor: TGA3Actor;
-  kind: "assistant_delta" | "blackboard_progress" | "agent_status" | "action_started" | "action_completed" | "question" | "user_message" | "model_changed" | "paused" | "resumed" | "error" | "system";
+  kind: "assistant_delta" | "blackboard_progress" | "agent_status" | "action_started" | "action_completed" | "model_changed" | "paused" | "resumed" | "error" | "system";
   text: string; payload: Record<string, unknown>; created_at: string;
 };
-export type TGA3RuntimeSnapshot = { task: TGA3Task; agents: TGA3Agent[]; blackboard: TGA3BoardEntry[]; dialogue: TGA3DialogueMessage[] };
+export type TGA3RuntimeSnapshot = { task: TGA3Task; agents: TGA3Agent[]; blackboard: TGA3BoardEntry[]; events: TGA3TaskEvent[] };
 type TaskDetail = { task: TGA3Task; agents: TGA3Agent[] };
 
-/** Load the native TGA3 task, agent, blackboard, and dialogue contracts. */
+/** Load the native TGA3 task, agent, blackboard, and activity event contracts. */
 export async function loadTGA3Snapshot(taskId: string): Promise<TGA3RuntimeSnapshot> {
   const encoded = encodeURIComponent(taskId);
-  const [detail, board, dialogue] = await Promise.all([
+  const [detail, board, events] = await Promise.all([
     requestJson<TaskDetail>(`/api/v3/tasks/${encoded}`),
     requestJson<{ entries: TGA3BoardEntry[] }>(`/api/v3/tasks/${encoded}/blackboard?limit=500`),
-    requestJson<TGA3DialogueMessage[]>(`/api/v3/tasks/${encoded}/dialogue?limit=500`),
+    requestJson<TGA3TaskEvent[]>(`/api/v3/tasks/${encoded}/events?limit=500`),
   ]);
-  return { task: detail.task, agents: detail.agents, blackboard: board.entries, dialogue };
+  return { task: detail.task, agents: detail.agents, blackboard: board.entries, events };
 }

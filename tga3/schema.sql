@@ -95,22 +95,6 @@ CREATE TABLE dialogue_messages (
 
 CREATE INDEX dialogue_task_seq_idx ON dialogue_messages(task_id, seq);
 
-CREATE TABLE pending_questions (
-    id UUID PRIMARY KEY,
-    task_id UUID NOT NULL REFERENCES task_runs(id) ON DELETE CASCADE,
-    question TEXT NOT NULL,
-    origin JSONB NOT NULL,
-    asked_by JSONB NOT NULL,
-    state TEXT NOT NULL DEFAULT 'waiting',
-    answer TEXT,
-    answer_attachment_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    answered_at TIMESTAMPTZ
-);
-
-CREATE INDEX pending_questions_waiting_idx
-    ON pending_questions(task_id, state);
-
 CREATE TABLE writeups (
     id UUID PRIMARY KEY,
     task_id UUID NOT NULL REFERENCES task_runs(id) ON DELETE CASCADE,

@@ -10,7 +10,6 @@ export function TGA3TaskHeader({ snapshot, connection, busy, onRefresh, onStop, 
   const findings = blackboard.filter((entry) => entry.kind === "finding").length;
   const intel = blackboard.filter((entry) => entry.kind === "intel").length;
   const finals = blackboard.filter((entry) => entry.kind === "final_candidate").length;
-  const questions = blackboard.filter((entry) => entry.kind === "qa").length;
   const terminal = ["completed", "failed", "cancelled", "stopped"].includes(task.state);
   return <header className="tga3-task-header">
     <div className="tga3-task-title">
@@ -25,7 +24,7 @@ export function TGA3TaskHeader({ snapshot, connection, busy, onRefresh, onStop, 
     <div className="tga3-task-facts">
       <span className={`tga3-state-pill tone-${stateTone(task.state)}`}><i />{stateLabel(task.state)}</span>
       <Fact label="Agent" value={`${active} 活动 / ${agents.length} 总数`} /><Fact label="黑板" value={`${task.blackboard_seq} 条`} />
-      <Fact label="Intel" value={`${intel}`} /><Fact label="Finding" value={`${findings}`} /><Fact label="Q&A" value={`${questions}`} /><Fact label="最终候选" value={`${finals}`} />
+      <Fact label="Intel" value={`${intel}`} /><Fact label="Finding" value={`${findings}`} /><Fact label="最终候选" value={`${finals}`} />
       <Fact label="同步" value={connectionLabel(connection)} /><Fact label="最后更新" value={formatTime(task.updated_at)} />
     </div>
   </header>;

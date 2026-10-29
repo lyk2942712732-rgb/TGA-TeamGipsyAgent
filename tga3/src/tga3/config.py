@@ -131,8 +131,8 @@ class ModelsConfig(BaseModel):
 class AgentConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
     display_name: str = Field(min_length=1, max_length=200)
-    role: Literal["supervisor", "worker", "reporter"]
-    runtime: Literal["openai_agents", "claude_agent", "codex_cli", "claude_cli"]
+    role: Literal["worker", "reporter"]
+    runtime: Literal["codex_cli", "claude_cli"]
     provider_id: str
     model_id: str
     protocol: ProviderProtocol
@@ -150,6 +150,13 @@ class AgentsConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
     schema_version: int = 1
     agents: dict[str, AgentConfig]
+
+    @model_validator(mode="before")
+    @classmethod
+    def remove_legacy_agent(cls, raw: Any) -> Any:
+        if isinstance(raw, dict) and "supervisor" in raw.get("agents", {}):
+            return {**raw, "agents": {key: value for key, value in raw["agents"].items() if key != "supervisor"}}
+        return raw
 
 
 class SceneConfig(BaseModel):
@@ -175,10 +182,6 @@ class ScenesConfig(BaseModel):
 class CadenceConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
     worker_sync_seconds: int = Field(default=90, ge=5, le=3600)
-    supervisor_debounce_seconds: int = Field(default=2, ge=0, le=60)
-    supervisor_intel_max_wait_seconds: int = Field(default=10, ge=1, le=300)
-    supervisor_advice_interval_seconds: int = Field(default=60, ge=1, le=3600)
-    supervisor_silence_seconds: int = Field(default=90, ge=15, le=3600)
     finalization_grace_seconds: int = Field(default=30, ge=0, le=600)
 
 
@@ -214,12 +217,24 @@ class RuntimeConfig(BaseModel):
     writeup_root: str
     skills_root: str
     mcp_instructions: str = Field(min_length=1)
-    supervisor_enabled: bool = False
     cli_timeout_seconds: int = Field(default=1800, ge=30, le=86400)
     worker_images: dict[str, str]
     worker_cycle_prompts: WorkerCyclePromptsConfig
     docker: DockerConfig = Field(default_factory=DockerConfig)
     cadence: CadenceConfig = Field(default_factory=CadenceConfig)
+
+    @model_validator(mode="before")
+    @classmethod
+    def remove_legacy_advisor_settings(cls, raw: Any) -> Any:
+        if not isinstance(raw, dict):
+            return raw
+        data = dict(raw)
+        data.pop("supervisor_enabled", None)
+        if "cadence" in data:
+            data["cadence"] = {
+                key: value for key, value in data["cadence"].items() if not key.startswith("supervisor_")
+            }
+        return data
 
 
 class ConfigBundle(BaseModel):
@@ -248,8 +263,8 @@ class ResolvedAgent(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     agent_id: str
     display_name: str
-    role: Literal["supervisor", "worker", "reporter"]
-    runtime: Literal["openai_agents", "claude_agent", "codex_cli", "claude_cli"]
+    role: Literal["worker", "reporter"]
+    runtime: Literal["codex_cli", "claude_cli"]
     provider: ProviderConfig
     model: ModelConfig
     protocol: ProviderProtocol
@@ -261,7 +276,7 @@ class ResolvedAgent(BaseModel):
 class TGA3Config:
     """Loads the single config directory; no environment-secret overlay is supported."""
 
-    REQUIRED_AGENTS = {"supervisor", "worker-openai", "worker-claude", "reporter"}
+    REQUIRED_AGENTS = {"worker-openai", "worker-claude", "reporter"}
     REQUIRED_SCENES = {
         "penetration_test",
         "incident_response",
@@ -325,12 +340,10 @@ class TGA3Config:
 
     @staticmethod
     def validate_runtime_protocol(runtime: str, protocol: ProviderProtocol) -> None:
-        if runtime in {"claude_agent", "claude_cli"} and protocol != "anthropic":
+        if runtime == "claude_cli" and protocol != "anthropic":
             raise ValueError("Claude Code requires an Anthropic-compatible provider")
         if runtime == "codex_cli" and protocol != "openai_responses":
             raise ValueError("Codex CLI requires the OpenAI Responses protocol")
-        if runtime == "openai_agents" and protocol == "anthropic":
-            raise ValueError("OpenAI Agents SDK requires an OpenAI-compatible provider")
 
     def scene(self, scene_id: str) -> SceneConfig:
         return self.scenes.scene(scene_id)
@@ -396,7 +409,9 @@ class TGA3Config:
                 ):
                     raise ValueError(f"{agent_id} name, role, and runtime are fixed definitions")
                 if proposed.provider_id and (proposed.provider_id, proposed.model_id, proposed.protocol) != (
-                    current.provider_id, current.model_id, current.protocol
+                    current.provider_id,
+                    current.model_id,
+                    current.protocol,
                 ):
                     self.models.provider(proposed.provider_id).model(
                         proposed.model_id, proposed.protocol, require_enabled=True
@@ -498,11 +513,12 @@ class TGA3Config:
         scenes: ScenesConfig,
         runtime: RuntimeConfig,
     ) -> None:
+        if set(agents.agents) != cls.REQUIRED_AGENTS:
+            raise ValueError("agents.json must contain exactly worker-openai, worker-claude and reporter")
         missing = sorted(cls.REQUIRED_AGENTS.difference(agents.agents))
         if missing:
             raise ValueError(f"agents.json is missing: {', '.join(missing)}")
         expected_roles = {
-            "supervisor": "supervisor",
             "worker-openai": "worker",
             "worker-claude": "worker",
             "reporter": "reporter",
@@ -517,7 +533,6 @@ class TGA3Config:
         if missing_scenes:
             raise ValueError(f"scenes.json is missing: {', '.join(missing_scenes)}")
         expected_runtimes = {
-            "supervisor": "openai_agents",
             "worker-openai": "codex_cli",
             "worker-claude": "claude_cli",
             "reporter": "codex_cli",

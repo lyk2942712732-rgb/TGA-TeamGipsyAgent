@@ -9,7 +9,7 @@ const tasks: TGA3TaskListItem[] = [
   { id: "active", title: "Active task", scene_id: "pwn", state: "running", blackboard_seq: 4, dialogue_seq: 7, created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:01:00Z" },
   { id: "done", title: "Completed task", scene_id: "forensics", state: "completed", blackboard_seq: 10, dialogue_seq: 9, created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:02:00Z" },
 ];
-const attention: AttentionItem[] = [{ id: "q1", kind: "question", task_id: "active", task_title: "Active task", task_state: "waiting_user", agent_id: "worker-openai", title: "Need input", detail: "Provide scope", question_id: "question-1", created_at: "2026-01-01T00:01:00Z" }];
+const attention: AttentionItem[] = [{ id: "q1", kind: "agent_failed", task_id: "active", task_title: "Active task", task_state: "waiting_user", agent_id: "worker-openai", title: "Need input", detail: "Provide scope", created_at: "2026-01-01T00:01:00Z" }];
 const health: SystemHealth = { components: [{ id: "runtime", label: "TGA3 Control Plane", status: "healthy", detail: "tga3", latencyMs: 2 }] };
 
 describe("DashboardPage", () => {

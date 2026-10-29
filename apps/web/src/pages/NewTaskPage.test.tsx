@@ -7,7 +7,7 @@ const mocks = vi.hoisted(() => ({
   stageInput: vi.fn(async (file: File) => ({ id: `asset-${file.name}`, originalName: file.name, mimeType: file.type, mediaKind: "image", size: file.size, status: "uploaded" as const })),
   deleteStagedInput: vi.fn(),
   listScenes: vi.fn(async () => ({ schema_version: 1, scenes: [{ id: "penetration_test", name: "渗透测试", description: "Web target", system_prompt: "Test safely" }] })),
-  fetchAgentModelOptions: vi.fn(async () => ({ scene_id: "penetration_test", agents: [{ id: "supervisor", display_name: "Supervisor", role: "supervisor", runtime: "openai_agents", model: { provider_id: "openai", provider_name: "OpenAI", model_id: "gpt-test", model_name: "gpt-test", protocol: "openai_responses", ready: true } }], models: [{ provider_id: "openai", provider_name: "OpenAI", model_id: "gpt-test", model_name: "gpt-test", protocol: "openai_responses", ready: true }] })),
+  fetchAgentModelOptions: vi.fn(async () => ({ scene_id: "penetration_test", agents: [{ id: "worker-openai", display_name: "OpenAI Worker", role: "worker", runtime: "codex_cli", model: { provider_id: "openai", provider_name: "OpenAI", model_id: "gpt-test", model_name: "gpt-test", protocol: "openai_responses", ready: true } }], models: [{ provider_id: "openai", provider_name: "OpenAI", model_id: "gpt-test", model_name: "gpt-test", protocol: "openai_responses", ready: true }] })),
 }));
 vi.mock("../api/tga3-tasks", () => mocks);
 vi.stubGlobal("URL", { createObjectURL: vi.fn(() => "blob:image"), revokeObjectURL: vi.fn() });
@@ -21,7 +21,7 @@ describe("NewTaskPage", () => {
     render(<NewTaskPage onCreated={vi.fn()} />);
     expect(await screen.findByRole("dialog", { name: "创建任务" })).toBeInTheDocument();
     expect(await screen.findByText("渗透测试")).toBeInTheDocument();
-    expect(await screen.findByLabelText("Supervisor 模型")).toHaveValue("openai::gpt-test::openai_responses");
+    expect(await screen.findByLabelText("OpenAI Worker 模型")).toHaveValue("openai::gpt-test::openai_responses");
   });
 
   it("creates a native TGA3 task with staged files", async () => {
@@ -36,7 +36,7 @@ describe("NewTaskPage", () => {
     await waitFor(() => expect(mocks.createTask).toHaveBeenCalledWith({
       title: "Web challenge", sceneId: "penetration_test", prompt: "Find the flag",
       fileIds: ["asset-challenge.png"],
-      agentModels: { supervisor: { provider_id: "openai", model_id: "gpt-test", protocol: "openai_responses" } },
+      agentModels: { "worker-openai": { provider_id: "openai", model_id: "gpt-test", protocol: "openai_responses" } },
     }));
     expect(onCreated).toHaveBeenCalledWith("task-created");
   });

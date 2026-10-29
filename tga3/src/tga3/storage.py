@@ -16,15 +16,13 @@ from .domain import (
     Artifact,
     ArtifactRef,
     BlackboardEntry,
-    DialogueKind,
-    DialogueMessage,
     EntryKind,
+    EventKind,
     FinalCandidateBody,
     InputFile,
-    PendingQuestion,
     PublishRequest,
-    QABody,
     RunState,
+    TaskEvent,
     TaskRun,
     Writeup,
     utc_now,
@@ -51,28 +49,17 @@ class Storage(Protocol):
         self, task_id: UUID, *, after_seq: int = 0, up_to_seq: int | None = None, limit: int = 500
     ) -> list[BlackboardEntry]: ...
     async def finding_links(self, task_id: UUID, finding_id: UUID) -> list[ArtifactRef]: ...
-    async def append_dialogue(
+    async def append_event(
         self,
         task_id: UUID,
         actor: Actor,
-        kind: DialogueKind,
+        kind: EventKind,
         text: str,
         *,
-        channel_agent_id: str = "supervisor",
+        channel_agent_id: str = "system",
         payload: dict[str, Any] | None = None,
-    ) -> DialogueMessage: ...
-    async def list_dialogue(self, task_id: UUID, *, after_seq: int = 0, limit: int = 500) -> list[DialogueMessage]: ...
-    async def create_question(self, question: PendingQuestion) -> PendingQuestion: ...
-    async def get_question(self, question_id: UUID) -> PendingQuestion: ...
-    async def answer_question(
-        self,
-        question_id: UUID,
-        *,
-        answer: str,
-        attachment_ids: Sequence[UUID],
-        user: Actor,
-        idempotency_key: str,
-    ) -> BlackboardEntry: ...
+    ) -> TaskEvent: ...
+    async def list_events(self, task_id: UUID, *, after_seq: int = 0, limit: int = 500) -> list[TaskEvent]: ...
     async def save_writeup(self, task_id: UUID, snapshot_seq: int, path: str, sha256: str) -> UUID: ...
     async def latest_writeup(self, task_id: UUID) -> Writeup: ...
 
@@ -114,9 +101,7 @@ class InMemoryStorage:
         self.input_files: dict[UUID, InputFile] = {}
         self.entries: dict[UUID, list[BlackboardEntry]] = defaultdict(list)
         self.links: dict[UUID, list[ArtifactRef]] = defaultdict(list)
-        self.dialogue: dict[UUID, list[DialogueMessage]] = defaultdict(list)
-        self.questions: dict[UUID, PendingQuestion] = {}
-        self.answers: dict[UUID, BlackboardEntry] = {}
+        self.events: dict[UUID, list[TaskEvent]] = defaultdict(list)
         self.writeups: dict[UUID, Writeup] = {}
         self._locks: defaultdict[UUID, asyncio.Lock] = defaultdict(asyncio.Lock)
 
@@ -141,7 +126,6 @@ class InMemoryStorage:
         agent_keys = [key for key in self.agents if key[0] == task_id]
         artifact_ids = [item.id for item in self.artifacts.values() if item.task_id == task_id]
         input_ids = [item.id for item in self.input_files.values() if item.task_id == task_id]
-        question_ids = [item.id for item in self.questions.values() if item.task_id == task_id]
         writeup_ids = [item.id for item in self.writeups.values() if item.task_id == task_id]
         finding_ids = [item.id for item in self.entries.get(task_id, [])]
         for key in agent_keys:
@@ -150,15 +134,12 @@ class InMemoryStorage:
             self.artifacts.pop(item_id, None)
         for item_id in input_ids:
             self.input_files.pop(item_id, None)
-        for item_id in question_ids:
-            self.questions.pop(item_id, None)
-            self.answers.pop(item_id, None)
         for item_id in writeup_ids:
             self.writeups.pop(item_id, None)
         for item_id in finding_ids:
             self.links.pop(item_id, None)
         self.entries.pop(task_id, None)
-        self.dialogue.pop(task_id, None)
+        self.events.pop(task_id, None)
         self._locks.pop(task_id, None)
         self.tasks.pop(task_id, None)
 
@@ -254,19 +235,19 @@ class InMemoryStorage:
             raise NotFoundError(f"finding not found: {finding_id}")
         return list(self.links[finding_id])
 
-    async def append_dialogue(
+    async def append_event(
         self,
         task_id: UUID,
         actor: Actor,
-        kind: DialogueKind,
+        kind: EventKind,
         text: str,
         *,
-        channel_agent_id: str = "supervisor",
+        channel_agent_id: str = "system",
         payload: dict[str, Any] | None = None,
-    ) -> DialogueMessage:
+    ) -> TaskEvent:
         async with self._locks[task_id]:
             task = await self.get_task(task_id)
-            message = DialogueMessage(
+            message = TaskEvent(
                 task_id=task_id,
                 seq=task.dialogue_seq + 1,
                 actor=actor,
@@ -275,73 +256,16 @@ class InMemoryStorage:
                 channel_agent_id=channel_agent_id,
                 payload=payload or {},
             )
-            self.dialogue[task_id].append(message)
+            self.events[task_id].append(message)
             self.tasks[task_id] = task.model_copy(update={"dialogue_seq": message.seq, "updated_at": utc_now()})
             return message
 
-    async def list_dialogue(self, task_id: UUID, *, after_seq: int = 0, limit: int = 500) -> list[DialogueMessage]:
+    async def list_events(self, task_id: UUID, *, after_seq: int = 0, limit: int = 500) -> list[TaskEvent]:
         await self.get_task(task_id)
-        return [message for message in self.dialogue[task_id] if message.seq > after_seq][:limit]
+        return [message for message in self.events[task_id] if message.seq > after_seq][:limit]
 
-    async def create_question(self, question: PendingQuestion) -> PendingQuestion:
-        await self.get_task(question.task_id)
-        if question.id in self.questions:
-            raise ConflictError(f"question already exists: {question.id}")
-        self.questions[question.id] = question
-        return question
 
-    async def get_question(self, question_id: UUID) -> PendingQuestion:
-        try:
-            return self.questions[question_id]
-        except KeyError as exc:
-            raise NotFoundError(f"question not found: {question_id}") from exc
 
-    async def answer_question(
-        self,
-        question_id: UUID,
-        *,
-        answer: str,
-        attachment_ids: Sequence[UUID],
-        user: Actor,
-        idempotency_key: str,
-    ) -> BlackboardEntry:
-        question = await self.get_question(question_id)
-        async with self._locks[question.task_id]:
-            if question.state == "answered":
-                return self.answers[question_id]
-            task = await self.get_task(question.task_id)
-            body = QABody(
-                question=question.question,
-                answer=answer,
-                origin_type="supervisor" if question.origin.role == "supervisor" else "agent",
-                origin_agent_id=question.origin.agent_id,
-                answer_attachment_ids=list(attachment_ids),
-            )
-            entry = BlackboardEntry(
-                task_id=question.task_id,
-                seq=task.blackboard_seq + 1,
-                actor=question.asked_by,
-                kind=EntryKind.QA,
-                topic="q&a",
-                body=body.model_dump(mode="json"),
-                idempotency_key=idempotency_key,
-            )
-            message = DialogueMessage(
-                task_id=question.task_id,
-                seq=task.dialogue_seq + 1,
-                actor=user,
-                kind=DialogueKind.USER_MESSAGE,
-                text=answer,
-                payload={"question_id": str(question_id), "attachment_ids": [str(x) for x in attachment_ids]},
-            )
-            self.entries[question.task_id].append(entry)
-            self.dialogue[question.task_id].append(message)
-            self.questions[question_id] = question.model_copy(update={"state": "answered"})
-            self.answers[question_id] = entry
-            self.tasks[question.task_id] = task.model_copy(
-                update={"blackboard_seq": entry.seq, "dialogue_seq": message.seq, "updated_at": utc_now()}
-            )
-            return entry
 
     async def save_writeup(self, task_id: UUID, snapshot_seq: int, path: str, sha256: str) -> UUID:
         await self.get_task(task_id)
@@ -390,11 +314,11 @@ def _entry(row: Any) -> BlackboardEntry:
     return BlackboardEntry.model_validate({key: data[key] for key in BlackboardEntry.model_fields})
 
 
-def _dialogue(row: Any) -> DialogueMessage:
+def _dialogue(row: Any) -> TaskEvent:
     data = dict(row)
     data["actor"] = _object(data["actor"])
     data["payload"] = _object(data["payload"])
-    return DialogueMessage.model_validate(data)
+    return TaskEvent.model_validate(data)
 
 
 class PostgresStorage:
@@ -644,16 +568,16 @@ class PostgresStorage:
             raise NotFoundError(f"finding not found: {finding_id}")
         return [ArtifactRef.model_validate(dict(row)) for row in rows]
 
-    async def append_dialogue(
+    async def append_event(
         self,
         task_id: UUID,
         actor: Actor,
-        kind: DialogueKind,
+        kind: EventKind,
         text: str,
         *,
-        channel_agent_id: str = "supervisor",
+        channel_agent_id: str = "system",
         payload: dict[str, Any] | None = None,
-    ) -> DialogueMessage:
+    ) -> TaskEvent:
         async with self.pool.acquire() as conn, conn.transaction():
             await self._lock(conn, task_id)
             seq = await conn.fetchval(
@@ -677,7 +601,7 @@ class PostgresStorage:
             await conn.execute("SELECT pg_notify('tga3_dialogue',$1)", _json({"task_id": task_id, "latest_seq": seq}))
             return _dialogue(row)
 
-    async def list_dialogue(self, task_id: UUID, *, after_seq: int = 0, limit: int = 500) -> list[DialogueMessage]:
+    async def list_events(self, task_id: UUID, *, after_seq: int = 0, limit: int = 500) -> list[TaskEvent]:
         rows = await self.pool.fetch(
             "SELECT * FROM dialogue_messages WHERE task_id=$1 AND seq>$2 ORDER BY seq LIMIT $3",
             task_id,
@@ -686,100 +610,8 @@ class PostgresStorage:
         )
         return [_dialogue(row) for row in rows]
 
-    async def create_question(self, question: PendingQuestion) -> PendingQuestion:
-        await self.pool.execute(
-            """INSERT INTO pending_questions(id,task_id,question,origin,asked_by,state,created_at)
-               VALUES($1,$2,$3,$4::jsonb,$5::jsonb,$6,$7)""",
-            question.id,
-            question.task_id,
-            question.question,
-            _json(question.origin.model_dump(mode="json")),
-            _json(question.asked_by.model_dump(mode="json")),
-            question.state,
-            question.created_at,
-        )
-        return question
 
-    async def get_question(self, question_id: UUID) -> PendingQuestion:
-        row = await self.pool.fetchrow("SELECT * FROM pending_questions WHERE id=$1", question_id)
-        if row is None:
-            raise NotFoundError(f"question not found: {question_id}")
-        data = dict(row)
-        data["origin"] = _object(data["origin"])
-        data["asked_by"] = _object(data["asked_by"])
-        return PendingQuestion.model_validate({key: data[key] for key in PendingQuestion.model_fields})
 
-    async def answer_question(
-        self,
-        question_id: UUID,
-        *,
-        answer: str,
-        attachment_ids: Sequence[UUID],
-        user: Actor,
-        idempotency_key: str,
-    ) -> BlackboardEntry:
-        async with self.pool.acquire() as conn, conn.transaction():
-            row = await conn.fetchrow("SELECT * FROM pending_questions WHERE id=$1 FOR UPDATE", question_id)
-            if row is None:
-                raise NotFoundError(f"question not found: {question_id}")
-            task_id = row["task_id"]
-            await self._lock(conn, task_id)
-            if row["state"] == "answered":
-                existing = await conn.fetchrow(
-                    """SELECT * FROM blackboard_entries
-                       WHERE task_id=$1 AND actor_id='supervisor' AND idempotency_key=$2""",
-                    task_id,
-                    idempotency_key,
-                )
-                if existing is None:
-                    raise ConflictError("question was already answered with another idempotency key")
-                return _entry(existing)
-            origin = Actor.model_validate(_object(row["origin"]))
-            asked_by = Actor.model_validate(_object(row["asked_by"]))
-            body = QABody(
-                question=row["question"],
-                answer=answer,
-                origin_type="supervisor" if origin.role == "supervisor" else "agent",
-                origin_agent_id=origin.agent_id,
-                answer_attachment_ids=list(attachment_ids),
-            )
-            bb_seq = await conn.fetchval(
-                """UPDATE task_runs
-                   SET blackboard_seq=blackboard_seq+1,dialogue_seq=dialogue_seq+1,updated_at=now()
-                   WHERE id=$1 RETURNING blackboard_seq""",
-                task_id,
-            )
-            dialogue_seq = await conn.fetchval("SELECT dialogue_seq FROM task_runs WHERE id=$1", task_id)
-            entry_row = await conn.fetchrow(
-                """INSERT INTO blackboard_entries(id,task_id,seq,actor,actor_id,kind,topic,body,idempotency_key)
-                   VALUES($1,$2,$3,$4::jsonb,$5,'qa','q&a',$6::jsonb,$7) RETURNING *""",
-                uuid4(),
-                task_id,
-                bb_seq,
-                _json(asked_by.model_dump(mode="json")),
-                asked_by.agent_id,
-                _json(body.model_dump(mode="json")),
-                idempotency_key,
-            )
-            await conn.execute(
-                """INSERT INTO dialogue_messages(id,task_id,seq,channel_agent_id,actor,kind,text,payload)
-                   VALUES($1,$2,$3,'supervisor',$4::jsonb,$5,$6,$7::jsonb)""",
-                uuid4(),
-                task_id,
-                dialogue_seq,
-                _json(user.model_dump(mode="json")),
-                DialogueKind.USER_MESSAGE.value,
-                answer,
-                _json({"question_id": str(question_id), "attachment_ids": [str(x) for x in attachment_ids]}),
-            )
-            await conn.execute(
-                """UPDATE pending_questions SET state='answered',answer=$2,answer_attachment_ids=$3::jsonb,
-                   answered_at=now() WHERE id=$1""",
-                question_id,
-                answer,
-                _json([str(x) for x in attachment_ids]),
-            )
-            return _entry(entry_row)
 
     async def save_writeup(self, task_id: UUID, snapshot_seq: int, path: str, sha256: str) -> UUID:
         writeup_id = uuid4()

@@ -10,7 +10,7 @@
   "artifact_root": "./data/artifacts",
   "writeup_root": "./data/writeups",
   "skills_root": "./config/skills",
-  "mcp_instructions": "共享任务记忆执行器：首次读取完整黑板，之后按序号增量读取；用 Intel 分享已验证且对其他 Agent 有用的中间情报，用 Finding 分享带证据的关键突破，并仅在需要时按名称读取通用 Skill。",
+  "mcp_instructions": "黑板 MCP 提供黑板增量同步、结构化发布和证据登记。Worker 将证据保存到各自私有的 /artifacts，再登记后引用；技能资料通过 CLI 原生文件工具读取 /skills。",
   "worker_images": {
     "worker-openai": "tga3-worker-openai:local",
     "worker-claude": "tga3-worker-claude:local",
@@ -33,12 +33,7 @@
   },
   "cadence": {
     "worker_sync_seconds": 90,
-    "supervisor_debounce_seconds": 2,
-    "supervisor_intel_max_wait_seconds": 10,
-    "supervisor_advice_interval_seconds": 60,
-    "supervisor_silence_seconds": 90,
     "finalization_grace_seconds": 30
   },
-  "supervisor_enabled": false,
   "cli_timeout_seconds": 1800
 }

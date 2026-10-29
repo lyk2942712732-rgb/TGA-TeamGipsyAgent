@@ -177,11 +177,6 @@ class CliAdapter(AgentAdapter):
             raise CliError(f"{self.runtime} failed (exit={process.returncode}): {failure}\n{detail}")
         if self.session_id:
             await emit("agent.session", {"cli_session_id": self.session_id, "runtime": self.runtime})
-        marker = "NEEDS_USER_INPUT:"
-        if not self.reporter and marker in self.final_output:
-            before, question = self.final_output.rsplit(marker, 1)
-            await emit("agent.needs_user_input", {"question": question.strip().splitlines()[0]})
-            return before.strip()
         return self.final_output
 
 
@@ -197,7 +192,8 @@ class CodexAdapter(CliAdapter):
         instructions = (
             os.environ["TGA3_SYSTEM_PROMPT"]
             + "\nRead /workspace/report-input.json and read-only evidence in /artifacts. "
-            "Skills are in /skills. Do not contact targets or change evidence. "
+            "Skills are in /skills; read SKILL.md and referenced files directly. "
+            "Evidence is grouped by Worker under /artifacts/<worker-id>/. Do not contact targets or change evidence. "
             "Use only recorded commands/code for reproduction steps; if absent, state they were not recorded. "
             "Never invent example commands. Return only Markdown."
             if self.reporter

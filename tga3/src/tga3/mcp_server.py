@@ -1,4 +1,4 @@
-"""One executor surface for blackboard, artifact and skill operations."""
+"""One executor surface for blackboard and artifact operations."""
 
 from __future__ import annotations
 
@@ -13,10 +13,9 @@ from mcp.server.transport_security import TransportSecuritySettings
 from .blackboard import Blackboard
 from .config import TGA3Config
 from .domain import Actor, Artifact, WorkerPublishRequest, worker_publish_contract
-from .skills import SkillCatalog
 
 
-def build_mcp(config: TGA3Config, blackboard: Blackboard, skills: SkillCatalog) -> FastMCP:
+def build_mcp(config: TGA3Config, blackboard: Blackboard) -> FastMCP:
     hostname = urlsplit(config.runtime.blackboard_mcp_url).hostname
     if not hostname:
         raise ValueError("blackboard_mcp_url must be an absolute URL with a hostname")
@@ -71,7 +70,11 @@ def build_mcp(config: TGA3Config, blackboard: Blackboard, skills: SkillCatalog) 
     ) -> dict[str, Any]:
         """Register a file already written below /artifacts; returns an artifact id for a Finding."""
         task_uuid = UUID(task_id)
-        task_root = (config.resolve_path(config.runtime.artifact_root) / str(task_uuid)).resolve()
+        identity = Actor.model_validate(actor)
+        configured = config.agents.agents.get(identity.agent_id)
+        if configured is None or configured.role != "worker" or identity.role != "worker":
+            raise ValueError("only configured Workers can register evidence")
+        task_root = (config.resolve_path(config.runtime.artifact_root) / str(task_uuid) / identity.agent_id).resolve()
         path = (task_root / relative_path).resolve()
         if task_root != path and task_root not in path.parents:
             raise ValueError("artifact path escapes the task artifact directory")
@@ -80,7 +83,7 @@ def build_mcp(config: TGA3Config, blackboard: Blackboard, skills: SkillCatalog) 
         digest = hashlib.sha256(path.read_bytes()).hexdigest()
         artifact = Artifact(
             task_id=task_uuid,
-            created_by=Actor.model_validate(actor),
+            created_by=identity,
             name=name,
             storage_path=str(path),
             media_type=media_type,
@@ -88,19 +91,6 @@ def build_mcp(config: TGA3Config, blackboard: Blackboard, skills: SkillCatalog) 
             size_bytes=path.stat().st_size,
         )
         return (await blackboard.register_artifact(artifact)).model_dump(mode="json")
-
-    @mcp.tool()
-    def skills_list() -> list[dict[str, Any]]:
-        """List skill packages by name, summary and Markdown document count."""
-        return [
-            {"name": item.name, "description": item.description, "file_count": item.file_count}
-            for item in skills.list()
-        ]
-
-    @mcp.tool()
-    def skill_read(name: str, path: str = "SKILL.md") -> str:
-        """Read one document from a skill package. Start with SKILL.md, then follow its routing guidance."""
-        return skills.read(name, path)
 
     return mcp
 

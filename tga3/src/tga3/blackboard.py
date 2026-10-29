@@ -22,7 +22,6 @@ ChangeHook = Callable[[UUID, int], Awaitable[None]]
 
 _WRITE_POLICY: dict[str, frozenset[EntryKind]] = {
     "user": frozenset({EntryKind.USER_PROMPT, EntryKind.USER_FILE}),
-    "supervisor": frozenset({EntryKind.SUPERVISOR_ADVICE}),
     "worker": frozenset({EntryKind.INTEL, EntryKind.FINDING, EntryKind.FINAL_CANDIDATE}),
     "reporter": frozenset(),
     "system": frozenset({EntryKind.USER_PROMPT, EntryKind.USER_FILE}),
@@ -35,7 +34,7 @@ class Blackboard:
         self.on_change = on_change
 
     async def publish(self, task_id: UUID, actor: Actor, request: PublishRequest) -> BlackboardEntry:
-        if request.kind not in _WRITE_POLICY[actor.role]:
+        if request.kind not in _WRITE_POLICY.get(actor.role, frozenset()):
             raise ContractError(f"{actor.role} cannot publish {request.kind.value}")
         task = await self.storage.get_task(task_id)
         if task.state in {RunState.REPORTING, RunState.COMPLETED, RunState.FAILED, RunState.CANCELLED}:
@@ -55,6 +54,7 @@ class Blackboard:
     ) -> BlackboardSyncResult:
         task = await self.storage.get_task(task_id)
         entries = await self.storage.list_entries(task_id, after_seq=after_seq, up_to_seq=up_to_seq, limit=limit)
+        entries = [entry for entry in entries if entry.kind not in {EntryKind.SUPERVISOR_ADVICE, EntryKind.QA}]
         return BlackboardSyncResult(latest_seq=task.blackboard_seq, entries=tuple(entries))
 
     async def publish_and_sync(
@@ -67,8 +67,8 @@ class Blackboard:
         limit: int = 500,
     ) -> BlackboardSyncResult:
         published = await self.publish(task_id, actor, request)
-        entries = await self.storage.list_entries(task_id, after_seq=after_seq, limit=limit)
-        return BlackboardSyncResult(published=published, latest_seq=published.seq, entries=tuple(entries))
+        result = await self.sync(task_id, after_seq=after_seq, limit=limit)
+        return result.model_copy(update={"published": published})
 
     async def register_artifact(self, artifact: Artifact) -> Artifact:
         return await self.storage.register_artifact(artifact)

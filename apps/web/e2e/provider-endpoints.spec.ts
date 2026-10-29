@@ -59,5 +59,26 @@ test("supplier endpoints, searchable toggles, and protocol-scoped Solver options
   await page.screenshot({ path: testInfo.outputPath("solver.png"), fullPage: true });
   await page.getByRole("button", { name: "配置 Reporter" }).click();
   await expect(page.getByLabel("Reporter Solver 配置", { exact: true }).getByRole("option", { name: "端点演示网关 / qwen-shared", exact: true })).toHaveCount(1);
+  await page.getByLabel("Reporter Solver 配置", { exact: true }).getByRole("combobox").selectOption({ label: "端点演示网关 / qwen-shared" });
+  await page.getByLabel("Reporter Solver 配置", { exact: true }).getByRole("button", { name: "保存配置" }).click();
+  await expect(page.locator(".settings-message")).toContainText("已保存");
+  await expect(page.getByRole("button", { name: "配置 Supervisor" })).toHaveCount(0);
+  const created = await page.request.post("/api/v3/tasks", { multipart: { title: "三角色隔离验证", prompt: "Inspect local fixture only", scene_id: "cryptography" } });
+  expect(created.ok()).toBe(true);
+  const task = await created.json();
+  const detail = await (await page.request.get(`/api/v3/tasks/${task.id}`)).json();
+  expect(detail.agents.map((agent: { agent_id: string }) => agent.agent_id).sort()).toEqual(["reporter", "worker-claude", "worker-openai"]);
+  await page.goto(`/tasks/${task.id}/runtime`);
+  await expect(page.getByRole("option", { name: /OpenAI Worker/ })).toBeVisible();
+  for (const name of [/OpenAI Worker/, /Claude Worker/, /Reporter/]) {
+    await page.getByRole("option", { name }).click();
+    await expect(page.getByRole("tab", { name: "活动", exact: true })).toBeVisible();
+    await expect(page.getByRole("tab", { name: "对话", exact: true })).toHaveCount(0);
+    await expect(page.getByPlaceholder(/添加提示/)).toHaveCount(0);
+  }
+  expect((await page.request.post(`/api/v3/tasks/${task.id}/prompts`, { data: { text: "removed" } })).status()).toBe(404);
+  expect((await page.request.get(`/api/v3/tasks/${task.id}/events`)).ok()).toBe(true);
+  await page.screenshot({ path: testInfo.outputPath("three-agent-runtime.png"), fullPage: true });
+  await page.request.delete(`/api/v3/tasks/${task.id}`);
   expect(errors).toEqual([]);
 });

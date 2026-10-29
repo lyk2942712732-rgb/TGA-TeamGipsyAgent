@@ -21,7 +21,6 @@ dependencies = [
 
 [project.optional-dependencies]
 control = ["docker>=7.1,<8"]
-supervisor = ["openai-agents>=0.13,<1"]
 dev = ["pytest>=8", "pytest-asyncio>=0.25", "ruff>=0.12"]
 
 [project.scripts]

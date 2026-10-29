@@ -1,4 +1,4 @@
-/* Native TGA3 runtime: task + agents + shared blackboard + dialogue. */
+/* Native TGA3 runtime: task + agents + shared blackboard + event. */
 .tga3-runtime-page {
   display: flex;
   flex-direction: column;
@@ -227,10 +227,7 @@
   color: var(--c-accent);
   background: #eaf2ff;
 }
-.tga3-agent-icon.role-supervisor {
-  color: #a16207;
-  background: #fef3c7;
-}
+
 .tga3-agent-icon.role-reporter {
   color: #be123c;
   background: #ffe4e6;
@@ -376,7 +373,7 @@
   box-shadow: var(--shadow-card);
 }
 .tga3-entry-list,
-.tga3-dialogue-list,
+.tga3-event-list,
 .tga3-inputs-panel,
 .tga3-findings-panel,
 .tga3-finding-grid {
@@ -403,11 +400,9 @@
   border-left-color: #7c3aed;
   background: #faf8ff;
 }
-.tga3-board-card.kind-supervisor_advice {
-  border-left-color: #d97706;
-}
+
 .tga3-board-card > header,
-.tga3-dialogue-card header {
+.tga3-event-card header {
   display: flex;
   align-items: center;
   gap: 7px;
@@ -422,7 +417,7 @@
   text-transform: uppercase;
 }
 .tga3-board-card > header small,
-.tga3-dialogue-card header small {
+.tga3-event-card header small {
   font-size: 8px;
 }
 .tga3-entry-author {
@@ -494,20 +489,19 @@
 .tga3-qa dd {
   margin: 0;
 }
-.tga3-dialogue-list,
-.tga3-conversation-thread {
+.tga3-event-list {
   position: relative;
 }
-.tga3-dialogue-card {
+.tga3-event-card {
   display: grid;
   grid-template-columns: 10px minmax(0, 1fr);
   gap: 8px;
   padding: 9px 0;
 }
-.tga3-dialogue-card + .tga3-dialogue-card {
+.tga3-event-card + .tga3-event-card {
   border-top: 1px solid var(--c-border);
 }
-.tga3-dialogue-dot {
+.tga3-event-dot {
   width: 8px;
   height: 8px;
   margin-top: 5px;
@@ -516,17 +510,15 @@
   background: #64748b;
   box-shadow: 0 0 0 1px #cbd5e1;
 }
-.tga3-dialogue-card.kind-question .tga3-dialogue-dot {
-  background: #d97706;
-}
-.tga3-dialogue-card.kind-error .tga3-dialogue-dot {
+
+.tga3-event-card.kind-error .tga3-event-dot {
   background: #dc2626;
 }
-.tga3-dialogue-card header b {
+.tga3-event-card header b {
   color: #263449;
   font-size: 9px;
 }
-.tga3-dialogue-card header em {
+.tga3-event-card header em {
   padding: 2px 5px;
   border-radius: 4px;
   color: #475569;
@@ -534,10 +526,10 @@
   font-size: 7px;
   font-style: normal;
 }
-.tga3-dialogue-card header small {
+.tga3-event-card header small {
   margin-left: auto;
 }
-.tga3-dialogue-card p {
+.tga3-event-card p {
   margin-top: 4px;
   color: #475569;
   font-size: 9px;
@@ -545,12 +537,12 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
-.tga3-dialogue-card footer {
+.tga3-event-card footer {
   margin-top: 4px;
   color: #94a3b8;
   font-size: 7px;
 }
-.tga3-dialogue-card[data-compact="true"] {
+.tga3-event-card[data-compact="true"] {
   padding: 7px 0;
 }
 .tga3-section-heading {
@@ -669,8 +661,7 @@
 }
 .tga3-agent-overview,
 .tga3-controls,
-.tga3-activity,
-.tga3-conversation {
+.tga3-activity {
   display: grid;
   gap: 12px;
 }
@@ -735,90 +726,20 @@
   font-size: 8px;
   overflow-wrap: anywhere;
 }
-.tga3-question-banner {
-  padding: 10px;
-  border: 1px solid var(--c-warning-border);
-  border-radius: 8px;
-  background: var(--c-warning-soft);
-}
-.tga3-question-banner strong {
-  color: #9a3412;
-  font-size: 10px;
-}
-.tga3-question-banner p {
-  margin: 5px 0;
-  color: #7c2d12;
-  font-size: 9px;
-}
-.tga3-question-banner small {
-  font-size: 8px;
-}
-.tga3-conversation-thread {
-  max-height: 330px;
-  overflow: auto;
-}
-.tga3-composer {
-  display: grid;
-  gap: 7px;
-  padding: 9px;
-  border: 1px solid var(--c-border-strong);
-  border-radius: 8px;
-  background: #fff;
-}
-.tga3-composer textarea {
-  min-height: 85px;
-  padding: 4px;
-  border: 0;
-  outline: 0;
-  resize: vertical;
-  font-size: 9px;
-}
-.tga3-composer footer {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-.tga3-composer footer button {
-  min-height: 28px;
-  padding: 0 8px;
-  color: #475569;
-  border: 1px solid var(--c-border);
-  background: #fff;
-  font-size: 8px;
-}
-.tga3-composer footer span {
-  flex: 1;
-  font-size: 7px;
-  color: #94a3b8;
-}
-.tga3-composer footer .tga3-send {
-  min-width: 31px;
-  padding: 0;
-  color: #fff;
-  border-color: var(--c-accent);
-  background: var(--c-accent);
-}
-.tga3-composer-assets {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-}
-.tga3-composer-assets > span {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 3px 5px;
-  border-radius: 4px;
-  background: #f1f5f9;
-  font-size: 7px;
-}
-.tga3-composer-assets button {
-  min-width: 0;
-  min-height: 0;
-  padding: 0;
-  color: #64748b;
-  background: transparent;
-}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 .tga3-notice {
   padding: 8px;
   border-radius: 6px;
@@ -1048,7 +969,7 @@
 .tga3-state-pill,
 .tga3-board-card > header span,
 .tga3-board-card > header small,
-.tga3-dialogue-card header small {
+.tga3-event-card header small {
   font-size: 10px !important;
 }
 .tga3-task-fact b,
@@ -1074,7 +995,7 @@
 .tga3-entry-author b,
 .tga3-board-card p,
 .tga3-board-card dd,
-.tga3-dialogue-card p,
+.tga3-event-card p,
 .tga3-info h3,
 .tga3-controls h3,
 .tga3-activity h3 {
@@ -1090,9 +1011,9 @@
 .tga3-entry-meta em,
 .tga3-entry-meta span,
 .tga3-board-card code,
-.tga3-dialogue-card header b,
-.tga3-dialogue-card header em,
-.tga3-dialogue-card footer,
+.tga3-event-card header b,
+.tga3-event-card header em,
+.tga3-event-card footer,
 .tga3-qa dt {
   font-size: 10px;
 }
@@ -1104,9 +1025,6 @@
 .tga3-agent-failure strong,
 .tga3-agent-failure p,
 .tga3-agent-failure small,
-.tga3-question-banner p,
-.tga3-question-banner small,
-.tga3-composer textarea,
 .tga3-notice,
 .tga3-muted,
 .tga3-activity article b,
@@ -1451,10 +1369,7 @@
   border-color: #b7d9ed;
   background: linear-gradient(145deg, #f5fcff, #e9f7ff);
 }
-.tga3-board-tile.kind-supervisor_advice {
-  border-color: #ead29d;
-  background: linear-gradient(145deg, #fffdf4, #fff6d9);
-}
+
 .tga3-board-tile.kind-final_candidate {
   border-color: #d6c7ef;
   background: linear-gradient(145deg, #fcfaff, #f3edff);
@@ -1829,10 +1744,7 @@
   color: #c2410c;
   background: #ffedd5;
 }
-.tga3-graph-node.agent.role-supervisor > span {
-  color: #a16207;
-  background: #fef3c7;
-}
+
 .tga3-graph-node.agent.role-reporter > span {
   color: #be123c;
   background: #ffe4e6;

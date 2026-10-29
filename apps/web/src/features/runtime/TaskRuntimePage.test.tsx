@@ -11,17 +11,17 @@ import { TaskRuntimePage } from "./TaskRuntimePage";
 const snapshot: TGA3RuntimeSnapshot = {
   task: { id: "task", title: "Native TGA3 task", scene_id: "pwn", state: "running", blackboard_seq: 3, dialogue_seq: 2, created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:01:00Z" },
   agents: [
-    { agent_id: "supervisor", sdk: "openai_agents", desired_state: "running", actual_state: "running", provider_id: "openai", model_id: "gpt", protocol: "openai_responses", display_name: "Supervisor", role: "supervisor", runtime_location: "host", updated_at: "2026-01-01T00:01:00Z" },
-    { agent_id: "worker-openai", sdk: "openai_agents", desired_state: "running", actual_state: "running", provider_id: "openai", model_id: "gpt", protocol: "openai_responses", display_name: "OpenAI Worker", role: "worker", runtime_location: "container", updated_at: "2026-01-01T00:01:00Z" },
+    { agent_id: "worker-claude", sdk: "codex_cli", desired_state: "running", actual_state: "running", provider_id: "openai", model_id: "gpt", protocol: "openai_responses", display_name: "Claude Worker", role: "worker", runtime_location: "container", updated_at: "2026-01-01T00:01:00Z" },
+    { agent_id: "worker-openai", sdk: "codex_cli", desired_state: "running", actual_state: "running", provider_id: "openai", model_id: "gpt", protocol: "openai_responses", display_name: "OpenAI Worker", role: "worker", runtime_location: "container", updated_at: "2026-01-01T00:01:00Z" },
   ],
   blackboard: [
     { id: "prompt", seq: 1, actor: { agent_id: "user", display_name: "用户", role: "user" }, kind: "user_prompt", topic: "initial", body: { text: "拿到 flag" }, created_at: "2026-01-01T00:00:00Z" },
     { id: "finding", seq: 2, actor: { agent_id: "worker-openai", display_name: "OpenAI Worker", role: "worker" }, kind: "finding", topic: "flag", body: { claim: "已发现入口" }, created_at: "2026-01-01T00:01:00Z" },
     { id: "intel", seq: 3, actor: { agent_id: "worker-openai", display_name: "OpenAI Worker", role: "worker" }, kind: "intel", topic: "stack", body: { claim: "确认目标使用 Flask", detail: "响应头与错误页已经交叉验证" }, created_at: "2026-01-01T00:01:10Z" },
   ],
-  dialogue: [
+  events: [
     { id: "status", seq: 1, channel_agent_id: "worker-openai", actor: { agent_id: "worker-openai", display_name: "OpenAI Worker", role: "worker" }, kind: "agent_status", text: "开始执行", payload: {}, created_at: "2026-01-01T00:00:30Z" },
-    { id: "progress", seq: 2, channel_agent_id: "supervisor", actor: { agent_id: "supervisor", display_name: "Supervisor", role: "supervisor" }, kind: "blackboard_progress", text: "黑板已有新 Finding", payload: {}, created_at: "2026-01-01T00:01:00Z" },
+    { id: "progress", seq: 2, channel_agent_id: "worker-claude", actor: { agent_id: "worker-claude", display_name: "Claude Worker", role: "worker" }, kind: "blackboard_progress", text: "黑板已有新 Finding", payload: {}, created_at: "2026-01-01T00:01:00Z" },
   ],
 };
 
@@ -56,6 +56,8 @@ describe("TaskRuntimePage", () => {
     render(<MemoryRouter initialEntries={["/tasks/task/runtime"]}><TaskRuntimePage taskId="task" /></MemoryRouter>);
     fireEvent.click(screen.getByRole("option", { name: /OpenAI Worker/ }));
     expect(screen.getByRole("heading", { name: "OpenAI Worker" })).toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: "对话" })).not.toBeInTheDocument();
+    expect(screen.queryByPlaceholderText(/添加提示/)).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("tab", { name: "活动" }));
     expect(screen.getByText("开始执行")).toBeInTheDocument();
   });
@@ -106,14 +108,14 @@ describe("TaskRuntimePage", () => {
     useTGA3Runtime.mockReturnValue({
       snapshot: {
         ...snapshot,
-        dialogue: [...snapshot.dialogue, {
+        events: [...snapshot.events, {
           id: "skill-action",
           seq: 3,
           channel_agent_id: "worker-openai",
           actor: { agent_id: "worker-openai", display_name: "OpenAI Worker", role: "worker" },
           kind: "action_completed",
-          text: "mcp__blackboard__skills_list",
-          payload: { tool: "mcp__blackboard__skills_list" },
+          text: "cat /skills/SKILL.md",
+          payload: { tool: "cat /skills/SKILL.md" },
           created_at: "2026-01-01T00:01:10Z",
         }],
       },
@@ -127,8 +129,8 @@ describe("TaskRuntimePage", () => {
     useTGA3Runtime.mockReturnValue({
       snapshot: {
         ...snapshot,
-        dialogue: [...snapshot.dialogue,
-          { id: "skill-action", seq: 3, channel_agent_id: "worker-openai", actor: { agent_id: "worker-openai", display_name: "OpenAI Worker", role: "worker" }, kind: "action_completed", text: "mcp__blackboard__skills_list", payload: { tool: "mcp__blackboard__skills_list" }, created_at: "2026-01-01T00:01:10Z" },
+        events: [...snapshot.events,
+          { id: "skill-action", seq: 3, channel_agent_id: "worker-openai", actor: { agent_id: "worker-openai", display_name: "OpenAI Worker", role: "worker" }, kind: "action_completed", text: "cat /skills/SKILL.md", payload: { tool: "cat /skills/SKILL.md" }, created_at: "2026-01-01T00:01:10Z" },
           { id: "shell-action", seq: 4, channel_agent_id: "worker-openai", actor: { agent_id: "worker-openai", display_name: "OpenAI Worker", role: "worker" }, kind: "action_completed", text: "id; pwd", payload: { tool: "shell" }, created_at: "2026-01-01T00:01:11Z" },
         ],
       },
@@ -144,10 +146,10 @@ describe("TaskRuntimePage", () => {
     useTGA3Runtime.mockReturnValue({
       snapshot: {
         ...snapshot,
-        dialogue: [...snapshot.dialogue,
-          { id: "skill-action", seq: 3, channel_agent_id: "worker-openai", actor: { agent_id: "worker-openai", display_name: "OpenAI Worker", role: "worker" }, kind: "action_completed", text: "mcp__blackboard__skills_list", payload: { tool: "mcp__blackboard__skills_list" }, created_at: "2026-01-01T00:01:10Z" },
+        events: [...snapshot.events,
+          { id: "skill-action", seq: 3, channel_agent_id: "worker-openai", actor: { agent_id: "worker-openai", display_name: "OpenAI Worker", role: "worker" }, kind: "action_completed", text: "cat /skills/SKILL.md", payload: { tool: "cat /skills/SKILL.md" }, created_at: "2026-01-01T00:01:10Z" },
           { id: "shell-action", seq: 4, channel_agent_id: "worker-openai", actor: { agent_id: "worker-openai", display_name: "OpenAI Worker", role: "worker" }, kind: "action_completed", text: "id; pwd", payload: { tool: "shell" }, created_at: "2026-01-01T00:01:11Z" },
-          { id: "supervisor-action", seq: 5, channel_agent_id: "supervisor", actor: { agent_id: "supervisor", display_name: "Supervisor", role: "supervisor" }, kind: "action_completed", text: "review findings", payload: { tool: "review" }, created_at: "2026-01-01T00:01:12Z" },
+          { id: "worker-claude-action", seq: 5, channel_agent_id: "worker-claude", actor: { agent_id: "worker-claude", display_name: "Claude Worker", role: "worker" }, kind: "action_completed", text: "review findings", payload: { tool: "review" }, created_at: "2026-01-01T00:01:12Z" },
         ],
       },
       connection: "live",
@@ -157,18 +159,18 @@ describe("TaskRuntimePage", () => {
     view.rerender(<MemoryRouter initialEntries={["/tasks/task/runtime?tab=runtime"]}><TaskRuntimePage taskId="task" /></MemoryRouter>);
     const concurrentGraph = screen.getByRole("region", { name: "实时运行图" });
     expect(within(concurrentGraph).getByText("OpenAI Worker 读取 Skill")).toBeInTheDocument();
-    expect(within(concurrentGraph).getByText("Supervisor review findings")).toBeInTheDocument();
+    expect(within(concurrentGraph).getByText("Claude Worker review findings")).toBeInTheDocument();
     view.rerender(<MemoryRouter initialEntries={["/tasks/task/runtime?tab=runtime"]}><TaskRuntimePage taskId="task" /></MemoryRouter>);
     expect(within(screen.getByRole("region", { name: "实时运行图" })).getByText("OpenAI Worker 读取 Skill")).toBeInTheDocument();
-    expect(within(screen.getByRole("region", { name: "实时运行图" })).getByText("Supervisor review findings")).toBeInTheDocument();
+    expect(within(screen.getByRole("region", { name: "实时运行图" })).getByText("Claude Worker review findings")).toBeInTheDocument();
 
     useTGA3Runtime.mockReturnValue({
       snapshot: {
         ...snapshot,
-        dialogue: [...snapshot.dialogue,
-          { id: "skill-action", seq: 3, channel_agent_id: "worker-openai", actor: { agent_id: "worker-openai", display_name: "OpenAI Worker", role: "worker" }, kind: "action_completed", text: "mcp__blackboard__skills_list", payload: { tool: "mcp__blackboard__skills_list" }, created_at: "2026-01-01T00:01:10Z" },
+        events: [...snapshot.events,
+          { id: "skill-action", seq: 3, channel_agent_id: "worker-openai", actor: { agent_id: "worker-openai", display_name: "OpenAI Worker", role: "worker" }, kind: "action_completed", text: "cat /skills/SKILL.md", payload: { tool: "cat /skills/SKILL.md" }, created_at: "2026-01-01T00:01:10Z" },
           { id: "shell-action", seq: 4, channel_agent_id: "worker-openai", actor: { agent_id: "worker-openai", display_name: "OpenAI Worker", role: "worker" }, kind: "action_completed", text: "id; pwd", payload: { tool: "shell" }, created_at: "2026-01-01T00:01:11Z" },
-          { id: "supervisor-action", seq: 5, channel_agent_id: "supervisor", actor: { agent_id: "supervisor", display_name: "Supervisor", role: "supervisor" }, kind: "action_completed", text: "review findings", payload: { tool: "review" }, created_at: "2026-01-01T00:01:12Z" },
+          { id: "worker-claude-action", seq: 5, channel_agent_id: "worker-claude", actor: { agent_id: "worker-claude", display_name: "Claude Worker", role: "worker" }, kind: "action_completed", text: "review findings", payload: { tool: "review" }, created_at: "2026-01-01T00:01:12Z" },
           { id: "shell-completed", seq: 6, channel_agent_id: "worker-openai", actor: { agent_id: "worker-openai", display_name: "OpenAI Worker", role: "worker" }, kind: "action_completed", text: "id; pwd", payload: { tool: "shell", exit_code: 0 }, created_at: "2026-01-01T00:01:13Z" },
         ],
       },
@@ -179,7 +181,7 @@ describe("TaskRuntimePage", () => {
     view.rerender(<MemoryRouter initialEntries={["/tasks/task/runtime?tab=runtime"]}><TaskRuntimePage taskId="task" /></MemoryRouter>);
     const completedGraph = screen.getByRole("region", { name: "实时运行图" });
     expect(within(completedGraph).getByText("OpenAI Worker 读取 Skill")).toBeInTheDocument();
-    expect(within(completedGraph).getByText("Supervisor review findings")).toBeInTheDocument();
+    expect(within(completedGraph).getByText("Claude Worker review findings")).toBeInTheDocument();
   });
 
   it("shows and truncates the concrete shell command from the action payload", () => {
@@ -188,7 +190,7 @@ describe("TaskRuntimePage", () => {
     useTGA3Runtime.mockReturnValue({
       snapshot: {
         ...snapshot,
-        dialogue: [...snapshot.dialogue, {
+        events: [...snapshot.events, {
           id: "long-shell-action",
           seq: 3,
           channel_agent_id: "worker-openai",
@@ -214,7 +216,7 @@ describe("TaskRuntimePage", () => {
       useTGA3Runtime.mockReturnValue({
         snapshot: {
           ...snapshot,
-          dialogue: [...snapshot.dialogue, { id: "first", seq: 3, channel_agent_id: "worker-openai", actor: { agent_id: "worker-openai", display_name: "OpenAI Worker", role: "worker" }, kind: "action_completed", text: "first", payload: { tool: "shell" }, created_at: "2026-01-01T00:01:10Z" }],
+          events: [...snapshot.events, { id: "first", seq: 3, channel_agent_id: "worker-openai", actor: { agent_id: "worker-openai", display_name: "OpenAI Worker", role: "worker" }, kind: "action_completed", text: "first", payload: { tool: "shell" }, created_at: "2026-01-01T00:01:10Z" }],
         },
         connection: "live", error: null, refresh: vi.fn(),
       });
@@ -225,7 +227,7 @@ describe("TaskRuntimePage", () => {
       useTGA3Runtime.mockReturnValue({
         snapshot: {
           ...snapshot,
-          dialogue: [...snapshot.dialogue,
+          events: [...snapshot.events,
             { id: "first", seq: 3, channel_agent_id: "worker-openai", actor: { agent_id: "worker-openai", display_name: "OpenAI Worker", role: "worker" }, kind: "action_completed", text: "first", payload: { tool: "shell" }, created_at: "2026-01-01T00:01:10Z" },
             { id: "second", seq: 4, channel_agent_id: "worker-openai", actor: { agent_id: "worker-openai", display_name: "OpenAI Worker", role: "worker" }, kind: "action_completed", text: "second", payload: { tool: "shell" }, created_at: "2026-01-01T00:01:11Z" },
           ],
@@ -251,12 +253,12 @@ describe("TaskRuntimePage", () => {
   it("waits for action completion before showing a tool action", () => {
     const view = render(<MemoryRouter initialEntries={["/tasks/task/runtime?tab=runtime"]}><TaskRuntimePage taskId="task" /></MemoryRouter>);
     const started = { id: "started", seq: 3, channel_agent_id: "worker-openai", actor: { agent_id: "worker-openai", display_name: "OpenAI Worker", role: "worker" }, kind: "action_started" as const, text: "whoami", payload: { tool: "shell" }, created_at: "2026-01-01T00:01:10Z" };
-    useTGA3Runtime.mockReturnValue({ snapshot: { ...snapshot, dialogue: [...snapshot.dialogue, started] }, connection: "live", error: null, refresh: vi.fn() });
+    useTGA3Runtime.mockReturnValue({ snapshot: { ...snapshot, events: [...snapshot.events, started] }, connection: "live", error: null, refresh: vi.fn() });
     view.rerender(<MemoryRouter initialEntries={["/tasks/task/runtime?tab=runtime"]}><TaskRuntimePage taskId="task" /></MemoryRouter>);
     expect(screen.queryByText("OpenAI Worker 执行 whoami")).not.toBeInTheDocument();
 
     useTGA3Runtime.mockReturnValue({
-      snapshot: { ...snapshot, dialogue: [...snapshot.dialogue, started, { ...started, id: "completed", seq: 4, kind: "action_completed", created_at: "2026-01-01T00:01:11Z" }] },
+      snapshot: { ...snapshot, events: [...snapshot.events, started, { ...started, id: "completed", seq: 4, kind: "action_completed", created_at: "2026-01-01T00:01:11Z" }] },
       connection: "live", error: null, refresh: vi.fn(),
     });
     view.rerender(<MemoryRouter initialEntries={["/tasks/task/runtime?tab=runtime"]}><TaskRuntimePage taskId="task" /></MemoryRouter>);
@@ -269,7 +271,7 @@ describe("TaskRuntimePage", () => {
       snapshot: {
         ...snapshot,
         agents: [...snapshot.agents, { agent_id: "worker-claude", sdk: "claude_agent", desired_state: "running", actual_state: "running", provider_id: "anthropic", model_id: "claude", protocol: "anthropic", display_name: "Claude Worker", role: "worker", runtime_location: "container", updated_at: "2026-01-01T00:01:00Z" }],
-        dialogue: [...snapshot.dialogue, { id: "claude-completed", seq: 3, channel_agent_id: "worker-claude", actor: { agent_id: "worker-claude", display_name: "Claude Worker", role: "worker" }, kind: "action_completed", text: "Bash", payload: { tool: "Bash", input: { command: "curl -I http://target" } }, created_at: "2026-01-01T00:01:10Z" }],
+        events: [...snapshot.events, { id: "claude-completed", seq: 3, channel_agent_id: "worker-claude", actor: { agent_id: "worker-claude", display_name: "Claude Worker", role: "worker" }, kind: "action_completed", text: "Bash", payload: { tool: "Bash", input: { command: "curl -I http://target" } }, created_at: "2026-01-01T00:01:10Z" }],
       },
       connection: "live", error: null, refresh: vi.fn(),
     });

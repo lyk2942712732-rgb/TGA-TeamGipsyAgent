@@ -91,11 +91,6 @@ class UserFileBody(BaseModel):
     description: str = Field(default="", max_length=2000)
 
 
-class SupervisorAdviceBody(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    advice: str = Field(min_length=1)
-    addressed_to: list[str] = Field(default_factory=list)
-    based_on_seq: int = Field(default=0, ge=0)
 
 
 class FindingBody(BaseModel):
@@ -106,13 +101,6 @@ class FindingBody(BaseModel):
     detail: str = Field(default="", max_length=8000, description="Reproducible supporting detail for the claim.")
 
 
-class QABody(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    question: str = Field(min_length=1)
-    answer: str = Field(min_length=1)
-    origin_type: Literal["supervisor", "agent"]
-    origin_agent_id: str
-    answer_attachment_ids: list[UUID] = Field(default_factory=list)
 
 
 class FinalCandidateBody(BaseModel):
@@ -210,10 +198,8 @@ def worker_publish_contract() -> str:
 BODY_BY_KIND: dict[EntryKind, type[BaseModel]] = {
     EntryKind.USER_PROMPT: UserPromptBody,
     EntryKind.USER_FILE: UserFileBody,
-    EntryKind.SUPERVISOR_ADVICE: SupervisorAdviceBody,
     EntryKind.INTEL: FindingBody,
     EntryKind.FINDING: FindingBody,
-    EntryKind.QA: QABody,
     EntryKind.FINAL_CANDIDATE: FinalCandidateBody,
 }
 
@@ -295,7 +281,7 @@ class Writeup(BaseModel):
     created_at: datetime = Field(default_factory=utc_now)
 
 
-class DialogueKind(StrEnum):
+class EventKind(StrEnum):
     ASSISTANT_DELTA = "assistant_delta"
     BLACKBOARD_PROGRESS = "blackboard_progress"
     AGENT_STATUS = "agent_status"
@@ -310,28 +296,19 @@ class DialogueKind(StrEnum):
     SYSTEM = "system"
 
 
-class DialogueMessage(BaseModel):
+class TaskEvent(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     id: UUID = Field(default_factory=uuid4)
     task_id: UUID
     seq: int = Field(ge=1)
-    channel_agent_id: str = "supervisor"
+    channel_agent_id: str = "system"
     actor: Actor
-    kind: DialogueKind
+    kind: EventKind
     text: str = Field(min_length=1)
     payload: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime = Field(default_factory=utc_now)
 
 
-class PendingQuestion(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-    id: UUID = Field(default_factory=uuid4)
-    task_id: UUID
-    question: str = Field(min_length=1)
-    origin: Actor
-    asked_by: Actor
-    state: Literal["waiting", "answered"] = "waiting"
-    created_at: datetime = Field(default_factory=utc_now)
 
 
 class TaskRun(BaseModel):
@@ -372,18 +349,15 @@ __all__ = [
     "ArtifactRef",
     "BlackboardEntry",
     "BlackboardSyncResult",
-    "DialogueKind",
-    "DialogueMessage",
+    "EventKind",
+    "TaskEvent",
     "EntryKind",
     "FinalCandidateBody",
     "FindingBody",
     "InputFile",
-    "PendingQuestion",
     "PublishRequest",
-    "QABody",
     "RunState",
     "SYSTEM_ACTOR",
-    "SupervisorAdviceBody",
     "TaskRun",
     "USER_ACTOR",
     "UserFileBody",

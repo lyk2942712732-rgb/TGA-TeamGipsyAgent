@@ -1,4 +1,3 @@
-import asyncio
 import json
 from pathlib import Path
 
@@ -6,108 +5,10 @@ import pytest
 
 from tga3.blackboard import Blackboard
 from tga3.config import TGA3Config
-from tga3.dialogue import SolverDialogue
 from tga3.domain import Actor, AgentRun, AgentState, Artifact, ArtifactRef, EntryKind, PublishRequest, RunState
-from tga3.host_agents import Automation, DeterministicHostModel, SupervisorDecision
+from tga3.events import TaskEvents
+from tga3.host_agents import Automation, DeterministicHostModel
 from tga3.storage import InMemoryStorage
-
-
-@pytest.mark.asyncio
-async def test_supervisor_batches_an_intel_burst_and_reads_one_delta():
-    class RecordingModel(DeterministicHostModel):
-        def __init__(self):
-            self.snapshots = []
-            self.called = asyncio.Event()
-
-        async def supervisor(self, snapshot: str, binding=None) -> SupervisorDecision:
-            self.snapshots.append(json.loads(snapshot))
-            self.called.set()
-            return SupervisorDecision(progress="Intel batch reviewed")
-
-    config = TGA3Config(Path(__file__).parents[1] / "config")
-    config.runtime.supervisor_enabled = True
-    config.runtime.cadence.supervisor_debounce_seconds = 0.05
-    config.runtime.cadence.supervisor_silence_seconds = 3600
-    storage = InMemoryStorage()
-    task = await storage.create_task("intel batching", "penetration_test")
-    configured = config.agents.agents["supervisor"]
-    await storage.upsert_agent(
-        AgentRun(
-            task_id=task.id,
-            agent_id="supervisor",
-            sdk=configured.runtime,
-            desired_state=AgentState.IDLE,
-            actual_state=AgentState.IDLE,
-            provider_id=configured.provider_id,
-            model_id=configured.model_id,
-            protocol=configured.protocol,
-        )
-    )
-    model = RecordingModel()
-    automation = Automation(config, storage, Blackboard(storage), SolverDialogue(storage), model)
-    actor = Actor(agent_id="worker-openai", display_name="OpenAI Worker", role="worker")
-
-    for index in range(3):
-        entry = await automation.blackboard.publish(
-            task.id,
-            actor,
-            PublishRequest(
-                kind=EntryKind.INTEL,
-                body={"claim": f"verified intermediate fact {index}"},
-                idempotency_key=f"intel-{index}",
-            ),
-        )
-        await automation.changed(task.id, entry.seq)
-
-    await asyncio.wait_for(model.called.wait(), timeout=1)
-    await asyncio.sleep(0)
-    await automation.cancel(task.id)
-
-    assert len(model.snapshots) == 1
-    assert [entry["kind"] for entry in model.snapshots[0]["new_entries"]] == ["intel", "intel", "intel"]
-
-
-@pytest.mark.asyncio
-async def test_supervisor_suppresses_recent_and_similar_advice_but_allows_bypass():
-    config = TGA3Config(Path(__file__).parents[1] / "config")
-    storage = InMemoryStorage()
-    task = await storage.create_task("advice gate", "penetration_test")
-    board = Blackboard(storage)
-    supervisor = Actor(agent_id="supervisor", display_name="Supervisor", role="supervisor")
-    previous = await board.publish(
-        task.id,
-        supervisor,
-        PublishRequest(
-            kind=EntryKind.SUPERVISOR_ADVICE,
-            body={"advice": "请优先验证 Git 泄露并恢复配置文件", "based_on_seq": 1},
-            idempotency_key="previous-advice",
-        ),
-    )
-    automation = Automation(config, storage, board, SolverDialogue(storage), DeterministicHostModel())
-
-    assert "相同或近似" in str(
-        automation._advice_suppression(
-            "请优先验证 Git 泄露，并恢复配置文件。",
-            [previous],
-            bypass_interval=True,
-        )
-    )
-    assert "间隔" in str(
-        automation._advice_suppression(
-            "改由另一名 Worker 检查模板注入",
-            [previous],
-            bypass_interval=False,
-        )
-    )
-    assert (
-        automation._advice_suppression(
-            "根据用户的新要求检查上传入口",
-            [previous],
-            bypass_interval=True,
-        )
-        is None
-    )
-    assert automation._advice_suppression("开局先确认目标基线", [], bypass_interval=False) is None
 
 
 @pytest.mark.asyncio
@@ -115,12 +16,11 @@ async def test_final_candidate_freezes_snapshot_and_generates_writeup(tmp_path: 
     config = TGA3Config(Path(__file__).parents[1] / "config")
     config.runtime.writeup_root = str(tmp_path)
     config.runtime.cadence.finalization_grace_seconds = 0
-    config.runtime.cadence.supervisor_debounce_seconds = 0
     storage = InMemoryStorage()
     task = await storage.create_task("report", "penetration_test")
-    for agent_id in ("supervisor", "reporter"):
+    for agent_id in ("reporter",):
         configured_agent = config.agents.agents[agent_id]
-        state = AgentState.IDLE if agent_id == "supervisor" else AgentState.CREATED
+        state = AgentState.CREATED
         await storage.upsert_agent(
             AgentRun(
                 task_id=task.id,
@@ -134,8 +34,8 @@ async def test_final_candidate_freezes_snapshot_and_generates_writeup(tmp_path: 
             )
         )
     board = Blackboard(storage)
-    dialogue = SolverDialogue(storage)
-    automation = Automation(config, storage, board, dialogue, DeterministicHostModel())
+    events = TaskEvents(storage)
+    automation = Automation(config, storage, board, events, DeterministicHostModel())
     actor = Actor(agent_id="worker-openai", display_name="OpenAI Worker", role="worker")
     proof = await storage.register_artifact(
         Artifact(
@@ -170,8 +70,6 @@ async def test_final_candidate_freezes_snapshot_and_generates_writeup(tmp_path: 
 
     await automation.changed(task.id, final.seq)
     await automation._reporter_jobs[task.id]
-    if task.id in automation._supervisor_jobs:
-        await automation._supervisor_jobs[task.id]
     completed = await storage.get_task(task.id)
     assert completed.state == RunState.COMPLETED
     assert completed.final_snapshot_seq == 2
@@ -192,9 +90,9 @@ async def test_reporter_failure_stops_workers_and_finishes_host_states(tmp_path:
     config.runtime.cadence.finalization_grace_seconds = 0
     storage = InMemoryStorage()
     task = await storage.create_task("report failure", "penetration_test")
-    for agent_id in ("supervisor", "reporter"):
+    for agent_id in ("reporter",):
         configured_agent = config.agents.agents[agent_id]
-        state = AgentState.IDLE if agent_id == "supervisor" else AgentState.CREATED
+        state = AgentState.CREATED
         await storage.upsert_agent(
             AgentRun(
                 task_id=task.id,
@@ -216,7 +114,7 @@ async def test_reporter_failure_stops_workers_and_finishes_host_states(tmp_path:
         config,
         storage,
         Blackboard(storage),
-        SolverDialogue(storage),
+        TaskEvents(storage),
         FailingReporter(),
         finish_workers,
     )
@@ -229,13 +127,10 @@ async def test_reporter_failure_stops_workers_and_finishes_host_states(tmp_path:
     assert reporter.desired_state == AgentState.FAILED
     assert reporter.actual_state == AgentState.FAILED
     assert reporter.last_error == "Max turns (2) exceeded"
-    supervisor = await storage.get_agent(task.id, "supervisor")
-    assert supervisor.desired_state == AgentState.STOPPED
-    assert supervisor.actual_state == AgentState.STOPPED
 
 
 @pytest.mark.asyncio
-async def test_cli_reporter_starts_after_workers_stop_and_supervisor_stays_reserved(tmp_path):
+async def test_cli_reporter_starts_after_both_workers_stop(tmp_path):
     from pydantic import SecretStr
 
     from tga3.coordinator import TaskCoordinator
@@ -257,9 +152,9 @@ async def test_cli_reporter_starts_after_workers_stop_and_supervisor_stays_reser
 
     storage, containers = InMemoryStorage(), Containers()
     coordinator = TaskCoordinator(config, storage, containers)
-    model = CliHostModel(config, containers, storage, coordinator.dialogue)
+    model = CliHostModel(config, containers, storage, coordinator.events)
     automation = Automation(
-        config, storage, coordinator.blackboard, coordinator.dialogue, model, coordinator.finish_task_workers
+        config, storage, coordinator.blackboard, coordinator.events, model, coordinator.finish_task_workers
     )
     task = await coordinator.create_and_start("CLI report", "analyze", "cryptography")
     actor = coordinator.actor_for(await storage.get_agent(task.id, "worker-openai"))
@@ -298,10 +193,8 @@ async def test_cli_reporter_starts_after_workers_stop_and_supervisor_stays_reser
     assert (await storage.get_task(task.id)).state == RunState.COMPLETED, (
         await storage.get_agent(task.id, "reporter")
     ).last_error
-    assert (await storage.get_agent(task.id, "supervisor")).actual_state == AgentState.STOPPED
     report = await storage.get_agent(task.id, "reporter")
     assert report.metadata["cli_session_id"] == "reporter-session"
     assert report.container_id == "fake-" + str(task.id) + "-reporter"
     assert len(containers.launched) == 3
     assert len(containers.stopped) == 3
-    assert not automation._supervisor_jobs

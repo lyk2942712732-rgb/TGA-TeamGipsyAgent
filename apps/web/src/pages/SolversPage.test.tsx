@@ -9,7 +9,6 @@ import { SolversPage } from "./SolversPage";
 const agentConfig = {
   schema_version: 1,
   agents: {
-    supervisor: { display_name: "Supervisor", role: "supervisor", runtime: "openai_agents", provider_id: "deepseek", model_id: "deepseek-v4-pro", protocol: "openai_chat_completions", max_turns_per_cycle: 8, system_prompt: "supervise" },
     "worker-claude": { display_name: "Claude Worker", role: "worker", runtime: "claude_cli", provider_id: "deepseek", model_id: "deepseek-v4-pro", protocol: "anthropic", max_turns_per_cycle: 12, system_prompt: "claude work" },
     "worker-openai": { display_name: "OpenAI Worker", role: "worker", runtime: "codex_cli", provider_id: "deepseek", model_id: "deepseek-v4-pro", protocol: "openai_responses", max_turns_per_cycle: 12, system_prompt: "openai work" },
     reporter: { display_name: "Reporter", role: "reporter", runtime: "codex_cli", provider_id: "deepseek", model_id: "deepseek-v4-pro", protocol: "openai_responses", max_turns_per_cycle: 8, system_prompt: "report" },
@@ -26,7 +25,7 @@ describe("SolversPage", () => {
       anthropic: { base_url: "https://api.test/anthropic", models: [model("deepseek-v4-pro"), model("anthropic-only")] },
       openai_chat_completions: { base_url: "https://api.test/chat/v1", models: [model("chat-only")] },
     } }] });
-    mocks.agentDefinitions.mockResolvedValue(Object.entries(agentConfig.agents).map(([id, agent]) => ({ ...agent, id, tools: ["skills.list", "skills.read"], image: agent.role === "worker" ? `tga3-${id}:local` : null, image_health: agent.role === "worker" ? { status: "healthy", available: true, detail: "healthy" } : null })));
+    mocks.agentDefinitions.mockResolvedValue(Object.entries(agentConfig.agents).map(([id, agent]) => ({ ...agent, id, tools: ["blackboard.sync", "blackboard.publish", "artifact.register"], image: agent.role === "worker" ? `tga3-${id}:local` : null, image_health: agent.role === "worker" ? { status: "healthy", available: true, detail: "healthy" } : null })));
     mocks.saveAgents.mockImplementation(async (value) => value);
   });
 
@@ -45,9 +44,9 @@ describe("SolversPage", () => {
     await user.click(await screen.findByRole("button", { name: "配置 OpenAI Worker" }));
     const panel = screen.getByLabelText("OpenAI Worker Solver 配置");
     for (const heading of ["概览", "模型", "System Prompt", "工具与镜像"]) expect(within(panel).getByRole("heading", { name: heading })).toBeInTheDocument();
-    expect(document.querySelector(".lane-supervisor")).toHaveAttribute("data-dimmed", "true");
+    expect(document.querySelector(".lane-worker-claude")).toHaveAttribute("data-dimmed", "true");
     expect(document.querySelector(".lane-worker-openai")).toHaveAttribute("data-dimmed", "false");
-    expect(document.querySelector(".lane-supervisor .solver-team-agent")).toHaveAttribute("data-dimmed", "true");
+    expect(document.querySelector(".lane-worker-claude .solver-team-agent")).toHaveAttribute("data-dimmed", "true");
     expect(document.querySelector(".lane-worker-openai .solver-team-agent")).toHaveAttribute("data-dimmed", "false");
     expect(document.querySelector(".lane-worker-openai .model")).toHaveAttribute("data-dimmed", "true");
     const prompt = within(panel).getByLabelText("OpenAI Worker System Prompt");

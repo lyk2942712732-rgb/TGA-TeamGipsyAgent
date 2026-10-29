@@ -153,12 +153,11 @@
 .solver-team-node.skills > span { color: #7c3aed; background: #f3e8ff; }
 .solver-team-node[data-dimmed="true"] { filter: blur(2.4px); opacity: .18; }
 .solver-team-lane { position: absolute; z-index: 3; display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); align-items: center; gap: clamp(12px,2vw,28px); width: 40%; transition: filter .22s ease, opacity .22s ease; }
-.solver-team-lane.lane-supervisor { top: 24%; left: 2%; }
 .solver-team-lane.lane-worker-claude { top: 24%; right: 2%; }
-.solver-team-lane.lane-worker-openai { bottom: 24%; left: 2%; }
-.solver-team-lane.lane-reporter { right: 2%; bottom: 24%; }
-.solver-team-lane.lane-worker-claude .model, .solver-team-lane.lane-reporter .model { grid-column: 2; }
-.solver-team-lane.lane-worker-claude .solver-team-agent, .solver-team-lane.lane-reporter .solver-team-agent { grid-column: 1; grid-row: 1; }
+.solver-team-lane.lane-worker-openai { top: 24%; left: 2%; }
+.solver-team-lane.lane-reporter { left: 50%; bottom: 24%; transform: translateX(-50%); }
+.solver-team-lane.lane-worker-claude .model { grid-column: 2; }
+.solver-team-lane.lane-worker-claude .solver-team-agent { grid-column: 1; grid-row: 1; }
 .solver-team-lane .solver-team-node { position: relative; width: 100%; max-width: 150px; transform: none; }
 .solver-team-lane .model { border-color: #fdba74; background: #fffaf3; }
 .solver-team-lane .model > span { color: #c2410c; background: #ffedd5; }
@@ -166,7 +165,6 @@
 .solver-team-agent:hover { border-color: #60a5fa; transform: translateY(-2px); box-shadow: 0 14px 32px rgba(30,64,175,.17); }
 .solver-team-agent[data-selected="true"] { z-index: 5; border-color: #2563eb; box-shadow: 0 0 0 4px rgba(37,99,235,.13),0 16px 34px rgba(30,64,175,.2); }
 .solver-team-agent[data-dimmed="true"] { filter: blur(2.6px); opacity: .16; }
-.solver-team-agent.role-supervisor > span { color: #a16207; background: #fef3c7; }
 .solver-team-agent.role-reporter > span { color: #be123c; background: #ffe4e6; }
 .solver-team-agent > i { flex: 0 0 auto; width: 7px; height: 7px; margin-left: auto; border-radius: 50%; background: #64748b; }
 .solver-team-agent > i.health-healthy { background: #16a34a; box-shadow: 0 0 0 4px rgba(22,163,74,.1); }

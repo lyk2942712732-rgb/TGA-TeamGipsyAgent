@@ -6,7 +6,7 @@ import asyncio
 import json
 from contextlib import asynccontextmanager
 from typing import Annotated, Any
-from uuid import UUID, uuid4
+from uuid import UUID
 
 from fastapi import APIRouter, FastAPI, File, Form, Request, UploadFile, WebSocket
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
@@ -15,7 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from .config import AgentsConfig, ModelConfig, ModelsConfig, RuntimeConfig, ScenesConfig, TGA3Config
 from .coordinator import TaskCoordinator
 from .docker_runtime import ContainerRuntime
-from .domain import AgentState, DialogueKind, RunState
+from .domain import AgentState, RunState
 from .errors import TGA3Error
 from .host_agents import Automation, CliHostModel, HostModel
 from .mcp_server import build_mcp
@@ -23,21 +23,6 @@ from .model_discovery import discover_provider_models
 from .provider_profiles import PROVIDER_PROFILES, ProviderProtocol
 from .skills import MAX_ARCHIVE_BYTES, SkillCatalog
 from .storage import Storage
-
-
-class PromptRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    text: str = Field(min_length=1)
-    addressed_to: list[str] = Field(default_factory=list)
-    attachment_ids: list[UUID] = Field(default_factory=list)
-    idempotency_key: str = Field(default_factory=lambda: str(uuid4()))
-
-
-class AnswerRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    answer: str = Field(min_length=1)
-    attachment_ids: list[UUID] = Field(default_factory=list)
-    idempotency_key: str = Field(default_factory=lambda: str(uuid4()))
 
 
 class ModelRequest(BaseModel):
@@ -72,12 +57,12 @@ def create_app(
         config,
         storage,
         coordinator.blackboard,
-        coordinator.dialogue,
-        host_model or CliHostModel(config, containers, storage, coordinator.dialogue),
+        coordinator.events,
+        host_model or CliHostModel(config, containers, storage, coordinator.events),
         coordinator.finish_task_workers,
     )
     coordinator.change_handlers.append(automation.changed)
-    mcp = build_mcp(config, coordinator.blackboard, skills)
+    mcp = build_mcp(config, coordinator.blackboard)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
@@ -113,33 +98,21 @@ def create_app(
 
     @api.get("/attention")
     async def attention(limit: int = 200) -> list[dict[str, Any]]:
-        """Human-action queue for questions, pauses and failures."""
+        """Runtime attention queue for pauses and failures."""
 
         result: list[dict[str, Any]] = []
         tasks = await storage.list_tasks(limit=min(max(limit, 1), 500))
         for task in tasks:
-            if task.state == RunState.WAITING_USER:
-                messages = await coordinator.dialogue.history(task.id, after_seq=0, limit=500)
-                for message in reversed(messages):
-                    if message.kind != DialogueKind.QUESTION or not message.payload.get("question_id"):
-                        continue
-                    question = await storage.get_question(UUID(str(message.payload["question_id"])))
-                    if question.state == "waiting":
-                        result.append({
-                            "id": f"question:{question.id}", "kind": "question", "task_id": str(task.id),
-                            "task_title": task.title, "task_state": task.state, "agent_id": question.origin.agent_id,
-                            "title": "等待用户回答", "detail": question.question, "question_id": str(question.id),
-                            "created_at": question.created_at,
-                        })
-                        break
             if task.state == RunState.FAILED:
                 result.append({
                     "id": f"task:{task.id}:failed", "kind": "task_failed", "task_id": str(task.id),
                     "task_title": task.title, "task_state": task.state, "agent_id": None,
-                    "title": "任务运行失败", "detail": "打开任务查看错误和 Agent 状态。", "question_id": None,
+                    "title": "任务运行失败", "detail": "打开任务查看错误和 Agent 状态。",
                     "created_at": task.updated_at,
                 })
             for agent in await storage.list_agents(task.id):
+                if agent.agent_id not in config.agents.agents:
+                    continue
                 if agent.actual_state not in {AgentState.PAUSED, AgentState.PAUSE_REQUESTED, AgentState.FAILED}:
                     continue
                 result.append({
@@ -149,7 +122,7 @@ def create_app(
                     "agent_id": agent.agent_id,
                     "title": "Agent 运行失败" if agent.actual_state == AgentState.FAILED else "Agent 已暂停",
                     "detail": agent.last_error or ("可恢复该 Agent，或打开任务补充提示。"),
-                    "question_id": None, "created_at": agent.updated_at,
+                    "created_at": agent.updated_at,
                 })
         return sorted(result, key=lambda item: str(item["created_at"]), reverse=True)
 
@@ -191,7 +164,7 @@ def create_app(
     @api.get("/tasks/{task_id}")
     async def get_task(task_id: UUID) -> dict[str, Any]:
         task = await storage.get_task(task_id)
-        agents = await storage.list_agents(task_id)
+        agents = [item for item in await storage.list_agents(task_id) if item.agent_id in config.agents.agents]
 
         def historical_model_name(agent) -> str:
             try:
@@ -226,32 +199,22 @@ def create_app(
         )
         return {"file": item.model_dump(mode="json"), "blackboard_entry_id": str(entry_id)}
 
-    @api.post("/tasks/{task_id}/prompts")
-    async def add_prompt(task_id: UUID, body: PromptRequest) -> dict[str, Any]:
-        entry = await coordinator.add_prompt(
-            task_id,
-            body.text,
-            addressed_to=body.addressed_to,
-            attachment_ids=body.attachment_ids,
-            idempotency_key=body.idempotency_key,
-        )
-        return entry.model_dump(mode="json")
 
     @api.get("/tasks/{task_id}/blackboard")
     async def blackboard(task_id: UUID, after_seq: int = 0, limit: int = 500) -> dict[str, Any]:
         return (await coordinator.blackboard.sync(task_id, after_seq=after_seq, limit=limit)).model_dump(mode="json")
 
-    @api.get("/tasks/{task_id}/dialogue")
-    async def dialogue(task_id: UUID, after_seq: int = 0, limit: int = 500) -> list[dict[str, Any]]:
-        messages = await coordinator.dialogue.history(task_id, after_seq=after_seq, limit=limit)
+    @api.get("/tasks/{task_id}/events")
+    async def events(task_id: UUID, after_seq: int = 0, limit: int = 500) -> list[dict[str, Any]]:
+        messages = await coordinator.events.history(task_id, after_seq=after_seq, limit=limit)
         return [message.model_dump(mode="json") for message in messages]
 
-    @api.get("/tasks/{task_id}/dialogue/stream")
-    async def dialogue_stream(task_id: UUID, request: Request, after_seq: int = 0) -> StreamingResponse:
+    @api.get("/tasks/{task_id}/events/stream")
+    async def event_stream(task_id: UUID, request: Request, after_seq: int = 0) -> StreamingResponse:
         async def events():
             cursor = after_seq
             while not await request.is_disconnected():
-                messages = await coordinator.dialogue.history(task_id, after_seq=cursor, limit=200)
+                messages = await coordinator.events.history(task_id, after_seq=cursor, limit=200)
                 for message in messages:
                     cursor = message.seq
                     yield f"id: {cursor}\ndata: {message.model_dump_json()}\n\n"
@@ -259,17 +222,6 @@ def create_app(
 
         return StreamingResponse(events(), media_type="text/event-stream")
 
-    @api.post("/questions/{question_id}/answer")
-    async def answer_question(question_id: UUID, body: AnswerRequest) -> dict[str, Any]:
-        entry = await coordinator.dialogue.answer(
-            question_id,
-            answer=body.answer,
-            attachment_ids=body.attachment_ids,
-            idempotency_key=body.idempotency_key,
-        )
-        await coordinator.blackboard_changed(entry.task_id, entry.seq)
-        await storage.update_task(entry.task_id, state=RunState.RUNNING)
-        return entry.model_dump(mode="json")
 
     @api.post("/tasks/{task_id}/agents/{agent_id}/pause")
     async def pause_agent(task_id: UUID, agent_id: str) -> dict[str, Any]:
@@ -328,14 +280,13 @@ def create_app(
     @api.get("/agent-definitions")
     async def agent_definitions() -> list[dict[str, Any]]:
         tools = {
-            "supervisor": ["skills.list", "skills.read"],
             "worker-openai": [
                 "Shell", "Read", "Edit", "blackboard.sync", "blackboard.publish",
-                "artifact.register", "skills.list", "skills.read",
+                "artifact.register",
             ],
             "worker-claude": [
                 "Bash", "Read", "Write", "Edit", "Glob", "Grep", "blackboard.sync",
-                "blackboard.publish", "artifact.register", "skills.list", "skills.read",
+                "blackboard.publish", "artifact.register",
             ],
             "reporter": ["Read snapshot", "Read evidence", "Read skills", "Markdown Writeup"],
         }

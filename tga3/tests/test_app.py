@@ -4,7 +4,6 @@ from io import BytesIO
 from pathlib import Path
 from shutil import copytree
 from unittest.mock import AsyncMock, patch
-from uuid import UUID
 from zipfile import ZipFile
 
 from fastapi.testclient import TestClient
@@ -13,7 +12,6 @@ from pydantic import SecretStr
 from tga3.app import create_app
 from tga3.config import TGA3Config
 from tga3.docker_runtime import FakeContainerRuntime
-from tga3.domain import Actor, RunState
 from tga3.host_agents import DeterministicHostModel
 from tga3.storage import InMemoryStorage
 
@@ -79,9 +77,9 @@ def test_frontend_api_uses_safe_catalog_and_page_owned_config_documents(tmp_path
         assert client.delete("/api/v3/config/models/team-gateway").status_code == 204
         assert client.delete("/api/v3/config/models/openai").status_code == 422
         agents = client.get("/api/v3/config/agents").json()
-        assert agents["agents"]["supervisor"]["system_prompt"]
+        assert set(agents["agents"]) == {"worker-openai", "worker-claude", "reporter"}
         definitions = client.get("/api/v3/agent-definitions").json()
-        assert len(definitions) == 4
+        assert len(definitions) == 3
         assert next(item for item in definitions if item["id"] == "reporter")["tools"] == [
             "Read snapshot", "Read evidence", "Read skills", "Markdown Writeup",
         ]
@@ -166,8 +164,8 @@ def test_frontend_api_uses_safe_catalog_and_page_owned_config_documents(tmp_path
         task_id = created.json()["id"]
         assert created.json()["scene_id"] == "reverse_engineering"
         detail = client.get(f"/api/v3/tasks/{task_id}").json()
-        assert len(detail["agents"]) == 4
-        assert {agent["runtime_location"] for agent in detail["agents"]} == {"reserved", "container"}
+        assert len(detail["agents"]) == 3
+        assert {agent["runtime_location"] for agent in detail["agents"]} == {"container"}
         assert next(agent for agent in detail["agents"] if agent["agent_id"] == "worker-openai")["model_id"] == (
             "gpt-task-override"
         )
@@ -184,22 +182,11 @@ def test_frontend_api_uses_safe_catalog_and_page_owned_config_documents(tmp_path
             "gpt-task-override"
         )
 
-        async def ask_user():
-            supervisor = Actor(agent_id="supervisor", display_name="Supervisor", role="supervisor")
-            question = await app.state.coordinator.dialogue.ask(
-                UUID(task_id), supervisor=supervisor, question="请提供目标 URL"
-            )
-            await storage.update_task(UUID(task_id), state=RunState.WAITING_USER)
-            return question
-
-        pending = client.portal.call(ask_user)
-        attention = client.get("/api/v3/attention").json()
-        assert attention[0]["question_id"] == str(pending.id)
-        answered = client.post(
-            f"/api/v3/questions/{pending.id}/answer",
-            json={"answer": "http://target.test"},
-        )
-        assert answered.status_code == 200
-        assert client.get("/api/v3/attention").json() == []
+        assert client.post(f"/api/v3/tasks/{task_id}/prompts", json={"text": "hello"}).status_code == 404
+        assert client.post(
+            "/api/v3/questions/00000000-0000-0000-0000-000000000000/answer", json={"answer": "x"}
+        ).status_code == 404
+        assert client.get(f"/api/v3/tasks/{task_id}/events").status_code == 200
+        assert client.get(f"/api/v3/tasks/{task_id}/dialogue").status_code == 404
         assert client.delete(f"/api/v3/tasks/{task_id}").status_code == 204
         assert client.get(f"/api/v3/tasks/{task_id}").status_code == 404
