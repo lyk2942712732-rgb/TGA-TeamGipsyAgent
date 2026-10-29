@@ -146,7 +146,7 @@ class OpenAIHostModel:
 
 
 class DeterministicHostModel:
-    """Offline test model; production selects OpenAIHostModel."""
+    """Offline test model; production selects CliHostModel."""
 
     async def supervisor(self, snapshot: str, binding: ResolvedAgent | None = None) -> SupervisorDecision:
         return SupervisorDecision(progress="黑板已有更新，两个 Worker 正在独立推进。")
@@ -230,14 +230,14 @@ class Automation:
         blackboard: Blackboard,
         dialogue: SolverDialogue,
         model: HostModel,
-        on_reporter_finished: Callable[[UUID], Awaitable[None]] | None = None,
+        stop_workers: Callable[[UUID], Awaitable[None]] | None = None,
     ) -> None:
         self.config = config
         self.storage = storage
         self.blackboard = blackboard
         self.dialogue = dialogue
         self.model = model
-        self.on_reporter_finished = on_reporter_finished
+        self.stop_workers = stop_workers
         self._supervisor_jobs: dict[UUID, asyncio.Task[None]] = {}
         self._reporter_jobs: dict[UUID, asyncio.Task[None]] = {}
         self._last_supervisor_seq: dict[UUID, int] = {}
@@ -478,8 +478,8 @@ class Automation:
             await self.storage.update_task(task_id, state=RunState.FINALIZING)
             await asyncio.sleep(self.config.runtime.cadence.finalization_grace_seconds)
             # Both writers exit before the report snapshot is fixed.
-            if self.on_reporter_finished:
-                await self.on_reporter_finished(task_id)
+            if self.stop_workers:
+                await self.stop_workers(task_id)
             task = await self.storage.get_task(task_id)
             snapshot_seq = task.blackboard_seq
             await self.storage.update_task(task_id, state=RunState.REPORTING, final_snapshot_seq=snapshot_seq)
@@ -547,6 +547,7 @@ class Automation:
 
 __all__ = [
     "Automation",
+    "CliHostModel",
     "DeterministicHostModel",
     "OpenAIHostModel",
     "SupervisorAdvice",

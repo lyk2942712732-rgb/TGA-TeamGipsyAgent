@@ -56,6 +56,8 @@ class CliAdapter(AgentAdapter):
         self.api_key = str(params["api_key"])
         self.base_url = str(params.get("base_url") or "")
         os.environ["TGA3_MODEL_NAME"] = self.model_name
+        os.environ["TGA3_API_KEY"] = self.api_key
+        os.environ["TGA3_BASE_URL"] = self.base_url
 
     def command(self) -> tuple[list[str], dict[str, str]]:
         raise NotImplementedError
@@ -195,7 +197,9 @@ class CodexAdapter(CliAdapter):
         instructions = (
             os.environ["TGA3_SYSTEM_PROMPT"]
             + "\nRead /workspace/report-input.json and read-only evidence in /artifacts. "
-            "Skills are in /skills. Do not contact targets or change evidence. Return only Markdown."
+            "Skills are in /skills. Do not contact targets or change evidence. "
+            "Use only recorded commands/code for reproduction steps; if absent, state they were not recorded. "
+            "Never invent example commands. Return only Markdown."
             if self.reporter
             else worker_instructions()
         )
@@ -226,7 +230,7 @@ class CodexAdapter(CliAdapter):
         args = [self.binary, "exec"]
         if self.session_id and not self.reporter:
             args += ["resume", self.session_id]
-        args += ["--json", "--skip-git-repo-check", "-"]
+        args += ["--json", "--skip-git-repo-check", "--model", self.model_name, "-"]
         return args, env
 
     async def event(self, value: dict[str, Any], emit: Emit) -> None:

@@ -27,7 +27,7 @@ export function TaskRuntimePage({ taskId }: { taskId: string }) {
   useEffect(() => {
     if (!snapshot?.agents.length) return;
     if (!selectedAgentId || !snapshot.agents.some((agent) => agent.agent_id === selectedAgentId)) {
-      const preferred = snapshot.agents.find((agent) => agent.role === "supervisor") ?? snapshot.agents[0];
+      const preferred = snapshot.agents.find((agent) => agent.role === "supervisor" && agent.actual_state !== "stopped") ?? snapshot.agents.find((agent) => agent.role === "worker") ?? snapshot.agents[0];
       setSelectedAgentId(preferred.agent_id);
     }
   }, [snapshot, selectedAgentId]);
@@ -47,7 +47,7 @@ export function TaskRuntimePage({ taskId }: { taskId: string }) {
   const terminal = ["completed", "failed", "cancelled", "stopped"].includes(current.task.state);
   async function stop() { if (busy) return; setBusy(true); setNotice(null); try { await tga3RuntimeApi.stopTask(taskId); setNotice("停止请求已提交。"); refresh(); } catch (reason) { setNotice(reason instanceof Error ? reason.message : "停止任务失败"); } finally { setBusy(false); } }
   async function confirmDelete() { if (busy) return; setBusy(true); setNotice(null); try { await deleteTask(taskId); navigate("/tasks", { replace: true }); } catch (reason) { setNotice(reason instanceof Error ? reason.message : "删除任务失败"); setBusy(false); setRemove(false); } }
-  function openConversation() { if (!selectedAgentId) setSelectedAgentId(current.agents.find((agent) => agent.role === "supervisor")?.agent_id ?? current.agents[0]?.agent_id ?? null); setConversationNonce((value) => value + 1); setDrawer("inspector"); }
+  function openConversation() { if (!selectedAgentId) setSelectedAgentId(current.agents.find((agent) => agent.role === "supervisor" && agent.actual_state !== "stopped")?.agent_id ?? current.agents.find((agent) => agent.role === "worker")?.agent_id ?? current.agents[0]?.agent_id ?? null); setConversationNonce((value) => value + 1); setDrawer("inspector"); }
 
   return <section className="task-runtime-page tga3-runtime-page">
     <TGA3TaskHeader snapshot={snapshot} connection={connection} busy={busy} onRefresh={refresh} onStop={() => void stop()} onDelete={() => setRemove(true)} />

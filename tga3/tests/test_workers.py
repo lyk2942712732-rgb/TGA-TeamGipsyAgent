@@ -241,3 +241,21 @@ time.sleep(120)
     status = Path(f"/proc/{child}/stat")
     if status.exists():
         assert status.read_text().rsplit(") ", 1)[1].split()[0] == "Z"
+
+
+@pytest.mark.asyncio
+async def test_model_switch_overrides_resumed_cli_model_and_credentials(cli_env):
+    adapter = CodexAdapter()
+    adapter.remember_session("session-1")
+    await adapter.set_model(
+        {
+            "model_name": "new-model",
+            "api_key": "new-key",
+            "base_url": "http://new-provider/v1",
+            "protocol": "openai_responses",
+        }
+    )
+    command, env = adapter.command()
+    assert command[command.index("--model") + 1] == "new-model"
+    assert env["CODEX_API_KEY"] == env["TGA3_API_KEY"] == "new-key"
+    assert "old-provider" not in (cli_env / ".codex/config.toml").read_text()
