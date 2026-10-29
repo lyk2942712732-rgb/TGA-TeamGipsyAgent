@@ -32,7 +32,9 @@ def worker_instructions() -> str:
             "task_id": os.environ["TGA3_TASK_ID"],
             "actor": actor,
             "body": {"claim": "<verified fact>", "detail": "<verified supporting details>"},
-            "artifact_refs": [{"artifact_id": "<UUID returned by artifact_register>", "locator": "<evidence location>"}],
+            "artifact_refs": [
+                {"artifact_id": "<UUID returned by artifact_register>", "locator": "<evidence location>"}
+            ],
             "idempotency_key": "<unique key for this entry>",
         },
     }
