@@ -131,7 +131,7 @@ export function ModelsPage({ onConfiguredChange }: { onConfiguredChange?: (confi
           const checked = draft.protocols.includes(protocol);
           return <label key={protocol}><input type="checkbox" checked={checked} disabled={!allowed || draft.preset_id !== "custom"} onChange={(event) => setDraft({ ...draft, protocols: event.target.checked ? [...draft.protocols, protocol] : draft.protocols.filter((item) => item !== protocol) })} />{protocolName(protocol)}</label>;
         })}</div><small>同一供应商可同时服务不同 Agent；实际协议在 Solver 模型绑定中选择。</small></fieldset>
-        <label className="wide">API 根地址<input required type="url" aria-label="API URL" value={draft.base_url} onChange={(event) => setDraft({ ...draft, base_url: event.target.value })} placeholder="https://api.example.com" /><small>只需填写协议、域名和端口，不需要填写 /v1、/anthropic 或 /models。</small></label>
+        <label className="wide">API 根地址<input required type="url" aria-label="API URL" value={draft.base_url} onChange={(event) => setDraft({ ...draft, base_url: event.target.value })} placeholder="https://api.example.com" /><small>预设供应商填写根地址；自定义网关可保留 /compatible-mode、/apps/anthropic 等路径前缀。</small></label>
         <label>API 密钥<input required type="password" aria-label="API 密钥" autoComplete="new-password" value={draft.api_key} onChange={(event) => setDraft({ ...draft, api_key: event.target.value })} placeholder="仅写入，不会回显" /></label>
         <footer><button type="button" className="ref-secondary-button" onClick={() => setAdding(false)}>取消</button><button className="ref-primary-button" disabled={busy === "create"}>{busy === "create" ? "正在保存…" : "保存供应商"}</button></footer>
       </form>

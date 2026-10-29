@@ -63,6 +63,7 @@ EVENT_METHODS = frozenset(
         "session.hello",
         "session.heartbeat",
         "agent.status",
+        "agent.session",
         "agent.output.delta",
         "agent.action.started",
         "agent.action.completed",

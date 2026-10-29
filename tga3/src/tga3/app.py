@@ -17,7 +17,7 @@ from .coordinator import TaskCoordinator
 from .docker_runtime import ContainerRuntime
 from .domain import AgentState, DialogueKind, RunState
 from .errors import TGA3Error
-from .host_agents import Automation, HostModel, OpenAIHostModel
+from .host_agents import Automation, CliHostModel, HostModel
 from .mcp_server import build_mcp
 from .model_discovery import discover_provider_models
 from .provider_profiles import PROVIDER_PROFILES, ProviderProtocol
@@ -67,7 +67,7 @@ def create_app(
         storage,
         coordinator.blackboard,
         coordinator.dialogue,
-        host_model or OpenAIHostModel(config, skills),
+        host_model or CliHostModel(config, containers, storage, coordinator.dialogue),
         coordinator.finish_task_workers,
     )
     coordinator.change_handlers.append(automation.changed)
@@ -195,7 +195,8 @@ def create_app(
                     "role": config.agents.agents[item.agent_id].role,
                     "model_name": config.models.provider(item.provider_id).model(item.model_id).name,
                     "runtime_location": (
-                        "container" if config.agents.agents[item.agent_id].role == "worker" else "host"
+                        "container" if config.agents.agents[item.agent_id].role in {"worker", "reporter"}
+                        else "reserved"
                     ),
                 }
                 for item in agents
@@ -314,14 +315,14 @@ def create_app(
         tools = {
             "supervisor": ["skills.list", "skills.read"],
             "worker-openai": [
-                "shell_exec", "progress_update", "blackboard.sync", "blackboard.publish",
+                "Shell", "Read", "Edit", "blackboard.sync", "blackboard.publish",
                 "artifact.register", "skills.list", "skills.read",
             ],
             "worker-claude": [
                 "Bash", "Read", "Write", "Edit", "Glob", "Grep", "blackboard.sync",
                 "blackboard.publish", "artifact.register", "skills.list", "skills.read",
             ],
-            "reporter": ["skills.list", "skills.read"],
+            "reporter": ["Read snapshot", "Read evidence", "Read skills", "Markdown Writeup"],
         }
         result: list[dict[str, Any]] = []
         for agent_id, binding in config.agents.agents.items():

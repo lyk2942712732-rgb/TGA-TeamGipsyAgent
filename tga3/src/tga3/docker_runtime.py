@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -17,12 +18,14 @@ from .errors import RuntimeUnavailableError
 class LaunchSpec:
     task_id: UUID
     agent: ResolvedAgent
+    report_input: str | None = None
 
 
 class ContainerRuntime(Protocol):
     async def launch(self, spec: LaunchSpec) -> str: ...
     async def stop(self, task_id: UUID, agent_id: str) -> None: ...
     async def image_status(self, image: str) -> dict[str, object]: ...
+    async def report(self, spec: LaunchSpec, emit) -> str: ...
 
 
 class DockerContainerRuntime:
@@ -65,6 +68,18 @@ class DockerContainerRuntime:
         docker_cfg = runtime.docker
         binding = spec.agent
         workspace, inputs, artifacts = self._task_paths(spec.task_id, binding.agent_id)
+        is_reporter = binding.role == "reporter"
+        if is_reporter:
+            (workspace / "report-input.json").write_text(spec.report_input or "[]", encoding="utf-8")
+            (workspace / "writeup.md").unlink(missing_ok=True)
+        volumes = {
+            str(workspace): {"bind": "/workspace", "mode": "rw"},
+            str(inputs): {"bind": "/inputs", "mode": "ro"},
+            str(artifacts): {"bind": "/artifacts", "mode": "ro" if is_reporter else "rw"},
+            str(self.config.skills_root): {"bind": "/skills", "mode": "ro"},
+        }
+        if is_reporter:
+            volumes[str(workspace / "report-input.json")] = {"bind": "/workspace/report-input.json", "mode": "ro"}
         image = runtime.worker_images[binding.agent_id]
         blackboard_mcp_url = f"{runtime.blackboard_mcp_url.rstrip('/')}/"
         environment = {
@@ -73,6 +88,8 @@ class DockerContainerRuntime:
             "TGA3_AGENT_ID": binding.agent_id,
             "TGA3_AGENT_DISPLAY_NAME": binding.display_name,
             "TGA3_AGENT_RUNTIME": binding.runtime,
+            "TGA3_AGENT_ROLE": binding.role,
+            "TGA3_CLI_TIMEOUT_SECONDS": str(runtime.cli_timeout_seconds),
             "TGA3_SYSTEM_PROMPT": binding.system_prompt,
             "TGA3_CONTROL_WS_URL": runtime.control_ws_url,
             "TGA3_BLACKBOARD_MCP_URL": blackboard_mcp_url,
@@ -96,22 +113,62 @@ class DockerContainerRuntime:
             environment=environment,
             user=f"{docker_cfg.worker_uid}:{docker_cfg.worker_gid}",
             labels={"tga3.task_id": str(spec.task_id), "tga3.agent_id": binding.agent_id},
-            volumes={
-                str(workspace): {"bind": "/workspace", "mode": "rw"},
-                str(inputs): {"bind": "/inputs", "mode": "ro"},
-                str(artifacts): {"bind": "/artifacts", "mode": "rw"},
-            },
+            volumes=volumes,
             working_dir="/workspace",
             network=runtime.docker.network,
             nano_cpus=int(docker_cfg.cpu_cores * 1_000_000_000),
             mem_limit=f"{docker_cfg.memory_mb}m",
             pids_limit=docker_cfg.pids_limit,
             cap_drop=["ALL"],
-            cap_add=docker_cfg.cap_add,
+            cap_add=[] if is_reporter else docker_cfg.cap_add,
             security_opt=["no-new-privileges:true"],
             extra_hosts={"host.docker.internal": "host-gateway"},
         )
         return container.id
+
+    async def report(self, spec: LaunchSpec, emit) -> str:
+        launch = asyncio.create_task(self.launch(spec))
+        try:
+            container_id = await asyncio.shield(launch)
+            await emit("container.started", {"container_id": container_id})
+            container = await asyncio.to_thread(self.client.containers.get, container_id)
+            deadline = asyncio.get_running_loop().time() + self.config.runtime.cli_timeout_seconds + 30
+            while True:
+                await asyncio.to_thread(container.reload)
+                if container.status in {"exited", "dead"}:
+                    break
+                if asyncio.get_running_loop().time() > deadline:
+                    raise RuntimeUnavailableError("Reporter container timed out")
+                await asyncio.sleep(0.25)
+            raw = await asyncio.to_thread(container.logs, tail=200)
+            key = spec.agent.api_key.get_secret_value()
+            for line in raw.decode(errors="replace").splitlines():
+                try:
+                    event = json.loads(line)
+                except ValueError:
+                    continue
+                if isinstance(event, dict) and event.get("method") in {
+                    "agent.session",
+                    "agent.action.started",
+                    "agent.action.completed",
+                }:
+                    await emit(event["method"], event.get("params", {}))
+            if container.attrs["State"].get("ExitCode") != 0:
+                detail = raw.decode(errors="replace")[-12000:]
+                raise RuntimeUnavailableError(detail.replace(key, "[redacted]") if key else detail)
+            workspace, _, _ = self._task_paths(spec.task_id, spec.agent.agent_id)
+            path = workspace / "writeup.md"
+            if path.is_symlink():
+                raise RuntimeUnavailableError("Reporter output must be a regular file")
+            result = path.read_text(encoding="utf-8")
+            if not result.strip():
+                raise RuntimeUnavailableError("Reporter returned an empty report")
+            return result
+        finally:
+            try:
+                await launch
+            finally:
+                await self.stop(spec.task_id, spec.agent.agent_id)
 
     async def launch(self, spec: LaunchSpec) -> str:
         try:
@@ -166,6 +223,14 @@ class FakeContainerRuntime:
     async def launch(self, spec: LaunchSpec) -> str:
         self.launched.append(spec)
         return f"fake-{spec.task_id}-{spec.agent.agent_id}"
+
+    async def report(self, spec: LaunchSpec, emit) -> str:
+        container_id = await self.launch(spec)
+        try:
+            await emit("container.started", {"container_id": container_id})
+            return "# Test report\n\n" + (spec.report_input or "")
+        finally:
+            await self.stop(spec.task_id, spec.agent.agent_id)
 
     async def stop(self, task_id: UUID, agent_id: str) -> None:
         self.stopped.append((task_id, agent_id))

@@ -13,7 +13,8 @@
   "mcp_instructions": "共享任务记忆执行器：首次读取完整黑板，之后按序号增量读取；用 Intel 分享已验证且对其他 Agent 有用的中间情报，用 Finding 分享带证据的关键突破，并仅在需要时按名称读取通用 Skill。",
   "worker_images": {
     "worker-openai": "tga3-worker-openai:local",
-    "worker-claude": "tga3-worker-claude:local"
+    "worker-claude": "tga3-worker-claude:local",
+    "reporter": "tga3-worker-openai:local"
   },
   "worker_cycle_prompts": {
     "startup": "开始任务：先读取完整共享黑板中的场景提示、用户描述和文件，记住最新序号，再自主推进。",
@@ -25,7 +26,10 @@
     "cpu_cores": 2.0,
     "memory_mb": 4096,
     "pids_limit": 512,
-    "cap_add": ["NET_RAW", "SYS_PTRACE"]
+    "cap_add": [
+      "NET_RAW",
+      "SYS_PTRACE"
+    ]
   },
   "cadence": {
     "worker_sync_seconds": 90,
@@ -34,5 +38,7 @@
     "supervisor_advice_interval_seconds": 60,
     "supervisor_silence_seconds": 90,
     "finalization_grace_seconds": 30
-  }
+  },
+  "supervisor_enabled": false,
+  "cli_timeout_seconds": 1800
 }

@@ -1,22 +1,18 @@
-# TGA3 — Team Gipsy Agent
+# TGA — Team Gipsy Agent
 
-TGA3 是一个面向安全竞赛与授权安全任务的双 Worker 黑板运行时。Supervisor 只提供建议，OpenAI Agents SDK Worker 与 Claude Agent SDK Worker 在独立容器中并行执行，Reporter 在最终候选出现后生成 Markdown writeup。
+TGA3 使用独立 Kali 容器中的 Codex CLI 和 Claude Code CLI 并行执行任务，
+通过共享黑板协作。两个 Worker 停止后，再启动 Codex CLI Reporter 生成报告。
+项目控制层管理任务、PostgreSQL、文件、MCP 和容器；Supervisor 暂时预留。
 
-```text
-apps/web  ── /api/v3 + SSE ──>  tga3 control plane
-                                      │
-                         PostgreSQL shared blackboard
-                             │                  │
-                    OpenAI Worker        Claude Worker
-                         container           container
-```
+详细架构与运行方式见 [tga3/README.md](tga3/README.md)，
+迁移及认证见 [tga3/CLI-MIGRATION.md](tga3/CLI-MIGRATION.md)。
 
 ## 目录
 
 - `apps/web`：React/Vite 控制台。
 - `tga3`：FastAPI 控制面、Agent 运行时、PostgreSQL schema、Worker 镜像与部署文件。
 - `tga3/config/models.json`：Provider、兼容协议、自动发现的模型、Base URL 和密钥。
-- `tga3/config/agents.json`：四个 Agent 的身份、SDK、模型与实际调用协议绑定、轮次和系统提示词。
+- `tga3/config/agents.json`：各 Agent 的身份、执行后端、模型与实际调用协议绑定、轮次和系统提示词。
 - `tga3/config/scenes.json`：任务场景及场景提示词。
 - `tga3/config/runtime.json`：容器、存储路径、运行节奏和周期提示。
 - `tga3/config/skills/<name>/SKILL.md`：所有 Agent 按名称读取的通用 Skills。

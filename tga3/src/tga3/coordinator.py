@@ -67,14 +67,19 @@ class TaskCoordinator:
         if unknown_agents:
             raise ValueError(f"unknown task agent model overrides: {', '.join(unknown_agents)}")
         resolved_agents = {
-            agent_id: self.config.resolve_agent(agent_id, *(model_overrides.get(agent_id) or (None, None, None)))
-            for agent_id in self.config.agents.agents
+            agent_id: self.config.resolve_agent(
+                agent_id, *(model_overrides.get(agent_id) or (None, None, None)),
+                require_api_key=configured.role != "supervisor" or self.config.runtime.supervisor_enabled,
+            )
+            for agent_id, configured in self.config.agents.agents.items()
         }
         task = await self.storage.create_task(title, scene.id, task_id)
         await self.storage.update_task(task.id, state=RunState.STARTING)
         for agent_id, configured in self.config.agents.agents.items():
             resolved = resolved_agents[agent_id]
             state = AgentState.IDLE if configured.role == "supervisor" else AgentState.CREATED
+            if configured.role == "supervisor" and not self.config.runtime.supervisor_enabled:
+                state = AgentState.STOPPED
             await self.storage.upsert_agent(
                 AgentRun(
                     task_id=task.id,
@@ -193,6 +198,8 @@ class TaskCoordinator:
             await self.dialogue.announce_status(
                 task_id, self.actor_for(run), state.value, str(params.get("detail", ""))
             )
+        elif method == "agent.session":
+            await self.storage.update_agent(task_id, agent_id, metadata={**run.metadata, **params})
         elif method == "agent.output.delta":
             await self.dialogue.emit(
                 task_id,

@@ -84,13 +84,10 @@ def test_deepseek_protocol_is_selected_by_each_agent_binding():
     provider = config.models.provider("deepseek")
     provider.models.append(ModelConfig(id="deepseek-v4", name="deepseek-v4"))
 
-    openai_binding = config.resolve_agent(
-        "worker-openai",
-        "deepseek",
-        "deepseek-v4",
-        "openai_chat_completions",
-        require_api_key=False,
-    )
+    with pytest.raises(ValueError, match="Responses"):
+        config.resolve_agent(
+            "worker-openai", "deepseek", "deepseek-v4", "openai_chat_completions", require_api_key=False
+        )
     claude_binding = config.resolve_agent(
         "worker-claude",
         "deepseek",
@@ -99,11 +96,9 @@ def test_deepseek_protocol_is_selected_by_each_agent_binding():
         require_api_key=False,
     )
 
-    assert openai_binding.protocol == "openai_chat_completions"
-    assert openai_binding.provider.sdk_base_url(openai_binding.protocol) == "https://api.deepseek.com"
     assert claude_binding.protocol == "anthropic"
     assert claude_binding.provider.sdk_base_url(claude_binding.protocol) == "https://api.deepseek.com/anthropic"
-    with pytest.raises(ValueError, match="OpenAI Agents SDK"):
+    with pytest.raises(ValueError, match="Responses"):
         config.resolve_agent(
             "worker-openai",
             "deepseek",
@@ -125,7 +120,7 @@ async def test_custom_openai_provider_probes_common_paths_from_origin():
 
     def handler(request: httpx.Request) -> httpx.Response:
         calls.append(str(request.url))
-        if request.url.path != "/v1/models":
+        if request.url.path != "/supplied/path/v1/models":
             return httpx.Response(404)
         return httpx.Response(200, json={"data": [{"id": "custom-model"}]})
 
@@ -133,6 +128,19 @@ async def test_custom_openai_provider_probes_common_paths_from_origin():
 
     assert result == ["custom-model"]
     assert calls == [
-        "https://gateway.example.test/models",
-        "https://gateway.example.test/v1/models",
+        "https://gateway.example.test/supplied/path/models",
+        "https://gateway.example.test/supplied/path/v1/models",
     ]
+
+
+def test_custom_gateway_prefixes_survive_config_and_runtime_resolution():
+    from tga3.config import ProviderConfig
+
+    common = dict(id="gateway", name="Gateway", api_keys=[], selected_api_key_id="", models=[])
+    responses = ProviderConfig(
+        **common, protocols=["openai_responses"], base_url="https://gateway.test/compatible-mode/v1"
+    )
+    assert responses.base_url == "https://gateway.test/compatible-mode"
+    assert responses.sdk_base_url("openai_responses") == "https://gateway.test/compatible-mode/v1"
+    anthropic = ProviderConfig(**common, protocols=["anthropic"], base_url="https://gateway.test/apps/anthropic")
+    assert anthropic.sdk_base_url("anthropic") == "https://gateway.test/apps/anthropic"

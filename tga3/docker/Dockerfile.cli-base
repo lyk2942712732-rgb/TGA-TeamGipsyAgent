@@ -1,0 +1,18 @@
+FROM tga3-ctf-base:local
+
+USER root
+ARG NODE_DOWNLOAD_BASE=https://nodejs.org/dist
+# Fixed official release and checksums; leave the Kali tool/library floor intact.
+RUN set -eu; \
+    case "$(uname -m)" in \
+      x86_64) arch=x64; checksum=9aa8e9d2298ab68c600bd6fb86a6c13bce11a4eca1ba9b39d79fa021755d7c37 ;; \
+      aarch64) arch=arm64; checksum=1bf1eb9ee63ffc4e5d324c0b9b62cf4a289f44332dfef9607cea1a0d9596ba6f ;; \
+      *) echo "Unsupported Node architecture" >&2; exit 1 ;; \
+    esac; \
+    archive="node-v22.22.0-linux-${arch}.tar.xz"; \
+    curl -fsSL --connect-timeout 15 --max-time 180 --retry 3 \
+      "${NODE_DOWNLOAD_BASE}/v22.22.0/${archive}" -o "/tmp/${archive}"; \
+    echo "${checksum}  /tmp/${archive}" | sha256sum -c -; \
+    tar -xJf "/tmp/${archive}" -C /usr/local --strip-components=1; \
+    rm "/tmp/${archive}"; \
+    node --version; npm --version

@@ -83,8 +83,7 @@ def test_frontend_api_uses_safe_catalog_and_page_owned_config_documents(tmp_path
         definitions = client.get("/api/v3/agent-definitions").json()
         assert len(definitions) == 4
         assert next(item for item in definitions if item["id"] == "reporter")["tools"] == [
-            "skills.list",
-            "skills.read",
+            "Read snapshot", "Read evidence", "Read skills", "Markdown Writeup",
         ]
         worker_definition = next(item for item in definitions if item["id"] == "worker-openai")
         assert worker_definition["image"]
@@ -154,7 +153,7 @@ def test_frontend_api_uses_safe_catalog_and_page_owned_config_documents(tmp_path
                     {"worker-openai": {
                         "provider_id": "openai",
                         "model_id": "gpt-task-override",
-                        "protocol": "openai_chat_completions",
+                        "protocol": "openai_responses",
                     }}
                 ),
             },
@@ -165,7 +164,7 @@ def test_frontend_api_uses_safe_catalog_and_page_owned_config_documents(tmp_path
         assert created.json()["scene_id"] == "reverse_engineering"
         detail = client.get(f"/api/v3/tasks/{task_id}").json()
         assert len(detail["agents"]) == 4
-        assert {agent["runtime_location"] for agent in detail["agents"]} == {"host", "container"}
+        assert {agent["runtime_location"] for agent in detail["agents"]} == {"reserved", "container"}
         assert next(agent for agent in detail["agents"] if agent["agent_id"] == "worker-openai")["model_id"] == (
             "gpt-task-override"
         )
@@ -173,7 +172,7 @@ def test_frontend_api_uses_safe_catalog_and_page_owned_config_documents(tmp_path
             "gpt-task-override"
         )
         assert next(agent for agent in detail["agents"] if agent["agent_id"] == "worker-openai")["protocol"] == (
-            "openai_chat_completions"
+            "openai_responses"
         )
         board = client.get(f"/api/v3/tasks/{task_id}/blackboard").json()["entries"]
         assert [entry["topic"] for entry in board] == ["scene", "task", "input"]

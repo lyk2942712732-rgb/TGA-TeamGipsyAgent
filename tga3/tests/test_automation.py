@@ -25,6 +25,7 @@ async def test_supervisor_batches_an_intel_burst_and_reads_one_delta():
             return SupervisorDecision(progress="Intel batch reviewed")
 
     config = TGA3Config(Path(__file__).parents[1] / "config")
+    config.runtime.supervisor_enabled = True
     config.runtime.cadence.supervisor_debounce_seconds = 0.05
     config.runtime.cadence.supervisor_silence_seconds = 3600
     storage = InMemoryStorage()
@@ -98,11 +99,14 @@ async def test_supervisor_suppresses_recent_and_similar_advice_but_allows_bypass
             bypass_interval=False,
         )
     )
-    assert automation._advice_suppression(
-        "根据用户的新要求检查上传入口",
-        [previous],
-        bypass_interval=True,
-    ) is None
+    assert (
+        automation._advice_suppression(
+            "根据用户的新要求检查上传入口",
+            [previous],
+            bypass_interval=True,
+        )
+        is None
+    )
     assert automation._advice_suppression("开局先确认目标基线", [], bypass_interval=False) is None
 
 
@@ -124,9 +128,9 @@ async def test_final_candidate_freezes_snapshot_and_generates_writeup(tmp_path: 
                 sdk=configured_agent.runtime,
                 desired_state=state,
                 actual_state=state,
-                    provider_id=configured_agent.provider_id,
-                    model_id=configured_agent.model_id,
-                    protocol=configured_agent.protocol,
+                provider_id=configured_agent.provider_id,
+                model_id=configured_agent.model_id,
+                protocol=configured_agent.protocol,
             )
         )
     board = Blackboard(storage)
@@ -228,3 +232,76 @@ async def test_reporter_failure_stops_workers_and_finishes_host_states(tmp_path:
     supervisor = await storage.get_agent(task.id, "supervisor")
     assert supervisor.desired_state == AgentState.STOPPED
     assert supervisor.actual_state == AgentState.STOPPED
+
+
+@pytest.mark.asyncio
+async def test_cli_reporter_starts_after_workers_stop_and_supervisor_stays_reserved(tmp_path):
+    from pydantic import SecretStr
+
+    from tga3.coordinator import TaskCoordinator
+    from tga3.docker_runtime import FakeContainerRuntime
+    from tga3.host_agents import CliHostModel
+
+    config = TGA3Config(Path(__file__).parents[1] / "config")
+    config.runtime.writeup_root = str(tmp_path / "reports")
+    config.runtime.cadence.finalization_grace_seconds = 0
+    for provider in config.models.providers:
+        provider.api_keys[0].api_key = SecretStr("test-key")
+
+    class Containers(FakeContainerRuntime):
+        async def report(self, spec, emit):
+            assert set(self.stopped) == {(spec.task_id, name) for name in config.worker_agent_ids}
+            assert json.loads(spec.report_input)[-1]["kind"] == "final_candidate"
+            await emit("agent.session", {"cli_session_id": "reporter-session", "runtime": "codex_cli"})
+            return await super().report(spec, emit)
+
+    storage, containers = InMemoryStorage(), Containers()
+    coordinator = TaskCoordinator(config, storage, containers)
+    model = CliHostModel(config, containers, storage, coordinator.dialogue)
+    automation = Automation(
+        config, storage, coordinator.blackboard, coordinator.dialogue, model, coordinator.finish_task_workers
+    )
+    task = await coordinator.create_and_start("CLI report", "analyze", "cryptography")
+    actor = coordinator.actor_for(await storage.get_agent(task.id, "worker-openai"))
+    artifact = await storage.register_artifact(
+        Artifact(
+            task_id=task.id,
+            created_by=actor,
+            name="proof",
+            storage_path="/artifacts/proof.txt",
+            media_type="text/plain",
+            sha256="a" * 64,
+            size_bytes=2,
+        )
+    )
+    finding = await coordinator.blackboard.publish(
+        task.id,
+        actor,
+        PublishRequest(
+            kind="finding",
+            body={"claim": "verified"},
+            artifact_refs=[ArtifactRef(artifact_id=artifact.id, locator="line 1")],
+            idempotency_key="finding",
+        ),
+    )
+    final = await coordinator.blackboard.publish(
+        task.id,
+        actor,
+        PublishRequest(
+            kind="final_candidate",
+            body={"conclusion": "OK", "rationale": "verified", "finding_ids": [finding.id]},
+            idempotency_key="final",
+        ),
+    )
+    await automation.changed(task.id, final.seq)
+    await automation._reporter_jobs[task.id]
+    assert (await storage.get_task(task.id)).state == RunState.COMPLETED, (
+        await storage.get_agent(task.id, "reporter")
+    ).last_error
+    assert (await storage.get_agent(task.id, "supervisor")).actual_state == AgentState.STOPPED
+    report = await storage.get_agent(task.id, "reporter")
+    assert report.metadata["cli_session_id"] == "reporter-session"
+    assert report.container_id == "fake-" + str(task.id) + "-reporter"
+    assert len(containers.launched) == 3
+    assert len(containers.stopped) == 3
+    assert not automation._supervisor_jobs

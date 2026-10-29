@@ -10,7 +10,13 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, model_validator
 
-from .provider_profiles import ProviderProtocol, normalize_api_origin, provider_profile, runtime_base_url
+from .provider_profiles import (
+    ProviderProtocol,
+    normalize_api_origin,
+    normalize_custom_base,
+    provider_profile,
+    runtime_base_url,
+)
 
 
 class APIKeyConfig(BaseModel):
@@ -44,7 +50,10 @@ class ProviderConfig(BaseModel):
     @model_validator(mode="after")
     def normalize_endpoint(self) -> ProviderConfig:
         if self.base_url:
-            self.base_url = normalize_api_origin(self.base_url)
+            self.base_url = (
+                normalize_api_origin(self.base_url) if provider_profile(self.preset_id)
+                else normalize_custom_base(self.base_url)
+            )
         profile = provider_profile(self.preset_id)
         if not self.protocols:
             raise ValueError(f"provider {self.id} must support at least one protocol")
@@ -97,7 +106,7 @@ class AgentConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
     display_name: str = Field(min_length=1, max_length=200)
     role: Literal["supervisor", "worker", "reporter"]
-    runtime: Literal["openai_agents", "claude_agent"]
+    runtime: Literal["openai_agents", "claude_agent", "codex_cli", "claude_cli"]
     provider_id: str
     model_id: str
     protocol: ProviderProtocol
@@ -173,6 +182,8 @@ class RuntimeConfig(BaseModel):
     writeup_root: str
     skills_root: str
     mcp_instructions: str = Field(min_length=1)
+    supervisor_enabled: bool = False
+    cli_timeout_seconds: int = Field(default=1800, ge=30, le=86400)
     worker_images: dict[str, str]
     worker_cycle_prompts: WorkerCyclePromptsConfig
     docker: DockerConfig = Field(default_factory=DockerConfig)
@@ -206,7 +217,7 @@ class ResolvedAgent(BaseModel):
     agent_id: str
     display_name: str
     role: Literal["supervisor", "worker", "reporter"]
-    runtime: Literal["openai_agents", "claude_agent"]
+    runtime: Literal["openai_agents", "claude_agent", "codex_cli", "claude_cli"]
     provider: ProviderConfig
     model: ModelConfig
     protocol: ProviderProtocol
@@ -280,8 +291,10 @@ class TGA3Config:
 
     @staticmethod
     def validate_runtime_protocol(runtime: str, protocol: ProviderProtocol) -> None:
-        if runtime == "claude_agent" and protocol != "anthropic":
-            raise ValueError("Claude Agent SDK requires an Anthropic-compatible provider")
+        if runtime in {"claude_agent", "claude_cli"} and protocol != "anthropic":
+            raise ValueError("Claude Code requires an Anthropic-compatible provider")
+        if runtime == "codex_cli" and protocol != "openai_responses":
+            raise ValueError("Codex CLI requires the OpenAI Responses protocol")
         if runtime == "openai_agents" and protocol == "anthropic":
             raise ValueError("OpenAI Agents SDK requires an OpenAI-compatible provider")
 
@@ -463,9 +476,9 @@ class TGA3Config:
             raise ValueError(f"scenes.json is missing: {', '.join(missing_scenes)}")
         expected_runtimes = {
             "supervisor": "openai_agents",
-            "worker-openai": "openai_agents",
-            "worker-claude": "claude_agent",
-            "reporter": "openai_agents",
+            "worker-openai": "codex_cli",
+            "worker-claude": "claude_cli",
+            "reporter": "codex_cli",
         }
         for agent_id, expected_runtime in expected_runtimes.items():
             if agents.agents[agent_id].runtime != expected_runtime:
@@ -479,7 +492,7 @@ class TGA3Config:
         missing_images = sorted(
             agent_id
             for agent_id, binding in agents.agents.items()
-            if binding.role == "worker" and agent_id not in runtime.worker_images
+            if binding.role in {"worker", "reporter"} and agent_id not in runtime.worker_images
         )
         if missing_images:
             raise ValueError(f"runtime.json worker_images is missing: {', '.join(missing_images)}")

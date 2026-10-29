@@ -1,4 +1,4 @@
-"""SDK-neutral worker session controlled through JSON-RPC WebSocket."""
+"""CLI-neutral worker session controlled through JSON-RPC WebSocket."""
 
 from __future__ import annotations
 
@@ -80,6 +80,7 @@ class WorkerSession:
                     await self.emit("agent.status", {"state": "running"})
                 elif message.method == "session.stop":
                     self.stop.set()
+                    self.paused.set()
                     if self.current_cycle and not self.current_cycle.done():
                         self.current_cycle.cancel()
                         await asyncio.gather(self.current_cycle, return_exceptions=True)
@@ -123,6 +124,8 @@ class WorkerSession:
                 await self.emit("agent.action.completed", {"summary": "工作周期完成"})
                 await self.emit("agent.status", {"state": "idle"})
             except asyncio.CancelledError:
+                if asyncio.current_task().cancelling():
+                    raise
                 if not self.stop.is_set():
                     await self.queue.put(prompt)
             except Exception as exc:

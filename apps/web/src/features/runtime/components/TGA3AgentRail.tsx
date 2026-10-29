@@ -28,5 +28,5 @@ export function TGA3AgentRail({ agents, selectedAgentId, onSelect }: { agents: T
 function roleIcon(agent: TGA3Agent) {
   if (agent.role === "supervisor") return <Lightbulb size={17} />;
   if (agent.role === "reporter") return <FileText size={17} />;
-  return agent.sdk === "claude_agent" ? <Boxes size={17} /> : <Bot size={17} />;
+  return (agent.sdk === "claude_cli" || agent.sdk === "claude_agent") ? <Boxes size={17} /> : <Bot size={17} />;
 }

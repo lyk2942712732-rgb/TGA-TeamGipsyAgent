@@ -22,7 +22,7 @@ export type TGA3Provider = {
   models: TGA3Model[];
 };
 export type ModelsConfig = { schema_version: number; providers: TGA3Provider[] };
-export type AgentConfig = { display_name: string; role: "supervisor" | "worker" | "reporter"; runtime: "openai_agents" | "claude_agent"; provider_id: string; model_id: string; protocol: ProviderProtocol; max_turns_per_cycle: number; system_prompt: string };
+export type AgentConfig = { display_name: string; role: "supervisor" | "worker" | "reporter"; runtime: "openai_agents" | "claude_agent" | "codex_cli" | "claude_cli"; provider_id: string; model_id: string; protocol: ProviderProtocol; max_turns_per_cycle: number; system_prompt: string };
 export type AgentsConfig = { schema_version: number; agents: Record<string, AgentConfig> };
 export type SceneConfig = { id: string; name: string; description: string; system_prompt: string };
 export type ScenesConfig = { schema_version: number; scenes: SceneConfig[] };

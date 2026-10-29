@@ -13,6 +13,7 @@ from .domain import (
     BlackboardSyncResult,
     EntryKind,
     PublishRequest,
+    RunState,
 )
 from .errors import ContractError
 from .storage import Storage
@@ -36,6 +37,9 @@ class Blackboard:
     async def publish(self, task_id: UUID, actor: Actor, request: PublishRequest) -> BlackboardEntry:
         if request.kind not in _WRITE_POLICY[actor.role]:
             raise ContractError(f"{actor.role} cannot publish {request.kind.value}")
+        task = await self.storage.get_task(task_id)
+        if task.state in {RunState.REPORTING, RunState.COMPLETED, RunState.FAILED, RunState.CANCELLED}:
+            raise ContractError("task is closed for blackboard writes")
         entry = await self.storage.publish(task_id, actor, request)
         if self.on_change:
             await self.on_change(task_id, entry.seq)

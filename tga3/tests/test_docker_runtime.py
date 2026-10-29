@@ -39,3 +39,22 @@ def test_worker_container_uses_stable_non_root_identity(tmp_path: Path):
     assert containers.kwargs["environment"]["TGA3_BLACKBOARD_MCP_URL"].endswith("/mcp/")
     assert containers.kwargs["volumes"][str(workspace)] == {"bind": "/workspace", "mode": "rw"}
     assert containers.kwargs["volumes"][str(artifacts)] == {"bind": "/artifacts", "mode": "rw"}
+
+
+def test_reporter_uses_codex_image_and_read_only_evidence(tmp_path):
+    config = TGA3Config(Path(__file__).parents[1] / "config")
+    config.models.provider("openai").api_keys[0].api_key = SecretStr("test-key")
+    containers = FakeContainers()
+    runtime = DockerContainerRuntime.__new__(DockerContainerRuntime)
+    runtime.config, runtime.client = config, SimpleNamespace(containers=containers)
+    for name in ("workspace", "inputs", "artifacts"):
+        (tmp_path / name).mkdir()
+    runtime._task_paths = lambda *_: tuple(tmp_path / name for name in ("workspace", "inputs", "artifacts"))
+    spec = LaunchSpec(task_id=uuid4(), agent=config.resolve_agent("reporter"), report_input="[]")
+    runtime._launch_sync(spec)
+    args = containers.kwargs
+    assert args["image"] == config.runtime.worker_images["worker-openai"]
+    assert args["environment"]["TGA3_AGENT_ROLE"] == "reporter"
+    assert args["volumes"][str(tmp_path / "artifacts")]["mode"] == "ro"
+    assert args["volumes"][str(tmp_path / "workspace/report-input.json")]["mode"] == "ro"
+    assert args["cap_add"] == []

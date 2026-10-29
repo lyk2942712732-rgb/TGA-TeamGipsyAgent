@@ -1,60 +1,45 @@
-# TGA3
+# TGA3 CLI 黑板运行时
 
-TGA3 是新的双 Worker 黑板运行时，不兼容旧数据库或旧任务。`apps/web` 直接使用 TGA3 API；两个成熟 Agent SDK 负责执行，主服务只负责控制面、共享黑板、对话流、主持建议、最终报告和容器生命周期。
-
-## 拓扑
+两个 Worker 在独立 Kali 容器中并行运行 Codex CLI 和 Claude Code CLI。
+出现最终候选后，控制层等待收尾宽限期、停止并回收 Worker，固定黑板快照，
+再用与 Codex Worker 相同的镜像启动一次性 Reporter 容器。
+Supervisor 暂时不参与任务，原有定义保留供后续改造。
 
 ```text
-用户 / apps/web
-       │ HTTP + SSE
-       ▼
-┌──────────────────────── Linux 主服务 ─────────────────────────┐
-│ TaskCoordinator：创建/暂停/恢复/停止，不做解题规划              │
-│ SolverDialogue：真实状态、动作摘要、进度、Supervisor 提问        │
-│ Supervisor：只读黑板/按名读 Skill，只写建议                     │
-│ Reporter：final_candidate 后固定快照，生成 Markdown              │
-│ Blackboard MCP：sync / publish / artifact_register / skills      │
-│ DockerContainerRuntime：每任务动态创建与回收两个 Worker           │
-└──────────────┬───────────────────────────┬──────────────────────┘
-               │ JSON-RPC 2.0 / WebSocket │
-       ┌───────▼────────┐          ┌───────▼────────┐
-       │ OpenAI Worker  │          │ Claude Worker  │
-       │ Agents SDK     │          │ Agent SDK      │
-       │ /workspace 独立│          │ /workspace 独立│
-       └───────┬────────┘          └───────┬────────┘
-               └──────── Blackboard MCP ──┘
-                              │
-                         PostgreSQL 容器
+Web UI → FastAPI 控制层 → PostgreSQL / 共享黑板 / MCP
+                    ├─ Kali + Codex CLI Worker ──────┐
+                    └─ Kali + Claude Code Worker ────┤ 并行
+                                                    ↓ 停止两者
+                                    固定快照 + 只读证据 / Skills
+                                                    ↓
+                                       Codex CLI Reporter
+                                                    ↓
+                                         保存报告、回收容器
 ```
 
-没有 Observer、LangChain 或 LangGraph。Worker 不互相等待，也不直接对话；它们收到 `blackboard.changed(latest_seq)` 后自行增量读取。工作周期上限、兜底同步频率等均从配置读取。
+CLI 管理私有会话、工具执行和上下文压缩；不再使用 Agents SDK Worker、Claude Agent SDK
+或项目自己的 SQLiteSession。控制层只通过薄适配器管理进程和统一事件，不复刻 CLI 的对话记录。
 
-## 数据边界
+- Codex 会话：每个 Worker 工作目录的 `.codex/`。
+- Claude 会话：每个 Worker 工作目录的 `.claude/`。
+- `.tga3/*-session.json` 只保存 CLI 会话指针；PG `agent_runs.metadata.cli_session_id` 保存对应标识。
+- `agent_runs.session_id` 仍是控制通道标识，不用于 CLI resume。
+- PostgreSQL 保存任务、共享黑板、对话事件、用户问答和证据/报告索引。
+- `/inputs` 只读、Worker `/artifacts` 可写、Reporter `/artifacts` 与快照只读。
+- Worker 通过 HTTP MCP 访问黑板、注册证据和读取 Skills。发布协议维持 Intel / Finding / final_candidate。
+- CLI 周期在安全点消费合并后的黑板更新；暂停、停止和超时会回收 CLI 的工具进程组。
 
-黑板公开条目为 `user_prompt`、`user_file`、`supervisor_advice`、`intel`、`finding`、`qa` 和 `final_candidate`。场景提示使用 `user_prompt` 条目、`topic=scene`，在用户描述之前写入。
-
-- Worker 先把持久证据写到 `/artifacts`，再调用 `artifact_register`。
-- `intel` 与 `finding` 共用严格的 `claim/detail` 正文：Intel 表示会影响其他 Agent 下一步行动的已验证中间情报，Artifact 可选；Finding 表示关键突破或重要结果，Artifact 必填。
-- 非空 Artifact 引用在写入事务中验证其存在、属于同一任务且仍可用；公开黑板不暴露关联，统一存入 `blackboard_artifact_links`。
-- Worker 的问题作为运行事件交给 Supervisor。只有 Supervisor 在对话流提问并标明来源；回答后问题与答案合并为一个 `qa` 条目。
-- `final_candidate` 必须引用已有 Finding。宽限期后 Reporter 固定 `snapshot_seq`，之后的内容不会混入报告。
-- Worker 对黑板变更按最新序号合并，在当前工具/SDK 周期结束后的安全点增量读取；90 秒周期同步负责漏事件兜底。
-- Supervisor 对 Intel 使用 2 秒静默合并和 10 秒批次上限进行审阅；由 Intel 触发的建议至少间隔 60 秒，相同或近似建议直接抑制。用户提示和 Finding 绕过时间限制，90 秒无共享进展时执行一次沉默检查；没有建议时只把审阅进度写入任务对话。
-
-PostgreSQL 用每任务 advisory transaction lock 分配黑板和对话序号，允许两个 Worker 并发写入；所有写入均带幂等键。
-
-共享状态与 SDK 私有会话彼此独立：PostgreSQL/黑板保存所有 Agent 可见的任务事实，OpenAI Worker 的
-`/workspace/.tga3-openai-session.db` 只保存该 Worker 自己的 Agents SDK 对话记忆，不作为公共情报源。
+详细构建、认证及旧配置迁移说明见 [CLI 迁移说明](CLI-MIGRATION.md)。
 
 ## 配置唯一数据源
 
 - `config/models.json`：Provider、支持的兼容协议、自动发现的模型、Base URL 和密钥。
-- `config/agents.json`：四个 Agent 的身份、SDK、模型与实际调用协议绑定、轮次和完整系统提示词。
+- `config/agents.json`：四个 Agent 的身份、CLI 后端、模型与实际调用协议绑定、轮次和完整系统提示词。
 - `config/scenes.json`：八种任务场景及进入黑板的场景提示词。
 - `config/runtime.json`：Docker 资源、镜像、目录、通信地址、运行节奏、MCP 指令和 Worker 周期提示。
 - `config/skills/<name>/`：不分角色与场景的通用 Skill 包；Agent 先列包名，选中后只读 `SKILL.md`，再依据其中的指引按需读取包内其他 Markdown。
 
-生产代码不从环境变量覆盖 Provider、模型、密钥或 Agent 提示词。环境变量只用于把上述已解析配置传给动态 Worker 容器。前端各配置页面通过 `/api/v3/config` 读写自己的 JSON；Skills 页面直接管理 `config/skills`。Models 页面按供应商预设补全模型发现路径，Solver 页面按 Agent SDK 选择实际推理协议；同一供应商可同时为不同 Agent 暴露多种协议。保存时后端先执行完整的跨文件校验，校验失败不会替换现有配置。
+生产代码不从环境变量覆盖 Provider、模型、密钥或 Agent 提示词。环境变量只用于把上述已解析配置传给动态执行容器。前端各配置页面通过 `/api/v3/config` 读写自己的 JSON；Skills 页面直接管理 `config/skills`。Models 页面按供应商预设补全模型发现路径，Solver 页面按 CLI 后端 选择实际推理协议；同一供应商可同时为不同 Agent 暴露多种协议。保存时后端先执行完整的跨文件校验，校验失败不会替换现有配置。
 
 新任务立即使用保存后的 Provider、模型、Agent 提示词、场景和容器参数。运行中的任务保留 PostgreSQL 中的运行状态；监听地址和 PostgreSQL DSN 保存后需要重启主服务。`GET /api/v3/models` 仍是供普通任务界面使用的无密钥目录，只有配置中心接口返回可编辑的完整配置。
 

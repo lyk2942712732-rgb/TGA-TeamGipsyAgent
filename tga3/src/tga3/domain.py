@@ -351,7 +351,7 @@ class AgentRun(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     task_id: UUID
     agent_id: str
-    sdk: Literal["openai_agents", "claude_agent"]
+    sdk: Literal["openai_agents", "claude_agent", "codex_cli", "claude_cli"]
     desired_state: AgentState = AgentState.CREATED
     actual_state: AgentState = AgentState.CREATED
     provider_id: str
@@ -359,6 +359,7 @@ class AgentRun(BaseModel):
     protocol: Literal["openai_responses", "openai_chat_completions", "anthropic"]
     container_id: str | None = None
     session_id: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
     last_error: str | None = None
     updated_at: datetime = Field(default_factory=utc_now)
 

@@ -1,211 +1,125 @@
 import asyncio
+import os
 import sys
-from types import ModuleType
+import tomllib
+from pathlib import Path
 
 import pytest
 
-from tga3.workers.claude_worker import ClaudeAdapter, ClaudeCliError
+from tga3.workers.cli_adapter import ClaudeAdapter, CliError, CodexAdapter
 from tga3.workers.prompts import worker_instructions
 from tga3.workers.runtime import AgentAdapter, WorkerSession
 
 
-@pytest.mark.asyncio
-async def test_claude_worker_preserves_cli_stderr(monkeypatch):
-    for name, value in {
-        "TGA3_MODEL_NAME": "claude-test",
-        "TGA3_API_KEY": "test-key",
-        "TGA3_MAX_TURNS_PER_CYCLE": "3",
-        "TGA3_BLACKBOARD_MCP_URL": "http://blackboard/mcp",
-        "TGA3_SYSTEM_PROMPT": "Work independently.",
-        "TGA3_TASK_ID": "task-id",
-        "TGA3_AGENT_ID": "worker-claude",
-        "TGA3_AGENT_DISPLAY_NAME": "Claude Worker",
-        "TGA3_AGENT_RUNTIME": "claude_agent",
-    }.items():
-        monkeypatch.setenv(name, value)
-
-    class ClaudeAgentOptions:
-        def __init__(self, **kwargs):
-            self.stderr = kwargs["stderr"]
-
-    class AssistantMessage:
-        pass
-
-    class ResultMessage:
-        is_error = True
-        result = "CLI process exited with code 1"
-        subtype = "error_during_execution"
-        errors = ["authentication failed"]
-        session_id = "session"
-
-    async def query(*, prompt, options):
-        assert prompt == "continue"
-        options.stderr("Error: invalid API key")
-        yield ResultMessage()
-
-    module = ModuleType("claude_agent_sdk")
-    module.AssistantMessage = AssistantMessage
-    module.ClaudeAgentOptions = ClaudeAgentOptions
-    module.ResultMessage = ResultMessage
-    module.TextBlock = type("TextBlock", (), {})
-    module.ToolResultBlock = type("ToolResultBlock", (), {})
-    module.ToolUseBlock = type("ToolUseBlock", (), {})
-    module.UserMessage = type("UserMessage", (), {})
-    module.query = query
-    monkeypatch.setitem(sys.modules, "claude_agent_sdk", module)
-
-    async def emit(_method, _params):
-        return None
-
-    with pytest.raises(ClaudeCliError) as raised:
-        await ClaudeAdapter().run_cycle("continue", emit)
-    assert "CLI process exited with code 1" in str(raised.value)
-    assert "authentication failed" in str(raised.value)
-    assert "Error: invalid API key" in str(raised.value)
-
-
-@pytest.mark.asyncio
-async def test_claude_max_turns_is_a_resumable_cycle_boundary(monkeypatch):
-    for name, value in {
-        "TGA3_MODEL_NAME": "deepseek-v4-pro",
-        "TGA3_API_KEY": "test-key",
+@pytest.fixture
+def cli_env(monkeypatch, tmp_path):
+    values = {
+        "TGA3_MODEL_NAME": "test-model",
+        "TGA3_API_KEY": "secret-key",
+        "TGA3_PROVIDER_PROTOCOL": "openai_responses",
+        "TGA3_BASE_URL": "http://provider/v1",
         "TGA3_MAX_TURNS_PER_CYCLE": "3",
         "TGA3_BLACKBOARD_MCP_URL": "http://blackboard/mcp/",
         "TGA3_SYSTEM_PROMPT": "Work independently.",
         "TGA3_TASK_ID": "task-id",
-        "TGA3_AGENT_ID": "worker-claude",
-        "TGA3_AGENT_DISPLAY_NAME": "Claude Worker",
-        "TGA3_AGENT_RUNTIME": "claude_agent",
-    }.items():
-        monkeypatch.setenv(name, value)
+        "TGA3_AGENT_ID": "worker-openai",
+        "TGA3_AGENT_DISPLAY_NAME": "Worker",
+        "TGA3_AGENT_RUNTIME": "codex_cli",
+        "TGA3_WORKSPACE": str(tmp_path),
+    }
+    for key, value in values.items():
+        monkeypatch.setenv(key, value)
+    return tmp_path
 
-    class ClaudeAgentOptions:
-        def __init__(self, **_kwargs):
-            pass
 
-    class ResultMessage:
-        is_error = True
-        result = None
-        subtype = "error_max_turns"
-        errors = []
-        session_id = "resumable-session"
+async def noop(*_args):
+    pass
 
-    async def query(**_kwargs):
-        yield ResultMessage()
 
-    module = ModuleType("claude_agent_sdk")
-    module.AssistantMessage = type("AssistantMessage", (), {})
-    module.ClaudeAgentOptions = ClaudeAgentOptions
-    module.ResultMessage = ResultMessage
-    module.TextBlock = type("TextBlock", (), {})
-    module.ToolResultBlock = type("ToolResultBlock", (), {})
-    module.ToolUseBlock = type("ToolUseBlock", (), {})
-    module.UserMessage = type("UserMessage", (), {})
-    module.query = query
-    monkeypatch.setitem(sys.modules, "claude_agent_sdk", module)
-
-    async def emit(_method, _params):
-        return None
-
-    adapter = ClaudeAdapter()
-    output = await adapter.run_cycle("continue", emit)
-    assert "下一周期继续" in output
-    assert adapter.session_id == "resumable-session"
+def test_codex_configuration_and_session_resume(cli_env):
+    adapter = CodexAdapter()
+    _, env = adapter.command()
+    config = tomllib.loads((cli_env / ".codex/config.toml").read_text(encoding="utf-8"))
+    assert config["model_providers"]["tga3"]["base_url"] == "http://provider/v1"
+    assert config["mcp_servers"]["blackboard"]["required"]
+    assert "secret-key" not in str(config)
+    assert env["CODEX_API_KEY"] == "secret-key"
+    adapter.remember_session("session-1")
+    resumed = CodexAdapter()
+    command, _ = resumed.command()
+    assert command[:4] == ["codex", "exec", "resume", "session-1"]
 
 
 @pytest.mark.asyncio
-async def test_claude_worker_emits_tool_completion_from_user_message(monkeypatch):
-    for name, value in {
-        "TGA3_MODEL_NAME": "deepseek-v4-flash",
-        "TGA3_API_KEY": "test-key",
-        "TGA3_MAX_TURNS_PER_CYCLE": "12",
-        "TGA3_BLACKBOARD_MCP_URL": "http://blackboard/mcp/",
-        "TGA3_SYSTEM_PROMPT": "Work independently.",
-        "TGA3_TASK_ID": "task-id",
-        "TGA3_AGENT_ID": "worker-claude",
-        "TGA3_AGENT_DISPLAY_NAME": "Claude Worker",
-        "TGA3_AGENT_RUNTIME": "claude_agent",
-    }.items():
-        monkeypatch.setenv(name, value)
-
-    class ClaudeAgentOptions:
-        def __init__(self, **_kwargs):
-            pass
-
-    class TextBlock:
-        def __init__(self, text):
-            self.text = text
-
-    class ToolUseBlock:
-        def __init__(self, tool_use_id, name, tool_input):
-            self.id = tool_use_id
-            self.name = name
-            self.input = tool_input
-
-    class ToolResultBlock:
-        def __init__(self, tool_use_id):
-            self.tool_use_id = tool_use_id
-            self.is_error = False
-
-    class AssistantMessage:
-        def __init__(self, content):
-            self.content = content
-
-    class UserMessage:
-        def __init__(self, content):
-            self.content = content
-
-    class ResultMessage:
-        is_error = False
-        result = "done"
-        subtype = "success"
-        session_id = "session"
-
-    command = "curl -sS http://target/flag"
-
-    async def query(**_kwargs):
-        yield AssistantMessage([ToolUseBlock("tool-1", "Bash", {"command": command})])
-        yield UserMessage([ToolResultBlock("tool-1")])
-        yield ResultMessage()
-
-    module = ModuleType("claude_agent_sdk")
-    module.AssistantMessage = AssistantMessage
-    module.ClaudeAgentOptions = ClaudeAgentOptions
-    module.ResultMessage = ResultMessage
-    module.TextBlock = TextBlock
-    module.ToolResultBlock = ToolResultBlock
-    module.ToolUseBlock = ToolUseBlock
-    module.UserMessage = UserMessage
-    module.query = query
-    monkeypatch.setitem(sys.modules, "claude_agent_sdk", module)
-    emitted = []
+async def test_cli_subprocess_parses_events_and_preserves_resume(cli_env):
+    script = cli_env / "cli.py"
+    script.write_text(
+        """import json,sys
+assert sys.stdin.read() == 'continue'
+for event in [
+ {'type':'thread.started','thread_id':'session-1'},
+ {'type':'item.completed','item':{'type':'agent_message','text':'done'}},
+ {'type':'turn.completed'}]:
+ print(json.dumps(event),flush=True)
+""",
+        encoding="utf-8",
+    )
+    adapter = CodexAdapter()
+    adapter.command = lambda: ([sys.executable, str(script)], dict(os.environ))
+    events = []
 
     async def emit(method, params):
-        emitted.append((method, params))
+        events.append((method, params))
 
-    await ClaudeAdapter().run_cycle("continue", emit)
+    assert await adapter.run_cycle("continue", emit) == "done"
+    assert CodexAdapter().session_id == "session-1"
+    assert any(method == "agent.session" for method, _ in events)
 
-    assert emitted == [
-        (
-            "agent.action.started",
-            {
-                "summary": "Bash",
-                "tool": "Bash",
-                "tool_use_id": "tool-1",
-                "input": {"command": command},
-            },
-        ),
-        (
-            "agent.action.completed",
-            {
-                "summary": "Bash",
-                "tool": "Bash",
-                "tool_use_id": "tool-1",
-                "input": {"command": command},
-                "error": False,
-            },
-        ),
-    ]
+
+@pytest.mark.asyncio
+async def test_cli_failure_exposes_diagnostics_without_credentials(cli_env):
+    script = cli_env / "fail.py"
+    script.write_text("import sys;sys.stdin.read();print('invalid secret-key',file=sys.stderr);sys.exit(1)")
+    adapter = CodexAdapter()
+    adapter.command = lambda: ([sys.executable, str(script)], dict(os.environ))
+    with pytest.raises(CliError, match="invalid") as raised:
+        await adapter.run_cycle("continue", noop)
+    assert "secret-key" not in str(raised.value)
+
+
+@pytest.mark.asyncio
+async def test_claude_max_turns_is_resumable(cli_env, monkeypatch):
+    monkeypatch.setenv("TGA3_PROVIDER_PROTOCOL", "anthropic")
+    adapter = ClaudeAdapter()
+    await adapter.event(
+        {"type": "result", "session_id": "claude-session", "is_error": True, "subtype": "error_max_turns"}, noop
+    )
+    assert not adapter.failure
+    assert adapter.completed
+    assert "下一周期继续" in adapter.final_output
+    assert ClaudeAdapter().session_id == "claude-session"
+
+
+@pytest.mark.asyncio
+async def test_cli_cancellation_stops_the_process(cli_env):
+    script = cli_env / "sleep.py"
+    script.write_text(
+        "import os,time;from pathlib import Path;Path('pid').write_text(str(os.getpid()));time.sleep(120)"
+    )
+    adapter = CodexAdapter()
+    adapter.command = lambda: ([sys.executable, str(script)], dict(os.environ))
+    task = asyncio.create_task(adapter.run_cycle("continue", noop))
+    for _ in range(200):
+        if (cli_env / "pid").is_file():
+            break
+        await asyncio.sleep(0.01)
+    assert (cli_env / "pid").is_file()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(task, 8)
+    if os.name == "posix":
+        with pytest.raises(ProcessLookupError):
+            os.kill(int((cli_env / "pid").read_text()), 0)
 
 
 def test_worker_prompt_injects_exact_blackboard_identity(monkeypatch):
@@ -300,3 +214,30 @@ async def test_worker_coalesces_blackboard_notifications_to_the_latest_sequence(
     marker = await session.queue.get()
     assert marker is not None and not isinstance(marker, str)
     assert session.pending_blackboard_seq == 7
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(os.name != "posix", reason="Linux deployment process-tree cleanup")
+async def test_cancellation_also_stops_tool_in_separate_session(cli_env):
+    script = cli_env / "detached.py"
+    script.write_text("""import os,subprocess,sys,time
+from pathlib import Path
+child=subprocess.Popen([sys.executable,'-c','import time;time.sleep(120)'],start_new_session=True)
+Path('child-pid').write_text(str(child.pid))
+time.sleep(120)
+""")
+    adapter = CodexAdapter()
+    adapter.command = lambda: ([sys.executable, str(script)], dict(os.environ))
+    task = asyncio.create_task(adapter.run_cycle("continue", noop))
+    for _ in range(200):
+        if (cli_env / "child-pid").is_file():
+            break
+        await asyncio.sleep(0.01)
+    assert (cli_env / "child-pid").is_file()
+    child = int((cli_env / "child-pid").read_text())
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(task, 8)
+    status = Path(f"/proc/{child}/stat")
+    if status.exists():
+        assert status.read_text().rsplit(") ", 1)[1].split()[0] == "Z"

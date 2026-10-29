@@ -38,7 +38,7 @@ export type AgentModelOptions = {
   agents: Array<{
     id: string;
     role: "supervisor" | "worker" | "reporter";
-    runtime: "openai_agents" | "claude_agent";
+    runtime: "openai_agents" | "claude_agent" | "codex_cli" | "claude_cli";
     display_name: string;
     model: AgentModelChoice;
   }>;
@@ -122,7 +122,7 @@ export async function fetchAgentModelOptions(sceneId: TaskMode): Promise<AgentMo
   return {
     scene_id: sceneId,
     models: choices,
-    agents: Object.entries(agents.agents).map(([id, agent]) => ({
+    agents: Object.entries(agents.agents).filter(([, agent]) => agent.role !== "supervisor").map(([id, agent]) => ({
       id,
       role: agent.role,
       runtime: agent.runtime,

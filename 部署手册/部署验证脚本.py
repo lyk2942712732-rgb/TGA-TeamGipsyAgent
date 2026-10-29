@@ -158,14 +158,17 @@ def check_config(configs: dict[str, dict[str, Any] | None], require_api_key: boo
             if not provider:
                 config_errors.append(f"{agent_id} 引用不存在的 Provider {provider_id}")
                 continue
-            used_providers.add(str(provider_id))
+            if binding.get("role") != "supervisor" or runtime.get("supervisor_enabled", False):
+                used_providers.add(str(provider_id))
             model_ids = {item.get("id") for item in provider.get("models", []) if isinstance(item, dict)}
             if model_id not in model_ids:
                 config_errors.append(f"{agent_id} 引用不存在的模型 {provider_id}/{model_id}")
             if protocol not in provider.get("protocols", []):
                 config_errors.append(f"{agent_id} 的协议 {protocol} 未由 Provider {provider_id} 声明")
-            if binding.get("runtime") == "claude_agent" and protocol != "anthropic":
-                config_errors.append(f"{agent_id} 的 Claude Agent SDK 必须使用 anthropic")
+            if binding.get("runtime") in {"claude_agent", "claude_cli"} and protocol != "anthropic":
+                config_errors.append(f"{agent_id} 的 Claude Code 必须使用 anthropic")
+            if binding.get("runtime") == "codex_cli" and protocol != "openai_responses":
+                config_errors.append(f"{agent_id} 的 Codex CLI 必须使用 openai_responses")
             if binding.get("runtime") == "openai_agents" and protocol == "anthropic":
                 config_errors.append(f"{agent_id} 的 OpenAI Agents SDK 不能使用 anthropic")
     if config_errors:

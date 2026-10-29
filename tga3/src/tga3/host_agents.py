@@ -1,4 +1,4 @@
-"""Host-side Supervisor advisor and final Reporter using OpenAI Agents SDK."""
+"""Task finalization with a CLI Reporter; legacy Supervisor is reserved."""
 
 from __future__ import annotations
 
@@ -7,7 +7,6 @@ import hashlib
 import json
 import re
 from collections.abc import Awaitable, Callable
-from contextlib import suppress
 from dataclasses import dataclass, field
 from difflib import SequenceMatcher
 from typing import Any, Literal, Protocol
@@ -18,6 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from .blackboard import Blackboard
 from .config import ResolvedAgent, TGA3Config
 from .dialogue import SolverDialogue
+from .docker_runtime import ContainerRuntime, LaunchSpec
 from .domain import (
     SYSTEM_ACTOR,
     Actor,
@@ -144,31 +144,6 @@ class OpenAIHostModel:
         result = await Runner.run(agent, snapshot, max_turns=binding.max_turns_per_cycle)
         return self._parse_supervisor_decision(result.final_output)
 
-    async def report(self, snapshot: str, binding: ResolvedAgent | None = None) -> str:
-        from agents import Agent, Runner, function_tool, set_tracing_disabled
-
-        set_tracing_disabled(True)
-        binding = binding or self.config.resolve_agent("reporter")
-
-        @function_tool
-        def skills_list() -> list[dict[str, Any]]:
-            """List role-neutral skill packages by name, including writeup guidance."""
-            return [item.__dict__ for item in self.skills.list()]
-
-        @function_tool
-        def skill_read(name: str, path: str = "SKILL.md") -> str:
-            """Read one package document. Start with SKILL.md and load referenced Markdown only as needed."""
-            return self.skills.read(name, path)
-
-        agent = Agent(
-            name=binding.display_name,
-            model=self._model(binding),
-            instructions=binding.system_prompt,
-            tools=[skills_list, skill_read],
-        )
-        result = await Runner.run(agent, snapshot, max_turns=binding.max_turns_per_cycle)
-        return str(result.final_output)
-
 
 class DeterministicHostModel:
     """Offline test model; production selects OpenAIHostModel."""
@@ -178,6 +153,48 @@ class DeterministicHostModel:
 
     async def report(self, snapshot: str, binding: ResolvedAgent | None = None) -> str:
         return f"# TGA3 Writeup\n\n## 固定黑板快照\n\n```json\n{snapshot}\n```\n"
+
+
+class CliHostModel:
+    """Reporter is a one-shot Codex container; Supervisor remains reserved."""
+
+    def __init__(
+        self, config: TGA3Config, containers: ContainerRuntime, storage: Storage, dialogue: SolverDialogue
+    ) -> None:
+        self.config, self.containers, self.storage, self.dialogue = config, containers, storage, dialogue
+
+    async def supervisor(self, snapshot: str, binding: ResolvedAgent | None = None) -> SupervisorDecision:
+        raise RuntimeError("Supervisor is reserved and does not participate in CLI tasks")
+
+    async def report(self, snapshot: str, binding: ResolvedAgent | None = None) -> str:
+        entries = json.loads(snapshot)
+        task_id = UUID(entries[0]["task_id"])
+        binding = binding or self.config.resolve_agent("reporter")
+        actor = Actor(
+            agent_id="reporter",
+            display_name=binding.display_name,
+            role="reporter",
+            sdk=binding.runtime,
+            model=binding.model.name,
+        )
+
+        async def emit(method: str, params: dict) -> None:
+            if method == "container.started":
+                await self.storage.update_agent(task_id, "reporter", container_id=params["container_id"])
+            elif method == "agent.session":
+                run = await self.storage.get_agent(task_id, "reporter")
+                await self.storage.update_agent(task_id, "reporter", metadata={**run.metadata, **params})
+            else:
+                await self.dialogue.emit(
+                    task_id,
+                    actor=actor,
+                    kind=DialogueKind.ACTION_STARTED if method.endswith("started") else DialogueKind.ACTION_COMPLETED,
+                    text=str(params.get("summary", method)),
+                    channel_agent_id="reporter",
+                    payload=params,
+                )
+
+        return await self.containers.report(LaunchSpec(task_id=task_id, agent=binding, report_input=snapshot), emit)
 
 
 @dataclass
@@ -237,6 +254,8 @@ class Automation:
         if latest.kind == EntryKind.FINAL_CANDIDATE:
             if task_id not in self._reporter_jobs:
                 self._reporter_jobs[task_id] = asyncio.create_task(self._report(task_id))
+            return
+        if not self.config.runtime.supervisor_enabled:
             return
         if latest.kind == EntryKind.SUPERVISOR_ADVICE or (
             latest.kind == EntryKind.USER_PROMPT and latest.topic == "scene"
@@ -340,11 +359,7 @@ class Automation:
         try:
             sync = await self.blackboard.sync(task_id, after_seq=0)
             processed_seq = sync.latest_seq
-            delta = [
-                entry
-                for entry in sync.entries
-                if entry.seq > last and entry.kind != EntryKind.SUPERVISOR_ADVICE
-            ]
+            delta = [entry for entry in sync.entries if entry.seq > last and entry.kind != EntryKind.SUPERVISOR_ADVICE]
             durable = [
                 entry
                 for entry in sync.entries
@@ -367,8 +382,7 @@ class Automation:
                     "reason": "silence_check" if silence else "blackboard_changed",
                     "new_entries": [entry.model_dump(mode="json") for entry in delta],
                     "context": [
-                        entry.model_dump(mode="json")
-                        for entry in durable + recent_intel + advice_entries[-4:]
+                        entry.model_dump(mode="json") for entry in durable + recent_intel + advice_entries[-4:]
                     ],
                     "agents": [agent.model_dump(mode="json") for agent in agents],
                 },
@@ -378,9 +392,7 @@ class Automation:
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            await self.storage.update_agent(
-                task_id, "supervisor", actual_state=AgentState.FAILED, last_error=str(exc)
-            )
+            await self.storage.update_agent(task_id, "supervisor", actual_state=AgentState.FAILED, last_error=str(exc))
             await self.dialogue.emit(
                 task_id,
                 actor=supervisor,
@@ -403,9 +415,7 @@ class Automation:
         suppression = self._advice_suppression(
             advice,
             recent_advice,
-            bypass_interval=any(
-                entry.kind in {EntryKind.USER_PROMPT, EntryKind.FINDING} for entry in delta
-            ),
+            bypass_interval=any(entry.kind in {EntryKind.USER_PROMPT, EntryKind.FINDING} for entry in delta),
         )
         progress = decision.progress if suppression is None else f"{decision.progress}（建议未写入：{suppression}）"
         await self.dialogue.announce_blackboard(task_id, sync.latest_seq, progress)
@@ -422,8 +432,7 @@ class Automation:
                         "based_on_seq": sync.latest_seq,
                     },
                     idempotency_key=(
-                        f"advice-{sync.latest_seq}-"
-                        f"{hashlib.sha256(advice.encode('utf-8')).hexdigest()[:12]}"
+                        f"advice-{sync.latest_seq}-{hashlib.sha256(advice.encode('utf-8')).hexdigest()[:12]}"
                     ),
                 ),
             )
@@ -453,11 +462,6 @@ class Automation:
         return None
 
     async def _report(self, task_id: UUID) -> None:
-        await self.storage.update_task(task_id, state=RunState.FINALIZING)
-        await asyncio.sleep(self.config.runtime.cadence.finalization_grace_seconds)
-        task = await self.storage.get_task(task_id)
-        snapshot_seq = task.blackboard_seq
-        await self.storage.update_task(task_id, state=RunState.REPORTING, final_snapshot_seq=snapshot_seq)
         configured = self.config.agents.agents["reporter"]
         run = await self.storage.get_agent(task_id, "reporter")
         binding = self.config.resolve_agent(
@@ -470,24 +474,29 @@ class Automation:
             sdk=configured.runtime,
             model=run.model_id,
         )
-        await self.storage.update_agent(task_id, "reporter", actual_state=AgentState.RUNNING)
-        await self.dialogue.announce_status(task_id, reporter, AgentState.RUNNING.value)
-        entries = await self.storage.list_entries(task_id, up_to_seq=snapshot_seq, limit=10_000)
-        snapshot = json.dumps([entry.model_dump(mode="json") for entry in entries], ensure_ascii=False, indent=2)
         try:
+            await self.storage.update_task(task_id, state=RunState.FINALIZING)
+            await asyncio.sleep(self.config.runtime.cadence.finalization_grace_seconds)
+            # Both writers exit before the report snapshot is fixed.
+            if self.on_reporter_finished:
+                await self.on_reporter_finished(task_id)
+            task = await self.storage.get_task(task_id)
+            snapshot_seq = task.blackboard_seq
+            await self.storage.update_task(task_id, state=RunState.REPORTING, final_snapshot_seq=snapshot_seq)
+            await self.storage.update_agent(task_id, "reporter", actual_state=AgentState.RUNNING)
+            await self.dialogue.announce_status(task_id, reporter, AgentState.RUNNING.value)
+            entries = await self.storage.list_entries(task_id, up_to_seq=snapshot_seq, limit=10_000)
+            snapshot = json.dumps([entry.model_dump(mode="json") for entry in entries], ensure_ascii=False, indent=2)
             markdown = await self.model.report(snapshot, binding)
+            if not markdown.strip():
+                raise ValueError("Reporter returned an empty report")
             root = self.config.resolve_path(self.config.runtime.writeup_root) / str(task_id)
             root.mkdir(parents=True, exist_ok=True)
             path = root / "writeup.md"
             path.write_text(markdown, encoding="utf-8")
             digest = hashlib.sha256(path.read_bytes()).hexdigest()
             await self.storage.save_writeup(task_id, snapshot_seq, str(path), digest)
-            if self.on_reporter_finished:
-                await self.on_reporter_finished(task_id)
         except Exception as exc:
-            if self.on_reporter_finished:
-                with suppress(Exception):
-                    await self.on_reporter_finished(task_id)
             await self.storage.update_agent(
                 task_id,
                 "reporter",
@@ -518,12 +527,13 @@ class Automation:
             desired_state=AgentState.COMPLETED,
             actual_state=AgentState.COMPLETED,
         )
-        await self.storage.update_agent(
-            task_id,
-            "supervisor",
-            desired_state=AgentState.COMPLETED,
-            actual_state=AgentState.COMPLETED,
-        )
+        if self.config.runtime.supervisor_enabled:
+            await self.storage.update_agent(
+                task_id,
+                "supervisor",
+                desired_state=AgentState.COMPLETED,
+                actual_state=AgentState.COMPLETED,
+            )
         await self.dialogue.announce_status(task_id, reporter, AgentState.COMPLETED.value)
         await self.storage.update_task(task_id, state=RunState.COMPLETED)
         await self.dialogue.emit(

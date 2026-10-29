@@ -110,6 +110,19 @@ def join_origin(origin: str, path: str) -> str:
     return f"{normalize_api_origin(origin)}{path}"
 
 
+def normalize_custom_base(raw: str) -> str:
+    """Keep gateway path prefixes while accepting pasted API/model URLs."""
+    parsed = urlsplit(raw.strip())
+    origin = normalize_api_origin(raw)
+    path = parsed.path.rstrip("/")
+    for suffix in ("/v1/chat/completions", "/v1/responses", "/v1/models", "/chat/completions",
+                   "/responses", "/models", "/v1"):
+        if path.endswith(suffix):
+            path = path[:-len(suffix)]
+            break
+    return origin + path
+
+
 def runtime_base_url(preset_id: str | None, origin: str, protocol: ProviderProtocol) -> str:
     profile = provider_profile(preset_id)
     if profile:
@@ -119,7 +132,7 @@ def runtime_base_url(preset_id: str | None, origin: str, protocol: ProviderProto
             raise ValueError(f"{profile.name} 不支持协议 {protocol}") from exc
         return join_origin(origin, path)
     path = "" if protocol == "anthropic" else "/v1"
-    return join_origin(origin, path)
+    return normalize_custom_base(origin) + path
 
 
 def discovery_urls(
@@ -130,7 +143,7 @@ def discovery_urls(
     profile = provider_profile(preset_id)
     if profile:
         return (join_origin(origin, profile.models_path),)
-    normalized = normalize_api_origin(origin)
+    normalized = normalize_custom_base(origin)
     paths = (
         ("/v1/models", "/models")
         if set(protocols) == {"anthropic"}
