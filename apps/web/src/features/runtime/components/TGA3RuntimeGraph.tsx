@@ -430,7 +430,7 @@ function polylineMidpoint(points: Array<{ x: number; y: number }>): { x: number;
 }
 
 function line(from: NodeBox, to: NodeBox) { return { x1: from.x, y1: from.y, x2: to.x, y2: to.y }; }
-function orderedAgents(agents: TGA3Agent[]): TGA3Agent[] { const order: Record<string, number> = { "worker-claude": 0, "worker-openai": 1, reporter: 2 }; return [...agents].sort((a, b) => (order[a.agent_id] ?? 9) - (order[b.agent_id] ?? 9)).slice(0, 3); }
+function orderedAgents(agents: TGA3Agent[]): TGA3Agent[] { const order: Record<string, number> = { scout: 0, "worker-claude": 1, "worker-openai": 2, reporter: 3 }; return [...agents].sort((a, b) => (order[a.agent_id] ?? 9) - (order[b.agent_id] ?? 9)).slice(0, 4); }
 function agentNode(agentId: string): string { return `agent:${agentId}`; }
 function modelNode(agentId: string): string { return `model:${agentId}`; }
 function timestamp(value: string): number { const parsed = Date.parse(value); return Number.isNaN(parsed) ? 0 : parsed; }

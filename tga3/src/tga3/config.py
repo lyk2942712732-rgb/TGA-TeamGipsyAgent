@@ -131,7 +131,7 @@ class ModelsConfig(BaseModel):
 class AgentConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
     display_name: str = Field(min_length=1, max_length=200)
-    role: Literal["worker", "reporter"]
+    role: Literal["scout", "worker", "reporter"]
     runtime: Literal["codex_cli", "claude_cli"]
     provider_id: str
     model_id: str
@@ -212,6 +212,7 @@ class RuntimeConfig(BaseModel):
     skills_root: str
     mcp_instructions: str = Field(min_length=1)
     cli_timeout_seconds: int = Field(default=1800, ge=30, le=86400)
+    scout_timeout_seconds: int = Field(default=300, ge=60, le=600)
     worker_images: dict[str, str]
     worker_cycle_prompts: WorkerCyclePromptsConfig
     docker: DockerConfig = Field(default_factory=DockerConfig)
@@ -245,7 +246,7 @@ class ResolvedAgent(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     agent_id: str
     display_name: str
-    role: Literal["worker", "reporter"]
+    role: Literal["scout", "worker", "reporter"]
     runtime: Literal["codex_cli", "claude_cli"]
     provider: ProviderConfig
     model: ModelConfig
@@ -258,7 +259,7 @@ class ResolvedAgent(BaseModel):
 class TGA3Config:
     """Loads the single config directory; no environment-secret overlay is supported."""
 
-    REQUIRED_AGENTS = {"worker-openai", "worker-claude", "reporter"}
+    REQUIRED_AGENTS = {"scout", "worker-openai", "worker-claude", "reporter"}
     REQUIRED_SCENES = {
         "penetration_test",
         "incident_response",
@@ -496,11 +497,12 @@ class TGA3Config:
         runtime: RuntimeConfig,
     ) -> None:
         if set(agents.agents) != cls.REQUIRED_AGENTS:
-            raise ValueError("agents.json must contain exactly worker-openai, worker-claude and reporter")
+            raise ValueError("agents.json must contain exactly scout, worker-openai, worker-claude and reporter")
         missing = sorted(cls.REQUIRED_AGENTS.difference(agents.agents))
         if missing:
             raise ValueError(f"agents.json is missing: {', '.join(missing)}")
         expected_roles = {
+            "scout": "scout",
             "worker-openai": "worker",
             "worker-claude": "worker",
             "reporter": "reporter",
@@ -515,6 +517,7 @@ class TGA3Config:
         if missing_scenes:
             raise ValueError(f"scenes.json is missing: {', '.join(missing_scenes)}")
         expected_runtimes = {
+            "scout": "codex_cli",
             "worker-openai": "codex_cli",
             "worker-claude": "claude_cli",
             "reporter": "codex_cli",
@@ -531,7 +534,7 @@ class TGA3Config:
         missing_images = sorted(
             agent_id
             for agent_id, binding in agents.agents.items()
-            if binding.role in {"worker", "reporter"} and agent_id not in runtime.worker_images
+            if binding.role in {"scout", "worker", "reporter"} and agent_id not in runtime.worker_images
         )
         if missing_images:
             raise ValueError(f"runtime.json worker_images is missing: {', '.join(missing_images)}")

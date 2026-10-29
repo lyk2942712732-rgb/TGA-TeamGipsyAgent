@@ -11,8 +11,8 @@ import { LoadingSkeleton } from "../components/ui/LoadingSkeleton";
 import { MODE_PROFILES, TASK_MODES } from "../modes";
 import { statusLabel } from "../shared/status";
 
-const STATES = ["created", "starting", "running", "finalizing", "reporting", "completed", "failed", "cancelled"];
-const STATE_TONES: Record<string, string> = { running: "tone-ok", completed: "tone-ok", finalizing: "tone-info", reporting: "tone-info", failed: "tone-danger", cancelled: "tone-muted", starting: "tone-info", created: "tone-muted" };
+const STATES = ["created", "scouting", "starting", "running", "finalizing", "reporting", "completed", "failed", "cancelled"];
+const STATE_TONES: Record<string, string> = { scouting: "tone-info", running: "tone-ok", completed: "tone-ok", finalizing: "tone-info", reporting: "tone-info", failed: "tone-danger", cancelled: "tone-muted", starting: "tone-info", created: "tone-muted" };
 
 export function TaskListPage() {
   const navigate = useNavigate();

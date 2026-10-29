@@ -138,7 +138,7 @@ def test_worker_prompt_injects_exact_blackboard_identity(monkeypatch):
     assert "task_id: task-uuid" in prompt
     assert '"agent_id":"worker-openai"' in prompt
     assert "Never invent a placeholder task ID or actor." in prompt
-    assert "intel: body={claim, detail?}; artifact_refs=optional" in prompt
+    assert "intel: body={claim, detail?}; artifact_refs=optional" not in prompt
     assert "body={claim, detail?}; artifact_refs=required non-empty" in prompt
     assert "body={conclusion, rationale, answer_type?, finding_ids}; artifact_refs=forbidden" in prompt
     assert "blackboard_publish tool accepts one request object" in prompt

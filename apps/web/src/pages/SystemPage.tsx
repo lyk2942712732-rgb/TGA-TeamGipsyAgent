@@ -14,7 +14,7 @@ export function SystemPage() {
   const attention = useQuery({ queryKey: ["tga3", "attention"], queryFn: attentionApi.list });
   const components = health.data?.components ?? [];
   const overall = !components.length ? "loading" : components.some((item) => item.status === "unavailable") ? "unavailable" : components.some((item) => item.status === "degraded") ? "degraded" : "healthy";
-  const running = (tasks.data ?? []).filter((task) => ["starting", "running", "finalizing", "reporting"].includes(task.state)).length;
+  const running = (tasks.data ?? []).filter((task) => ["scouting", "starting", "running", "finalizing", "reporting"].includes(task.state)).length;
   const refresh = () => { void health.refetch(); void tasks.refetch(); void attention.refetch(); };
   const columns: Array<Column<SystemComponent>> = [
     { id: "label", header: "组件", render: (row) => <strong>{row.label}</strong> },

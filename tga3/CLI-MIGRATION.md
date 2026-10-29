@@ -98,3 +98,13 @@ npm run build
 ```
 
 部署时还需验证真实镜像版本、Kali 工具、数据库记录、CLI 会话恢复、Worker → Reporter 串行收尾与清理。
+
+## Scout 前置侦察
+
+任务按 Scout → 两个 Worker 并行 → Reporter 串行推进。Scout 复用 Codex Worker 镜像，
+使用独立目录和全新 CLI 单轮执行。仅 Scout 可发布 Intel，Worker 仅发布 Finding 和最终候选。
+`runtime.scout_timeout_seconds` 默认 300，允许 60–600 秒；控制层限制包含容器启动的总时间，
+超时先终止并回收 Scout 再启动 Worker，已有 Intel 与证据保留。正常结束但没有 Intel 时
+提示 Worker 从原始材料开始；执行错误则任务失败，不悄悄绕过错误。
+Scout 的 /artifacts 独立保存在 artifacts/<task-id>/scout；Worker 将其只读挂载到 /recon。
+Reporter 只读查看 Scout 与两个 Worker 的证据。只有 Intel 作为交接，不生成额外侦察简报。

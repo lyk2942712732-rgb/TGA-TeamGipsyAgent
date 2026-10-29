@@ -11,7 +11,7 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from .blackboard import Blackboard
-from .config import TGA3Config
+from .config import ResolvedAgent, TGA3Config
 from .docker_runtime import ContainerRuntime, LaunchSpec
 from .domain import (
     SYSTEM_ACTOR,
@@ -37,6 +37,7 @@ class TaskCoordinator:
         self.config = config
         self.storage = storage
         self.containers = containers
+        self._startup_jobs: dict[UUID, asyncio.Task[None]] = {}
         self.gateway = AgentGateway(self.handle_agent_event)
         self.events = TaskEvents(storage)
         self.blackboard = Blackboard(storage, self.blackboard_changed)
@@ -111,26 +112,98 @@ class TaskCoordinator:
         )
         for name, media_type, content in initial_files or []:
             await self.add_input_file(task.id, name, media_type, content)
-        try:
-            for agent_id in self.config.worker_agent_ids:
-                resolved = resolved_agents[agent_id]
-                run = await self.storage.update_agent(
-                    task.id,
-                    agent_id,
-                    desired_state=AgentState.RUNNING,
-                    actual_state=AgentState.STARTING,
+        task = await self.storage.update_task(task.id, state=RunState.SCOUTING)
+        self._startup_jobs[task.id] = asyncio.create_task(self._scout_then_workers(task.id, resolved_agents))
+        return task
+
+    async def _scout_then_workers(self, task_id: UUID, bindings: dict[str, ResolvedAgent]) -> None:
+        scout = await self.storage.update_agent(
+            task_id, "scout", desired_state=AgentState.RUNNING, actual_state=AgentState.STARTING
+        )
+        actor = self.actor_for(scout)
+
+        async def emit(method: str, params: dict) -> None:
+            if method == "container.started":
+                await self.storage.update_agent(
+                    task_id, "scout", container_id=params["container_id"], actual_state=AgentState.RUNNING
                 )
-                container_id = await self.containers.launch(LaunchSpec(task_id=task.id, agent=resolved))
-                run = await self.storage.update_agent(task.id, agent_id, container_id=container_id)
-                await self.events.announce_status(task.id, self.actor_for(run), AgentState.STARTING.value)
-            return await self.storage.update_task(task.id, state=RunState.RUNNING)
-        except Exception:
-            await self.storage.update_task(task.id, state=RunState.FAILED)
+                await self.events.announce_status(task_id, actor, AgentState.RUNNING.value)
+            else:
+                await self.handle_agent_event(task_id, "scout", method, params)
+
+        try:
+            await self.events.announce_status(task_id, actor, AgentState.STARTING.value)
+            timed_out = False
+            try:
+                async with asyncio.timeout(self.config.runtime.scout_timeout_seconds):
+                    await self.containers.scout(LaunchSpec(task_id=task_id, agent=bindings["scout"]), emit)
+            except TimeoutError:
+                timed_out = True
+            # scout() only returns after the container and its tool processes have stopped.
+            entries = (await self.blackboard.sync(task_id, limit=10_000)).entries
+            intel_count = sum(entry.kind == EntryKind.INTEL for entry in entries)
+            state = AgentState.STOPPED if timed_out else AgentState.COMPLETED
+            current = await self.storage.get_agent(task_id, "scout")
+            await self.storage.update_agent(
+                task_id, "scout", desired_state=state, actual_state=state,
+                metadata={**current.metadata, "finish_reason": "timeout" if timed_out else "completed",
+                          "intel_count": intel_count},
+            )
+            await self.events.announce_status(
+                task_id, actor, state.value, "侦察预算已用尽，保留已有成果" if timed_out else "侦察结束"
+            )
+            await self.events.emit(
+                task_id, actor=SYSTEM_ACTOR, kind=EventKind.SYSTEM,
+                text=f"Scout 已交接 {intel_count} 条 Intel，开始启动两个 Worker。"
+                     + ("未获得 Intel，Worker 将从题面与原始材料开始。" if not intel_count else ""),
+                payload={"intel_count": intel_count, "timed_out": timed_out},
+            )
+            # Open the Worker write phase before launching either container.
+            await self.storage.update_task(task_id, state=RunState.RUNNING)
+            for agent_id in self.config.worker_agent_ids:
+                run = await self.storage.update_agent(
+                    task_id, agent_id, desired_state=AgentState.RUNNING, actual_state=AgentState.STARTING
+                )
+                launch = asyncio.create_task(
+                    self.containers.launch(LaunchSpec(task_id=task_id, agent=bindings[agent_id]))
+                )
+                try:
+                    container_id = await asyncio.shield(launch)
+                except asyncio.CancelledError:
+                    await launch
+                    raise
+                await self.storage.update_agent(task_id, agent_id, container_id=container_id)
+                await self.events.announce_status(task_id, self.actor_for(run), AgentState.STARTING.value)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            await self.storage.update_task(task_id, state=RunState.FAILED)
+            current = await self.storage.get_agent(task_id, "scout")
+            if current.actual_state not in {AgentState.COMPLETED, AgentState.STOPPED}:
+                await self.storage.update_agent(
+                    task_id, "scout", desired_state=AgentState.FAILED, actual_state=AgentState.FAILED,
+                    last_error=str(exc),
+                )
+            await self.events.emit(
+                task_id, actor=SYSTEM_ACTOR, kind=EventKind.ERROR, text=f"任务启动失败：{exc}",
+            )
             await asyncio.gather(
-                *(self.containers.stop(task.id, agent_id) for agent_id in self.config.worker_agent_ids),
+                *(self.containers.stop(task_id, agent_id) for agent_id in bindings), return_exceptions=True,
+            )
+
+    async def cancel_startup(self, task_id: UUID) -> None:
+        job = self._startup_jobs.pop(task_id, None)
+        if job is not None and not job.done():
+            job.cancel()
+            await asyncio.gather(job, return_exceptions=True)
+            await asyncio.gather(
+                *(self.containers.stop(task_id, agent_id) for agent_id in self.config.agents.agents),
                 return_exceptions=True,
             )
-            raise
+
+    async def close(self) -> None:
+        for task_id in list(self._startup_jobs):
+            await self.cancel_startup(task_id)
 
     async def add_input_file(
         self, task_id: UUID, raw_name: str, media_type: str, content: bytes
@@ -315,6 +388,8 @@ class TaskCoordinator:
             )
 
     async def stop_task(self, task_id: UUID) -> None:
+        await self.cancel_startup(task_id)
+        await self.containers.stop(task_id, "scout")
         workers = await self._worker_runs(task_id)
         for run in workers:
             await self.storage.update_agent(task_id, run.agent_id, desired_state=AgentState.STOPPING)
@@ -330,6 +405,7 @@ class TaskCoordinator:
         await self.storage.update_task(task_id, state=RunState.CANCELLED)
 
     async def delete_task(self, task_id: UUID) -> None:
+        await self.cancel_startup(task_id)
         task = await self.storage.get_task(task_id)
         terminal = task.state in {RunState.COMPLETED, RunState.FAILED, RunState.CANCELLED}
         if not terminal:

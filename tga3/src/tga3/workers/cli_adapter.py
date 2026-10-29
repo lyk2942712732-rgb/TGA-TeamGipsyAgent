@@ -224,7 +224,7 @@ class CodexAdapter(CliAdapter):
         (cli_home / "config.toml").write_text("\n".join(config) + "\n", encoding="utf-8")
         env = dict(os.environ, CODEX_HOME=str(cli_home), CODEX_API_KEY=self.api_key)
         args = [self.binary, "exec"]
-        if self.session_id and not self.reporter:
+        if self.session_id and not self.reporter and os.environ.get("TGA3_AGENT_ROLE") != "scout":
             args += ["resume", self.session_id]
         args += ["--json", "--skip-git-repo-check", "--model", self.model_name, "-"]
         return args, env

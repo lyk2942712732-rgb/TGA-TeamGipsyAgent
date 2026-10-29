@@ -22,7 +22,8 @@ ChangeHook = Callable[[UUID, int], Awaitable[None]]
 
 _WRITE_POLICY: dict[str, frozenset[EntryKind]] = {
     "user": frozenset({EntryKind.USER_PROMPT, EntryKind.USER_FILE}),
-    "worker": frozenset({EntryKind.INTEL, EntryKind.FINDING, EntryKind.FINAL_CANDIDATE}),
+    "scout": frozenset({EntryKind.INTEL}),
+    "worker": frozenset({EntryKind.FINDING, EntryKind.FINAL_CANDIDATE}),
     "reporter": frozenset(),
     "system": frozenset({EntryKind.USER_PROMPT, EntryKind.USER_FILE}),
 }
@@ -37,6 +38,10 @@ class Blackboard:
         if request.kind not in _WRITE_POLICY.get(actor.role, frozenset()):
             raise ContractError(f"{actor.role} cannot publish {request.kind.value}")
         task = await self.storage.get_task(task_id)
+        if actor.role == "scout" and task.state != RunState.SCOUTING:
+            raise ContractError("Scout can publish only during scouting")
+        if actor.role == "worker" and task.state == RunState.SCOUTING:
+            raise ContractError("Workers must wait for Scout handoff")
         if task.state in {RunState.REPORTING, RunState.COMPLETED, RunState.FAILED, RunState.CANCELLED}:
             raise ContractError("task is closed for blackboard writes")
         entry = await self.storage.publish(task_id, actor, request)

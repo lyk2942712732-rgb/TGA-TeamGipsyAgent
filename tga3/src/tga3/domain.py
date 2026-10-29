@@ -26,6 +26,7 @@ class RunState(StrEnum):
     CREATED = "created"
     STARTING = "starting"
     RUNNING = "running"
+    SCOUTING = "scouting"
     FINALIZING = "finalizing"
     REPORTING = "reporting"
     COMPLETED = "completed"
@@ -52,7 +53,7 @@ class Actor(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     agent_id: str = Field(min_length=1, max_length=120)
     display_name: str = Field(min_length=1, max_length=200)
-    role: Literal["user", "worker", "reporter", "system"]
+    role: Literal["user", "scout", "worker", "reporter", "system"]
     sdk: str | None = Field(default=None, max_length=80)
     model: str | None = Field(default=None, max_length=200)
 
@@ -148,7 +149,12 @@ class WorkerFindingPublication(WorkerPublicationBase):
     )
 
 
-class WorkerIntelPublication(WorkerPublicationBase):
+class ScoutActor(Actor):
+    role: Literal["scout"] = "scout"
+
+
+class ScoutIntelPublication(WorkerPublicationBase):
+    actor: ScoutActor
     kind: Literal[EntryKind.INTEL]
     body: FindingBody
     artifact_refs: list[ArtifactRef] = Field(
@@ -162,17 +168,22 @@ class WorkerFinalCandidatePublication(WorkerPublicationBase):
     body: FinalCandidateBody
 
 
-WorkerPublishRequest: TypeAlias = Annotated[
-    WorkerIntelPublication | WorkerFindingPublication | WorkerFinalCandidatePublication,
+AgentPublishRequest: TypeAlias = Annotated[
+    ScoutIntelPublication | WorkerFindingPublication | WorkerFinalCandidatePublication,
     Field(discriminator="kind"),
 ]
 
 
-def worker_publish_contract() -> str:
+def publication_contract(role: str | None = None) -> str:
     """Generate the compact prompt/tool description from the authoritative Pydantic models."""
 
     parts: list[str] = []
-    for model in (WorkerIntelPublication, WorkerFindingPublication, WorkerFinalCandidatePublication):
+    models = (
+        (ScoutIntelPublication,) if role == "scout" else (WorkerFindingPublication, WorkerFinalCandidatePublication)
+    )
+    if role is None:
+        models = (ScoutIntelPublication, *models)
+    for model in models:
         literal_kind = get_args(model.model_fields["kind"].annotation)[0]
         kind = literal_kind.value
         body_model = model.model_fields["body"].annotation
@@ -187,7 +198,8 @@ def worker_publish_contract() -> str:
             )
         parts.append(f"{kind}: body={{{body_fields}}}; {artifact_rule}")
     return (
-        "Worker blackboard publication contract generated from Pydantic. Select the request branch by kind; "
+        "Scout publishes intel only; Workers publish finding/final_candidate only. "
+        "Publication contract generated from Pydantic. Select the request branch by kind; "
         "extra fields are forbidden. " + " | ".join(parts)
     )
 
@@ -360,9 +372,9 @@ __all__ = [
     "WorkerActor",
     "WorkerFinalCandidatePublication",
     "WorkerFindingPublication",
-    "WorkerIntelPublication",
-    "WorkerPublishRequest",
+    "ScoutIntelPublication",
+    "AgentPublishRequest",
     "Writeup",
     "utc_now",
-    "worker_publish_contract",
+    "publication_contract",
 ]

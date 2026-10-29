@@ -29,7 +29,7 @@ def test_workers_get_private_workspaces_and_evidence_reporter_gets_read_only_uni
     runtime.config, runtime.client = config, SimpleNamespace(containers=containers)
     task_id = uuid4()
     paths = {}
-    for agent_id in ("worker-openai", "worker-claude", "reporter"):
+    for agent_id in ("scout", "worker-openai", "worker-claude", "reporter"):
         runtime._launch_sync(LaunchSpec(task_id=task_id, agent=config.resolve_agent(agent_id)))
         args = containers.kwargs
         mounts = {value["bind"]: (Path(key), value["mode"]) for key, value in args["volumes"].items()}
@@ -37,8 +37,9 @@ def test_workers_get_private_workspaces_and_evidence_reporter_gets_read_only_uni
         assert args["working_dir"] == "/workspace"
         assert mounts["/inputs"][1] == "ro"
     first, second, reporter = (paths[key] for key in ("worker-openai", "worker-claude", "reporter"))
-    assert len({paths[key]["/workspace"][0] for key in paths}) == 3
+    assert len({paths[key]["/workspace"][0] for key in paths}) == 4
     assert first["/inputs"] == second["/inputs"] == reporter["/inputs"]
+    assert first["/recon"] == second["/recon"] == (paths["scout"]["/artifacts"][0], "ro")
     assert first["/artifacts"][0] != second["/artifacts"][0]
     for key, content in (("worker-openai", "first"), ("worker-claude", "second")):
         (paths[key]["/artifacts"][0] / "proof.txt").write_text(content)

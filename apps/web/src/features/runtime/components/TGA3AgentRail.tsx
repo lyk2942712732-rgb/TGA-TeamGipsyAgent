@@ -2,7 +2,7 @@ import { Bot, Boxes, FileText } from "lucide-react";
 import type { TGA3Agent } from "../../../runtime/tga3-runtime";
 import { protocolLabel, roleLabel, sdkLabel, stateLabel, stateTone } from "../tga3-view";
 
-const ORDER: Record<string, number> = { worker: 1, reporter: 2 };
+const ORDER: Record<string, number> = { scout: 0, worker: 1, reporter: 2 };
 
 export function TGA3AgentRail({ agents, selectedAgentId, onSelect }: { agents: TGA3Agent[]; selectedAgentId: string | null; onSelect: (agentId: string) => void }) {
   const ordered = [...agents].sort((a, b) => (ORDER[a.role] ?? 9) - (ORDER[b.role] ?? 9) || a.agent_id.localeCompare(b.agent_id));

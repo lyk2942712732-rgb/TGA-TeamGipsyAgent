@@ -12,6 +12,7 @@ from tga3.domain import (
     ArtifactRef,
     EntryKind,
     PublishRequest,
+    RunState,
     utc_now,
 )
 from tga3.errors import ContractError, FindingRejectedError
@@ -89,8 +90,9 @@ async def test_finding_gate_hides_artifact_links_and_is_idempotent():
 async def test_intel_reuses_finding_body_and_accepts_optional_evidence():
     storage = InMemoryStorage()
     task = await storage.create_task("intel", "penetration_test")
+    await storage.update_task(task.id, state=RunState.SCOUTING)
     board = Blackboard(storage)
-    actor = worker()
+    actor = Actor(agent_id="scout", display_name="Scout", role="scout")
 
     without_evidence = await board.publish(
         task.id,
@@ -121,10 +123,11 @@ async def test_intel_reuses_finding_body_and_accepts_optional_evidence():
 async def test_intel_rejects_an_unavailable_optional_artifact():
     storage = InMemoryStorage()
     task = await storage.create_task("bad intel", "penetration_test")
+    await storage.update_task(task.id, state=RunState.SCOUTING)
     with pytest.raises(FindingRejectedError):
         await Blackboard(storage).publish(
             task.id,
-            worker(),
+            Actor(agent_id="scout", display_name="Scout", role="scout"),
             PublishRequest(
                 kind=EntryKind.INTEL,
                 body={"claim": "unsupported intel"},

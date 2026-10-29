@@ -12,7 +12,7 @@ from mcp.server.transport_security import TransportSecuritySettings
 
 from .blackboard import Blackboard
 from .config import TGA3Config
-from .domain import Actor, Artifact, WorkerPublishRequest, worker_publish_contract
+from .domain import Actor, AgentPublishRequest, Artifact, publication_contract
 
 
 def build_mcp(config: TGA3Config, blackboard: Blackboard) -> FastMCP:
@@ -48,11 +48,15 @@ def build_mcp(config: TGA3Config, blackboard: Blackboard) -> FastMCP:
         result = await blackboard.sync(UUID(task_id), after_seq=after_seq, limit=limit)
         return result.model_dump(mode="json")
 
-    @mcp.tool(description=worker_publish_contract())
+    @mcp.tool(description=publication_contract())
     async def blackboard_publish(
-        request: WorkerPublishRequest,
+        request: AgentPublishRequest,
     ) -> dict[str, Any]:
         """Publish one strictly typed Worker entry; the request schema is authoritative."""
+        identity = request.actor
+        configured = config.agents.agents.get(identity.agent_id)
+        if configured is None or configured.role != identity.role:
+            raise ValueError("actor must match a configured Scout or Worker")
         entry = await blackboard.publish(
             request.task_id,
             Actor.model_validate(request.actor),
@@ -72,8 +76,8 @@ def build_mcp(config: TGA3Config, blackboard: Blackboard) -> FastMCP:
         task_uuid = UUID(task_id)
         identity = Actor.model_validate(actor)
         configured = config.agents.agents.get(identity.agent_id)
-        if configured is None or configured.role != "worker" or identity.role != "worker":
-            raise ValueError("only configured Workers can register evidence")
+        if configured is None or configured.role not in {"scout", "worker"} or identity.role != configured.role:
+            raise ValueError("only configured Scout or Workers can register evidence")
         task_root = (config.resolve_path(config.runtime.artifact_root) / str(task_uuid) / identity.agent_id).resolve()
         path = (task_root / relative_path).resolve()
         if task_root != path and task_root not in path.parents:

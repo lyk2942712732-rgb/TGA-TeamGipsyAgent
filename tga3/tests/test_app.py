@@ -77,9 +77,9 @@ def test_frontend_api_uses_safe_catalog_and_page_owned_config_documents(tmp_path
         assert client.delete("/api/v3/config/models/team-gateway").status_code == 204
         assert client.delete("/api/v3/config/models/openai").status_code == 422
         agents = client.get("/api/v3/config/agents").json()
-        assert set(agents["agents"]) == {"worker-openai", "worker-claude", "reporter"}
+        assert set(agents["agents"]) == {"scout", "worker-openai", "worker-claude", "reporter"}
         definitions = client.get("/api/v3/agent-definitions").json()
-        assert len(definitions) == 3
+        assert len(definitions) == 4
         assert next(item for item in definitions if item["id"] == "reporter")["tools"] == [
             "Read snapshot", "Read evidence", "Read skills", "Markdown Writeup",
         ]
@@ -164,7 +164,7 @@ def test_frontend_api_uses_safe_catalog_and_page_owned_config_documents(tmp_path
         task_id = created.json()["id"]
         assert created.json()["scene_id"] == "reverse_engineering"
         detail = client.get(f"/api/v3/tasks/{task_id}").json()
-        assert len(detail["agents"]) == 3
+        assert len(detail["agents"]) == 4
         assert {agent["runtime_location"] for agent in detail["agents"]} == {"container"}
         assert next(agent for agent in detail["agents"] if agent["agent_id"] == "worker-openai")["model_id"] == (
             "gpt-task-override"
@@ -177,7 +177,7 @@ def test_frontend_api_uses_safe_catalog_and_page_owned_config_documents(tmp_path
         )
         board = client.get(f"/api/v3/tasks/{task_id}/blackboard").json()["entries"]
         assert [entry["topic"] for entry in board] == ["scene", "task", "input"]
-        assert len(containers.launched) == 2
+        assert len(containers.launched) == 3
         assert next(item for item in containers.launched if item.agent.agent_id == "worker-openai").agent.model.id == (
             "gpt-task-override"
         )

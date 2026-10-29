@@ -26,6 +26,7 @@ class ContainerRuntime(Protocol):
     async def stop(self, task_id: UUID, agent_id: str) -> None: ...
     async def image_status(self, image: str) -> dict[str, object]: ...
     async def report(self, spec: LaunchSpec, emit) -> str: ...
+    async def scout(self, spec: LaunchSpec, emit) -> None: ...
 
 
 class DockerContainerRuntime:
@@ -58,7 +59,7 @@ class DockerContainerRuntime:
         workspace = self.config.resolve_path(self.config.runtime.workspace_root) / str(task_id) / agent_id
         inputs = self.config.resolve_path(self.config.runtime.input_root) / str(task_id)
         artifacts = self.config.resolve_path(self.config.runtime.artifact_root) / str(task_id)
-        if self.config.agents.agents[agent_id].role == "worker":
+        if self.config.agents.agents[agent_id].role in {"scout", "worker"}:
             artifacts = artifacts / agent_id
         inputs.mkdir(parents=True, exist_ok=True)
         self._ensure_worker_directory(workspace)
@@ -80,6 +81,10 @@ class DockerContainerRuntime:
             str(artifacts): {"bind": "/artifacts", "mode": "ro" if is_reporter else "rw"},
             str(self.config.skills_root): {"bind": "/skills", "mode": "ro"},
         }
+        if binding.role == "worker":
+            recon = self.config.resolve_path(runtime.artifact_root) / str(spec.task_id) / "scout"
+            self._ensure_worker_directory(recon)
+            volumes[str(recon)] = {"bind": "/recon", "mode": "ro"}
         if is_reporter:
             volumes[str(workspace / "report-input.json")] = {"bind": "/workspace/report-input.json", "mode": "ro"}
         image = runtime.worker_images[binding.agent_id]
@@ -91,7 +96,10 @@ class DockerContainerRuntime:
             "TGA3_AGENT_DISPLAY_NAME": binding.display_name,
             "TGA3_AGENT_RUNTIME": binding.runtime,
             "TGA3_AGENT_ROLE": binding.role,
-            "TGA3_CLI_TIMEOUT_SECONDS": str(runtime.cli_timeout_seconds),
+            "TGA3_CLI_TIMEOUT_SECONDS": str(
+                runtime.scout_timeout_seconds + 30 if binding.role == "scout" else runtime.cli_timeout_seconds
+            ),
+            "TGA3_SCOUT_TIMEOUT_SECONDS": str(runtime.scout_timeout_seconds),
             "TGA3_SYSTEM_PROMPT": binding.system_prompt,
             "TGA3_CONTROL_WS_URL": runtime.control_ws_url,
             "TGA3_BLACKBOARD_MCP_URL": blackboard_mcp_url,
@@ -127,6 +135,44 @@ class DockerContainerRuntime:
             extra_hosts={"host.docker.internal": "host-gateway"},
         )
         return container.id
+
+    async def scout(self, spec: LaunchSpec, emit) -> None:
+        """One CLI turn; the coordinator owns the total deadline and cancels this call."""
+        launch = asyncio.create_task(self.launch(spec))
+        offset = 0
+        pending = b""
+        try:
+            container_id = await asyncio.shield(launch)
+            await emit("container.started", {"container_id": container_id})
+            container = await asyncio.to_thread(self.client.containers.get, container_id)
+            while True:
+                await asyncio.to_thread(container.reload)
+                raw = await asyncio.to_thread(container.logs)
+                pending += raw[offset:]
+                offset = len(raw)
+                lines = pending.split(b"\n")
+                pending = lines.pop()
+                for line in lines:
+                    try:
+                        event = json.loads(line)
+                    except ValueError:
+                        continue
+                    if isinstance(event, dict) and event.get("method") in {
+                        "agent.session", "agent.action.started", "agent.action.completed", "agent.output.delta",
+                    }:
+                        await emit(event["method"], event.get("params", {}))
+                if container.status in {"exited", "dead"}:
+                    if container.attrs["State"].get("ExitCode") != 0:
+                        key = spec.agent.api_key.get_secret_value()
+                        detail = raw.decode(errors="replace")[-12000:]
+                        raise RuntimeUnavailableError(detail.replace(key, "[redacted]") if key else detail)
+                    return
+                await asyncio.sleep(0.5)
+        finally:
+            try:
+                await launch
+            finally:
+                await self.stop(spec.task_id, spec.agent.agent_id)
 
     async def report(self, spec: LaunchSpec, emit) -> str:
         launch = asyncio.create_task(self.launch(spec))
@@ -231,6 +277,13 @@ class FakeContainerRuntime:
         try:
             await emit("container.started", {"container_id": container_id})
             return "# Test report\n\n" + (spec.report_input or "")
+        finally:
+            await self.stop(spec.task_id, spec.agent.agent_id)
+
+    async def scout(self, spec: LaunchSpec, emit) -> None:
+        container_id = await self.launch(spec)
+        try:
+            await emit("container.started", {"container_id": container_id})
         finally:
             await self.stop(spec.task_id, spec.agent.agent_id)
 

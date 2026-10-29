@@ -24,12 +24,13 @@ export type TGA3Provider = {
   selected_api_key_id: string;
 };
 export type ModelsConfig = { schema_version: number; providers: TGA3Provider[] };
-export type AgentConfig = { display_name: string; role: "worker" | "reporter"; runtime: "codex_cli" | "claude_cli"; provider_id: string; model_id: string; protocol: ProviderProtocol; max_turns_per_cycle: number; system_prompt: string };
+export type AgentConfig = { display_name: string; role: "scout" | "worker" | "reporter"; runtime: "codex_cli" | "claude_cli"; provider_id: string; model_id: string; protocol: ProviderProtocol; max_turns_per_cycle: number; system_prompt: string };
 export type AgentsConfig = { schema_version: number; agents: Record<string, AgentConfig> };
 export type SceneConfig = { id: string; name: string; description: string; system_prompt: string };
 export type ScenesConfig = { schema_version: number; scenes: SceneConfig[] };
 export type AgentDefinition = AgentConfig & {
   id: string;
+  scout_timeout_seconds?: number;
   tools: string[];
   image: string | null;
   image_health: null | { status: "healthy" | "missing" | "unavailable"; available: boolean; detail: string; image_id?: string; size_bytes?: number; created?: string };

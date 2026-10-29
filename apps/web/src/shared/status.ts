@@ -9,6 +9,7 @@ export type StatusDefinition = {
 export const STATUS_DICTIONARY: Record<string, StatusDefinition> = {
   created: { label: "已创建", tone: "neutral" },
   starting: { label: "启动中", tone: "info" },
+  scouting: { label: "侦察中", tone: "info" },
   running: { label: "运行中", tone: "info" },
   finalizing: { label: "最终确认中", tone: "info" },
   reporting: { label: "生成报告中", tone: "info" },

@@ -1,14 +1,14 @@
 import type { TGA3Agent, TGA3BoardEntry, TGA3TaskEvent } from "../../runtime/tga3-runtime";
 
 export const TASK_STATE_LABELS: Record<string, string> = {
-  created: "已创建", starting: "启动中", running: "运行中", finalizing: "固定结论",
+  created: "已创建", scouting: "侦察中", starting: "启动中", running: "运行中", finalizing: "固定结论",
   reporting: "生成报告", completed: "已完成", failed: "失败", cancelled: "已取消", stopping: "停止中", stopped: "已停止",
 };
 export const AGENT_STATE_LABELS: Record<string, string> = {
-  created: "已创建", starting: "启动中", running: "运行中", idle: "待命", pause_requested: "正在暂停",
+  created: "已创建", scouting: "侦察中", starting: "启动中", running: "运行中", idle: "待命", pause_requested: "正在暂停",
   paused: "已暂停", stopping: "停止中", stopped: "已停止", completed: "已完成", failed: "失败",
 };
-export const ROLE_LABELS: Record<string, string> = { worker: "执行", reporter: "报告" };
+export const ROLE_LABELS: Record<string, string> = { scout: "侦察", worker: "执行", reporter: "报告" };
 export const BOARD_KIND_LABELS: Record<TGA3BoardEntry["kind"], string> = {
   user_prompt: "用户提示", user_file: "用户文件", intel: "Intel", finding: "Finding", final_candidate: "最终候选",
 };
@@ -22,7 +22,7 @@ export const sdkLabel = (value: string) => ({ claude_cli: "Claude Code CLI", cod
 export const roleLabel = (agent: Pick<TGA3Agent, "role">) => ROLE_LABELS[agent.role] ?? agent.role;
 export const stateLabel = (value: string) => AGENT_STATE_LABELS[value] ?? TASK_STATE_LABELS[value] ?? value;
 export function stateTone(value: string): "active" | "waiting" | "success" | "danger" | "muted" {
-  if (["running", "starting", "reporting", "finalizing"].includes(value)) return "active";
+  if (["scouting", "running", "starting", "reporting", "finalizing"].includes(value)) return "active";
   if (["paused", "pause_requested", "idle"].includes(value)) return "waiting";
   if (value === "completed") return "success";
   if (["failed", "cancelled"].includes(value)) return "danger";

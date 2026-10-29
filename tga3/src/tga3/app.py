@@ -67,7 +67,10 @@ def create_app(
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         async with mcp.session_manager.run():
-            yield
+            try:
+                yield
+            finally:
+                await coordinator.close()
 
     app = FastAPI(title="TGA3 Control Plane", version="0.1.0", lifespan=lifespan)
     app.state.config = config
@@ -179,7 +182,7 @@ def create_app(
                     "role": config.agents.agents[item.agent_id].role,
                     "model_name": historical_model_name(item),
                     "runtime_location": (
-                        "container" if config.agents.agents[item.agent_id].role in {"worker", "reporter"}
+                        "container" if config.agents.agents[item.agent_id].role in {"scout", "worker", "reporter"}
                         else "reserved"
                     ),
                 }
@@ -278,6 +281,8 @@ def create_app(
     @api.get("/agent-definitions")
     async def agent_definitions() -> list[dict[str, Any]]:
         tools = {
+            "scout": ["Shell", "Read", "Edit", "Kali 侦察工具", "blackboard.sync", "blackboard.publish Intel",
+                      "artifact.register"],
             "worker-openai": [
                 "Shell", "Read", "Edit", "blackboard.sync", "blackboard.publish",
                 "artifact.register",
@@ -294,6 +299,7 @@ def create_app(
             image_health = await containers.image_status(image) if image else None
             result.append({
                 "id": agent_id,
+                "scout_timeout_seconds": config.runtime.scout_timeout_seconds if binding.role == "scout" else None,
                 **binding.model_dump(mode="json"),
                 "tools": tools.get(agent_id, []),
                 "image": image,

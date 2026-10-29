@@ -145,7 +145,7 @@ async def test_cli_reporter_starts_after_both_workers_stop(tmp_path):
 
     class Containers(FakeContainerRuntime):
         async def report(self, spec, emit):
-            assert set(self.stopped) == {(spec.task_id, name) for name in config.worker_agent_ids}
+            assert set(self.stopped) == {(spec.task_id, name) for name in (*config.worker_agent_ids, "scout")}
             assert json.loads(spec.report_input)[-1]["kind"] == "final_candidate"
             await emit("agent.session", {"cli_session_id": "reporter-session", "runtime": "codex_cli"})
             return await super().report(spec, emit)
@@ -157,6 +157,7 @@ async def test_cli_reporter_starts_after_both_workers_stop(tmp_path):
         config, storage, coordinator.blackboard, coordinator.events, model, coordinator.finish_task_workers
     )
     task = await coordinator.create_and_start("CLI report", "analyze", "cryptography")
+    await coordinator._startup_jobs[task.id]
     actor = coordinator.actor_for(await storage.get_agent(task.id, "worker-openai"))
     artifact = await storage.register_artifact(
         Artifact(
@@ -196,5 +197,5 @@ async def test_cli_reporter_starts_after_both_workers_stop(tmp_path):
     report = await storage.get_agent(task.id, "reporter")
     assert report.metadata["cli_session_id"] == "reporter-session"
     assert report.container_id == "fake-" + str(task.id) + "-reporter"
-    assert len(containers.launched) == 3
-    assert len(containers.stopped) == 3
+    assert len(containers.launched) == 4
+    assert len(containers.stopped) == 4

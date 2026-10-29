@@ -7,7 +7,7 @@ from zipfile import ZipFile
 import pytest
 from pydantic import TypeAdapter, ValidationError
 
-from tga3.domain import EntryKind, PublishRequest, WorkerPublishRequest, worker_publish_contract
+from tga3.domain import AgentPublishRequest, EntryKind, PublishRequest, publication_contract
 from tga3.errors import NotFoundError
 from tga3.protocol import RpcMessage
 from tga3.skills import SkillCatalog
@@ -33,7 +33,7 @@ def test_finding_requires_artifact_but_does_not_put_it_in_body():
 
 
 def test_worker_publication_contract_is_discriminated_strict_and_generated_from_models():
-    adapter = TypeAdapter(WorkerPublishRequest)
+    adapter = TypeAdapter(AgentPublishRequest)
     task_id = uuid4()
     finding = adapter.validate_python({
         "kind": "finding",
@@ -48,7 +48,7 @@ def test_worker_publication_contract_is_discriminated_strict_and_generated_from_
     intel = adapter.validate_python({
         "kind": "intel",
         "task_id": task_id,
-        "actor": {"agent_id": "worker-openai", "display_name": "OpenAI Worker", "role": "worker"},
+        "actor": {"agent_id": "scout", "display_name": "Scout", "role": "scout"},
         "body": {"claim": "Flask is in use", "detail": "confirmed from response headers"},
         "idempotency_key": "intel-1",
     })
@@ -80,7 +80,7 @@ def test_worker_publication_contract_is_discriminated_strict_and_generated_from_
     schema = adapter.json_schema()
     assert schema["discriminator"]["propertyName"] == "kind"
     assert set(schema["discriminator"]["mapping"]) == {"intel", "finding", "final_candidate"}
-    summary = worker_publish_contract()
+    summary = publication_contract()
     assert "intel: body={claim, detail?}; artifact_refs=optional" in summary
     assert "finding: body={claim, detail?}; artifact_refs=required non-empty" in summary
     assert "body={conclusion, rationale, answer_type?, finding_ids}" in summary
@@ -154,6 +154,7 @@ def test_config_separates_secrets_from_agent_bindings():
     assert "providers" not in bindings
     assert all(item["system_prompt"] for item in bindings["agents"].values())
     assert set(bindings["agents"]) == {
+        "scout",
         "worker-openai",
         "worker-claude",
         "reporter",

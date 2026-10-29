@@ -10,11 +10,12 @@
   "artifact_root": "./data/artifacts",
   "writeup_root": "./data/writeups",
   "skills_root": "./config/skills",
-  "mcp_instructions": "黑板 MCP 提供黑板增量同步、结构化发布和证据登记。Worker 将证据保存到各自私有的 /artifacts，再登记后引用；技能资料通过 CLI 原生文件工具读取 /skills。",
+  "mcp_instructions": "Scout 使用 blackboard_sync 读取题面，使用 blackboard_publish 发布 Intel；Worker 消费 Intel，仅发布 Finding 和 final_candidate。artifact_register 登记各自 /artifacts 中的证据。Worker 可只读访问 /recon 中的 Scout 原始材料，Reporter 只读汇总全部证据。Shell、文件操作和 Skills 读取使用 CLI 原生能力。",
   "worker_images": {
     "worker-openai": "tga3-worker-openai:local",
     "worker-claude": "tga3-worker-claude:local",
-    "reporter": "tga3-worker-openai:local"
+    "reporter": "tga3-worker-openai:local",
+    "scout": "tga3-worker-openai:local"
   },
   "worker_cycle_prompts": {
     "startup": "开始任务：先读取完整共享黑板中的场景提示、用户描述和文件，记住最新序号，再自主推进。",
@@ -35,5 +36,6 @@
     "worker_sync_seconds": 90,
     "finalization_grace_seconds": 30
   },
-  "cli_timeout_seconds": 1800
+  "cli_timeout_seconds": 1800,
+  "scout_timeout_seconds": 300
 }

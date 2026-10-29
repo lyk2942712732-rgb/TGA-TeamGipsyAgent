@@ -38,7 +38,7 @@ export type AgentModelOptions = {
   scene_id: TaskMode;
   agents: Array<{
     id: string;
-    role: "worker" | "reporter";
+    role: "scout" | "worker" | "reporter";
     runtime: "codex_cli" | "claude_cli";
     display_name: string;
     model: AgentModelChoice;

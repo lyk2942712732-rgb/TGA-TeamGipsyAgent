@@ -40,7 +40,7 @@ async def test_mcp_publish_tool_exposes_one_discriminated_worker_contract():
     assert set(request["discriminator"]["mapping"]) == {"intel", "finding", "final_candidate"}
     assert len(request["oneOf"]) == 3
     assert "body={claim, detail?}" in publish.description
-    intel_schema = publish.inputSchema["$defs"]["WorkerIntelPublication"]
+    intel_schema = publish.inputSchema["$defs"]["ScoutIntelPublication"]
     finding_schema = publish.inputSchema["$defs"]["WorkerFindingPublication"]
     final_schema = publish.inputSchema["$defs"]["WorkerFinalCandidatePublication"]
     assert "kind" in finding_schema["required"]
@@ -78,7 +78,7 @@ async def test_artifact_registration_uses_the_publishing_workers_private_directo
         with pytest.raises(Exception, match="escapes"):
             await mcp.call_tool("artifact_register", arguments)
     assert hashes[0] != hashes[1]
-    with pytest.raises(Exception, match="only configured Workers"):
+    with pytest.raises(Exception, match="only configured Scout or Workers"):
         await mcp.call_tool("artifact_register", {
             "task_id": str(uuid4()),
             "actor": {"agent_id": "reporter", "display_name": "Reporter", "role": "reporter"},

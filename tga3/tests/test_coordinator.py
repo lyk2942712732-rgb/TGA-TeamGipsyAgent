@@ -24,13 +24,16 @@ async def test_task_start_launches_two_independent_worker_containers():
     coordinator = TaskCoordinator(configured(), storage, containers)
 
     task = await coordinator.create_and_start("dual", "solve this", "penetration_test")
-    assert task.state == RunState.RUNNING
+    await coordinator._startup_jobs[task.id]
+    assert (await storage.get_task(task.id)).state == RunState.RUNNING
     assert [spec.agent.agent_id for spec in containers.launched] == [
+        "scout",
         "worker-openai",
         "worker-claude",
     ]
     agents = await storage.list_agents(task.id)
     assert {agent.agent_id for agent in agents} == {
+        "scout",
         "worker-openai",
         "worker-claude",
         "reporter",
@@ -48,6 +51,7 @@ async def test_finishing_workers_treats_control_disconnect_as_expected():
     containers = FakeContainerRuntime()
     coordinator = TaskCoordinator(configured(), storage, containers)
     task = await coordinator.create_and_start("finish", "solve this", "penetration_test")
+    await coordinator._startup_jobs[task.id]
 
     async def disconnect_on_stop(task_id, agent_id, method, _params=None):
         assert method == "session.stop"

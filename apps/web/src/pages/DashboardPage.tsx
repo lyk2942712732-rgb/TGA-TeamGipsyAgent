@@ -17,7 +17,7 @@ export function DashboardPage({ tasks, attention, health, onNew, onTask, onTasks
   onSystem: () => void;
   onReports: () => void;
 }) {
-  const active = tasks.filter((task) => ["starting", "running", "finalizing", "reporting"].includes(task.state));
+  const active = tasks.filter((task) => ["scouting", "starting", "running", "finalizing", "reporting"].includes(task.state));
   const completed = tasks.filter((task) => task.state === "completed");
   const failed = tasks.filter((task) => task.state === "failed");
   const metrics = [

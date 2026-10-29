@@ -2,7 +2,7 @@
 
 TGA3 使用独立 Kali 容器中的 Codex CLI 和 Claude Code CLI 并行执行任务，
 通过共享黑板协作。两个 Worker 停止后，再启动 Codex CLI Reporter 生成报告。
-项目控制层管理任务、PostgreSQL、文件、MCP 和容器；执行角色仅包含两个 Worker 和 Reporter。
+项目控制层管理任务、PostgreSQL、文件、MCP 和容器；执行顺序为 Scout → 两个 Worker 并行 → Reporter。
 
 详细架构与运行方式见 [tga3/README.md](tga3/README.md)，
 迁移及认证见 [tga3/CLI-MIGRATION.md](tga3/CLI-MIGRATION.md)。
