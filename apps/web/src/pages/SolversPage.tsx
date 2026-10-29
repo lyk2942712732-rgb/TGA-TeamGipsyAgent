@@ -112,7 +112,7 @@ function ImageHealth({ definition }: { definition: AgentDefinition }) {
   const health = definition.image_health;
   return <section className="worker-image-card"><header><div><Box size={20} /><span><small>执行镜像</small><strong>{definition.image}</strong></span></div>{health ? <HealthDot status={health.status} /> : null}</header><dl><div><dt>状态</dt><dd>{health?.detail ?? "未检查"}</dd></div>{health?.image_id ? <div><dt>镜像 ID</dt><dd>{health.image_id}</dd></div> : null}{health?.size_bytes ? <div><dt>大小</dt><dd>{formatBytes(health.size_bytes)}</dd></div> : null}</dl></section>;
 }
-function modelLabel(agent: AgentConfig, models: ModelsConfig | null) { const provider = models?.providers.find((item) => item.id === agent.provider_id); return { provider: provider?.name ?? agent.provider_id, name: provider?.endpoints[agent.protocol]?.models.find((item) => item.id === agent.model_id)?.name ?? agent.model_id }; }
+function modelLabel(agent: AgentConfig, models: ModelsConfig | null) { const provider = models?.providers.find((item) => item.id === agent.provider_id); return { provider: provider?.name ?? (agent.provider_id || "请选择供应商"), name: provider?.endpoints[agent.protocol]?.models.find((item) => item.id === agent.model_id)?.name ?? (agent.model_id || "待配置") }; }
 function edgeClass(selectedId: string | null) { return selectedId ? "dimmed" : ""; }
 function roleName(value: string) { return ({ supervisor: "Supervisor / 顾问", worker: "Worker / 执行", reporter: "Reporter / 报告" } as Record<string,string>)[value] ?? value; }
 function roleShort(value: string) { return ({ supervisor: "顾问", worker: "执行", reporter: "报告" } as Record<string,string>)[value] ?? value; }

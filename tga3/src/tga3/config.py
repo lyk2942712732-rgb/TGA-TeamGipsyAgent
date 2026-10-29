@@ -139,6 +139,12 @@ class AgentConfig(BaseModel):
     max_turns_per_cycle: int = Field(default=3, ge=1, le=50)
     system_prompt: str = Field(min_length=1)
 
+    @model_validator(mode="after")
+    def validate_model_binding(self) -> AgentConfig:
+        if bool(self.provider_id) != bool(self.model_id):
+            raise ValueError("供应商和模型必须同时配置或同时留空")
+        return self
+
 
 class AgentsConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -289,10 +295,14 @@ class TGA3Config:
             binding = self.agents.agents[agent_id]
         except KeyError as exc:
             raise KeyError(f"agent config not found: {agent_id}") from exc
-        provider = self.models.provider(provider_id or binding.provider_id)
+        selected_provider = provider_id or binding.provider_id
+        selected_model = model_id or binding.model_id
+        if not selected_provider or not selected_model:
+            raise ValueError(f"{binding.display_name} 尚未配置模型，请先在 Solver 页面选择已启用模型")
+        provider = self.models.provider(selected_provider)
         selected_protocol = protocol or binding.protocol
         self.validate_runtime_protocol(binding.runtime, selected_protocol)
-        model = provider.model(model_id or binding.model_id, selected_protocol, require_enabled=require_api_key)
+        model = provider.model(selected_model, selected_protocol, require_enabled=require_api_key)
         selected_key = next(
             (value.api_key for value in provider.api_keys if value.id == provider.selected_api_key_id),
             None,
@@ -385,7 +395,7 @@ class TGA3Config:
                     current.runtime,
                 ):
                     raise ValueError(f"{agent_id} name, role, and runtime are fixed definitions")
-                if (proposed.provider_id, proposed.model_id, proposed.protocol) != (
+                if proposed.provider_id and (proposed.provider_id, proposed.model_id, proposed.protocol) != (
                     current.provider_id, current.model_id, current.protocol
                 ):
                     self.models.provider(proposed.provider_id).model(
@@ -516,9 +526,11 @@ class TGA3Config:
             if agents.agents[agent_id].runtime != expected_runtime:
                 raise ValueError(f"{agent_id} must use runtime={expected_runtime}")
         for _agent_id, binding in agents.agents.items():
+            cls.validate_runtime_protocol(binding.runtime, binding.protocol)
+            if not binding.provider_id and not binding.model_id:
+                continue
             provider = models.provider(binding.provider_id)
             provider.model(binding.model_id, binding.protocol)
-            cls.validate_runtime_protocol(binding.runtime, binding.protocol)
         missing_images = sorted(
             agent_id
             for agent_id, binding in agents.agents.items()

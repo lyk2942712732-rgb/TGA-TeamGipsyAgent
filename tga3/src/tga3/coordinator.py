@@ -72,11 +72,12 @@ class TaskCoordinator:
                 require_api_key=configured.role != "supervisor" or self.config.runtime.supervisor_enabled,
             )
             for agent_id, configured in self.config.agents.agents.items()
+            if configured.role != "supervisor" or self.config.runtime.supervisor_enabled
         }
         task = await self.storage.create_task(title, scene.id, task_id)
         await self.storage.update_task(task.id, state=RunState.STARTING)
         for agent_id, configured in self.config.agents.agents.items():
-            resolved = resolved_agents[agent_id]
+            resolved = resolved_agents.get(agent_id)
             state = AgentState.IDLE if configured.role == "supervisor" else AgentState.CREATED
             if configured.role == "supervisor" and not self.config.runtime.supervisor_enabled:
                 state = AgentState.STOPPED
@@ -84,12 +85,12 @@ class TaskCoordinator:
                 AgentRun(
                     task_id=task.id,
                     agent_id=agent_id,
-                    sdk=resolved.runtime,
+                    sdk=resolved.runtime if resolved else configured.runtime,
                     desired_state=state,
                     actual_state=state,
-                    provider_id=resolved.provider.id,
-                    model_id=resolved.model.id,
-                    protocol=resolved.protocol,
+                    provider_id=resolved.provider.id if resolved else configured.provider_id,
+                    model_id=resolved.model.id if resolved else configured.model_id,
+                    protocol=resolved.protocol if resolved else configured.protocol,
                 )
             )
         await self.blackboard.publish(

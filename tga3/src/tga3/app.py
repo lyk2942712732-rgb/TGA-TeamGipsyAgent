@@ -192,6 +192,13 @@ def create_app(
     async def get_task(task_id: UUID) -> dict[str, Any]:
         task = await storage.get_task(task_id)
         agents = await storage.list_agents(task_id)
+
+        def historical_model_name(agent) -> str:
+            try:
+                return config.models.provider(agent.provider_id).model(agent.model_id, agent.protocol).name
+            except (KeyError, ValueError):
+                return agent.model_id or "未配置"
+
         return {
             "task": task.model_dump(mode="json"),
             "agents": [
@@ -199,7 +206,7 @@ def create_app(
                     **item.model_dump(mode="json"),
                     "display_name": config.agents.agents[item.agent_id].display_name,
                     "role": config.agents.agents[item.agent_id].role,
-                    "model_name": config.models.provider(item.provider_id).model(item.model_id, item.protocol).name,
+                    "model_name": historical_model_name(item),
                     "runtime_location": (
                         "container" if config.agents.agents[item.agent_id].role in {"worker", "reporter"}
                         else "reserved"
