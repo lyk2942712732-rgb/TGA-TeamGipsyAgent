@@ -25,7 +25,7 @@ export function TaskRuntimePage({ taskId }: { taskId: string }) {
   useEffect(() => {
     if (!snapshot?.agents.length) return;
     if (!selectedAgentId || !snapshot.agents.some((agent) => agent.agent_id === selectedAgentId)) {
-      const preferred = snapshot.agents.find((agent) => agent.role === "worker") ?? snapshot.agents[0];
+      const preferred = snapshot.agents.find((agent) => agent.role === (snapshot.task.state === "scouting" ? "scout" : "worker")) ?? snapshot.agents[0];
       setSelectedAgentId(preferred.agent_id);
     }
   }, [snapshot, selectedAgentId]);

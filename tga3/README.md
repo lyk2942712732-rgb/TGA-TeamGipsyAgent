@@ -3,7 +3,7 @@
 两个 Worker 在独立 Kali 容器中并行运行 Codex CLI 和 Claude Code CLI。
 出现最终候选后，控制层等待收尾宽限期、停止并回收 Worker，固定黑板快照，
 再用与 Codex Worker 相同的镜像启动一次性 Reporter 容器。
-运行角色仅有两个 Worker 和 Reporter；不包含 Supervisor 或执行智能体聊天入口。
+Scout 先使用独立 Codex CLI 容器侦察并发布 Intel，结束或达到预算后再启动两个 Worker；最后由 Reporter 汇总。
 
 ```text
 Web UI → FastAPI 控制层 → PostgreSQL / 共享黑板 / MCP
@@ -24,6 +24,7 @@ CLI 管理私有会话、工具执行和上下文压缩；不再使用 Agents SD
 - Claude 会话：每个 Worker 工作目录的 `.claude/`。
 - `.tga3/*-session.json` 只保存 CLI 会话指针；PG `agent_runs.metadata.cli_session_id` 保存对应标识。
 - `agent_runs.session_id` 仍是控制通道标识，不用于 CLI resume。
+- Scout 默认总预算 300 秒，由 runtime.scout_timeout_seconds 配置为 60–600 秒；其证据只读挂载到 Worker 的 /recon。
 - PostgreSQL 保存任务、共享黑板、只读执行事件和证据/报告索引。
 - `/inputs` 只读、Worker `/artifacts` 可写、Reporter `/artifacts` 与快照只读。
 - Worker 通过 HTTP MCP 访问黑板、注册证据和读取 Skills。发布协议维持 Intel / Finding / final_candidate。
