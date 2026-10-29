@@ -259,3 +259,30 @@ async def test_model_switch_overrides_resumed_cli_model_and_credentials(cli_env)
     assert command[command.index("--model") + 1] == "new-model"
     assert env["CODEX_API_KEY"] == env["TGA3_API_KEY"] == "new-key"
     assert "old-provider" not in (cli_env / ".codex/config.toml").read_text()
+
+
+@pytest.mark.asyncio
+async def test_stopping_a_paused_worker_does_not_launch_a_queued_cli(monkeypatch):
+    for key, value in {
+        "TGA3_TASK_ID": "task",
+        "TGA3_AGENT_ID": "worker-openai",
+        "TGA3_CONTROL_WS_URL": "ws://control",
+        "TGA3_SYNC_SECONDS": "90",
+        "TGA3_STARTUP_PROMPT": "start",
+    }.items():
+        monkeypatch.setenv(key, value)
+
+    class Adapter(AgentAdapter):
+        async def run_cycle(self, *_args):
+            pytest.fail("CLI must not start after stop")
+
+        async def set_model(self, _params):
+            pass
+
+    session = WorkerSession(Adapter())
+    session.paused.clear()
+    task = asyncio.create_task(session._work())
+    await asyncio.sleep(0.01)
+    session.stop.set()
+    session.paused.set()
+    await asyncio.wait_for(task, 1)

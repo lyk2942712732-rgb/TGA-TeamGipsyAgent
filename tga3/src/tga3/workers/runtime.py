@@ -114,6 +114,8 @@ class WorkerSession:
                 prompt = os.environ["TGA3_BLACKBOARD_CHANGED_PROMPT"].format(latest_seq=latest_seq)
             assert isinstance(prompt, str)
             await self.paused.wait()
+            if self.stop.is_set():
+                return
             await self.emit("agent.status", {"state": "running"})
             await self.emit("agent.action.started", {"summary": "开始一个工作周期"})
             try:

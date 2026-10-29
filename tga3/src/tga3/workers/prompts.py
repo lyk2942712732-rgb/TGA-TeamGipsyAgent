@@ -26,6 +26,24 @@ def worker_instructions() -> str:
         f"{worker_publish_contract()}\n"
         "The blackboard_publish tool accepts one request object. Follow the schema branch selected by request.kind."
     )
+    finding_example = {
+        "request": {
+            "kind": "finding",
+            "task_id": os.environ["TGA3_TASK_ID"],
+            "actor": actor,
+            "body": {"claim": "<verified fact>", "detail": "<verified supporting details>"},
+            "artifact_refs": [{"artifact_id": "<UUID returned by artifact_register>", "locator": "<evidence location>"}],
+            "idempotency_key": "<unique key for this entry>",
+        },
+    }
+    publication_contract += (
+        "\nFinding tool argument example (replace angle-bracket values with actual evidence):\n"
+        + json.dumps(finding_example, ensure_ascii=False)
+        + "\nKeep kind, task_id, actor, body, artifact_refs and idempotency_key directly inside request. "
+        "Do not add a finding/intel wrapper. Artifact references are objects with artifact_id and locator, "
+        "never bare UUID strings. For Intel use the same flat request with kind=intel and omit artifact_refs. "
+        "For final_candidate use the same flat request with its required body.finding_ids and omit artifact_refs."
+    )
     return f"{os.environ['TGA3_SYSTEM_PROMPT'].rstrip()}\n\n{runtime_context}\n\n{publication_contract}"
 
 
