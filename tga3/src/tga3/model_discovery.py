@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
-from urllib.parse import urlsplit
 
 import httpx
 
@@ -80,30 +79,39 @@ async def discover_provider_models(
     *,
     transport: httpx.AsyncBaseTransport | None = None,
 ) -> list[str]:
-    """Read the selected endpoint's catalog using its service's discovery API."""
+    """Read a catalog, reusing this provider's OpenAI models for Messages-only gateways."""
 
     base_url = provider.endpoint(protocol).base_url
     suffix = "/v1/models" if protocol == "anthropic" and not base_url.endswith("/v1") else "/models"
     url = base_url + suffix
-    discovery_protocol = protocol
-    parsed = urlsplit(base_url)
-    if (
-        protocol == "anthropic"
-        and (parsed.hostname or "").endswith(".maas.aliyuncs.com")
-        and parsed.path == "/apps/anthropic"
-    ):
-        # Model Studio's Messages adapter has no /models route. Its shared
-        # same-workspace catalog requires Bearer auth, not x-api-key.
-        url = f"{parsed.scheme}://{parsed.netloc}/compatible-mode/v1/models"
-        discovery_protocol = "openai_chat_completions"
     async with httpx.AsyncClient(transport=transport, timeout=httpx.Timeout(20.0)) as client:
         try:
-            return await _discover_at(client, provider, discovery_protocol, url)
+            return await _discover_at(client, provider, protocol, url)
         except httpx.HTTPStatusError as exc:
             detail = f"{url}: HTTP {exc.response.status_code}"
+            if protocol == "anthropic" and exc.response.status_code in {404, 405, 501}:
+                try:
+                    return await _openai_catalog(client, provider)
+                except (httpx.HTTPError, ValueError) as fallback_error:
+                    detail += f"；复用同供应商 OpenAI 模型列表失败：{fallback_error}"
         except (httpx.HTTPError, ValueError) as exc:
             detail = f"{url}: {exc}"
     raise ValueError(f"读取模型列表失败：{detail}")
+
+
+async def _openai_catalog(client: httpx.AsyncClient, provider: ProviderConfig) -> list[str]:
+    candidates: list[ProviderProtocol] = [
+        protocol for protocol in ("openai_chat_completions", "openai_responses")
+        if protocol in provider.endpoints
+    ]
+    for protocol in candidates:
+        names = [model.name for model in provider.endpoint(protocol).models if model.available]
+        if names:
+            return list(dict.fromkeys(names))
+    if not candidates:
+        raise ValueError("请先为此供应商配置 OpenAI 端点并读取模型")
+    protocol = candidates[0]
+    return await _discover_at(client, provider, protocol, provider.endpoint(protocol).base_url + "/models")
 
 
 __all__ = ["discover_provider_models"]

@@ -164,48 +164,81 @@ async def test_multi_protocol_provider_uses_anthropic_auth_and_accepts_empty_cat
     assert await discover_provider_models(provider, "anthropic", transport=httpx.MockTransport(handler)) == []
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize("host", [
-    "workspace.cn-beijing.maas.aliyuncs.com",
-    "workspace.ap-southeast-1.maas.aliyuncs.com",
-])
-async def test_aliyun_messages_uses_shared_catalog_with_bearer_auth_without_changing_runtime(host):
+def fallback_provider(openai_protocol="openai_responses", models=None):
     from tga3.config import ProviderConfig
 
-    provider = ProviderConfig(id="aliyun", name="Aliyun", api_keys=[{"id": "key", "api_key": "test-only"}],
-                              selected_api_key_id="key", endpoints={
-                                  "anthropic": {"base_url": f"https://{host}/apps/anthropic"},
-                              })
+    endpoints = {"anthropic": {"base_url": "https://messages.example.test/custom"}}
+    if openai_protocol:
+        endpoints[openai_protocol] = {"base_url": "https://catalog.example.test/gateway/v2", "models": models or []}
+    return ProviderConfig(id="gateway", name="Gateway", api_keys=[{"id": "key", "api_key": "test-only"}],
+                          selected_api_key_id="key", endpoints=endpoints)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", [404, 405, 501])
+@pytest.mark.parametrize("protocol", ["openai_responses", "openai_chat_completions"])
+async def test_messages_without_catalog_reuses_own_openai_names_including_disabled_models(status, protocol):
+    provider = fallback_provider(protocol, [
+        {"id": "alias", "name": "remote-name", "enabled": False},
+        {"id": "enabled", "name": "enabled", "enabled": True},
+        {"id": "missing", "name": "missing", "available": False},
+    ])
     calls = []
 
     def handler(request):
         calls.append(str(request.url))
-        assert request.headers["authorization"] == "Bearer test-only"
-        assert "x-api-key" not in request.headers
-        assert "anthropic-version" not in request.headers
-        assert not request.url.params
-        return httpx.Response(200, json={"data": [{"id": "qwen-model"}]})
+        assert request.headers["x-api-key"] == "test-only"
+        return httpx.Response(status)
 
-    result = await discover_provider_models(provider, "anthropic", transport=httpx.MockTransport(handler))
-    assert result == ["qwen-model"]
-    assert calls == [f"https://{host}/compatible-mode/v1/models"]
-    assert provider.sdk_base_url("anthropic") == f"https://{host}/apps/anthropic"
+    names = await discover_provider_models(provider, "anthropic", transport=httpx.MockTransport(handler))
+    assert names == ["remote-name", "enabled"]
+    assert calls == ["https://messages.example.test/custom/v1/models?limit=100"]
+    assert provider.sdk_base_url("anthropic") == "https://messages.example.test/custom"
+    assert not provider.endpoint(protocol).models[0].enabled
+    assert provider.endpoint("anthropic").models == []
 
 
 @pytest.mark.asyncio
-async def test_non_aliyun_messages_endpoint_does_not_use_aliyun_catalog_mapping():
-    from tga3.config import ProviderConfig
-
-    base = "https://maas.aliyuncs.com.example.test/apps/anthropic"
-    provider = ProviderConfig(id="gateway", name="Gateway", api_keys=[{"id": "key", "api_key": "test-only"}],
-                              selected_api_key_id="key", endpoints={"anthropic": {"base_url": base}})
+async def test_messages_fallback_reads_configured_openai_endpoint_when_catalog_not_loaded():
+    provider = fallback_provider()
     calls = []
 
     def handler(request):
-        calls.append(request.url.path)
-        assert request.headers["x-api-key"] == "test-only"
+        calls.append(str(request.url))
+        if request.url.host == "messages.example.test":
+            return httpx.Response(404)
+        assert request.url.host == "catalog.example.test"
+        assert request.url.path == "/gateway/v2/models"
+        assert request.headers["authorization"] == "Bearer test-only"
+        assert "x-api-key" not in request.headers
+        assert not request.url.params
+        return httpx.Response(200, json={"data": [{"id": "shared-model"}]})
+
+    result = await discover_provider_models(provider, "anthropic", transport=httpx.MockTransport(handler))
+    assert result == ["shared-model"]
+    assert len(calls) == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", [401, 403, 429, 500])
+async def test_messages_auth_rate_limit_and_server_errors_do_not_trigger_catalog_fallback(status):
+    provider = fallback_provider(models=[{"id": "cached", "name": "cached"}])
+
+    with pytest.raises(ValueError, match=f"HTTP {status}"):
+        await discover_provider_models(provider, "anthropic", transport=httpx.MockTransport(
+            lambda request: httpx.Response(status)
+        ))
+
+
+@pytest.mark.asyncio
+async def test_messages_without_own_openai_endpoint_does_not_guess_another_address():
+    provider = fallback_provider(None)
+    calls = []
+
+    def handler(request):
+        calls.append(str(request.url))
         return httpx.Response(404)
 
-    with pytest.raises(ValueError, match="HTTP 404"):
+    with pytest.raises(ValueError, match="请先为此供应商配置 OpenAI 端点"):
         await discover_provider_models(provider, "anthropic", transport=httpx.MockTransport(handler))
-    assert calls == ["/apps/anthropic/v1/models"]
+    assert len(calls) == 1
