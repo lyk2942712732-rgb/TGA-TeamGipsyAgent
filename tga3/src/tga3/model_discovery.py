@@ -7,16 +7,12 @@ from collections.abc import Iterable
 import httpx
 
 from .config import ProviderConfig
-from .provider_profiles import discovery_urls, provider_profile
+from .provider_profiles import ProviderProtocol
 
 
-def _headers(provider: ProviderConfig) -> dict[str, str]:
-    profile = provider_profile(provider.preset_id)
-    auth_style = profile.discovery_auth if profile else (
-        "anthropic" if set(provider.protocols) == {"anthropic"} else "bearer"
-    )
+def _headers(provider: ProviderConfig, protocol: ProviderProtocol) -> dict[str, str]:
     key = provider.key()
-    if auth_style == "anthropic":
+    if protocol == "anthropic":
         return {
             "accept": "application/json",
             "anthropic-version": "2023-06-01",
@@ -30,9 +26,9 @@ def _model_ids(payload: object) -> Iterable[str]:
     if isinstance(payload, list):
         rows = payload
     elif isinstance(payload, dict):
-        rows = payload.get("data", payload.get("models", []))
+        rows = payload.get("data", payload.get("models"))
     else:
-        rows = []
+        rows = None
     if not isinstance(rows, list):
         raise ValueError("供应商返回了无效的模型列表")
     for row in rows:
@@ -50,10 +46,10 @@ def _model_ids(payload: object) -> Iterable[str]:
 async def _discover_at(
     client: httpx.AsyncClient,
     provider: ProviderConfig,
+    protocol: ProviderProtocol,
     url: str,
 ) -> list[str]:
-    profile = provider_profile(provider.preset_id)
-    paginated = bool(profile and profile.anthropic_pagination)
+    paginated = protocol == "anthropic"
     found: list[str] = []
     seen: set[str] = set()
     after_id: str | None = None
@@ -61,7 +57,7 @@ async def _discover_at(
         params = {"limit": "100"} if paginated else None
         if params is not None and after_id:
             params["after_id"] = after_id
-        response = await client.get(url, headers=_headers(provider), params=params)
+        response = await client.get(url, headers=_headers(provider, protocol), params=params)
         response.raise_for_status()
         payload = response.json()
         for model_id in _model_ids(payload):
@@ -79,22 +75,21 @@ async def _discover_at(
 
 async def discover_provider_models(
     provider: ProviderConfig,
+    protocol: ProviderProtocol,
     *,
     transport: httpx.AsyncBaseTransport | None = None,
 ) -> list[str]:
-    """Return unique model identifiers using a preset or safe same-origin probing."""
+    """Discover only the selected endpoint; never probe another protocol's path."""
 
-    if not provider.base_url:
-        raise ValueError(f"供应商 {provider.id} 尚未配置 API 根地址")
-    urls = discovery_urls(provider.preset_id, provider.base_url, provider.protocols)
+    base_url = provider.endpoint(protocol).base_url
+    suffix = "/v1/models" if protocol == "anthropic" and not base_url.endswith("/v1") else "/models"
+    urls = (base_url + suffix,)
     failures: list[str] = []
     async with httpx.AsyncClient(transport=transport, timeout=httpx.Timeout(20.0)) as client:
         for url in urls:
             try:
-                found = await _discover_at(client, provider, url)
-                if found:
-                    return found
-                failures.append(f"{url}: 未返回模型")
+                found = await _discover_at(client, provider, protocol, url)
+                return found
             except httpx.HTTPStatusError as exc:
                 failures.append(f"{url}: HTTP {exc.response.status_code}")
             except httpx.HTTPError as exc:

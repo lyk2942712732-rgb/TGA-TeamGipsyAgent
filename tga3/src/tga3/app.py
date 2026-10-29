@@ -12,7 +12,7 @@ from fastapi import APIRouter, FastAPI, File, Form, Request, UploadFile, WebSock
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
-from .config import AgentsConfig, ConfigBundle, ModelConfig, ModelsConfig, RuntimeConfig, ScenesConfig, TGA3Config
+from .config import AgentsConfig, ModelConfig, ModelsConfig, RuntimeConfig, ScenesConfig, TGA3Config
 from .coordinator import TaskCoordinator
 from .docker_runtime import ContainerRuntime
 from .domain import AgentState, DialogueKind, RunState
@@ -45,6 +45,12 @@ class ModelRequest(BaseModel):
     provider_id: str
     model_id: str
     protocol: ProviderProtocol
+
+
+class ModelEnabledRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    model_ids: list[str] = Field(min_length=1)
+    enabled: bool
 
 
 class SkillPackageRequest(BaseModel):
@@ -193,7 +199,7 @@ def create_app(
                     **item.model_dump(mode="json"),
                     "display_name": config.agents.agents[item.agent_id].display_name,
                     "role": config.agents.agents[item.agent_id].role,
-                    "model_name": config.models.provider(item.provider_id).model(item.model_id).name,
+                    "model_name": config.models.provider(item.provider_id).model(item.model_id, item.protocol).name,
                     "runtime_location": (
                         "container" if config.agents.agents[item.agent_id].role in {"worker", "reporter"}
                         else "reserved"
@@ -291,8 +297,10 @@ def create_app(
                 {
                     "id": provider.id,
                     "name": provider.name,
-                    "protocols": provider.protocols,
-                    "models": [model.model_dump(mode="json") for model in provider.models],
+                    "endpoints": {
+                        protocol: endpoint.model_dump(mode="json")
+                        for protocol, endpoint in provider.endpoints.items()
+                    },
                 }
                 for provider in config.models.providers
             ],
@@ -369,49 +377,58 @@ def create_app(
             config.apply_document("models", updated)
 
     @api.post("/config/models/{provider_id}/discover")
-    async def discover_models(provider_id: str) -> dict[str, Any]:
+    async def discover_models(provider_id: str, protocol: ProviderProtocol) -> dict[str, Any]:
         snapshot = config.models.provider(provider_id).model_copy(deep=True)
-        discovered = await discover_provider_models(snapshot)
+        discovered = await discover_provider_models(snapshot, protocol)
         async with config_lock:
             updated = config.models.model_copy(deep=True)
             provider = updated.provider(provider_id)
             if (
-                provider.base_url != snapshot.base_url
+                provider.endpoint(protocol).base_url != snapshot.endpoint(protocol).base_url
                 or provider.selected_api_key_id != snapshot.selected_api_key_id
+                or provider.key() != snapshot.key()
             ):
                 raise ValueError("供应商 URL 或所选密钥已变化，请重新同步")
-            existing_by_name = {model.name: model for model in provider.models}
-            existing_by_id = {model.id: model for model in provider.models}
-            provider.models = [
+            endpoint = provider.endpoint(protocol)
+            existing_by_name = {model.name: model for model in endpoint.models}
+            existing_by_id = {model.id: model for model in endpoint.models}
+            refreshed = [
                 (
                     existing_by_name.get(remote_id)
                     or existing_by_id.get(remote_id)
-                    or ModelConfig(id=remote_id, name=remote_id)
+                    or ModelConfig(id=remote_id, name=remote_id, enabled=False)
                 )
-                .model_copy(update={"name": remote_id, "verification_status": "verified", "source": "api"})
+                .model_copy(update={"name": remote_id, "available": True, "source": "api"})
                 for remote_id in discovered
             ]
-            discovered_ids = {model.id for model in provider.models}
-            updated_agents = config.agents.model_copy(deep=True)
-            rebound_agents: list[str] = []
-            for agent_id, binding in updated_agents.agents.items():
-                if binding.provider_id == provider_id and binding.model_id not in discovered_ids:
-                    binding.model_id = provider.models[0].id
-                    rebound_agents.append(agent_id)
-            config.apply_bundle(
-                ConfigBundle(
-                    models=updated,
-                    agents=updated_agents,
-                    scenes=config.scenes,
-                    runtime=config.runtime,
-                )
-            )
+            discovered_ids = {model.id for model in refreshed}
+            # Keep unavailable records so existing bindings remain inspectable.
+            endpoint.models = refreshed + [
+                model.model_copy(update={"enabled": False, "available": False})
+                for model in endpoint.models if model.id not in discovered_ids
+            ]
+            config.apply_document("models", updated)
         return {
             "provider_id": provider_id,
-            "count": len(provider.models),
-            "models": [model.model_dump(mode="json") for model in provider.models],
-            "rebound_agents": rebound_agents,
+            "protocol": protocol,
+            "count": len(discovered),
+            "models": [model.model_dump(mode="json") for model in endpoint.models],
         }
+
+    @api.patch("/config/models/{provider_id}/endpoints/{protocol}/models")
+    async def set_models_enabled(
+        provider_id: str, protocol: ProviderProtocol, body: ModelEnabledRequest
+    ) -> dict[str, Any]:
+        async with config_lock:
+            updated = config.models.model_copy(deep=True)
+            provider = updated.provider(provider_id)
+            selected = [provider.model(model_id, protocol) for model_id in set(body.model_ids)]
+            if body.enabled and any(not model.available for model in selected):
+                raise ValueError("模型已不在此端点的可访问列表中，请先重新读取模型")
+            for model in selected:
+                model.enabled = body.enabled
+            config.apply_document("models", updated)
+        return {"provider_id": provider_id, "protocol": protocol, "enabled": body.enabled}
 
     @api.get("/config/agents")
     async def read_agents_config() -> dict:

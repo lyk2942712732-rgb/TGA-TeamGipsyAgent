@@ -26,10 +26,17 @@ Kali 工具基础镜像保持不变。Dockerfile 的 `CLI_VERSION` build arg 可
 控制层启动容器时注入已解析配置，Codex 通过 `CODEX_API_KEY`，Claude 通过 `ANTHROPIC_API_KEY`
 进行非交互认证。镜像、Git 和日志不得包含真实密钥。
 
-Codex 仅支持 Responses：仅有 Chat Completions 的模型供应商不能直接绑定 Codex Worker / Reporter。
-Claude 需要支持工具调用的 Anthropic Messages 端点。自定义供应商可以分别添加，根地址可包含路径前缀；
-例如 Responses 地址 `/compatible-mode/v1` 对应根地址 `/compatible-mode`，Anthropic 地址
-`/apps/anthropic` 原样作为该独立供应商根地址。
+Codex 使用 Responses：仅有 Chat Completions 端点的模型供应商不能直接绑定 Codex Worker / Reporter。
+Claude 需要支持工具调用的 Anthropic Messages 端点。同一供应商在 `endpoints` 下分别配置协议端点，
+共享密钥，每个端点独立维护 `base_url` 和 `models`。至少配置一个端点，地址保留完整网关前缀及版本，
+例如 Responses 填写 `https://gateway/compatible-mode/v1`，Anthropic 填写
+`https://gateway/apps/anthropic`。新配置不再根据供应商品牌自动改写地址。
+
+旧版 `protocols/base_url/models` 配置加载时自动转换成端点结构，保留原来的实际调用地址及模型绑定；
+保存 Models 配置后写入新结构。每个端点模型有独立的 `enabled` 开关。首次发现的模型默认关闭，
+刷新保留已有开关；消失的模型保留记录并标记不可访问、关闭，不自动替换 Solver 绑定。
+Solver、新任务和运行中切换模型的选项只包含对应协议端点中已启用且可访问的模型，
+界面显示“供应商 / 模型”，内部仍保留协议用于路由。模型发现只证明列表可读取，不代表 CLI 推理兼容性已验证。
 
 迁移已有部署时先备份配置，保留原有供应商、密钥、Skills 和数据；将三个执行角色 runtime 分别改为
 `codex_cli`、`claude_cli`、`codex_cli`，配置正确的协议及供应商，再增加 Reporter 镜像映射。

@@ -75,7 +75,7 @@ def test_frontend_api_uses_safe_catalog_and_page_owned_config_documents(tmp_path
         saved_custom = next(
             item for item in saved_models.json()["providers"] if item["id"] == "team-gateway"
         )
-        assert saved_custom["base_url"] == "https://gateway.example.test"
+        assert saved_custom["endpoints"]["openai_chat_completions"]["base_url"] == "https://gateway.example.test/v1"
         assert client.delete("/api/v3/config/models/team-gateway").status_code == 204
         assert client.delete("/api/v3/config/models/openai").status_code == 422
         agents = client.get("/api/v3/config/agents").json()
@@ -92,13 +92,16 @@ def test_frontend_api_uses_safe_catalog_and_page_owned_config_documents(tmp_path
             "tga3.app.discover_provider_models",
             new=AsyncMock(return_value=["gpt-5.6", "gpt-task-override"]),
         ):
-            discovered = client.post("/api/v3/config/models/openai/discover")
+            discovered = client.post("/api/v3/config/models/openai/discover?protocol=openai_responses")
         assert discovered.status_code == 200
         assert discovered.json()["count"] == 2
         assert [item["name"] for item in discovered.json()["models"]] == [
             "gpt-5.6",
             "gpt-task-override",
         ]
+        assert client.patch("/api/v3/config/models/openai/endpoints/openai_responses/models", json={
+            "model_ids": ["gpt-task-override"], "enabled": True,
+        }).status_code == 200
         invalid = deepcopy(agents)
         invalid["agents"]["worker-openai"]["model_id"] = "missing-model"
         original_agents = (config_dir / "agents.json").read_text(encoding="utf-8")

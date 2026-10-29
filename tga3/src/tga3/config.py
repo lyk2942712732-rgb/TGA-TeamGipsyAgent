@@ -5,16 +5,14 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, model_validator
 
 from .provider_profiles import (
     ProviderProtocol,
-    normalize_api_origin,
-    normalize_custom_base,
-    provider_profile,
+    normalize_endpoint_base,
     runtime_base_url,
 )
 
@@ -30,9 +28,25 @@ class ModelConfig(BaseModel):
     model_config = ConfigDict(extra="allow")
     id: str
     name: str
+    enabled: bool = True
+    available: bool = True
     max_output_tokens: int = Field(default=8192, ge=1)
     timeout_seconds: int = Field(default=180, ge=1)
     temperature: float | None = Field(default=None, ge=0, le=2)
+
+
+class ProviderEndpoint(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    base_url: str
+    models: list[ModelConfig] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_endpoint(self) -> ProviderEndpoint:
+        self.base_url = normalize_endpoint_base(self.base_url)
+        ids = [model.id for model in self.models]
+        if len(ids) != len(set(ids)):
+            raise ValueError("协议端点包含重复模型 ID")
+        return self
 
 
 class ProviderConfig(BaseModel):
@@ -41,35 +55,45 @@ class ProviderConfig(BaseModel):
     name: str
     preset_id: str = "custom"
     built_in: bool = False
-    protocols: list[ProviderProtocol]
-    base_url: str | None = None
+    endpoints: dict[ProviderProtocol, ProviderEndpoint]
     api_keys: list[APIKeyConfig]
     selected_api_key_id: str
-    models: list[ModelConfig]
+
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_legacy_endpoints(cls, raw: Any) -> Any:
+        if not isinstance(raw, dict):
+            return raw
+        data = dict(raw)
+        if "endpoints" not in data:
+            # Resolve the old implicit paths once. New endpoints are always explicit.
+            protocols = data.get("protocols", [])
+            if len(protocols) != len(set(protocols)):
+                raise ValueError("供应商包含重复协议")
+            data["endpoints"] = {
+                protocol: {
+                    "base_url": runtime_base_url(data.get("preset_id"), data.get("base_url") or "", protocol),
+                    "models": data.get("models", []),
+                }
+                for protocol in protocols
+            }
+        for field in ("protocols", "base_url", "models"):
+            data.pop(field, None)
+        return data
 
     @model_validator(mode="after")
-    def normalize_endpoint(self) -> ProviderConfig:
-        if self.base_url:
-            self.base_url = (
-                normalize_api_origin(self.base_url) if provider_profile(self.preset_id)
-                else normalize_custom_base(self.base_url)
-            )
-        profile = provider_profile(self.preset_id)
-        if not self.protocols:
-            raise ValueError(f"provider {self.id} must support at least one protocol")
-        if len(set(self.protocols)) != len(self.protocols):
-            raise ValueError(f"provider {self.id} contains duplicate protocols")
-        if profile and not set(self.protocols).issubset(profile.protocols):
-            unsupported = sorted(set(self.protocols).difference(profile.protocols))
-            raise ValueError(f"{self.preset_id} preset does not support: {', '.join(unsupported)}")
+    def validate_endpoints(self) -> ProviderConfig:
+        if not self.endpoints:
+            raise ValueError("至少填写一个协议端点")
         return self
 
-    def sdk_base_url(self, protocol: ProviderProtocol) -> str | None:
-        if not self.base_url:
-            return None
-        if protocol not in self.protocols:
+    def endpoint(self, protocol: ProviderProtocol) -> ProviderEndpoint:
+        if protocol not in self.endpoints:
             raise ValueError(f"provider {self.id} does not support protocol={protocol}")
-        return runtime_base_url(self.preset_id, self.base_url, protocol)
+        return self.endpoints[protocol]
+
+    def sdk_base_url(self, protocol: ProviderProtocol) -> str:
+        return self.endpoint(protocol).base_url
 
     def key(self) -> str:
         item = next(
@@ -83,10 +107,12 @@ class ProviderConfig(BaseModel):
             raise ValueError(f"API key is empty for provider {self.id}")
         return value
 
-    def model(self, model_id: str) -> ModelConfig:
-        item = next((value for value in self.models if value.id == model_id), None)
+    def model(self, model_id: str, protocol: ProviderProtocol, *, require_enabled: bool = False) -> ModelConfig:
+        item = next((value for value in self.endpoint(protocol).models if value.id == model_id), None)
         if item is None:
-            raise KeyError(f"model not found: {self.id}/{model_id}")
+            raise KeyError(f"model not found: {self.id}/{protocol}/{model_id}")
+        if require_enabled and (not item.enabled or not item.available):
+            raise ValueError(f"模型未启用或已不可用：{self.name}/{item.name}")
         return item
 
 
@@ -264,11 +290,9 @@ class TGA3Config:
         except KeyError as exc:
             raise KeyError(f"agent config not found: {agent_id}") from exc
         provider = self.models.provider(provider_id or binding.provider_id)
-        model = provider.model(model_id or binding.model_id)
         selected_protocol = protocol or binding.protocol
         self.validate_runtime_protocol(binding.runtime, selected_protocol)
-        if selected_protocol not in provider.protocols:
-            raise ValueError(f"provider {provider.id} does not support protocol={selected_protocol}")
+        model = provider.model(model_id or binding.model_id, selected_protocol, require_enabled=require_api_key)
         selected_key = next(
             (value.api_key for value in provider.api_keys if value.id == provider.selected_api_key_id),
             None,
@@ -361,6 +385,12 @@ class TGA3Config:
                     current.runtime,
                 ):
                     raise ValueError(f"{agent_id} name, role, and runtime are fixed definitions")
+                if (proposed.provider_id, proposed.model_id, proposed.protocol) != (
+                    current.provider_id, current.model_id, current.protocol
+                ):
+                    self.models.provider(proposed.provider_id).model(
+                        proposed.model_id, proposed.protocol, require_enabled=True
+                    )
         if name == "scenes":
             assert isinstance(value, ScenesConfig)
             current_definitions = [(item.id, item.name, item.description) for item in self.scenes.scenes]
@@ -399,6 +429,7 @@ class TGA3Config:
                 json.dumps(documents[filename], ensure_ascii=False, indent=2) + "\n",
                 encoding="utf-8",
             )
+            temporary.chmod(0o600 if name == "models" else target.stat().st_mode & 0o777)
             os.replace(temporary, target)
         finally:
             temporary.unlink(missing_ok=True)
@@ -422,6 +453,7 @@ class TGA3Config:
                     json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
                     encoding="utf-8",
                 )
+                temporary.chmod(0o600 if name == "models.json" else targets[name].stat().st_mode & 0o777)
                 staged[name] = temporary
             for name, target in targets.items():
                 os.replace(staged[name], target)
@@ -485,9 +517,7 @@ class TGA3Config:
                 raise ValueError(f"{agent_id} must use runtime={expected_runtime}")
         for _agent_id, binding in agents.agents.items():
             provider = models.provider(binding.provider_id)
-            provider.model(binding.model_id)
-            if binding.protocol not in provider.protocols:
-                raise ValueError(f"provider {provider.id} does not support protocol={binding.protocol}")
+            provider.model(binding.model_id, binding.protocol)
             cls.validate_runtime_protocol(binding.runtime, binding.protocol)
         missing_images = sorted(
             agent_id

@@ -33,13 +33,13 @@ CLI 管理私有会话、工具执行和上下文压缩；不再使用 Agents SD
 
 ## 配置唯一数据源
 
-- `config/models.json`：Provider、支持的兼容协议、自动发现的模型、Base URL 和密钥。
+- `config/models.json`：Provider、各协议端点的独立地址与模型启用选择，以及供应商共享的密钥。
 - `config/agents.json`：四个 Agent 的身份、CLI 后端、模型与实际调用协议绑定、轮次和完整系统提示词。
 - `config/scenes.json`：八种任务场景及进入黑板的场景提示词。
 - `config/runtime.json`：Docker 资源、镜像、目录、通信地址、运行节奏、MCP 指令和 Worker 周期提示。
 - `config/skills/<name>/`：不分角色与场景的通用 Skill 包；Agent 先列包名，选中后只读 `SKILL.md`，再依据其中的指引按需读取包内其他 Markdown。
 
-生产代码不从环境变量覆盖 Provider、模型、密钥或 Agent 提示词。环境变量只用于把上述已解析配置传给动态执行容器。前端各配置页面通过 `/api/v3/config` 读写自己的 JSON；Skills 页面直接管理 `config/skills`。Models 页面按供应商预设补全模型发现路径，Solver 页面按 CLI 后端 选择实际推理协议；同一供应商可同时为不同 Agent 暴露多种协议。保存时后端先执行完整的跨文件校验，校验失败不会替换现有配置。
+生产代码不从环境变量覆盖 Provider、模型、密钥或 Agent 提示词。环境变量只用于把上述已解析配置传给动态执行容器。前端各配置页面通过 `/api/v3/config` 读写自己的 JSON；Skills 页面直接管理 `config/skills`。Models 页面分别配置协议端点，模型列表可折叠、搜索、开启或关闭。Solver 页面只显示当前 CLI 所需端点的已启用模型，协议由执行后端确定。保存时后端先执行完整的跨文件校验，校验失败不会替换现有配置。
 
 新任务立即使用保存后的 Provider、模型、Agent 提示词、场景和容器参数。运行中的任务保留 PostgreSQL 中的运行状态；监听地址和 PostgreSQL DSN 保存后需要重启主服务。`GET /api/v3/models` 仍是供普通任务界面使用的无密钥目录，只有配置中心接口返回可编辑的完整配置。
 

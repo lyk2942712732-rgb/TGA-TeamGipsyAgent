@@ -1,189 +1,165 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
-import { Check, ChevronRight, Cpu, KeyRound, Plus, RefreshCw, Server, ShieldCheck, Trash2, X } from "lucide-react";
+import { FormEvent, useEffect, useState } from "react";
+import { Check, ChevronDown, ChevronRight, KeyRound, Plus, RefreshCw, Search, Server, Trash2, X } from "lucide-react";
 import {
   addProviderAPIKey, createModelProvider, deleteModelProvider, discoverProviderModels, fetchProviderCatalog,
-  selectProviderAPIKey, updateProviderEndpoint, type ModelProvider, type ProviderCatalog,
+  selectProviderAPIKey, setProviderModelsEnabled, updateProviderEndpoints,
+  type ModelProvider, type ProviderCatalog,
 } from "../api/tga3-models";
-import type { ProviderProtocol } from "../api/tga3-config";
+import type { ProviderEndpoint, ProviderEndpoints, ProviderProtocol } from "../api/tga3-config";
 
-type ProviderDraft = { preset_id: string; name: string; protocols: ProviderProtocol[]; base_url: string; api_key: string };
-
-const EMPTY_PROVIDER: ProviderDraft = {
-  preset_id: "custom", name: "", protocols: ["openai_chat_completions"], base_url: "", api_key: "",
-};
-const PROTOCOLS: ProviderProtocol[] = ["openai_chat_completions", "openai_responses", "anthropic"];
+type ProviderDraft = { preset_id: string; name: string; endpoints: ProviderEndpoints; api_key: string };
+const EMPTY_PROVIDER: ProviderDraft = { preset_id: "custom", name: "", endpoints: { openai_responses: { base_url: "", models: [] } }, api_key: "" };
+const PROTOCOLS: ProviderProtocol[] = ["openai_responses", "anthropic", "openai_chat_completions"];
 
 export function ModelsPage({ onConfiguredChange }: { onConfiguredChange?: (configured: boolean) => void }) {
   const [catalog, setCatalog] = useState<ProviderCatalog | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const [draft, setDraft] = useState<ProviderDraft>(EMPTY_PROVIDER);
-  const [endpoint, setEndpoint] = useState("");
+  const [editingEndpoints, setEditingEndpoints] = useState(false);
+  const [endpoints, setEndpoints] = useState<ProviderEndpoints>({});
   const [newKey, setNewKey] = useState("");
   const [newKeyLabel, setNewKeyLabel] = useState("");
-  const [busy, setBusy] = useState("");
+  const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
+  const selected = catalog?.providers.find((provider) => provider.id === selectedId) ?? null;
 
-  const load = async (preferredId?: string) => {
+  async function load(preferredId?: string) {
     const value = await fetchProviderCatalog();
     setCatalog(value);
-    setSelectedId((current) => preferredId ?? current ?? value.providers[0]?.id ?? null);
-    onConfiguredChange?.(value.providers.some((provider) => provider.models.length > 0 && configuredKeyCount(provider) > 0));
-  };
+    setSelectedId((current) => value.providers.find((p) => p.id === (preferredId ?? current))?.id ?? value.providers[0]?.id ?? null);
+    onConfiguredChange?.(value.providers.some((provider) => enabledCount(provider) > 0 && hasSelectedKey(provider)));
+  }
+  useEffect(() => { void load().catch((reason) => setMessage(errorText(reason))); }, []);
+  useEffect(() => { setEditingEndpoints(false); setNewKey(""); setNewKeyLabel(""); }, [selectedId]);
 
-  useEffect(() => { void load().catch((reason: unknown) => setMessage(errorText(reason))); }, []);
+  async function perform(action: () => Promise<unknown>, success: string) {
+    setBusy(true); setMessage("");
+    try { await action(); await load(); setMessage(success); }
+    catch (reason) { await load().catch(() => undefined); setMessage(errorText(reason)); }
+    finally { setBusy(false); }
+  }
 
-  const selected = useMemo(
-    () => catalog?.providers.find((provider) => provider.id === selectedId) ?? null,
-    [catalog, selectedId],
-  );
-  const availablePresets = useMemo(
-    () => catalog?.presets.filter(
-      (preset) => !catalog.providers.some((provider) => provider.preset_id === preset.id),
-    ) ?? [],
-    [catalog],
-  );
-  useEffect(() => { setEndpoint(selected?.base_url ?? ""); }, [selected?.id, selected?.base_url]);
-
-  const choosePreset = (presetId: string) => {
+  function choosePreset(presetId: string) {
     const preset = catalog?.presets.find((item) => item.id === presetId);
-    setDraft((current) => ({
-      ...current, preset_id: presetId,
-      name: preset ? preset.name : current.name,
-      protocols: preset ? preset.protocols : current.protocols,
-      base_url: preset ? preset.base_url : current.base_url,
-    }));
-  };
+    setDraft((current) => ({ ...current, preset_id: presetId, name: preset?.name ?? current.name,
+      endpoints: preset ? structuredClone(preset.endpoints) : current.endpoints }));
+  }
 
-  const create = async (event: FormEvent) => {
-    event.preventDefault(); setBusy("create"); setMessage("");
+  async function create(event: FormEvent) {
+    event.preventDefault();
+    if (!Object.keys(draft.endpoints).length) { setMessage("至少填写一个协议端点"); return; }
+    setBusy(true); setMessage("");
     try {
-      if (!draft.protocols.length) throw new Error("至少选择一种兼容协议");
-      const result = await createModelProvider({ ...draft, preset_id: draft.preset_id });
-      setDraft(EMPTY_PROVIDER); setAdding(false);
-      await load(result.provider.id);
-      setMessage(`已添加供应商 ${result.provider.name}，并读取到 ${result.provider.models.length} 个可访问模型。`);
+      const result = await createModelProvider(draft);
+      setDraft(EMPTY_PROVIDER); setAdding(false); await load(result.provider.id);
+      setMessage(`已添加供应商 ${result.provider.name}。${result.warnings.length ? `部分端点读取失败：${result.warnings.join("；")}` : "模型已读取，请开启需要使用的模型。"}`);
     } catch (reason) { await load().catch(() => undefined); setMessage(errorText(reason)); }
-    finally { setBusy(""); }
-  };
+    finally { setBusy(false); }
+  }
 
-  const removeProvider = async () => {
-    if (!selected || selected.built_in) return;
-    if (!window.confirm(`确认删除供应商“${selected.name}”？其密钥和模型记录会一起删除。`)) return;
-    setBusy("delete"); setMessage("");
-    try {
-      await deleteModelProvider(selected.id);
-      setSelectedId(null);
-      await load();
-      setMessage(`已删除供应商 ${selected.name}。`);
-    } catch (reason) { await load(selected.id).catch(() => undefined); setMessage(errorText(reason)); }
-    finally { setBusy(""); }
-  };
-
-  const syncModels = async (event?: FormEvent) => {
-    event?.preventDefault();
-    if (!selected) return;
-    setBusy("models"); setMessage("");
-    try {
-      if (endpoint.trim() !== selected.base_url) await updateProviderEndpoint(selected.id, endpoint.trim());
-      else await discoverProviderModels(selected.id);
-      await load(selected.id);
-      setMessage("已使用当前 API URL 和所选密钥刷新可访问模型。");
-    }
-    catch (reason) { await load(selected.id).catch(() => undefined); setMessage(errorText(reason)); }
-    finally { setBusy(""); }
-  };
-
-  const appendKey = async (event: FormEvent) => {
+  async function saveEndpoints(event: FormEvent) {
     event.preventDefault(); if (!selected) return;
-    setBusy("key"); setMessage("");
-    try {
-      await addProviderAPIKey(selected.id, { api_key: newKey, label: newKeyLabel || undefined });
-      setNewKey(""); setNewKeyLabel(""); await load(selected.id);
-      setMessage("API 密钥已保存并选中，可访问模型也已自动刷新。");
-    } catch (reason) { await load(selected.id).catch(() => undefined); setMessage(errorText(reason)); }
-    finally { setBusy(""); }
-  };
+    if (!Object.keys(endpoints).length) { setMessage("至少填写一个协议端点"); return; }
+    await perform(async () => { await updateProviderEndpoints(selected.id, endpoints); setEditingEndpoints(false); }, "协议端点已保存，可分别读取模型。");
+  }
 
-  const selectKey = async (provider: ModelProvider, keyId: string) => {
-    if (provider.selected_api_key_id === keyId) return;
-    setBusy(`key:${keyId}`); setMessage("");
-    try { await selectProviderAPIKey(provider.id, keyId); await load(provider.id); setMessage("已切换密钥并自动刷新可访问模型。"); }
-    catch (reason) { await load(provider.id).catch(() => undefined); setMessage(errorText(reason)); }
-    finally { setBusy(""); }
-  };
+  async function appendKey(event: FormEvent) {
+    event.preventDefault(); if (!selected) return;
+    await perform(async () => {
+      const result = await addProviderAPIKey(selected.id, { api_key: newKey, label: newKeyLabel || undefined });
+      setNewKey(""); setNewKeyLabel("");
+      if (result.warnings.length) throw new Error(`密钥已保存，部分端点读取失败：${result.warnings.join("；")}`);
+    }, "密钥已保存并选中，各端点的模型已刷新。");
+  }
 
   return <div className="ref-page models-catalog-page">
-    <header className="ref-page-head models-page-head">
-      <div><span className="eyebrow">MODEL REGISTRY</span><h1>模型供应商</h1><p>只填写 API 根地址与密钥，系统会按供应商自动补全协议路径并读取可访问模型。</p></div>
-      <button className="ref-primary-button" onClick={() => setAdding(true)}><Plus size={16} />添加供应商</button>
-    </header>
-
+    <header className="ref-page-head models-page-head"><div><h1>模型供应商</h1><p>为供应商配置协议端点，并开启供 Solver 使用的模型。</p></div><button className="ref-primary-button" disabled={busy} onClick={() => setAdding(true)}><Plus size={16} />添加供应商</button></header>
     {message ? <p className="settings-message" role="status">{message}</p> : null}
-
     {adding ? <section className="provider-create-card" aria-label="添加供应商">
-      <header><div><h2>添加供应商</h2><p>选择官方预设会自动填写 API URL；也可以使用任意兼容端点。</p></div><button className="icon-button" aria-label="关闭" onClick={() => setAdding(false)}><X size={18} /></button></header>
+      <header><div><h2>添加供应商</h2><p>至少填写一个协议端点；不同端点共用所选 API 密钥。</p></div><button className="icon-button" disabled={busy} aria-label="关闭" onClick={() => setAdding(false)}><X size={18} /></button></header>
       <form onSubmit={create}>
-        <label>供应商类型<select aria-label="供应商类型" value={draft.preset_id} onChange={(event) => choosePreset(event.target.value)}><option value="custom">自定义供应商</option>{availablePresets.map((preset) => <option key={preset.id} value={preset.id}>{preset.name}</option>)}</select></label>
-        <label>供应商名称<input required aria-label="供应商名称" value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} placeholder="例如：团队网关" /></label>
-        <fieldset className="provider-protocol-picker wide"><legend>兼容协议</legend><div>{PROTOCOLS.map((protocol) => {
-          const allowed = draft.preset_id === "custom" || Boolean(catalog?.presets.find((item) => item.id === draft.preset_id)?.protocols.includes(protocol));
-          const checked = draft.protocols.includes(protocol);
-          return <label key={protocol}><input type="checkbox" checked={checked} disabled={!allowed || draft.preset_id !== "custom"} onChange={(event) => setDraft({ ...draft, protocols: event.target.checked ? [...draft.protocols, protocol] : draft.protocols.filter((item) => item !== protocol) })} />{protocolName(protocol)}</label>;
-        })}</div><small>同一供应商可同时服务不同 Agent；实际协议在 Solver 模型绑定中选择。</small></fieldset>
-        <label className="wide">API 根地址<input required type="url" aria-label="API URL" value={draft.base_url} onChange={(event) => setDraft({ ...draft, base_url: event.target.value })} placeholder="https://api.example.com" /><small>预设供应商填写根地址；自定义网关可保留 /compatible-mode、/apps/anthropic 等路径前缀。</small></label>
-        <label>API 密钥<input required type="password" aria-label="API 密钥" autoComplete="new-password" value={draft.api_key} onChange={(event) => setDraft({ ...draft, api_key: event.target.value })} placeholder="仅写入，不会回显" /></label>
-        <footer><button type="button" className="ref-secondary-button" onClick={() => setAdding(false)}>取消</button><button className="ref-primary-button" disabled={busy === "create"}>{busy === "create" ? "正在保存…" : "保存供应商"}</button></footer>
+        <label>供应商类型<select aria-label="供应商类型" disabled={busy} value={draft.preset_id} onChange={(event) => choosePreset(event.target.value)}><option value="custom">自定义供应商</option>{catalog?.presets.map((preset) => <option key={preset.id} value={preset.id}>{preset.name}</option>)}</select></label>
+        <label>供应商名称<input required aria-label="供应商名称" disabled={busy} value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} placeholder="例如：团队网关" /></label>
+        <EndpointFields endpoints={draft.endpoints} disabled={busy} onChange={(value) => setDraft({ ...draft, endpoints: value })} />
+        <label className="wide">API 密钥<input required type="password" aria-label="API 密钥" disabled={busy} autoComplete="new-password" value={draft.api_key} onChange={(event) => setDraft({ ...draft, api_key: event.target.value })} /></label>
+        <footer><button type="button" className="ref-secondary-button" disabled={busy} onClick={() => setAdding(false)}>取消</button><button className="ref-primary-button" disabled={busy}>{busy ? "正在保存…" : "保存供应商"}</button></footer>
       </form>
     </section> : null}
-
     <div className="provider-layout">
       <section className="provider-list" aria-label="已配置供应商">
-        <header><div><h2>已配置</h2><span>{catalog?.providers.length ?? 0}</span></div><p>选择供应商查看模型与密钥</p></header>
-        {catalog?.providers.length ? catalog.providers.map((provider) => {
-          return <button key={provider.id} className={provider.id === selectedId ? "selected" : ""} onClick={() => setSelectedId(provider.id)}>
-            <span className="provider-mark"><Server size={18} /></span><span><strong>{provider.name}</strong><small>{provider.models.length} 个模型 · {configuredKeyCount(provider)} 个有效密钥</small></span>
-            <em className={provider.models.length && configuredKeyCount(provider) ? "ready" : "pending"}>{provider.models.length && configuredKeyCount(provider) ? "已配置" : "未完整配置"}</em><ChevronRight size={16} />
-          </button>;
-        }) : <div className="provider-empty"><Server size={24} /><strong>还没有供应商</strong><p>添加一个供应商后即可配置 Agent 使用的模型。</p></div>}
+        <header><div><h2>已配置</h2><span>{catalog?.providers.length ?? 0}</span></div><p>选择供应商管理端点与模型</p></header>
+        {catalog?.providers.length ? catalog.providers.map((provider) => <button key={provider.id} disabled={busy} className={provider.id === selectedId ? "selected" : ""} onClick={() => setSelectedId(provider.id)}>
+          <span className="provider-mark"><Server size={18} /></span><span><strong>{provider.name}</strong><small>{Object.keys(provider.endpoints).length} 个端点 · {enabledCount(provider)} 个已启用模型</small></span><em className={enabledCount(provider) && hasSelectedKey(provider) ? "ready" : "pending"}>{enabledCount(provider) && hasSelectedKey(provider) ? "已配置" : "待配置"}</em><ChevronRight size={16} />
+        </button>) : <div className="provider-empty"><Server size={24} /><strong>还没有供应商</strong><p>添加供应商后即可配置 Solver 模型。</p></div>}
       </section>
-
       <section className="provider-detail" aria-label="供应商详情">
         {selected ? <>
-          <header className="provider-detail-head"><div><span>{selected.preset_id === "custom" ? "自定义供应商" : "供应商预设"}</span><h2>{selected.name}</h2><code>{selected.base_url}</code><div className="provider-protocol-tags">{selected.protocols.map((protocol) => <em key={protocol}>{protocolName(protocol)}</em>)}</div></div><div className="provider-detail-actions"><div className="provider-counts"><span><Cpu size={15} />{selected.models.length} 模型</span><span><KeyRound size={15} />{configuredKeyCount(selected)} 有效密钥</span></div>{!selected.built_in ? <button type="button" className="provider-delete-button" disabled={busy === "delete"} onClick={() => void removeProvider()}><Trash2 size={15} />删除</button> : null}</div></header>
-          <form className="provider-endpoint-form" onSubmit={syncModels}><label>API 根地址<input required type="url" value={endpoint} onChange={(event) => setEndpoint(event.target.value)} /><small>系统会自动拼接模型发现与 SDK 推理路径。</small></label><button className="ref-secondary-button" disabled={busy === "models"}><RefreshCw size={15} />{busy === "models" ? "读取中…" : "读取可访问模型"}</button></form>
-
-          <div className="provider-detail-grid">
-            <section className="provider-models"><header><div><h3>可访问模型</h3><p>列表由当前 API URL 和所选 API 密钥自动读取，不再手动添加。</p></div><button type="button" className="icon-button" aria-label="刷新模型" disabled={busy === "models"} onClick={() => void syncModels()}><RefreshCw size={16} /></button></header>
-              <div className="provider-items">{selected.models.map((model) => <article key={model.id}>
-                <span className="item-icon"><Cpu size={16} /></span><div><strong>{model.name}</strong><small>{model.max_output_tokens} tokens · {model.reasoning_mode === "enabled" ? "推理模式" : "标准模式"}</small></div>
-                <span className={`verification-pill ${model.verification_status === "verified" ? "verified" : "stale"}`}><Check size={12} />{model.verification_status === "verified" ? "已同步" : "待同步"}</span>
-              </article>)}</div>
-              {!selected.models.length ? <p className="provider-model-empty">尚未读取到模型，请检查 API URL、所选密钥及供应商协议。</p> : null}
-            </section>
-
-            <section className="provider-keys"><header><div><h3>API 密钥</h3><p>点击条目即可选中；页面列表仅显示密钥掩码。</p></div></header>
-              <div className="provider-items key-items">{selected.api_keys.map((key) => <button type="button" key={key.id} className={key.selected && key.configured !== false ? "selected" : ""} onClick={() => void selectKey(selected, key.id)} disabled={busy === `key:${key.id}` || key.configured === false}>
-                <span className="item-icon"><KeyRound size={16} /></span><span><strong>{key.label}</strong><code>{key.masked}</code></span>{key.configured === false ? <small>请在下方添加密钥</small> : key.selected ? <em><Check size={13} />当前使用</em> : <small>点击选中</small>}
-              </button>)}</div>
-              <form className="provider-key-form" onSubmit={appendKey}><input aria-label="密钥备注" value={newKeyLabel} onChange={(event) => setNewKeyLabel(event.target.value)} placeholder="备注（可选）" /><input required type="password" aria-label="添加 API 密钥" autoComplete="new-password" value={newKey} onChange={(event) => setNewKey(event.target.value)} placeholder="输入新的 API 密钥" /><button disabled={busy === "key"}><Plus size={14} />添加 API 密钥</button></form>
-            </section>
-          </div>
-          <footer className="provider-security-note"><ShieldCheck size={16} /><span>密钥随 models.json 保存；输入框使用密码模式，列表只显示掩码。请仅在可信主机部署并限制 config 目录权限。</span></footer>
-        </> : <div className="provider-detail-empty"><Server size={28} /><h2>选择一个供应商</h2><p>在左侧查看已配置供应商，或先添加新的供应商。</p></div>}
+          <header className="provider-detail-head"><div><h2>{selected.name}</h2><p>{Object.keys(selected.endpoints).length} 个协议端点，共用 {selected.api_keys.filter((key) => key.configured).length} 个已填写密钥</p></div><div className="provider-detail-actions">
+            <button className="ref-secondary-button" disabled={busy} onClick={() => { setEndpoints(structuredClone(selected.endpoints)); setEditingEndpoints(!editingEndpoints); }}>编辑协议端点</button>
+            {!selected.built_in ? <button className="provider-delete-button" disabled={busy} onClick={() => {
+              if (window.confirm(`确认删除供应商“${selected.name}”？其端点、模型和密钥记录会一起删除。`)) void perform(() => deleteModelProvider(selected.id), "供应商已删除。");
+            }}><Trash2 size={15} />删除</button> : null}
+          </div></header>
+          {editingEndpoints ? <form className="provider-endpoints-editor" aria-label="编辑协议端点" onSubmit={saveEndpoints}>
+            <EndpointFields endpoints={endpoints} disabled={busy} onChange={setEndpoints} />
+            <footer><button className="ref-secondary-button" type="button" disabled={busy} onClick={() => setEditingEndpoints(false)}>取消</button><button className="ref-primary-button" disabled={busy}>保存端点</button></footer>
+          </form> : null}
+          <div className="provider-endpoint-lists">{Object.entries(selected.endpoints).map(([protocol, endpoint]) => <EndpointModels key={`${selected.id}:${protocol}`} protocol={protocol as ProviderProtocol} endpoint={endpoint} busy={busy}
+            onRefresh={() => void perform(() => discoverProviderModels(selected.id, protocol as ProviderProtocol), "模型已读取；新增模型默认关闭，已有启用选择已保留。")}
+            onEnabled={(ids, enabled) => void perform(() => setProviderModelsEnabled(selected.id, protocol as ProviderProtocol, ids, enabled), enabled ? "模型已启用，可在对应 Solver 中选择。" : "模型已关闭，后续任务无法选择该模型。")}
+          />)}</div>
+          <section className="provider-keys provider-shared-keys"><header><div><h3><KeyRound size={16} />共享 API 密钥</h3><p>所选密钥用于此供应商的所有协议端点。</p></div></header>
+            <div className="provider-items key-items">{selected.api_keys.map((key) => <button type="button" key={key.id} className={key.selected && key.configured ? "selected" : ""} disabled={busy || !key.configured} onClick={() => {
+              if (!key.selected) void perform(async () => {
+                const result = await selectProviderAPIKey(selected.id, key.id);
+                if (result.warnings.length) throw new Error(`密钥已切换，部分端点读取失败：${result.warnings.join("；")}`);
+              }, "密钥已切换，各端点的模型已刷新。");
+            }}><span className="item-icon"><KeyRound size={16} /></span><span><strong>{key.label}</strong><code>{key.masked}</code></span>{!key.configured ? <small>未填写</small> : key.selected ? <em><Check size={13} />当前使用</em> : <small>点击选中</small>}</button>)}</div>
+            <form className="provider-key-form" onSubmit={appendKey}><input aria-label="密钥备注" disabled={busy} value={newKeyLabel} onChange={(event) => setNewKeyLabel(event.target.value)} placeholder="备注（可选）" /><input required type="password" aria-label="添加 API 密钥" disabled={busy} autoComplete="new-password" value={newKey} onChange={(event) => setNewKey(event.target.value)} placeholder="输入新的 API 密钥" /><button disabled={busy}><Plus size={14} />添加 API 密钥</button></form>
+          </section>
+        </> : <div className="provider-detail-empty"><Server size={28} /><h2>选择一个供应商</h2><p>在左侧选择供应商，或添加新的供应商。</p></div>}
       </section>
     </div>
   </div>;
 }
 
-function errorText(reason: unknown): string {
-  return reason instanceof Error ? reason.message : "操作失败，请稍后重试";
+function EndpointFields({ endpoints, disabled, onChange }: { endpoints: ProviderEndpoints; disabled: boolean; onChange: (value: ProviderEndpoints) => void }) {
+  return <fieldset className="provider-endpoint-fields wide" disabled={disabled}><legend>协议端点（至少一项）</legend><p>填写 API 基础地址，保留网关路径和版本号；系统按填写的地址连接。</p>
+    {PROTOCOLS.map((protocol) => <div className="provider-endpoint-field" key={protocol}>
+      <label className="endpoint-checkbox"><input type="checkbox" checked={Boolean(endpoints[protocol])} onChange={(event) => {
+        const next = { ...endpoints };
+        if (event.target.checked) next[protocol] = { base_url: "", models: [] }; else delete next[protocol];
+        onChange(next);
+      }} />{protocolName(protocol)}</label>
+      {endpoints[protocol] ? <input required type="url" aria-label={`${protocolName(protocol)} API 地址`} value={endpoints[protocol].base_url} placeholder={protocol === "anthropic" ? "https://api.example.com/apps/anthropic" : "https://api.example.com/compatible-mode/v1"} onChange={(event) => onChange({ ...endpoints, [protocol]: { ...endpoints[protocol], base_url: event.target.value } })} /> : <span className="endpoint-not-configured">未配置</span>}
+    </div>)}
+  </fieldset>;
 }
 
-function configuredKeyCount(provider: ModelProvider): number {
-  return provider.api_keys.filter((key) => key.configured !== false).length;
+function EndpointModels({ protocol, endpoint, busy, onRefresh, onEnabled }: { protocol: ProviderProtocol; endpoint: ProviderEndpoint; busy: boolean; onRefresh: () => void; onEnabled: (ids: string[], enabled: boolean) => void }) {
+  const [expanded, setExpanded] = useState(true);
+  const [search, setSearch] = useState("");
+  const query = search.trim().toLocaleLowerCase();
+  const visible = endpoint.models.filter((model) => `${model.name} ${model.id}`.toLocaleLowerCase().includes(query));
+  const enabled = endpoint.models.filter((model) => model.enabled && model.available).length;
+  return <section className="endpoint-models" aria-label={`${protocolName(protocol)} 模型`}>
+    <header><button type="button" className="endpoint-models-toggle" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>
+      {expanded ? <ChevronDown size={18} /> : <ChevronRight size={18} />}<span><strong>{protocolName(protocol)}</strong><small>{endpoint.base_url}</small></span><em>{enabled} / {endpoint.models.length} 已启用</em>
+    </button><button type="button" className="ref-secondary-button" disabled={busy} onClick={onRefresh}><RefreshCw size={14} />读取可访问模型</button></header>
+    {expanded ? <div className="endpoint-models-body">
+      <div className="endpoint-models-toolbar"><span>开启后可在对应 Solver 中选择</span><button disabled={busy || !endpoint.models.some((model) => model.available && !model.enabled)} onClick={() => onEnabled(endpoint.models.filter((model) => model.available).map((model) => model.id), true)}>全部开启</button><button disabled={busy || !enabled} onClick={() => onEnabled(endpoint.models.map((model) => model.id), false)}>全部关闭</button></div>
+      <label className="endpoint-model-search"><Search size={16} /><input type="search" aria-label={`搜索 ${protocolName(protocol)} 模型`} placeholder="搜索模型…" value={search} onChange={(event) => setSearch(event.target.value)} /></label>
+      <div className="endpoint-model-rows">{visible.map((model) => <div key={model.id} className="endpoint-model-row" data-enabled={model.enabled && model.available}>
+        <button type="button" role="switch" className="model-enable-switch" aria-label={`启用 ${model.name}`} aria-checked={model.enabled && model.available} disabled={busy || !model.available} onClick={() => onEnabled([model.id], !model.enabled)}><span /></button>
+        <strong title={model.name}>{model.name}</strong>{!model.available ? <small>已不可访问</small> : <small>{model.enabled ? "已启用" : "未启用"}</small>}
+      </div>)}</div>
+      {!visible.length ? <p className="provider-model-empty">{endpoint.models.length ? "没有匹配的模型。" : "尚未读取模型，请点击“读取可访问模型”。"}</p> : null}
+    </div> : null}
+  </section>;
 }
 
-function protocolName(protocol: ProviderProtocol): string {
-  return ({ openai_chat_completions: "OpenAI Chat Completions", openai_responses: "OpenAI Responses", anthropic: "Anthropic Messages" } as Record<ProviderProtocol, string>)[protocol];
-}
+function errorText(reason: unknown) { return reason instanceof Error ? reason.message : "操作失败，请稍后重试"; }
+function enabledCount(provider: ModelProvider) { return Object.values(provider.endpoints).reduce((count, endpoint) => count + endpoint.models.filter((model) => model.enabled && model.available).length, 0); }
+function hasSelectedKey(provider: ModelProvider) { return provider.api_keys.some((key) => key.selected && key.configured); }
+function protocolName(protocol: ProviderProtocol) { return ({ openai_responses: "OpenAI Responses", openai_chat_completions: "OpenAI Chat Completions", anthropic: "Anthropic Messages" } as const)[protocol]; }

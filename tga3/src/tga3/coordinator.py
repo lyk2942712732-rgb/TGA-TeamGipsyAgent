@@ -302,10 +302,8 @@ class TaskCoordinator:
     ) -> AgentRun:
         current = await self._worker_run(task_id, agent_id)
         provider = self.config.models.provider(provider_id)
-        provider.model(model_id)
-        if protocol not in provider.protocols:
-            raise ValueError(f"provider {provider.id} does not support protocol={protocol}")
         self.config.validate_runtime_protocol(current.sdk, protocol)
+        model = provider.model(model_id, protocol, require_enabled=True)
         await self.gateway.request(
             task_id,
             agent_id,
@@ -313,7 +311,7 @@ class TaskCoordinator:
             {
                 "provider_id": provider_id,
                 "model_id": model_id,
-                "model_name": provider.model(model_id).name,
+                "model_name": model.name,
                 "protocol": protocol,
                 "base_url": provider.sdk_base_url(protocol),
                 "api_key": provider.key(),

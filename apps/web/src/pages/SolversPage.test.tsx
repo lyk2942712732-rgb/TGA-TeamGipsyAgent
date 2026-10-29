@@ -10,9 +10,9 @@ const agentConfig = {
   schema_version: 1,
   agents: {
     supervisor: { display_name: "Supervisor", role: "supervisor", runtime: "openai_agents", provider_id: "deepseek", model_id: "deepseek-v4-pro", protocol: "openai_chat_completions", max_turns_per_cycle: 8, system_prompt: "supervise" },
-    "worker-claude": { display_name: "Claude Worker", role: "worker", runtime: "claude_agent", provider_id: "deepseek", model_id: "deepseek-v4-pro", protocol: "anthropic", max_turns_per_cycle: 12, system_prompt: "claude work" },
-    "worker-openai": { display_name: "OpenAI Worker", role: "worker", runtime: "openai_agents", provider_id: "deepseek", model_id: "deepseek-v4-pro", protocol: "openai_chat_completions", max_turns_per_cycle: 12, system_prompt: "openai work" },
-    reporter: { display_name: "Reporter", role: "reporter", runtime: "openai_agents", provider_id: "deepseek", model_id: "deepseek-v4-pro", protocol: "openai_chat_completions", max_turns_per_cycle: 8, system_prompt: "report" },
+    "worker-claude": { display_name: "Claude Worker", role: "worker", runtime: "claude_cli", provider_id: "deepseek", model_id: "deepseek-v4-pro", protocol: "anthropic", max_turns_per_cycle: 12, system_prompt: "claude work" },
+    "worker-openai": { display_name: "OpenAI Worker", role: "worker", runtime: "codex_cli", provider_id: "deepseek", model_id: "deepseek-v4-pro", protocol: "openai_responses", max_turns_per_cycle: 12, system_prompt: "openai work" },
+    reporter: { display_name: "Reporter", role: "reporter", runtime: "codex_cli", provider_id: "deepseek", model_id: "deepseek-v4-pro", protocol: "openai_responses", max_turns_per_cycle: 8, system_prompt: "report" },
   },
 } as const;
 
@@ -20,7 +20,12 @@ describe("SolversPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.agents.mockResolvedValue(structuredClone(agentConfig));
-    mocks.models.mockResolvedValue({ schema_version: 1, providers: [{ id: "deepseek", name: "DeepSeek", protocols: ["openai_chat_completions", "anthropic"], api_keys: [], selected_api_key_id: "", models: [{ id: "deepseek-v4-pro", name: "deepseek-v4-pro", max_output_tokens: 8192, timeout_seconds: 120 }] }] });
+    const model = (id: string, enabled = true) => ({ id, name: id, enabled, available: true, max_output_tokens: 8192, timeout_seconds: 120 });
+    mocks.models.mockResolvedValue({ schema_version: 1, providers: [{ id: "deepseek", name: "DeepSeek", api_keys: [], selected_api_key_id: "", endpoints: {
+      openai_responses: { base_url: "https://api.test/responses/v1", models: [model("deepseek-v4-pro"), model("responses-only"), model("disabled-model", false)] },
+      anthropic: { base_url: "https://api.test/anthropic", models: [model("deepseek-v4-pro"), model("anthropic-only")] },
+      openai_chat_completions: { base_url: "https://api.test/chat/v1", models: [model("chat-only")] },
+    } }] });
     mocks.agentDefinitions.mockResolvedValue(Object.entries(agentConfig.agents).map(([id, agent]) => ({ ...agent, id, tools: ["skills.list", "skills.read"], image: agent.role === "worker" ? `tga3-${id}:local` : null, image_health: agent.role === "worker" ? { status: "healthy", available: true, detail: "healthy" } : null })));
     mocks.saveAgents.mockImplementation(async (value) => value);
   });
@@ -51,19 +56,22 @@ describe("SolversPage", () => {
     await waitFor(() => expect(mocks.saveAgents).toHaveBeenCalledWith(expect.objectContaining({ agents: expect.objectContaining({ "worker-openai": expect.objectContaining({ system_prompt: "updated prompt" }) }) })));
   });
 
-  it("only shows model protocols compatible with the selected Agent SDK", async () => {
+  it("only offers enabled models from the CLI's endpoint without protocol suffixes", async () => {
     const user = userEvent.setup();
     render(<SolversPage />);
-
     await user.click(await screen.findByRole("button", { name: "配置 OpenAI Worker" }));
     let modelSelect = within(screen.getByLabelText("OpenAI Worker Solver 配置")).getByRole("combobox");
-    expect(within(modelSelect).getByRole("option", { name: /OpenAI Chat/ })).toBeInTheDocument();
-    expect(within(modelSelect).queryByRole("option", { name: /Anthropic Messages/ })).not.toBeInTheDocument();
-    expect(within(modelSelect).queryByText(/SDK 协议不兼容/)).not.toBeInTheDocument();
-
+    expect(within(modelSelect).getByRole("option", { name: "DeepSeek / responses-only" })).toBeInTheDocument();
+    expect(within(modelSelect).queryByRole("option", { name: /anthropic-only|disabled-model|chat-only|Responses/ })).toBeNull();
+    await user.selectOptions(modelSelect, "deepseek::responses-only::openai_responses");
+    await user.click(within(screen.getByLabelText("OpenAI Worker Solver 配置")).getByRole("button", { name: "保存配置" }));
+    await waitFor(() => expect(mocks.saveAgents).toHaveBeenCalledWith(expect.objectContaining({ agents: expect.objectContaining({ "worker-openai": expect.objectContaining({ model_id: "responses-only", protocol: "openai_responses" }) }) })));
     await user.click(screen.getByRole("button", { name: "配置 Claude Worker" }));
     modelSelect = within(screen.getByLabelText("Claude Worker Solver 配置")).getByRole("combobox");
-    expect(within(modelSelect).getByRole("option", { name: /Anthropic Messages/ })).toBeInTheDocument();
-    expect(within(modelSelect).queryByRole("option", { name: /OpenAI Chat/ })).not.toBeInTheDocument();
+    expect(within(modelSelect).getByRole("option", { name: "DeepSeek / anthropic-only" })).toBeInTheDocument();
+    expect(within(modelSelect).queryByRole("option", { name: /responses-only|disabled-model|chat-only|Messages/ })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "配置 Reporter" }));
+    modelSelect = within(screen.getByLabelText("Reporter Solver 配置")).getByRole("combobox");
+    expect(within(modelSelect).getByRole("option", { name: "DeepSeek / responses-only" })).toBeInTheDocument();
   });
 });

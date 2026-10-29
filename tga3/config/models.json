@@ -6,8 +6,36 @@
       "name": "OpenAI",
       "preset_id": "openai",
       "built_in": true,
-      "protocols": ["openai_responses", "openai_chat_completions"],
-      "base_url": "https://api.openai.com",
+      "endpoints": {
+        "openai_responses": {
+          "base_url": "https://api.openai.com/v1",
+          "models": [
+            {
+              "id": "openai-worker-model",
+              "name": "gpt-5.6",
+              "enabled": true,
+              "available": true,
+              "max_output_tokens": 8192,
+              "timeout_seconds": 180,
+              "temperature": null
+            }
+          ]
+        },
+        "openai_chat_completions": {
+          "base_url": "https://api.openai.com/v1",
+          "models": [
+            {
+              "id": "openai-worker-model",
+              "name": "gpt-5.6",
+              "enabled": true,
+              "available": true,
+              "max_output_tokens": 8192,
+              "timeout_seconds": 180,
+              "temperature": null
+            }
+          ]
+        }
+      },
       "api_keys": [
         {
           "id": "openai-primary",
@@ -15,23 +43,29 @@
           "api_key": ""
         }
       ],
-      "selected_api_key_id": "openai-primary",
-      "models": [
-        {
-          "id": "openai-worker-model",
-          "name": "gpt-5.6",
-          "max_output_tokens": 8192,
-          "timeout_seconds": 180
-        }
-      ]
+      "selected_api_key_id": "openai-primary"
     },
     {
       "id": "anthropic",
       "name": "Anthropic",
       "preset_id": "anthropic",
       "built_in": true,
-      "protocols": ["anthropic"],
-      "base_url": "https://api.anthropic.com",
+      "endpoints": {
+        "anthropic": {
+          "base_url": "https://api.anthropic.com",
+          "models": [
+            {
+              "id": "claude-worker-model",
+              "name": "claude-sonnet-4-6",
+              "enabled": true,
+              "available": true,
+              "max_output_tokens": 8192,
+              "timeout_seconds": 180,
+              "temperature": null
+            }
+          ]
+        }
+      },
       "api_keys": [
         {
           "id": "anthropic-primary",
@@ -39,23 +73,23 @@
           "api_key": ""
         }
       ],
-      "selected_api_key_id": "anthropic-primary",
-      "models": [
-        {
-          "id": "claude-worker-model",
-          "name": "claude-sonnet-4-6",
-          "max_output_tokens": 8192,
-          "timeout_seconds": 180
-        }
-      ]
+      "selected_api_key_id": "anthropic-primary"
     },
     {
       "id": "deepseek",
       "name": "DeepSeek",
       "preset_id": "deepseek",
       "built_in": true,
-      "protocols": ["openai_chat_completions", "anthropic"],
-      "base_url": "https://api.deepseek.com",
+      "endpoints": {
+        "openai_chat_completions": {
+          "base_url": "https://api.deepseek.com",
+          "models": []
+        },
+        "anthropic": {
+          "base_url": "https://api.deepseek.com/anthropic",
+          "models": []
+        }
+      },
       "api_keys": [
         {
           "id": "deepseek-primary",
@@ -63,16 +97,19 @@
           "api_key": ""
         }
       ],
-      "selected_api_key_id": "deepseek-primary",
-      "models": []
+      "selected_api_key_id": "deepseek-primary"
     },
     {
       "id": "gemini",
       "name": "Google Gemini",
       "preset_id": "gemini",
       "built_in": true,
-      "protocols": ["openai_chat_completions"],
-      "base_url": "https://generativelanguage.googleapis.com",
+      "endpoints": {
+        "openai_chat_completions": {
+          "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
+          "models": []
+        }
+      },
       "api_keys": [
         {
           "id": "gemini-primary",
@@ -80,16 +117,19 @@
           "api_key": ""
         }
       ],
-      "selected_api_key_id": "gemini-primary",
-      "models": []
+      "selected_api_key_id": "gemini-primary"
     },
     {
       "id": "openrouter",
       "name": "OpenRouter",
       "preset_id": "openrouter",
       "built_in": true,
-      "protocols": ["openai_chat_completions"],
-      "base_url": "https://openrouter.ai",
+      "endpoints": {
+        "openai_chat_completions": {
+          "base_url": "https://openrouter.ai/api/v1",
+          "models": []
+        }
+      },
       "api_keys": [
         {
           "id": "openrouter-primary",
@@ -97,16 +137,19 @@
           "api_key": ""
         }
       ],
-      "selected_api_key_id": "openrouter-primary",
-      "models": []
+      "selected_api_key_id": "openrouter-primary"
     },
     {
       "id": "groq",
       "name": "Groq",
       "preset_id": "groq",
       "built_in": true,
-      "protocols": ["openai_chat_completions"],
-      "base_url": "https://api.groq.com",
+      "endpoints": {
+        "openai_chat_completions": {
+          "base_url": "https://api.groq.com/openai/v1",
+          "models": []
+        }
+      },
       "api_keys": [
         {
           "id": "groq-primary",
@@ -114,8 +157,7 @@
           "api_key": ""
         }
       ],
-      "selected_api_key_id": "groq-primary",
-      "models": []
+      "selected_api_key_id": "groq-primary"
     }
   ]
 }

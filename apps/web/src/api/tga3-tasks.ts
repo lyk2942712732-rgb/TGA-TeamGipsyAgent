@@ -1,5 +1,6 @@
 import type { TaskMode } from "../modes";
 import { requestJson } from "./client";
+import { enabledModelOptions } from "./model-options";
 import type { AgentsConfig, ModelsConfig, ProviderProtocol, ScenesConfig } from "./tga3-config";
 
 export type TGA3TaskListItem = {
@@ -109,16 +110,14 @@ export async function fetchAgentModelOptions(sceneId: TaskMode): Promise<AgentMo
     requestJson<ModelsConfig>("/api/v3/config/models"),
     requestJson<AgentsConfig>("/api/v3/config/agents"),
   ]);
-  const choices = models.providers.flatMap((provider) =>
-    provider.models.flatMap((model) => provider.protocols.map((protocol) => ({
+  const choices = enabledModelOptions(models).map(({ provider, model, protocol }) => ({
       provider_id: provider.id,
       provider_name: provider.name,
       protocol,
       model_id: model.id,
       model_name: model.name,
       ready: Boolean(provider.api_keys.find((key) => key.id === provider.selected_api_key_id)?.api_key),
-    }))),
-  );
+    }));
   return {
     scene_id: sceneId,
     models: choices,

@@ -3,6 +3,8 @@ import { requestJson } from "./client";
 export type TGA3Model = {
   id: string;
   name: string;
+  enabled: boolean;
+  available: boolean;
   max_output_tokens: number;
   timeout_seconds: number;
   temperature?: number | null;
@@ -10,16 +12,16 @@ export type TGA3Model = {
   verification_status?: "unverified" | "verifying" | "verified" | "failed" | "stale";
 };
 export type ProviderProtocol = "openai_responses" | "openai_chat_completions" | "anthropic";
+export type ProviderEndpoint = { base_url: string; models: TGA3Model[] };
+export type ProviderEndpoints = Partial<Record<ProviderProtocol, ProviderEndpoint>>;
 export type TGA3Provider = {
   id: string;
   name: string;
   preset_id?: string;
   built_in?: boolean;
-  protocols: ProviderProtocol[];
-  base_url?: string | null;
+  endpoints: ProviderEndpoints;
   api_keys: Array<{ id: string; label: string; api_key: string }>;
   selected_api_key_id: string;
-  models: TGA3Model[];
 };
 export type ModelsConfig = { schema_version: number; providers: TGA3Provider[] };
 export type AgentConfig = { display_name: string; role: "supervisor" | "worker" | "reporter"; runtime: "openai_agents" | "claude_agent" | "codex_cli" | "claude_cli"; provider_id: string; model_id: string; protocol: ProviderProtocol; max_turns_per_cycle: number; system_prompt: string };

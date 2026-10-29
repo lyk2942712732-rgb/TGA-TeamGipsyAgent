@@ -28,6 +28,10 @@ class ProviderProfile:
             "protocols": list(self.protocols),
             "default_protocol": self.default_protocol,
             "base_url": self.base_url,
+            "endpoints": {
+                protocol: {"base_url": self.base_url + path, "models": []}
+                for protocol, path in self.runtime_paths.items()
+            },
         }
 
 
@@ -104,6 +108,15 @@ def normalize_api_origin(raw: str) -> str:
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         raise ValueError("API 地址必须是有效的 http(s) 根地址")
     return f"{parsed.scheme}://{parsed.netloc}"
+
+
+def normalize_endpoint_base(raw: str) -> str:
+    """Validate an explicit CLI API base without guessing or removing its path."""
+    parsed = urlsplit(raw.strip())
+    normalize_api_origin(raw)
+    if parsed.username or parsed.password or parsed.query or parsed.fragment:
+        raise ValueError("API 基础地址不能包含账号、查询参数或片段")
+    return raw.strip().rstrip("/")
 
 
 def join_origin(origin: str, path: str) -> str:

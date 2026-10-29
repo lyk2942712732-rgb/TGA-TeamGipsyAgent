@@ -20,7 +20,7 @@ async def test_openai_compatible_discovery_uses_selected_key_and_models_endpoint
         seen["authorization"] = request.headers.get("authorization", "")
         return httpx.Response(200, json={"data": [{"id": "gpt-a"}, {"id": "gpt-b"}, {"id": "gpt-a"}]})
 
-    result = await discover_provider_models(provider, transport=httpx.MockTransport(handler))
+    result = await discover_provider_models(provider, "openai_responses", transport=httpx.MockTransport(handler))
 
     assert result == ["gpt-a", "gpt-b"]
     assert seen == {
@@ -46,7 +46,7 @@ async def test_anthropic_discovery_follows_model_pagination():
             )
         return httpx.Response(200, json={"data": [{"id": "claude-b"}], "has_more": False})
 
-    result = await discover_provider_models(provider, transport=httpx.MockTransport(handler))
+    result = await discover_provider_models(provider, "anthropic", transport=httpx.MockTransport(handler))
 
     assert result == ["claude-a", "claude-b"]
     assert calls[0].startswith("https://api.anthropic.com/v1/models?limit=100")
@@ -68,7 +68,7 @@ async def test_deepseek_uses_root_models_endpoint_and_anthropic_runtime_endpoint
             json={"data": [{"id": "deepseek-v4-flash"}, {"id": "deepseek-v4-pro"}]},
         )
 
-    result = await discover_provider_models(provider, transport=httpx.MockTransport(handler))
+    result = await discover_provider_models(provider, "openai_chat_completions", transport=httpx.MockTransport(handler))
 
     assert result == ["deepseek-v4-flash", "deepseek-v4-pro"]
     assert seen == {
@@ -82,7 +82,7 @@ async def test_deepseek_uses_root_models_endpoint_and_anthropic_runtime_endpoint
 def test_deepseek_protocol_is_selected_by_each_agent_binding():
     config = TGA3Config(Path(__file__).parents[1] / "config")
     provider = config.models.provider("deepseek")
-    provider.models.append(ModelConfig(id="deepseek-v4", name="deepseek-v4"))
+    provider.endpoint("anthropic").models.append(ModelConfig(id="deepseek-v4", name="deepseek-v4"))
 
     with pytest.raises(ValueError, match="Responses"):
         config.resolve_agent(
@@ -109,28 +109,27 @@ def test_deepseek_protocol_is_selected_by_each_agent_binding():
 
 
 @pytest.mark.asyncio
-async def test_custom_openai_provider_probes_common_paths_from_origin():
-    config = TGA3Config(Path(__file__).parents[1] / "config")
-    provider = config.models.provider("openrouter").model_copy(
-        update={"preset_id": "custom", "base_url": "https://gateway.example.test/supplied/path"},
-        deep=True,
-    )
-    provider.api_keys[0].api_key = SecretStr("custom-secret")
-    calls: list[str] = []
+async def test_custom_endpoint_uses_exact_path_for_discovery_and_runtime():
+    from tga3.config import ProviderConfig
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    provider = ProviderConfig(id="gateway", name="Gateway", api_keys=[
+        {"id": "key", "api_key": "custom-secret"}
+    ], selected_api_key_id="key", endpoints={
+        "openai_responses": {"base_url": "https://gateway.test/supplied/path/api/v2"},
+        "anthropic": {"base_url": "https://gateway.test/apps/anthropic"},
+    })
+    calls = []
+
+    def handler(request):
         calls.append(str(request.url))
-        if request.url.path != "/supplied/path/v1/models":
-            return httpx.Response(404)
+        assert request.headers["authorization"] == "Bearer custom-secret"
         return httpx.Response(200, json={"data": [{"id": "custom-model"}]})
 
-    result = await discover_provider_models(provider, transport=httpx.MockTransport(handler))
-
+    result = await discover_provider_models(provider, "openai_responses", transport=httpx.MockTransport(handler))
     assert result == ["custom-model"]
-    assert calls == [
-        "https://gateway.example.test/supplied/path/models",
-        "https://gateway.example.test/supplied/path/v1/models",
-    ]
+    assert calls == ["https://gateway.test/supplied/path/api/v2/models"]
+    assert provider.sdk_base_url("openai_responses") == "https://gateway.test/supplied/path/api/v2"
+    assert provider.sdk_base_url("anthropic") == "https://gateway.test/apps/anthropic"
 
 
 def test_custom_gateway_prefixes_survive_config_and_runtime_resolution():
@@ -140,7 +139,26 @@ def test_custom_gateway_prefixes_survive_config_and_runtime_resolution():
     responses = ProviderConfig(
         **common, protocols=["openai_responses"], base_url="https://gateway.test/compatible-mode/v1"
     )
-    assert responses.base_url == "https://gateway.test/compatible-mode"
+    assert responses.endpoint("openai_responses").base_url == "https://gateway.test/compatible-mode/v1"
     assert responses.sdk_base_url("openai_responses") == "https://gateway.test/compatible-mode/v1"
     anthropic = ProviderConfig(**common, protocols=["anthropic"], base_url="https://gateway.test/apps/anthropic")
     assert anthropic.sdk_base_url("anthropic") == "https://gateway.test/apps/anthropic"
+
+
+@pytest.mark.asyncio
+async def test_multi_protocol_provider_uses_anthropic_auth_and_accepts_empty_catalog():
+    from tga3.config import ProviderConfig
+
+    provider = ProviderConfig(id="gateway", name="Gateway", api_keys=[{"id": "key", "api_key": "test-only"}],
+                              selected_api_key_id="key", endpoints={
+                                  "openai_responses": {"base_url": "https://gateway.test/responses/v1"},
+                                  "anthropic": {"base_url": "https://gateway.test/apps/anthropic"},
+                              })
+
+    def handler(request):
+        assert request.url.path == "/apps/anthropic/v1/models"
+        assert request.headers["x-api-key"] == "test-only"
+        assert "authorization" not in request.headers
+        return httpx.Response(200, json={"data": [], "has_more": False})
+
+    assert await discover_provider_models(provider, "anthropic", transport=httpx.MockTransport(handler)) == []
