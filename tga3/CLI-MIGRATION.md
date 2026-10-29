@@ -42,7 +42,7 @@ Anthropic 的实际推理地址及各端点的启用开关仍独立保存。认�
 
 迁移已有部署时先备份配置，保留原有供应商、密钥、Skills 和数据；将三个执行角色 runtime 分别改为
 `codex_cli`、`claude_cli`、`codex_cli`，配置正确的协议及供应商，再增加 Reporter 镜像映射。
-加载旧配置时移除 Supervisor 及其调度字段；保存后持久化三角色配置。旧 SDK 的私有会话不能直接导入 CLI；已有公共黑板和证据保留。
+旧任务已清理，不支持旧 Supervisor 或问答记录；配置只接受三个执行角色。
 
 ## 会话与运行
 
@@ -77,13 +77,12 @@ skills/                             → 全部 /skills（只读）
 
 Worker 无法通过挂载访问对方工作目录或证据目录；双方通过公共黑板共享已验证结论。
 Reporter 从 `/artifacts/<worker-id>/` 汇总证据，只向自己的工作目录写入报告。
-旧任务根目录已有证据保持原位置，登记过的绝对路径继续有效。
 
 文件读写、搜索、Shell 与 Skills 文档读取直接使用 CLI 原生能力，删除重复的 Skills MCP 工具。
 MCP 只保留 `blackboard_sync`、`blackboard_publish`、`artifact_register`；证据登记按发布 Worker
 定位私有目录并拒绝目录穿越。Skills 配置中心仍负责管理文档包。
 执行页面仅保留状态、活动和控制，不提供 Worker/Reporter 聊天或问答转发。
-PostgreSQL 的旧事件表名保留以兼容历史数据，不再向客户端暴露对话写入接口。
+PostgreSQL 使用 task_events 和 task_runs.event_seq 保存只读执行事件，不提供对话写入接口。
 
 ## 验证
 

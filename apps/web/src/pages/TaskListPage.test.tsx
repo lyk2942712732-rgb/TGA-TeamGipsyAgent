@@ -16,7 +16,7 @@ function renderPage(entry = "/tasks") {
 describe("TaskListPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.listTasks.mockResolvedValue([{ id: "task-one", title: "Alpha task", scene_id: "pwn", state: "running", blackboard_seq: 3, dialogue_seq: 5, created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:01:00Z" }]);
+    mocks.listTasks.mockResolvedValue([{ id: "task-one", title: "Alpha task", scene_id: "pwn", state: "running", blackboard_seq: 3, event_seq: 5, created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:01:00Z" }]);
     mocks.deleteTask.mockResolvedValue(undefined);
   });
 

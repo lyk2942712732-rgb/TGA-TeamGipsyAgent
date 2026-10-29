@@ -151,12 +151,6 @@ class AgentsConfig(BaseModel):
     schema_version: int = 1
     agents: dict[str, AgentConfig]
 
-    @model_validator(mode="before")
-    @classmethod
-    def remove_legacy_agent(cls, raw: Any) -> Any:
-        if isinstance(raw, dict) and "supervisor" in raw.get("agents", {}):
-            return {**raw, "agents": {key: value for key, value in raw["agents"].items() if key != "supervisor"}}
-        return raw
 
 
 class SceneConfig(BaseModel):
@@ -223,18 +217,6 @@ class RuntimeConfig(BaseModel):
     docker: DockerConfig = Field(default_factory=DockerConfig)
     cadence: CadenceConfig = Field(default_factory=CadenceConfig)
 
-    @model_validator(mode="before")
-    @classmethod
-    def remove_legacy_advisor_settings(cls, raw: Any) -> Any:
-        if not isinstance(raw, dict):
-            return raw
-        data = dict(raw)
-        data.pop("supervisor_enabled", None)
-        if "cadence" in data:
-            data["cadence"] = {
-                key: value for key, value in data["cadence"].items() if not key.startswith("supervisor_")
-            }
-        return data
 
 
 class ConfigBundle(BaseModel):

@@ -17,10 +17,8 @@ def utc_now() -> datetime:
 class EntryKind(StrEnum):
     USER_PROMPT = "user_prompt"
     USER_FILE = "user_file"
-    SUPERVISOR_ADVICE = "supervisor_advice"
     INTEL = "intel"
     FINDING = "finding"
-    QA = "qa"
     FINAL_CANDIDATE = "final_candidate"
 
 
@@ -28,7 +26,6 @@ class RunState(StrEnum):
     CREATED = "created"
     STARTING = "starting"
     RUNNING = "running"
-    WAITING_USER = "waiting_user"
     FINALIZING = "finalizing"
     REPORTING = "reporting"
     COMPLETED = "completed"
@@ -55,7 +52,7 @@ class Actor(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     agent_id: str = Field(min_length=1, max_length=120)
     display_name: str = Field(min_length=1, max_length=200)
-    role: Literal["user", "supervisor", "worker", "reporter", "system"]
+    role: Literal["user", "worker", "reporter", "system"]
     sdk: str | None = Field(default=None, max_length=80)
     model: str | None = Field(default=None, max_length=200)
 
@@ -287,8 +284,6 @@ class EventKind(StrEnum):
     AGENT_STATUS = "agent_status"
     ACTION_STARTED = "action_started"
     ACTION_COMPLETED = "action_completed"
-    QUESTION = "question"
-    USER_MESSAGE = "user_message"
     MODEL_CHANGED = "model_changed"
     PAUSED = "paused"
     RESUMED = "resumed"
@@ -318,7 +313,7 @@ class TaskRun(BaseModel):
     scene_id: str = Field(min_length=1, max_length=100)
     state: RunState = RunState.CREATED
     blackboard_seq: int = 0
-    dialogue_seq: int = 0
+    event_seq: int = 0
     final_snapshot_seq: int | None = None
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
@@ -328,7 +323,7 @@ class AgentRun(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     task_id: UUID
     agent_id: str
-    sdk: Literal["openai_agents", "claude_agent", "codex_cli", "claude_cli"]
+    sdk: Literal["codex_cli", "claude_cli"]
     desired_state: AgentState = AgentState.CREATED
     actual_state: AgentState = AgentState.CREATED
     provider_id: str

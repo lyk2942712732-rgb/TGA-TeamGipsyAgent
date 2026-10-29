@@ -1,7 +1,7 @@
 import type { TGA3Agent, TGA3BoardEntry, TGA3TaskEvent } from "../../runtime/tga3-runtime";
 
 export const TASK_STATE_LABELS: Record<string, string> = {
-  created: "已创建", starting: "启动中", running: "运行中", waiting_user: "等待用户", finalizing: "固定结论",
+  created: "已创建", starting: "启动中", running: "运行中", finalizing: "固定结论",
   reporting: "生成报告", completed: "已完成", failed: "失败", cancelled: "已取消", stopping: "停止中", stopped: "已停止",
 };
 export const AGENT_STATE_LABELS: Record<string, string> = {
@@ -23,7 +23,7 @@ export const roleLabel = (agent: Pick<TGA3Agent, "role">) => ROLE_LABELS[agent.r
 export const stateLabel = (value: string) => AGENT_STATE_LABELS[value] ?? TASK_STATE_LABELS[value] ?? value;
 export function stateTone(value: string): "active" | "waiting" | "success" | "danger" | "muted" {
   if (["running", "starting", "reporting", "finalizing"].includes(value)) return "active";
-  if (["waiting_user", "paused", "pause_requested", "idle"].includes(value)) return "waiting";
+  if (["paused", "pause_requested", "idle"].includes(value)) return "waiting";
   if (value === "completed") return "success";
   if (["failed", "cancelled"].includes(value)) return "danger";
   return "muted";
@@ -35,6 +35,6 @@ export function formatTime(value?: string | null): string {
 }
 export function bodyText(entry: TGA3BoardEntry): string {
   const body = entry.body;
-  return String(body.claim ?? body.conclusion ?? body.advice ?? body.text ?? body.question ?? body.name ?? `${entry.kind}: ${entry.topic}`);
+  return String(body.claim ?? body.conclusion ?? body.text ?? body.name ?? `${entry.kind}: ${entry.topic}`);
 }
 export function listStrings(value: unknown): string[] { return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : []; }

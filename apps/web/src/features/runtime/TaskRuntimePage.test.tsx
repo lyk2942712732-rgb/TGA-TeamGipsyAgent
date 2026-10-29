@@ -9,7 +9,7 @@ vi.mock("../../api/tga3-tasks", async (original) => ({ ...await original<typeof 
 import { TaskRuntimePage } from "./TaskRuntimePage";
 
 const snapshot: TGA3RuntimeSnapshot = {
-  task: { id: "task", title: "Native TGA3 task", scene_id: "pwn", state: "running", blackboard_seq: 3, dialogue_seq: 2, created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:01:00Z" },
+  task: { id: "task", title: "Native TGA3 task", scene_id: "pwn", state: "running", blackboard_seq: 3, event_seq: 2, created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:01:00Z" },
   agents: [
     { agent_id: "worker-claude", sdk: "codex_cli", desired_state: "running", actual_state: "running", provider_id: "openai", model_id: "gpt", protocol: "openai_responses", display_name: "Claude Worker", role: "worker", runtime_location: "container", updated_at: "2026-01-01T00:01:00Z" },
     { agent_id: "worker-openai", sdk: "codex_cli", desired_state: "running", actual_state: "running", provider_id: "openai", model_id: "gpt", protocol: "openai_responses", display_name: "OpenAI Worker", role: "worker", runtime_location: "container", updated_at: "2026-01-01T00:01:00Z" },

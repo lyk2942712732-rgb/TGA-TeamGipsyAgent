@@ -111,8 +111,6 @@ def create_app(
                     "created_at": task.updated_at,
                 })
             for agent in await storage.list_agents(task.id):
-                if agent.agent_id not in config.agents.agents:
-                    continue
                 if agent.actual_state not in {AgentState.PAUSED, AgentState.PAUSE_REQUESTED, AgentState.FAILED}:
                     continue
                 result.append({
@@ -164,7 +162,7 @@ def create_app(
     @api.get("/tasks/{task_id}")
     async def get_task(task_id: UUID) -> dict[str, Any]:
         task = await storage.get_task(task_id)
-        agents = [item for item in await storage.list_agents(task_id) if item.agent_id in config.agents.agents]
+        agents = await storage.list_agents(task_id)
 
         def historical_model_name(agent) -> str:
             try:

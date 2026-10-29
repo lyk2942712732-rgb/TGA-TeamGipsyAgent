@@ -108,4 +108,4 @@ export function NewTaskPage({ onCreated, onCancel = () => history.back() }: { on
 }
 
 function formatBytes(value: number) { return value < 1024 ? `${value} B` : value < 1024 ** 2 ? `${(value / 1024).toFixed(1)} KB` : `${(value / 1024 ** 2).toFixed(1)} MB`; }
-function modelCompatible(runtime: "openai_agents" | "claude_agent" | "codex_cli" | "claude_cli", protocol: "openai_responses" | "openai_chat_completions" | "anthropic") { return runtime === "claude_cli" || runtime === "claude_agent" ? protocol === "anthropic" : runtime === "codex_cli" ? protocol === "openai_responses" : protocol !== "anthropic"; }
+function modelCompatible(runtime: "codex_cli" | "claude_cli", protocol: "openai_responses" | "openai_chat_completions" | "anthropic") { return runtime === "claude_cli" ? protocol === "anthropic" : protocol === "openai_responses"; }

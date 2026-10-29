@@ -54,7 +54,6 @@ class Blackboard:
     ) -> BlackboardSyncResult:
         task = await self.storage.get_task(task_id)
         entries = await self.storage.list_entries(task_id, after_seq=after_seq, up_to_seq=up_to_seq, limit=limit)
-        entries = [entry for entry in entries if entry.kind not in {EntryKind.SUPERVISOR_ADVICE, EntryKind.QA}]
         return BlackboardSyncResult(latest_seq=task.blackboard_seq, entries=tuple(entries))
 
     async def publish_and_sync(

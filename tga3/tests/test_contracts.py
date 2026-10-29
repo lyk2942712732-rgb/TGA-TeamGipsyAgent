@@ -17,10 +17,8 @@ def test_blackboard_vocabulary_has_no_legacy_worker_messages():
     assert {kind.value for kind in EntryKind} == {
         "user_prompt",
         "user_file",
-        "supervisor_advice",
         "intel",
         "finding",
-        "qa",
         "final_candidate",
     }
 

@@ -249,7 +249,7 @@ class InMemoryStorage:
             task = await self.get_task(task_id)
             message = TaskEvent(
                 task_id=task_id,
-                seq=task.dialogue_seq + 1,
+                seq=task.event_seq + 1,
                 actor=actor,
                 kind=kind,
                 text=text,
@@ -257,7 +257,7 @@ class InMemoryStorage:
                 payload=payload or {},
             )
             self.events[task_id].append(message)
-            self.tasks[task_id] = task.model_copy(update={"dialogue_seq": message.seq, "updated_at": utc_now()})
+            self.tasks[task_id] = task.model_copy(update={"event_seq": message.seq, "updated_at": utc_now()})
             return message
 
     async def list_events(self, task_id: UUID, *, after_seq: int = 0, limit: int = 500) -> list[TaskEvent]:
@@ -314,7 +314,7 @@ def _entry(row: Any) -> BlackboardEntry:
     return BlackboardEntry.model_validate({key: data[key] for key in BlackboardEntry.model_fields})
 
 
-def _dialogue(row: Any) -> TaskEvent:
+def _event(row: Any) -> TaskEvent:
     data = dict(row)
     data["actor"] = _object(data["actor"])
     data["payload"] = _object(data["payload"])
@@ -581,13 +581,13 @@ class PostgresStorage:
         async with self.pool.acquire() as conn, conn.transaction():
             await self._lock(conn, task_id)
             seq = await conn.fetchval(
-                "UPDATE task_runs SET dialogue_seq=dialogue_seq+1,updated_at=now() WHERE id=$1 RETURNING dialogue_seq",
+                "UPDATE task_runs SET event_seq=event_seq+1,updated_at=now() WHERE id=$1 RETURNING event_seq",
                 task_id,
             )
             if seq is None:
                 raise NotFoundError(f"task not found: {task_id}")
             row = await conn.fetchrow(
-                """INSERT INTO dialogue_messages(id,task_id,seq,channel_agent_id,actor,kind,text,payload)
+                """INSERT INTO task_events(id,task_id,seq,channel_agent_id,actor,kind,text,payload)
                    VALUES($1,$2,$3,$4,$5::jsonb,$6,$7,$8::jsonb) RETURNING *""",
                 uuid4(),
                 task_id,
@@ -598,17 +598,17 @@ class PostgresStorage:
                 text,
                 _json(payload or {}),
             )
-            await conn.execute("SELECT pg_notify('tga3_dialogue',$1)", _json({"task_id": task_id, "latest_seq": seq}))
-            return _dialogue(row)
+            await conn.execute("SELECT pg_notify('tga3_events',$1)", _json({"task_id": task_id, "latest_seq": seq}))
+            return _event(row)
 
     async def list_events(self, task_id: UUID, *, after_seq: int = 0, limit: int = 500) -> list[TaskEvent]:
         rows = await self.pool.fetch(
-            "SELECT * FROM dialogue_messages WHERE task_id=$1 AND seq>$2 ORDER BY seq LIMIT $3",
+            "SELECT * FROM task_events WHERE task_id=$1 AND seq>$2 ORDER BY seq LIMIT $3",
             task_id,
             after_seq,
             limit,
         )
-        return [_dialogue(row) for row in rows]
+        return [_event(row) for row in rows]
 
 
 

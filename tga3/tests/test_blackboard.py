@@ -23,7 +23,7 @@ def worker(agent_id: str = "worker-openai") -> Actor:
         agent_id=agent_id,
         display_name=agent_id,
         role="worker",
-        sdk="openai_agents",
+        sdk="codex_cli",
         model="test-model",
     )
 

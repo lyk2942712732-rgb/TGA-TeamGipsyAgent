@@ -1,7 +1,7 @@
 import { requestJson } from "../api/client";
 
 export type TGA3Task = {
-  id: string; title: string; scene_id: string; state: string; blackboard_seq: number; dialogue_seq: number;
+  id: string; title: string; scene_id: string; state: string; blackboard_seq: number; event_seq: number;
   final_snapshot_seq?: number | null; created_at: string; updated_at: string;
 };
 export type TGA3Agent = {

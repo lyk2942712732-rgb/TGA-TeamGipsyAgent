@@ -9,7 +9,7 @@ export type TGA3TaskListItem = {
   scene_id: TaskMode;
   state: string;
   blackboard_seq?: number;
-  dialogue_seq?: number;
+  event_seq?: number;
   created_at: string;
   updated_at: string;
 };
@@ -39,7 +39,7 @@ export type AgentModelOptions = {
   agents: Array<{
     id: string;
     role: "worker" | "reporter";
-    runtime: "openai_agents" | "claude_agent" | "codex_cli" | "claude_cli";
+    runtime: "codex_cli" | "claude_cli";
     display_name: string;
     model: AgentModelChoice;
   }>;

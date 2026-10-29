@@ -55,20 +55,7 @@ class TaskEvents:
         )
 
     async def history(self, task_id: UUID, *, after_seq: int = 0, limit: int = 500) -> list[TaskEvent]:
-        result: list[TaskEvent] = []
-        cursor = after_seq
-        while len(result) < limit:
-            entries = await self.storage.list_events(task_id, after_seq=cursor, limit=limit - len(result))
-            if not entries:
-                break
-            cursor = entries[-1].seq
-            result.extend(
-                entry for entry in entries
-                if entry.actor.role not in {"user", "supervisor"}
-                and entry.channel_agent_id != "supervisor"
-                and entry.kind not in {EventKind.QUESTION, EventKind.USER_MESSAGE}
-            )
-        return result
+        return await self.storage.list_events(task_id, after_seq=after_seq, limit=limit)
 
 
 __all__ = ["TaskEvents"]

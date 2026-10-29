@@ -10,7 +10,6 @@ export const STATUS_DICTIONARY: Record<string, StatusDefinition> = {
   created: { label: "已创建", tone: "neutral" },
   starting: { label: "启动中", tone: "info" },
   running: { label: "运行中", tone: "info" },
-  waiting_user: { label: "等待用户", tone: "warning" },
   finalizing: { label: "最终确认中", tone: "info" },
   reporting: { label: "生成报告中", tone: "info" },
   idle: { label: "空闲", tone: "neutral" },

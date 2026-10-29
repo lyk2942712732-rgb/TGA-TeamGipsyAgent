@@ -4,7 +4,7 @@ CREATE TABLE task_runs (
     scene_id TEXT NOT NULL,
     state TEXT NOT NULL,
     blackboard_seq BIGINT NOT NULL DEFAULT 0,
-    dialogue_seq BIGINT NOT NULL DEFAULT 0,
+    event_seq BIGINT NOT NULL DEFAULT 0,
     final_snapshot_seq BIGINT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -80,7 +80,7 @@ CREATE TABLE blackboard_artifact_links (
     PRIMARY KEY (entry_id, artifact_id, locator)
 );
 
-CREATE TABLE dialogue_messages (
+CREATE TABLE task_events (
     id UUID PRIMARY KEY,
     task_id UUID NOT NULL REFERENCES task_runs(id) ON DELETE CASCADE,
     seq BIGINT NOT NULL,
@@ -93,7 +93,7 @@ CREATE TABLE dialogue_messages (
     UNIQUE (task_id, seq)
 );
 
-CREATE INDEX dialogue_task_seq_idx ON dialogue_messages(task_id, seq);
+CREATE INDEX events_task_seq_idx ON task_events(task_id, seq);
 
 CREATE TABLE writeups (
     id UUID PRIMARY KEY,
