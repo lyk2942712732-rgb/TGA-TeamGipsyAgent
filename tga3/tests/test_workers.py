@@ -280,6 +280,7 @@ async def test_inactivity_watchdog_stops_hung_cli_without_losing_session(cli_env
         "print(json.dumps({'type':'thread.started','thread_id':'keep-context'}),flush=True);time.sleep(30)"
     )
     adapter = CodexAdapter()
+    adapter.remember_session("keep-context")
     adapter.command = lambda: ([sys.executable, str(script)], dict(os.environ))
     with pytest.raises(CliError, match="inactivity"):
         await asyncio.wait_for(adapter._run_once("continue", noop), timeout=8)
