@@ -3,6 +3,7 @@ import os
 import sys
 import tomllib
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -285,6 +286,48 @@ async def test_inactivity_watchdog_stops_hung_cli_without_losing_session(cli_env
     with pytest.raises(CliError, match="inactivity"):
         await asyncio.wait_for(adapter._run_once("continue", noop), timeout=8)
     assert CodexAdapter().session_id == "keep-context"
+
+
+async def test_identical_tool_result_loop_is_interrupted_and_keeps_context(cli_env, monkeypatch):
+    clock = [0]
+
+    def monotonic():
+        clock[0] += 20
+        return clock[0]
+
+    # Replace only this module's clock; asyncio keeps its real clock.
+    monkeypatch.setattr("tga3.workers.cli_adapter.time", SimpleNamespace(monotonic=monotonic))
+    script = cli_env / "loop.py"
+    script.write_text("""import json,sys,time
+sys.stdin.read()
+print(json.dumps({'type':'thread.started','thread_id':'loop-context'}),flush=True)
+for i in range(12):
+ print(json.dumps({'type':'item.completed','item':{
+  'type':'command_execution','id':str(i),'command':'retry same command',
+  'aggregated_output':'same failure','exit_code':1,'status':'completed'}}),flush=True)
+time.sleep(30)
+""")
+    adapter = CodexAdapter()
+    adapter.command = lambda: ([sys.executable, str(script)], dict(os.environ))
+    with pytest.raises(CliError, match="identical tool/result"):
+        await asyncio.wait_for(adapter._run_once("continue", noop), timeout=8)
+    assert CodexAdapter().session_id == "loop-context"
+
+
+async def test_repeated_short_replies_with_real_tool_progress_do_not_trigger_recovery(cli_env, monkeypatch):
+    adapter = CodexAdapter()
+    adapter.remember_session("working-session")
+
+    async def once(*args):
+        adapter.tool_progress = True
+        return "done"
+
+    monkeypatch.setattr(adapter, "_run_once", once)
+    monkeypatch.setattr("tga3.workers.cli_adapter.time", SimpleNamespace(monotonic=lambda: 1000))
+    adapter.output_history_since = 0
+    for _ in range(12):
+        assert await adapter.run_cycle("continue", noop) == "done"
+    assert not adapter.output_history
 
 
 @pytest.mark.asyncio

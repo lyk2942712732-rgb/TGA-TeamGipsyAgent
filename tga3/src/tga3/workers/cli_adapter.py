@@ -43,6 +43,7 @@ class CliAdapter(AgentAdapter):
         self.final_output = ""
         self.failure = ""
         self.completed = False
+        self.tool_progress = False
         self.output_history = deque(maxlen=8)
         self.output_history_since = time.monotonic()
         self.stderr: deque[str] = deque(maxlen=80)
@@ -140,7 +141,10 @@ class CliAdapter(AgentAdapter):
         while True:
             try:
                 output = await self._run_once(prompt, emit)
-                self.output_history.append(output)
+                if self.tool_progress:
+                    self.output_history.clear()
+                else:
+                    self.output_history.append(output)
                 if len(self.output_history) < 8 or len(set(self.output_history)) != 1:
                     self.output_history_since = time.monotonic()
                 elif time.monotonic() - self.output_history_since >= 30:
@@ -164,6 +168,7 @@ class CliAdapter(AgentAdapter):
     async def _run_once(self, prompt: str, emit: Emit) -> str:
         self.final_output = self.failure = ""
         self.completed = False
+        self.tool_progress = False
         self.stderr.clear()
         self.pending_tools.clear()
         last_activity = time.monotonic()
@@ -174,6 +179,7 @@ class CliAdapter(AgentAdapter):
         async def tracked_emit(method, params):
             nonlocal repeat_since
             if method == "agent.action.completed":
+                self.tool_progress = True
                 fingerprint = params.get("result_fingerprint")
                 if fingerprint:
                     repeated.append(fingerprint)
