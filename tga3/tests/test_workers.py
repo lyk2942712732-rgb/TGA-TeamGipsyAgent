@@ -216,6 +216,76 @@ async def test_worker_coalesces_blackboard_notifications_to_the_latest_sequence(
     assert session.pending_blackboard_seq == 7
 
 
+async def test_worker_continues_immediately_instead_of_waiting_90_seconds(monkeypatch):
+    for name, value in {
+        "TGA3_TASK_ID": "task-id", "TGA3_AGENT_ID": "worker-openai",
+        "TGA3_CONTROL_WS_URL": "ws://control", "TGA3_STARTUP_PROMPT": "start",
+        "TGA3_PERIODIC_PROMPT": "continue", "TGA3_BLACKBOARD_CHANGED_PROMPT": "sync {latest_seq}",
+    }.items():
+        monkeypatch.setenv(name, value)
+    prompts = []
+
+    class Adapter(AgentAdapter):
+        async def run_cycle(self, prompt, emit):
+            prompts.append(prompt)
+            if len(prompts) == 3:
+                session.stop.set()
+            return "progress"
+
+        async def set_model(self, params):
+            pass
+
+    session = WorkerSession(Adapter())
+    await asyncio.wait_for(session._work(), timeout=0.5)
+    assert prompts == ["start", "continue", "continue"]
+
+
+@pytest.mark.parametrize("role", ["worker", "scout", "reporter"])
+async def test_recovery_keeps_cli_session_for_every_role(cli_env, monkeypatch, role):
+    monkeypatch.setenv("TGA3_AGENT_ROLE", role)
+    adapter = CodexAdapter()
+    adapter.remember_session("retained-session")
+    calls = []
+
+    async def once(prompt, emit):
+        calls.append(prompt)
+        if len(calls) == 1:
+            raise CliError("simulated stall")
+        assert adapter.session_id == "retained-session"
+        assert "resume" in adapter.command()[0]
+        return "recovered"
+
+    async def no_wait(*args):
+        pass
+
+    monkeypatch.setattr(adapter, "_run_once", once)
+    monkeypatch.setattr(asyncio, "sleep", no_wait)
+    assert await adapter.run_cycle("continue", noop) == "recovered"
+    assert CodexAdapter().session_id == "retained-session"
+
+
+def test_claude_has_no_fixed_turn_cap_and_installs_worker_hooks(cli_env, monkeypatch):
+    monkeypatch.setenv("TGA3_AGENT_ROLE", "worker")
+    monkeypatch.setenv("TGA3_PROVIDER_PROTOCOL", "anthropic")
+    command, _ = ClaudeAdapter().command()
+    assert "--max-turns" not in command
+    assert "PreToolUse" in command[command.index("--settings") + 1]
+
+
+async def test_inactivity_watchdog_stops_hung_cli_without_losing_session(cli_env, monkeypatch):
+    monkeypatch.setenv("TGA3_CLI_IDLE_TIMEOUT_SECONDS", "0.05")
+    script = cli_env / "hung.py"
+    script.write_text(
+        "import json,sys,time;sys.stdin.read();"
+        "print(json.dumps({'type':'thread.started','thread_id':'keep-context'}),flush=True);time.sleep(30)"
+    )
+    adapter = CodexAdapter()
+    adapter.command = lambda: ([sys.executable, str(script)], dict(os.environ))
+    with pytest.raises(CliError, match="inactivity"):
+        await asyncio.wait_for(adapter._run_once("continue", noop), timeout=8)
+    assert CodexAdapter().session_id == "keep-context"
+
+
 @pytest.mark.asyncio
 @pytest.mark.skipif(os.name != "posix", reason="Linux deployment process-tree cleanup")
 async def test_cancellation_also_stops_tool_in_separate_session(cli_env):

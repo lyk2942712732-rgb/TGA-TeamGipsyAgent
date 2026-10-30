@@ -136,7 +136,7 @@ class AgentConfig(BaseModel):
     provider_id: str
     model_id: str
     protocol: ProviderProtocol
-    max_turns_per_cycle: int = Field(default=3, ge=1, le=50)
+    blackboard_interval_seconds: int = Field(default=60, ge=1, le=3600)
     system_prompt: str = Field(min_length=1)
 
     @model_validator(mode="after")
@@ -175,7 +175,6 @@ class ScenesConfig(BaseModel):
 
 class CadenceConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    worker_sync_seconds: int = Field(default=90, ge=5, le=3600)
     finalization_grace_seconds: int = Field(default=30, ge=0, le=600)
 
 
@@ -252,7 +251,6 @@ class ResolvedAgent(BaseModel):
     model: ModelConfig
     protocol: ProviderProtocol
     api_key: SecretStr
-    max_turns_per_cycle: int
     system_prompt: str
 
 
@@ -317,7 +315,6 @@ class TGA3Config:
             model=model,
             protocol=selected_protocol,
             api_key=api_key,
-            max_turns_per_cycle=binding.max_turns_per_cycle,
             system_prompt=binding.system_prompt,
         )
 

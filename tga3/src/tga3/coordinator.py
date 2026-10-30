@@ -269,7 +269,7 @@ class TaskCoordinator:
                 task_id, self.actor_for(run), state.value, str(params.get("detail", ""))
             )
         elif method == "agent.session":
-            await self.storage.update_agent(task_id, agent_id, metadata={**run.metadata, **params})
+            await self.storage.update_agent(task_id, agent_id, metadata=params)
         elif method == "agent.output.delta":
             await self.events.emit(
                 task_id,
@@ -287,6 +287,11 @@ class TaskCoordinator:
                 text=str(params.get("summary", method)),
                 channel_agent_id=agent_id,
                 payload=params,
+            )
+        elif method == "agent.recovery":
+            await self.events.emit(
+                task_id, actor=actor, kind=EventKind.SYSTEM,
+                text=str(params.get("summary", "CLI 会话恢复")), channel_agent_id=agent_id, payload=params,
             )
         elif method == "agent.error":
             detail = str(params.get("message", "agent error"))

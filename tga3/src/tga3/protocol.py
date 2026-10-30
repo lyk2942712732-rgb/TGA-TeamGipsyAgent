@@ -67,6 +67,7 @@ EVENT_METHODS = frozenset(
         "agent.action.started",
         "agent.action.completed",
         "agent.error",
+        "agent.recovery",
     }
 )
 

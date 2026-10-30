@@ -109,8 +109,6 @@ class DockerContainerRuntime:
             "TGA3_MODEL_NAME": binding.model.name,
             "TGA3_API_KEY": binding.api_key.get_secret_value(),
             "TGA3_BASE_URL": binding.provider.sdk_base_url(binding.protocol) or "",
-            "TGA3_MAX_TURNS_PER_CYCLE": str(binding.max_turns_per_cycle),
-            "TGA3_SYNC_SECONDS": str(runtime.cadence.worker_sync_seconds),
             "TGA3_STARTUP_PROMPT": runtime.worker_cycle_prompts.startup,
             "TGA3_PERIODIC_PROMPT": runtime.worker_cycle_prompts.periodic,
             "TGA3_BLACKBOARD_CHANGED_PROMPT": runtime.worker_cycle_prompts.blackboard_changed,
@@ -158,7 +156,8 @@ class DockerContainerRuntime:
                     except ValueError:
                         continue
                     if isinstance(event, dict) and event.get("method") in {
-                        "agent.session", "agent.action.started", "agent.action.completed", "agent.output.delta",
+                        "agent.session", "agent.action.started", "agent.action.completed",
+                        "agent.output.delta", "agent.recovery",
                     }:
                         await emit(event["method"], event.get("params", {}))
                 if container.status in {"exited", "dead"}:
@@ -197,6 +196,7 @@ class DockerContainerRuntime:
                     continue
                 if isinstance(event, dict) and event.get("method") in {
                     "agent.session",
+                    "agent.recovery",
                     "agent.action.started",
                     "agent.action.completed",
                 }:

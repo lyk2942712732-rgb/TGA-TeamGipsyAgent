@@ -57,6 +57,11 @@ def build_mcp(config: TGA3Config, blackboard: Blackboard) -> FastMCP:
         configured = config.agents.agents.get(identity.agent_id)
         if configured is None or configured.role != identity.role:
             raise ValueError("actor must match a configured Scout or Worker")
+        if request.kind.value == "final_candidate":
+            run = await blackboard.storage.get_agent(request.task_id, identity.agent_id)
+            task = await blackboard.storage.get_task(request.task_id)
+            if run.metadata.get("blackboard_cursor", -1) < task.blackboard_seq:
+                raise ValueError("Unread blackboard updates: run the native checkpoint before resubmitting")
         entry = await blackboard.publish(
             request.task_id,
             Actor.model_validate(request.actor),

@@ -177,6 +177,8 @@ class InMemoryStorage:
         if unknown:
             raise ValueError(f"unknown agent fields: {sorted(unknown)}")
         changes["updated_at"] = utc_now()
+        if "metadata" in changes:
+            changes["metadata"] = {**run.metadata, **changes["metadata"]}
         run = AgentRun.model_validate({**run.model_dump(), **changes})
         self.agents[(task_id, agent_id)] = run
         return run
@@ -443,8 +445,27 @@ class PostgresStorage:
 
     async def update_agent(self, task_id: UUID, agent_id: str, **changes: Any) -> AgentRun:
         current = await self.get_agent(task_id, agent_id)
+        allowed = set(AgentRun.model_fields) - {"task_id", "agent_id"}
+        if set(changes) - allowed:
+            raise ValueError("unknown agent fields")
         updated = AgentRun.model_validate({**current.model_dump(), **changes, "updated_at": utc_now()})
-        return await self.upsert_agent(updated)
+        changes["updated_at"] = updated.updated_at
+        assignments = []
+        values = [task_id, agent_id]
+        for name in changes:
+            value = getattr(updated, name)
+            values.append(_json(value) if name == "metadata" else value)
+            placeholder = f"${len(values)}"
+            assignments.append(
+                f"metadata=metadata || {placeholder}::jsonb" if name == "metadata" else f"{name}={placeholder}"
+            )
+        row = await self.pool.fetchrow(
+            "UPDATE agent_runs SET " + ",".join(assignments) + " WHERE task_id=$1 AND agent_id=$2 RETURNING *",
+            *values,
+        )
+        if row is None:
+            raise NotFoundError(f"agent not found: {task_id}/{agent_id}")
+        return _agent(row)
 
     async def register_artifact(self, artifact: Artifact) -> Artifact:
         row = await self.pool.fetchrow(

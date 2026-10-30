@@ -40,6 +40,13 @@ def worker_instructions() -> str:
             "Use time.monotonic()/date to track time; publish immediately and finish before the deadline."
         )
         return f"{os.environ['TGA3_SYSTEM_PROMPT'].rstrip()}\n\n{runtime_context}\n\n{publication_contract}"
+    publication_contract += (
+        "\nThe native CLI hooks deliver the initial complete blackboard and subsequent unseen entries automatically. "
+        "Do not call blackboard_sync or reread the full blackboard yourself. At the next tool opportunity, "
+        "updates are supplied only when the configured interval elapsed and new entries exist. "
+        "Before final_candidate, the hook bypasses the interval; review newly supplied entries and retry if blocked. "
+        "Continue working without waiting for updates. Tool hooks handle cursors and elapsed time."
+    )
     finding_example = {
         "request": {
             "kind": "finding",

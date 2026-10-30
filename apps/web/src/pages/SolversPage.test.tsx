@@ -73,4 +73,19 @@ describe("SolversPage", () => {
     modelSelect = within(screen.getByLabelText("Reporter Solver 配置")).getByRole("combobox");
     expect(within(modelSelect).getByRole("option", { name: "DeepSeek / responses-only" })).toBeInTheDocument();
   });
+
+  it("saves each Worker's blackboard interval without a fixed turn limit", async () => {
+    const user = userEvent.setup();
+    render(<SolversPage />);
+    await user.click(await screen.findByRole("button", { name: "配置 Claude Worker" }));
+    const panel = screen.getByLabelText("Claude Worker Solver 配置");
+    expect(within(panel).queryByText("每次执行最大轮数")).not.toBeInTheDocument();
+    const interval = within(panel).getByLabelText("黑板同步间隔（秒）");
+    await user.clear(interval);
+    await user.type(interval, "120");
+    await user.click(within(panel).getByRole("button", { name: "保存配置" }));
+    await waitFor(() => expect(mocks.saveAgents).toHaveBeenCalledWith(expect.objectContaining({
+      agents: expect.objectContaining({ "worker-claude": expect.objectContaining({ blackboard_interval_seconds: 120 }) }),
+    })));
+  });
 });

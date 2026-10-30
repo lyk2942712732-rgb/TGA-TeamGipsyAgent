@@ -51,8 +51,8 @@ Claude 的 `CLAUDE_CONFIG_DIR=/workspace/.claude`；`.tga3/` 仅存 CLI 会话�
 恢复相同工作目录时按 CLI session ID 续接。PG `agent_runs.metadata.cli_session_id` 记录 CLI 标识，
 与 `agent_runs.session_id` 控制通道标识分开，现有 metadata 列不需数据库迁移。
 
-`runtime.cli_timeout_seconds` 限制一次 CLI 周期的墙钟时间。Claude 使用 `max_turns_per_cycle`，
-Codex 的工具循环由 CLI 自己管理，不再模拟 SDK max_turns。暂停/取消/超时清理整个 CLI 进程组。
+`runtime.cli_timeout_seconds` 限制一次 CLI 周期的墙钟时间。两个 Worker 均不设置固定轮数，
+CLI 自然结束一段工作后立即恢复同一会话继续，无 90 秒等待。暂停/取消/超时清理整个 CLI 进程组。
 外层 Docker 管理权限和资源边界，CLI 不再嵌套启用系统 sandbox。
 
 出现最终候选后，项目等待宽限期、停止并回收两个 Worker，然后固定黑板快照，启动一次性 Reporter。
@@ -108,3 +108,19 @@ npm run build
 提示 Worker 从原始材料开始；执行错误则任务失败，不悄悄绕过错误。
 Scout 的 /artifacts 独立保存在 artifacts/<task-id>/scout；Worker 将其只读挂载到 /recon。
 Reporter 只读查看 Scout 与两个 Worker 的证据。只有 Intel 作为交接，不生成额外侦察简报。
+
+## Worker 连续执行与黑板同步
+
+Solver 为每个 Worker 单独保存 blackboard_interval_seconds（默认 60 秒）。
+Codex/Claude 的 UserPromptSubmit 与 PreToolUse 原生 Hook 检查服务端游标：首次完整交接，
+之后只有黑板有更新且间隔已满时才取未读增量；不是闹钟中断，也不采用长工具返回后的独立触发。
+提交 final_candidate 前忽略时间间隔检查更新，有新条目时先阻止本次提交并注入内容，
+模型消费后重新提交。无更新不查询内容，不产生额外模型黑板工具调用。
+增量交接确认后持久化各 Worker 游标，重启/恢复时重发未确认批次；间隔从实际交接时间起计算。
+运行中的 Worker 同样使用 Solver 已保存的新间隔。
+
+所有执行角色遇到失败、长期无进展、重复相同工具结果或重复相同回复时，
+无进展阈值默认 300 秒，短预算角色取单次执行预算的三分之一作为较短阈值。
+清理当前 CLI 进程后使用其原 session ID 恢复，保留 CLI 上下文与文件，并给出换路提示。
+尚未建立会话时无法 resume；该错误正常报告。恢复采用 2–30 秒退避，不删除记忆。
+Scout 总预算和 Reporter 外层超时仍有效，用户暂停/取消不触发自动恢复。

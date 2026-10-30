@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 import signal
+import time
 from collections import deque
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from .prompts import worker_instructions
 from .runtime import AgentAdapter, Emit
@@ -40,7 +43,16 @@ class CliAdapter(AgentAdapter):
         self.final_output = ""
         self.failure = ""
         self.completed = False
+        self.output_history = deque(maxlen=8)
+        self.output_history_since = time.monotonic()
         self.stderr: deque[str] = deque(maxlen=80)
+
+    def hook_config(self) -> dict:
+        if os.environ.get("TGA3_AGENT_ROLE") != "worker":
+            return {}
+        command = "python -m tga3.workers.blackboard_hook"
+        return {"hooks": {event: [{"hooks": [{"type": "command", "command": command, "timeout": 15}]}]
+                          for event in ("UserPromptSubmit", "PreToolUse")}}
 
     def remember_session(self, session_id: str) -> None:
         self.session_id = session_id
@@ -124,11 +136,56 @@ class CliAdapter(AgentAdapter):
         raise CliError("CLI tool processes did not stop")
 
     async def run_cycle(self, prompt: str, emit: Emit) -> str:
+        attempt = 0
+        while True:
+            try:
+                output = await self._run_once(prompt, emit)
+                self.output_history.append(output)
+                if len(self.output_history) < 8 or len(set(self.output_history)) != 1:
+                    self.output_history_since = time.monotonic()
+                elif time.monotonic() - self.output_history_since >= 30:
+                    raise CliError("Repeated identical CLI replies without progress")
+                return output
+            except CliError as exc:
+                if not self.session_id:
+                    raise
+                attempt += 1
+                await emit("agent.recovery", {
+                    "summary": "CLI 异常，保留上下文并恢复原会话", "attempt": attempt,
+                    "cli_session_id": self.session_id, "reason": str(exc)[-2000:],
+                })
+                await asyncio.sleep(min(30, 2 ** min(attempt, 5)))
+                prompt = (
+                    "Continue the original task in this same session. The prior CLI invocation failed, stalled "
+                    "or repeated identical tool results. Review its existing context and saved files, "
+                    "change the failing approach rather than repeating it, and continue.\n" + prompt
+                )[-16000:]
+
+    async def _run_once(self, prompt: str, emit: Emit) -> str:
         self.final_output = self.failure = ""
         self.completed = False
         self.stderr.clear()
         self.pending_tools.clear()
+        last_activity = time.monotonic()
+        repeated = deque(maxlen=8)
+        repeat_since = last_activity
+        original_emit = emit
+
+        async def tracked_emit(method, params):
+            nonlocal repeat_since
+            if method == "agent.action.completed":
+                fingerprint = params.get("result_fingerprint")
+                if fingerprint:
+                    repeated.append(fingerprint)
+                    if len(repeated) < repeated.maxlen or len(set(repeated)) != 1:
+                        repeat_since = time.monotonic()
+                    elif time.monotonic() - repeat_since >= 30:
+                        raise CliError("Repeated identical tool/result loop detected")
+            await original_emit(method, params)
+
+        emit = tracked_emit
         command, env = self.command()
+        env["TGA3_CLI_GENERATION"] = str(uuid4())
         process = await asyncio.create_subprocess_exec(
             *command,
             cwd=self.workspace,
@@ -141,6 +198,7 @@ class CliAdapter(AgentAdapter):
         )
 
         async def read_stdout() -> None:
+            nonlocal last_activity
             assert process.stdout is not None
             async for line in process.stdout:
                 try:
@@ -149,6 +207,10 @@ class CliAdapter(AgentAdapter):
                     raise CliError("CLI emitted invalid JSON; check the pinned CLI version") from exc
                 if not isinstance(value, dict):
                     raise CliError("CLI event must be a JSON object")
+                if not value.get("error") and not value.get("is_error") and not any(
+                    word in str(value.get("subtype", "")) for word in ("error", "retry")
+                ):
+                    last_activity = time.monotonic()
                 await self.event(value, emit)
 
         async def read_stderr() -> None:
@@ -164,17 +226,45 @@ class CliAdapter(AgentAdapter):
             await asyncio.gather(read_stdout(), read_stderr())
             await process.wait()
 
+        async def watchdog():
+            idle_limit = min(float(os.environ.get("TGA3_CLI_IDLE_TIMEOUT_SECONDS", "300")), self.timeout / 3)
+            while True:
+                await asyncio.sleep(min(5, idle_limit / 2))
+                if time.monotonic() - last_activity >= idle_limit:
+                    raise CliError("CLI produced no progress before the inactivity deadline")
+
+        exchange_task = asyncio.create_task(exchange())
+        watchdog_task = asyncio.create_task(watchdog())
         try:
-            await asyncio.wait_for(exchange(), timeout=self.timeout)
+            async with asyncio.timeout(self.timeout):
+                done, _ = await asyncio.wait({exchange_task, watchdog_task}, return_when=asyncio.FIRST_COMPLETED)
+                for task in done:
+                    await task
         except TimeoutError as exc:
             raise CliError(f"CLI cycle timed out after {self.timeout}s") from exc
         finally:
+            exchange_task.cancel()
+            watchdog_task.cancel()
+            await asyncio.gather(exchange_task, watchdog_task, return_exceptions=True)
             await self._terminate(process)
         if process.returncode or self.failure or not self.completed:
             detail = "\n".join(self.stderr)
             detail = detail.replace(self.api_key, "[redacted]") if self.api_key else detail
             failure = self.failure.replace(self.api_key, "[redacted]") if self.api_key else self.failure
             raise CliError(f"{self.runtime} failed (exit={process.returncode}): {failure}\n{detail}")
+        if os.environ.get("TGA3_AGENT_ROLE") == "worker":
+            from .blackboard_hook import checkpoint
+            # The completed model turn confirms it consumed the last injected context.
+            # Acknowledgement must never fetch fresh content outside a tool opportunity.
+            original_generation = os.environ.get("TGA3_CLI_GENERATION")
+            os.environ["TGA3_CLI_GENERATION"] = env["TGA3_CLI_GENERATION"]
+            try:
+                await asyncio.to_thread(checkpoint, {"ack_only": True})
+            finally:
+                if original_generation is None:
+                    os.environ.pop("TGA3_CLI_GENERATION", None)
+                else:
+                    os.environ["TGA3_CLI_GENERATION"] = original_generation
         if self.session_id:
             await emit("agent.session", {"cli_session_id": self.session_id, "runtime": self.runtime})
         return self.final_output
@@ -221,10 +311,14 @@ class CodexAdapter(CliAdapter):
                 f"url = {json.dumps(os.environ['TGA3_BLACKBOARD_MCP_URL'])}",
                 "required = true",
             ]
+        if os.environ.get("TGA3_AGENT_ROLE") == "worker":
+            config += ['disabled_tools = ["blackboard_sync"]']
+        if self.hook_config():
+            (cli_home / "hooks.json").write_text(json.dumps(self.hook_config()), encoding="utf-8")
         (cli_home / "config.toml").write_text("\n".join(config) + "\n", encoding="utf-8")
         env = dict(os.environ, CODEX_HOME=str(cli_home), CODEX_API_KEY=self.api_key)
-        args = [self.binary, "exec"]
-        if self.session_id and not self.reporter and os.environ.get("TGA3_AGENT_ROLE") != "scout":
+        args = [self.binary, "--dangerously-bypass-hook-trust", "exec"] if self.hook_config() else [self.binary, "exec"]
+        if self.session_id:
             args += ["resume", self.session_id]
         args += ["--json", "--skip-git-repo-check", "--model", self.model_name, "-"]
         return args, env
@@ -252,6 +346,11 @@ class CodexAdapter(CliAdapter):
                         "summary": str(item.get("command") or item.get("tool") or item_type)[:500],
                         "exit_code": item.get("exit_code"),
                         "status": item.get("status"),
+                        "result_fingerprint": hashlib.sha256(json.dumps([
+                            item.get("command"), item.get("tool"), item.get("arguments"), item.get("aggregated_output"),
+                            item.get("result"), item.get("error"),
+                            item.get("exit_code"), item.get("status"),
+                        ], sort_keys=True).encode()).hexdigest() if kind == "item.completed" else None,
                     },
                 )
 
@@ -297,14 +396,12 @@ class ClaudeAdapter(CliAdapter):
             "--allowedTools",
             "Bash,Read,Write,Edit,Glob,Grep,mcp__blackboard__*",
             "--disallowedTools",
-            "AskUserQuestion",
+            "AskUserQuestion,mcp__blackboard__blackboard_sync",
             "--strict-mcp-config",
             "--mcp-config",
             str(mcp_file),
             "--settings",
-            '{"sandbox":{"enabled":false}}',
-            "--max-turns",
-            os.environ["TGA3_MAX_TURNS_PER_CYCLE"],
+            json.dumps({"sandbox": {"enabled": False}, **self.hook_config()}),
         ]
         if self.session_id:
             args += ["--resume", self.session_id]
@@ -340,6 +437,9 @@ class ClaudeAdapter(CliAdapter):
                             "tool": tool,
                             "tool_use_id": block["tool_use_id"],
                             "error": block.get("is_error", False),
+                            "result_fingerprint": hashlib.sha256(json.dumps([
+                                tool, block.get("content"), block.get("is_error", False),
+                            ], sort_keys=True).encode()).hexdigest(),
                         },
                     )
         elif kind == "result":

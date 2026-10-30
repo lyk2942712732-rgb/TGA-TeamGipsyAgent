@@ -12,6 +12,7 @@ from fastapi import APIRouter, FastAPI, File, Form, Request, UploadFile, WebSock
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
+from .blackboard_delivery import BlackboardDelivery
 from .config import AgentsConfig, ModelConfig, ModelsConfig, RuntimeConfig, ScenesConfig, TGA3Config
 from .coordinator import TaskCoordinator
 from .docker_runtime import ContainerRuntime
@@ -63,6 +64,7 @@ def create_app(
     )
     coordinator.change_handlers.append(automation.changed)
     mcp = build_mcp(config, coordinator.blackboard)
+    delivery = BlackboardDelivery(config, storage, coordinator.blackboard)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
@@ -272,7 +274,6 @@ def create_app(
                     "provider_id": binding.provider_id,
                     "model_id": binding.model_id,
                     "protocol": binding.protocol,
-                    "max_turns_per_cycle": binding.max_turns_per_cycle,
                 }
                 for agent_id, binding in config.agents.agents.items()
             },
@@ -284,11 +285,11 @@ def create_app(
             "scout": ["Shell", "Read", "Edit", "Kali 侦察工具", "blackboard.sync", "blackboard.publish Intel",
                       "artifact.register"],
             "worker-openai": [
-                "Shell", "Read", "Edit", "blackboard.sync", "blackboard.publish",
+                "Shell", "Read", "Edit", "原生黑板同步 Hook", "blackboard.publish",
                 "artifact.register",
             ],
             "worker-claude": [
-                "Bash", "Read", "Write", "Edit", "Glob", "Grep", "blackboard.sync",
+                "Bash", "Read", "Write", "Edit", "Glob", "Grep", "原生黑板同步 Hook",
                 "blackboard.publish", "artifact.register",
             ],
             "reporter": ["Read snapshot", "Read evidence", "Read skills", "Markdown Writeup"],
@@ -489,6 +490,14 @@ def create_app(
     async def download_writeup(task_id: UUID) -> FileResponse:
         item = await storage.latest_writeup(task_id)
         return FileResponse(item.storage_path, media_type="text/markdown", filename="writeup.md")
+
+    @app.post("/internal/blackboard/{task_id}/{agent_id}/checkpoint")
+    async def blackboard_checkpoint(task_id: UUID, agent_id: str, body: dict) -> dict:
+        return await delivery.checkpoint(
+            task_id, agent_id, ack=str(body.get("ack", "")), final=bool(body.get("final", False)),
+            ack_only=bool(body.get("ack_only", False)),
+            initial_only=bool(body.get("initial_only", False))
+        )
 
     @app.websocket("/internal/agents/{task_id}/{agent_id}")
     async def agent_socket(websocket: WebSocket, task_id: UUID, agent_id: str) -> None:

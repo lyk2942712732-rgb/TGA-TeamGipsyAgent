@@ -78,6 +78,11 @@ def test_frontend_api_uses_safe_catalog_and_page_owned_config_documents(tmp_path
         assert client.delete("/api/v3/config/models/openai").status_code == 422
         agents = client.get("/api/v3/config/agents").json()
         assert set(agents["agents"]) == {"scout", "worker-openai", "worker-claude", "reporter"}
+        agents["agents"]["worker-claude"]["blackboard_interval_seconds"] = 120
+        assert client.put("/api/v3/config/agents", json=agents).status_code == 200
+        reloaded = TGA3Config(config_dir)
+        assert reloaded.agents.agents["worker-claude"].blackboard_interval_seconds == 120
+        assert reloaded.agents.agents["worker-openai"].blackboard_interval_seconds == 60
         definitions = client.get("/api/v3/agent-definitions").json()
         assert len(definitions) == 4
         assert next(item for item in definitions if item["id"] == "reporter")["tools"] == [

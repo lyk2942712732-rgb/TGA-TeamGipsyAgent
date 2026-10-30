@@ -29,7 +29,6 @@ class WorkerSession:
         self.task_id = os.environ["TGA3_TASK_ID"]
         self.agent_id = os.environ["TGA3_AGENT_ID"]
         self.control_url = f"{os.environ['TGA3_CONTROL_WS_URL'].rstrip('/')}/{self.task_id}/{self.agent_id}"
-        self.sync_seconds = int(os.environ["TGA3_SYNC_SECONDS"])
         self.session_id = str(uuid4())
         self.queue: asyncio.Queue[str | object | None] = asyncio.Queue()
         self.paused = asyncio.Event()
@@ -91,7 +90,7 @@ class WorkerSession:
                         await asyncio.gather(self.current_cycle, return_exceptions=True)
                     await self.adapter.set_model(params)
                 elif message.method == "blackboard.changed":
-                    await self._queue_blackboard_update(int(params["latest_seq"]))
+                    self.pending_blackboard_seq = max(self.pending_blackboard_seq, int(params["latest_seq"]))
                 await self._reply(message, {"accepted": True})
             except Exception as exc:
                 await self._reply(message, error=str(exc))
@@ -100,8 +99,8 @@ class WorkerSession:
         await self.queue.put(os.environ["TGA3_STARTUP_PROMPT"])
         while not self.stop.is_set():
             try:
-                prompt = await asyncio.wait_for(self.queue.get(), timeout=self.sync_seconds)
-            except TimeoutError:
+                prompt = self.queue.get_nowait()
+            except asyncio.QueueEmpty:
                 prompt = os.environ["TGA3_PERIODIC_PROMPT"]
             if prompt is None:
                 return
