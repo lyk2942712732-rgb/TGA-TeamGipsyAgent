@@ -10,6 +10,7 @@ const apiPort = Number(process.env.TGA_PLAYWRIGHT_API_PORT ?? 18083);
 
 export default defineConfig({
   testDir: "./e2e",
+  testIgnore: "workbench-visual.spec.ts",
   expect: { timeout: 15000 },
   use: { baseURL, headless: true, launchOptions: existsSync(downloadedChrome) ? { executablePath: downloadedChrome } : {} },
   webServer: externalServer ? undefined : [{

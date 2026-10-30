@@ -1,10 +1,9 @@
-import { Download, File, FileText, Flag, Grid2X2, Lightbulb, List, Maximize2, MessageSquareText, Search, ShieldCheck, X } from "lucide-react";
+import { File, FileText, Flag, Grid2X2, Lightbulb, List, Maximize2, MessageSquareText, Search, ShieldCheck, X } from "lucide-react";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { tga3RuntimeApi } from "../../../api/tga3-runtime-control";
 import type { TGA3BoardEntry, TGA3TaskEvent, TGA3RuntimeSnapshot } from "../../../runtime/tga3-runtime";
 import { BOARD_KIND_LABELS, EVENT_KIND_LABELS, bodyText, formatTime, listStrings } from "../tga3-view";
-import { TGA3RuntimeGraph } from "./TGA3RuntimeGraph";
+import { TGA3ReportReader } from "./TGA3ReportReader";
 
 export type TGA3WorkspaceTab = "blackboard" | "events" | "findings" | "inputs" | "report" | "runtime";
 const TABS: Array<[TGA3WorkspaceTab, string]> = [["blackboard", "共享黑板"], ["events", "执行事件"], ["findings", "Findings"], ["inputs", "输入与文件"], ["report", "报告"], ["runtime", "运行图"]];
@@ -22,7 +21,7 @@ export function TGA3Workspace({ snapshot, tab, selectedAgentId, onTab }: { snaps
       {effectiveTab === "findings" ? <FindingsPanel entries={snapshot.blackboard} /> : null}
       {effectiveTab === "inputs" ? <InputsPanel entries={snapshot.blackboard} /> : null}
       {effectiveTab === "report" ? <ReportPanel snapshot={snapshot} /> : null}
-      {effectiveTab === "runtime" ? <TGA3RuntimeGraph snapshot={snapshot} /> : null}
+      {effectiveTab === "runtime" ? <div className="tga3-empty"><h3>实时运行图位于任务顶部</h3><p>点击图中的 Agent、黑板或 Skills，查看对应动作与交互。</p><div className="workbench-definition"><span>黑板位置<strong>#{snapshot.task.blackboard_seq}</strong></span><span>事件位置<strong>#{snapshot.task.event_seq}</strong></span></div></div> : null}
     </div>
   </section>;
 }
@@ -155,7 +154,8 @@ function InputsPanel({ entries }: { entries: TGA3BoardEntry[] }) {
 }
 function ReportPanel({ snapshot }: { snapshot: TGA3RuntimeSnapshot }) {
   const finals = snapshot.blackboard.filter((entry) => entry.kind === "final_candidate"); const ready = snapshot.task.state === "completed";
-  return <div className="tga3-report-panel"><FileText size={34} /><span>REPORTER</span><h3>{ready ? "Markdown Writeup 已生成" : finals.length ? "Reporter 正在固定黑板快照并生成报告" : "等待最终候选"}</h3><p>{ready ? "报告只基于 final_candidate 触发时固定的黑板内容生成。" : "Worker 发布引用既有 Finding 的 final_candidate 后，Reporter 才会被唤醒。"}</p>{ready ? <a className="ref-primary-button" href={tga3RuntimeApi.reportUrl(snapshot.task.id)} target="_blank" rel="noreferrer"><Download size={15} />下载 writeup.md</a> : null}</div>;
+  if (ready) return <TGA3ReportReader taskId={snapshot.task.id} />;
+  return <div className="workbench-report-pending"><FileText size={28} /><h3>{finals.length ? "Reporter 正在生成报告" : "等待最终候选"}</h3><p>最终候选确定后，Reporter 根据固定的黑板快照整理步骤、证据与结论。</p></div>;
 }
 function Meta({ label, values }: { label: string; values: string[] }) { return values.length ? <footer className="tga3-entry-meta"><span>{label}</span>{values.map((value, index) => <em key={`${value}-${index}`}>{value}</em>)}</footer> : null; }
 function Empty({ icon, title, detail }: { icon: ReactNode; title: string; detail: string }) { return <div className="tga3-empty">{icon}<h3>{title}</h3><p>{detail}</p></div>; }

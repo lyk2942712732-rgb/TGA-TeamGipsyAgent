@@ -52,15 +52,15 @@ describe("RuntimeApp TGA3 shell", () => {
     mocks.listTasks.mockResolvedValue([{ id: "running", title: "Active", scene_id: "penetration_test", state: "running", created_at: "2026-01-01", updated_at: "2026-01-01" }]);
     mocks.listAttention.mockResolvedValue([{ id: "q1" }]);
     renderShell("/reports");
-    expect(await screen.findByText("运行中")).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "运行中" })).toBeInTheDocument();
     const approvals = await screen.findByRole("button", { name: "审批中心，1 条待处理" });
     expect(approvals.querySelector(".topbar-notification-dot")).toBeInTheDocument();
   });
 
-  it("keeps the task runtime page free of the global topbar", () => {
+  it("keeps navigation and task breadcrumbs available in the runtime page", () => {
     renderShell("/tasks/task-1/runtime");
     expect(screen.getByText("task runtime")).toBeInTheDocument();
-    expect(document.querySelector(".app-topbar")).not.toBeInTheDocument();
+    expect(document.querySelector(".app-topbar")).toBeInTheDocument();
   });
 
   it("navigates to a current configuration page", async () => {

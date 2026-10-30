@@ -19,7 +19,7 @@ describe("NewTaskPage", () => {
 
   it("loads TGA3 scenes and task-level agent models", async () => {
     render(<NewTaskPage onCreated={vi.fn()} />);
-    expect(await screen.findByRole("dialog", { name: "创建任务" })).toBeInTheDocument();
+    expect(await screen.findByRole("region", { name: "创建任务" })).toBeInTheDocument();
     expect(await screen.findByText("渗透测试")).toBeInTheDocument();
     expect(await screen.findByLabelText("OpenAI Worker 模型")).toHaveValue("openai::gpt-test::openai_responses");
   });

@@ -45,6 +45,7 @@ export function CatalogTable<T>({ columns, rows, rowKey, selectedKey, onSelect, 
             tabIndex={onSelect ? 0 : undefined}
             onClick={onSelect ? () => onSelect(row) : undefined}
             onKeyDown={onSelect ? (event) => {
+              if (event.target !== event.currentTarget) return;
               if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onSelect(row); }
             } : undefined}
           >

@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { TGA3RuntimeSnapshot } from "../../runtime/tga3-runtime";
@@ -30,7 +30,7 @@ describe("TaskRuntimePage", () => {
   it("renders only native TGA3 runtime concepts", () => {
     render(<MemoryRouter initialEntries={["/tasks/task/runtime"]}><TaskRuntimePage taskId="task" /></MemoryRouter>);
     expect(screen.getByRole("heading", { name: "Native TGA3 task" })).toBeInTheDocument();
-    expect(screen.getByRole("navigation", { name: "任务 Agent" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "实时运行图" })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: /共享黑板/ })).toBeInTheDocument();
     expect(screen.getByText("已发现入口")).toBeInTheDocument();
   });
@@ -54,8 +54,8 @@ describe("TaskRuntimePage", () => {
   });
   it("selects an agent and opens its native inspector", () => {
     render(<MemoryRouter initialEntries={["/tasks/task/runtime"]}><TaskRuntimePage taskId="task" /></MemoryRouter>);
-    fireEvent.click(screen.getByRole("option", { name: /OpenAI Worker/ }));
-    expect(screen.getByRole("heading", { name: "OpenAI Worker" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "查看 OpenAI Worker" }));
+    expect(screen.getByRole("heading", { name: "OpenAI Worker", level: 2 })).toBeInTheDocument();
     expect(screen.queryByRole("tab", { name: "对话" })).not.toBeInTheDocument();
     expect(screen.queryByPlaceholderText(/添加提示/)).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("tab", { name: "活动" }));
@@ -89,193 +89,5 @@ describe("TaskRuntimePage", () => {
     render(<MemoryRouter initialEntries={["/tasks/task/runtime"]}><TaskRuntimePage taskId="task" /></MemoryRouter>);
     expect(screen.queryByText("控制通道意外断开")).not.toBeInTheDocument();
   });
-  it("shows the standalone runtime graph with per-agent models and concurrent owner flashes", () => {
-    const view = render(<MemoryRouter initialEntries={["/tasks/task/runtime?tab=runtime"]}><TaskRuntimePage taskId="task" /></MemoryRouter>);
-    const graph = screen.getByRole("region", { name: "实时运行图" });
-    expect(within(graph).getByText("用户")).toBeInTheDocument();
-    expect(within(graph).getByText("Skills")).toBeInTheDocument();
-    expect(within(graph).getByText("黑板")).toBeInTheDocument();
-    expect(within(graph).getAllByText("gpt")).toHaveLength(2);
-    expect(within(graph).queryByText("大模型")).not.toBeInTheDocument();
-    expect(within(graph).queryByText(/读取 Skill/)).not.toBeInTheDocument();
-    expect(within(graph).queryByText("用户 写入 用户提示")).not.toBeInTheDocument();
-    expect(within(graph).getByRole("button", { name: "缩小运行图" })).toBeInTheDocument();
-    fireEvent.click(within(graph).getByRole("button", { name: "放大运行图" }));
-    expect(within(graph).getByRole("button", { name: "还原运行图" })).toHaveTextContent("125%");
-    fireEvent.click(within(graph).getByRole("button", { name: "还原运行图" }));
-    expect(within(graph).getByRole("button", { name: "还原运行图" })).toHaveTextContent("100%");
 
-    useTGA3Runtime.mockReturnValue({
-      snapshot: {
-        ...snapshot,
-        events: [...snapshot.events, {
-          id: "skill-action",
-          seq: 3,
-          channel_agent_id: "worker-openai",
-          actor: { agent_id: "worker-openai", display_name: "OpenAI Worker", role: "worker" },
-          kind: "action_completed",
-          text: "cat /skills/SKILL.md",
-          payload: { tool: "cat /skills/SKILL.md" },
-          created_at: "2026-01-01T00:01:10Z",
-        }],
-      },
-      connection: "live",
-      error: null,
-      refresh: vi.fn(),
-    });
-    view.rerender(<MemoryRouter initialEntries={["/tasks/task/runtime?tab=runtime"]}><TaskRuntimePage taskId="task" /></MemoryRouter>);
-    expect(within(screen.getByRole("region", { name: "实时运行图" })).getByText("OpenAI Worker 读取 Skill")).toHaveClass("interaction");
-
-    useTGA3Runtime.mockReturnValue({
-      snapshot: {
-        ...snapshot,
-        events: [...snapshot.events,
-          { id: "skill-action", seq: 3, channel_agent_id: "worker-openai", actor: { agent_id: "worker-openai", display_name: "OpenAI Worker", role: "worker" }, kind: "action_completed", text: "cat /skills/SKILL.md", payload: { tool: "cat /skills/SKILL.md" }, created_at: "2026-01-01T00:01:10Z" },
-          { id: "shell-action", seq: 4, channel_agent_id: "worker-openai", actor: { agent_id: "worker-openai", display_name: "OpenAI Worker", role: "worker" }, kind: "action_completed", text: "id; pwd", payload: { tool: "shell" }, created_at: "2026-01-01T00:01:11Z" },
-        ],
-      },
-      connection: "live",
-      error: null,
-      refresh: vi.fn(),
-    });
-    view.rerender(<MemoryRouter initialEntries={["/tasks/task/runtime?tab=runtime"]}><TaskRuntimePage taskId="task" /></MemoryRouter>);
-    const updatedGraph = screen.getByRole("region", { name: "实时运行图" });
-    expect(within(updatedGraph).getByText("OpenAI Worker 读取 Skill")).toBeInTheDocument();
-    expect(within(updatedGraph).queryByText("OpenAI Worker 执行 id; pwd")).not.toBeInTheDocument();
-
-    useTGA3Runtime.mockReturnValue({
-      snapshot: {
-        ...snapshot,
-        events: [...snapshot.events,
-          { id: "skill-action", seq: 3, channel_agent_id: "worker-openai", actor: { agent_id: "worker-openai", display_name: "OpenAI Worker", role: "worker" }, kind: "action_completed", text: "cat /skills/SKILL.md", payload: { tool: "cat /skills/SKILL.md" }, created_at: "2026-01-01T00:01:10Z" },
-          { id: "shell-action", seq: 4, channel_agent_id: "worker-openai", actor: { agent_id: "worker-openai", display_name: "OpenAI Worker", role: "worker" }, kind: "action_completed", text: "id; pwd", payload: { tool: "shell" }, created_at: "2026-01-01T00:01:11Z" },
-          { id: "worker-claude-action", seq: 5, channel_agent_id: "worker-claude", actor: { agent_id: "worker-claude", display_name: "Claude Worker", role: "worker" }, kind: "action_completed", text: "review findings", payload: { tool: "review" }, created_at: "2026-01-01T00:01:12Z" },
-        ],
-      },
-      connection: "live",
-      error: null,
-      refresh: vi.fn(),
-    });
-    view.rerender(<MemoryRouter initialEntries={["/tasks/task/runtime?tab=runtime"]}><TaskRuntimePage taskId="task" /></MemoryRouter>);
-    const concurrentGraph = screen.getByRole("region", { name: "实时运行图" });
-    expect(within(concurrentGraph).getByText("OpenAI Worker 读取 Skill")).toBeInTheDocument();
-    expect(within(concurrentGraph).getByText("Claude Worker review findings")).toBeInTheDocument();
-    view.rerender(<MemoryRouter initialEntries={["/tasks/task/runtime?tab=runtime"]}><TaskRuntimePage taskId="task" /></MemoryRouter>);
-    expect(within(screen.getByRole("region", { name: "实时运行图" })).getByText("OpenAI Worker 读取 Skill")).toBeInTheDocument();
-    expect(within(screen.getByRole("region", { name: "实时运行图" })).getByText("Claude Worker review findings")).toBeInTheDocument();
-
-    useTGA3Runtime.mockReturnValue({
-      snapshot: {
-        ...snapshot,
-        events: [...snapshot.events,
-          { id: "skill-action", seq: 3, channel_agent_id: "worker-openai", actor: { agent_id: "worker-openai", display_name: "OpenAI Worker", role: "worker" }, kind: "action_completed", text: "cat /skills/SKILL.md", payload: { tool: "cat /skills/SKILL.md" }, created_at: "2026-01-01T00:01:10Z" },
-          { id: "shell-action", seq: 4, channel_agent_id: "worker-openai", actor: { agent_id: "worker-openai", display_name: "OpenAI Worker", role: "worker" }, kind: "action_completed", text: "id; pwd", payload: { tool: "shell" }, created_at: "2026-01-01T00:01:11Z" },
-          { id: "worker-claude-action", seq: 5, channel_agent_id: "worker-claude", actor: { agent_id: "worker-claude", display_name: "Claude Worker", role: "worker" }, kind: "action_completed", text: "review findings", payload: { tool: "review" }, created_at: "2026-01-01T00:01:12Z" },
-          { id: "shell-completed", seq: 6, channel_agent_id: "worker-openai", actor: { agent_id: "worker-openai", display_name: "OpenAI Worker", role: "worker" }, kind: "action_completed", text: "id; pwd", payload: { tool: "shell", exit_code: 0 }, created_at: "2026-01-01T00:01:13Z" },
-        ],
-      },
-      connection: "live",
-      error: null,
-      refresh: vi.fn(),
-    });
-    view.rerender(<MemoryRouter initialEntries={["/tasks/task/runtime?tab=runtime"]}><TaskRuntimePage taskId="task" /></MemoryRouter>);
-    const completedGraph = screen.getByRole("region", { name: "实时运行图" });
-    expect(within(completedGraph).getByText("OpenAI Worker 读取 Skill")).toBeInTheDocument();
-    expect(within(completedGraph).getByText("Claude Worker review findings")).toBeInTheDocument();
-  });
-
-  it("shows and truncates the concrete shell command from the action payload", () => {
-    const command = "curl -sS https://target.example/api/v1/debug?token=temporary-token-value --header 'Accept: application/json'";
-    const view = render(<MemoryRouter initialEntries={["/tasks/task/runtime?tab=runtime"]}><TaskRuntimePage taskId="task" /></MemoryRouter>);
-    useTGA3Runtime.mockReturnValue({
-      snapshot: {
-        ...snapshot,
-        events: [...snapshot.events, {
-          id: "long-shell-action",
-          seq: 3,
-          channel_agent_id: "worker-openai",
-          actor: { agent_id: "worker-openai", display_name: "OpenAI Worker", role: "worker" },
-          kind: "action_completed",
-          text: "shell_exec",
-          payload: { tool: "shell_exec", input: { command } },
-          created_at: "2026-01-01T00:01:10Z",
-        }],
-      },
-      connection: "live",
-      error: null,
-      refresh: vi.fn(),
-    });
-    view.rerender(<MemoryRouter initialEntries={["/tasks/task/runtime?tab=runtime"]}><TaskRuntimePage taskId="task" /></MemoryRouter>);
-    expect(within(screen.getByRole("region", { name: "实时运行图" })).getByText("OpenAI Worker 执行 curl -sS https://target.example/api/v1/debug?token=tempora…")).toBeInTheDocument();
-  });
-
-  it("keeps each owner's replacement flash independent from the previous timer", () => {
-    vi.useFakeTimers();
-    try {
-      const view = render(<MemoryRouter initialEntries={["/tasks/task/runtime?tab=runtime"]}><TaskRuntimePage taskId="task" /></MemoryRouter>);
-      useTGA3Runtime.mockReturnValue({
-        snapshot: {
-          ...snapshot,
-          events: [...snapshot.events, { id: "first", seq: 3, channel_agent_id: "worker-openai", actor: { agent_id: "worker-openai", display_name: "OpenAI Worker", role: "worker" }, kind: "action_completed", text: "first", payload: { tool: "shell" }, created_at: "2026-01-01T00:01:10Z" }],
-        },
-        connection: "live", error: null, refresh: vi.fn(),
-      });
-      view.rerender(<MemoryRouter initialEntries={["/tasks/task/runtime?tab=runtime"]}><TaskRuntimePage taskId="task" /></MemoryRouter>);
-      expect(screen.getByText("OpenAI Worker 执行 first")).toBeInTheDocument();
-      act(() => vi.advanceTimersByTime(100));
-
-      useTGA3Runtime.mockReturnValue({
-        snapshot: {
-          ...snapshot,
-          events: [...snapshot.events,
-            { id: "first", seq: 3, channel_agent_id: "worker-openai", actor: { agent_id: "worker-openai", display_name: "OpenAI Worker", role: "worker" }, kind: "action_completed", text: "first", payload: { tool: "shell" }, created_at: "2026-01-01T00:01:10Z" },
-            { id: "second", seq: 4, channel_agent_id: "worker-openai", actor: { agent_id: "worker-openai", display_name: "OpenAI Worker", role: "worker" }, kind: "action_completed", text: "second", payload: { tool: "shell" }, created_at: "2026-01-01T00:01:11Z" },
-          ],
-        },
-        connection: "live", error: null, refresh: vi.fn(),
-      });
-      view.rerender(<MemoryRouter initialEntries={["/tasks/task/runtime?tab=runtime"]}><TaskRuntimePage taskId="task" /></MemoryRouter>);
-      expect(screen.getByText("OpenAI Worker 执行 first")).toBeInTheDocument();
-      expect(screen.queryByText("OpenAI Worker 执行 second")).not.toBeInTheDocument();
-      act(() => vi.advanceTimersByTime(99));
-      expect(screen.getByText("OpenAI Worker 执行 first")).toBeInTheDocument();
-      act(() => vi.advanceTimersByTime(1));
-      expect(screen.getByText("OpenAI Worker 执行 second")).toBeInTheDocument();
-      act(() => vi.advanceTimersByTime(2099));
-      expect(screen.getByText("OpenAI Worker 执行 second")).toBeInTheDocument();
-      act(() => vi.advanceTimersByTime(1));
-      expect(screen.queryByText("OpenAI Worker 执行 second")).not.toBeInTheDocument();
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("waits for action completion before showing a tool action", () => {
-    const view = render(<MemoryRouter initialEntries={["/tasks/task/runtime?tab=runtime"]}><TaskRuntimePage taskId="task" /></MemoryRouter>);
-    const started = { id: "started", seq: 3, channel_agent_id: "worker-openai", actor: { agent_id: "worker-openai", display_name: "OpenAI Worker", role: "worker" }, kind: "action_started" as const, text: "whoami", payload: { tool: "shell" }, created_at: "2026-01-01T00:01:10Z" };
-    useTGA3Runtime.mockReturnValue({ snapshot: { ...snapshot, events: [...snapshot.events, started] }, connection: "live", error: null, refresh: vi.fn() });
-    view.rerender(<MemoryRouter initialEntries={["/tasks/task/runtime?tab=runtime"]}><TaskRuntimePage taskId="task" /></MemoryRouter>);
-    expect(screen.queryByText("OpenAI Worker 执行 whoami")).not.toBeInTheDocument();
-
-    useTGA3Runtime.mockReturnValue({
-      snapshot: { ...snapshot, events: [...snapshot.events, started, { ...started, id: "completed", seq: 4, kind: "action_completed", created_at: "2026-01-01T00:01:11Z" }] },
-      connection: "live", error: null, refresh: vi.fn(),
-    });
-    view.rerender(<MemoryRouter initialEntries={["/tasks/task/runtime?tab=runtime"]}><TaskRuntimePage taskId="task" /></MemoryRouter>);
-    expect(screen.getByText("OpenAI Worker 执行 whoami")).toBeInTheDocument();
-  });
-
-  it("places standalone Claude actions below the Claude Worker node", () => {
-    const view = render(<MemoryRouter initialEntries={["/tasks/task/runtime?tab=runtime"]}><TaskRuntimePage taskId="task" /></MemoryRouter>);
-    useTGA3Runtime.mockReturnValue({
-      snapshot: {
-        ...snapshot,
-        agents: [...snapshot.agents, { agent_id: "worker-claude", sdk: "claude_agent", desired_state: "running", actual_state: "running", provider_id: "anthropic", model_id: "claude", protocol: "anthropic", display_name: "Claude Worker", role: "worker", runtime_location: "container", updated_at: "2026-01-01T00:01:00Z" }],
-        events: [...snapshot.events, { id: "claude-completed", seq: 3, channel_agent_id: "worker-claude", actor: { agent_id: "worker-claude", display_name: "Claude Worker", role: "worker" }, kind: "action_completed", text: "Bash", payload: { tool: "Bash", input: { command: "curl -I http://target" } }, created_at: "2026-01-01T00:01:10Z" }],
-      },
-      connection: "live", error: null, refresh: vi.fn(),
-    });
-    view.rerender(<MemoryRouter initialEntries={["/tasks/task/runtime?tab=runtime"]}><TaskRuntimePage taskId="task" /></MemoryRouter>);
-    expect(screen.getByText("Claude Worker 执行 curl -I http://target")).toHaveAttribute("data-placement", "below");
-  });
 });

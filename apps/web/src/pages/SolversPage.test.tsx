@@ -29,28 +29,27 @@ describe("SolversPage", () => {
     mocks.saveAgents.mockImplementation(async (value) => value);
   });
 
-  it("uses the static team graph instead of an Agent list", async () => {
+  it("shows the task phases and opens the selected Agent configuration", async () => {
     render(<SolversPage />);
     const graph = await screen.findByRole("region", { name: "Solver 团队图" });
-    expect(within(graph).getByRole("button", { name: "配置 OpenAI Worker" })).toBeInTheDocument();
+    expect(within(graph).getByRole("button", { name: "配置 OpenAI Worker" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByLabelText("OpenAI Worker Solver 配置")).toBeInTheDocument();
     expect(screen.queryByLabelText("Agent 列表")).not.toBeInTheDocument();
-    expect(screen.queryByRole("tab")).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("OpenAI Worker Solver 配置")).not.toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "运行与模型" })).toHaveAttribute("aria-selected", "true");
   });
 
-  it("focuses one Agent and opens all configuration sections in one drawer", async () => {
+  it("keeps prompt edits when switching agents and saves the whole configuration", async () => {
     const user = userEvent.setup();
     render(<SolversPage />);
     await user.click(await screen.findByRole("button", { name: "配置 OpenAI Worker" }));
-    const panel = screen.getByLabelText("OpenAI Worker Solver 配置");
-    for (const heading of ["概览", "模型", "System Prompt", "工具与镜像"]) expect(within(panel).getByRole("heading", { name: heading })).toBeInTheDocument();
-    expect(document.querySelector(".lane-worker-claude")).toHaveAttribute("data-dimmed", "true");
-    expect(document.querySelector(".lane-worker-openai")).toHaveAttribute("data-dimmed", "false");
-    expect(document.querySelector(".lane-worker-claude .solver-team-agent")).toHaveAttribute("data-dimmed", "true");
-    expect(document.querySelector(".lane-worker-openai .solver-team-agent")).toHaveAttribute("data-dimmed", "false");
-    expect(document.querySelector(".lane-worker-openai .model")).toHaveAttribute("data-dimmed", "true");
-    const prompt = within(panel).getByLabelText("OpenAI Worker System Prompt");
+    await user.click(screen.getByRole("tab", { name: "系统提示词" }));
+    const prompt = screen.getByLabelText("OpenAI Worker System Prompt");
     await user.clear(prompt); await user.type(prompt, "updated prompt");
+    await user.click(screen.getByRole("button", { name: "配置 Claude Worker" }));
+    await user.click(screen.getByRole("button", { name: "配置 OpenAI Worker" }));
+    const panel = screen.getByLabelText("OpenAI Worker Solver 配置");
+    expect(within(panel).getByLabelText("OpenAI Worker System Prompt")).toHaveValue("updated prompt");
+    expect(within(panel).getByRole("status")).toHaveTextContent("有未保存的更改");
     await user.click(within(panel).getByRole("button", { name: "保存配置" }));
     await waitFor(() => expect(mocks.saveAgents).toHaveBeenCalledWith(expect.objectContaining({ agents: expect.objectContaining({ "worker-openai": expect.objectContaining({ system_prompt: "updated prompt" }) }) })));
   });

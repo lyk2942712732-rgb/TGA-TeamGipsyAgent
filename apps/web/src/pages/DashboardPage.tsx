@@ -1,4 +1,4 @@
-import { Bot, ChevronRight, CircleCheck, CirclePlay, Clock, Database, FileText, Layers } from "lucide-react";
+import { Bot, ChevronRight, CircleCheck, CirclePlay, Clock, Database, FileText, Layers, Plus } from "lucide-react";
 import type { AttentionItem } from "../api/tga3-attention";
 import type { SystemHealth } from "../api/tga3-system";
 import type { TGA3TaskListItem } from "../api/tga3-tasks";
@@ -28,7 +28,8 @@ export function DashboardPage({ tasks, attention, health, onNew, onTask, onTasks
   ];
 
   return <div className="ref-page dashboard-ref">
-    <header className="dashboard-greeting"><div><h1>TGA3 控制台</h1><p>双 Worker 黑板任务、待处理事项与最终报告</p></div><button className="ref-primary-button" onClick={onNew}>创建任务</button></header>
+    <header className="dashboard-greeting"><div><h1>工作台</h1><p>继续正在进行的解题，或开始一个新任务。</p></div><button className="ref-primary-button" onClick={onNew}>创建任务</button></header>
+    {!tasks.length ? <section className="ref-card workbench-first-task"><Plus size={28} /><h2>开始你的第一个任务</h2><p>提供题目描述与附件，Scout 先整理线索，两个 Worker 并行验证，Reporter 生成解题报告。</p><button className="ref-primary-button" onClick={onNew}>创建任务</button><button className="ref-link-button" onClick={onSystem}>查看系统状态</button></section> : <>
     <section className="dashboard-metrics" aria-label="运行指标">{metrics.map(({ key, label, value, icon: Icon, tone }) => <article key={key} className={`dashboard-metric tone-${tone}`}><header><span className="metric-icon"><Icon size={17} /></span><span className="metric-label">{label}</span></header><strong>{value}</strong><footer>来自 TGA3 当前状态</footer></article>)}</section>
     <div className="dashboard-columns">
       <section className="ref-card"><header className="ref-card-head"><h2>需要你的处理</h2></header>{attention.length ? <ul className="attention-items">{attention.slice(0, 6).map((item) => <li key={item.id}><span className={`severity-chip ${item.kind.includes("failed") ? "tone-high" : "tone-medium"}`}>{item.kind === "agent_paused" ? "暂停" : "失败"}</span><div className="attention-copy"><strong>{item.title}</strong><small>{item.task_title}{item.agent_id ? ` · ${item.agent_id}` : ""}</small></div><time>{relativeTime(item.created_at)}</time><button className="ref-secondary-button" onClick={() => onTask(item.task_id)}>处理</button></li>)}</ul> : <EmptyState label="暂无需要处理的事项" />}<footer className="card-footer-link"><button className="ref-link-button" onClick={onApprovals}>查看全部（{attention.length}）<ChevronRight size={14} /></button></footer></section>
@@ -38,6 +39,7 @@ export function DashboardPage({ tasks, attention, health, onNew, onTask, onTasks
       <section className="ref-card"><header className="ref-card-head"><h2>系统状态</h2></header><ul className="system-rows">{(health?.components ?? []).map((item) => <li key={item.id}><span className="system-row-icon">{item.id === "models" ? <Layers size={16} /> : <Database size={16} />}</span><strong>{item.label}</strong><span className="system-row-status"><small className="system-row-note">{item.detail}</small><em className={`system-row-value tone-${item.status === "unavailable" ? "bad" : item.status === "degraded" ? "warn" : "ok"}`}>{item.status === "unavailable" ? "异常" : item.status === "degraded" ? "降级" : "正常"}</em></span></li>)}</ul><footer className="card-footer-link"><button className="ref-link-button" onClick={onSystem}>查看系统状态 <ChevronRight size={14} /></button></footer></section>
       <section className="ref-card"><header className="ref-card-head"><h2>最近完成</h2></header>{completed.length ? <ul className="report-rows">{completed.slice(0, 6).map((task) => <li key={task.id}><span className="report-icon"><FileText size={16} /></span><button className="report-main" onClick={() => onTask(task.id)}><strong>{task.title}</strong></button><span className="chip tone-neutral">{modeLabel(task.scene_id)}</span><time>{relativeTime(task.updated_at)}</time><em className="report-status">完成</em></li>)}</ul> : <EmptyState label="暂无已完成任务" />}<footer className="card-footer-link"><button className="ref-link-button" onClick={onReports}>查看报告 <ChevronRight size={14} /></button></footer></section>
     </div>
+    </>}
   </div>;
 }
 

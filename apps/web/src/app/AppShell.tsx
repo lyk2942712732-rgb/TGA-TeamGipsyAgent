@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { Bell, ChevronLeft, ChevronRight, CirclePlay, HeartPulse, Menu, Shield } from "lucide-react";
+import { Bell, ChevronLeft, ChevronRight, CirclePlay, HeartPulse, Shield } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import { attentionApi } from "../api/tga3-attention";
@@ -7,27 +7,25 @@ import { fetchSystemHealth } from "../api/tga3-system";
 import { listTasks } from "../api/tga3-tasks";
 import { NAVIGATION_GROUPS, isNavigationItemActive } from "./navigation";
 import { isRuntimePage, type AppRoute } from "./router";
+import { statusLabel } from "../shared/status";
 
 export function AppShell({ route, children }: { route: AppRoute; children: ReactNode }) {
   const navigate = useNavigate();
   const [collapsed, setCollapsed] = useState(false);
-  const [mobileOpen, setMobileOpen] = useState(false);
-  const showTopbar = !isRuntimePage(route.page);
 
   const tasks = useQuery({ queryKey: ["tga3", "tasks"], queryFn: listTasks });
-  const attention = useQuery({ queryKey: ["tga3", "attention"], queryFn: attentionApi.list, enabled: showTopbar, refetchInterval: 5000 });
-  const health = useQuery({ queryKey: ["system", "health"], queryFn: fetchSystemHealth, enabled: showTopbar, refetchInterval: 15000 });
-  const activeTasks = (tasks.data ?? []).filter((task) => ["starting", "running", "finalizing", "reporting"].includes(task.state));
+  const attention = useQuery({ queryKey: ["tga3", "attention"], queryFn: attentionApi.list, refetchInterval: 5000 });
+  const health = useQuery({ queryKey: ["system", "health"], queryFn: fetchSystemHealth, refetchInterval: 15000 });
+  const activeTasks = (tasks.data ?? []).filter((task) => ["scouting", "starting", "running", "finalizing", "reporting"].includes(task.state));
   const running = activeTasks.slice(0, 3);
   const pending = attention.data?.length ?? 0;
   const healthStatus = overallHealth(health.data?.components.map((item) => item.status), health.isPending, health.isError);
 
   const go = (path: string) => {
-    setMobileOpen(false);
     navigate(path);
   };
 
-  return <div className={`app-shell ${collapsed ? "is-collapsed" : ""} ${mobileOpen ? "is-mobile-open" : ""}`}>
+  return <div className={`app-shell ${collapsed ? "is-collapsed" : ""}`}>
     <aside className="app-sidebar" aria-label="应用侧栏">
       <div className="app-brand">
         <button className="app-brand-mark" aria-label="返回首页" onClick={() => go("/")}><Shield size={20} aria-hidden="true" /></button>
@@ -66,7 +64,7 @@ export function AppShell({ route, children }: { route: AppRoute; children: React
           <CirclePlay size={15} aria-hidden="true" />
           <span>
             <strong>{task.title}</strong>
-            <small>{task.state}</small>
+            <small>{statusLabel(task.state)}</small>
           </span>
         </button>)}
       </section> : null}
@@ -79,11 +77,9 @@ export function AppShell({ route, children }: { route: AppRoute; children: React
       </footer>
     </aside>
 
-    {mobileOpen ? <button className="app-sidebar-backdrop" aria-label="关闭导航" onClick={() => setMobileOpen(false)} /> : null}
-
     <div className="app-content">
-      {showTopbar ? <header className="app-topbar">
-        <button className="app-mobile-menu" aria-label="打开导航" onClick={() => setMobileOpen(true)}><Menu size={19} /></button>
+      <header className="app-topbar">
+        <span className="app-breadcrumb">{["models", "skills", "solvers", "policies", "system"].includes(route.page) ? "配置中心" : "工作区"} / {({ dashboard: "首页", tasks: "任务", new: "创建任务", runtime: "任务工作区", approvals: "审批中心", reports: "报告", solvers: "Solver", skills: "Skills", models: "Models", policies: "场景", system: "系统状态", "not-found": "页面不存在" })[route.page]}</span>
         <div className="app-topbar-actions">
           <button className="topbar-state" title={activeTasks.length ? `${activeTasks.length} 个任务正在运行` : "当前没有运行中的任务"} onClick={() => go("/tasks")}>
             <i className={activeTasks.length ? "running-dot" : "idle-dot"} aria-hidden="true" />
@@ -98,7 +94,7 @@ export function AppShell({ route, children }: { route: AppRoute; children: React
             {pending > 0 ? <i className="topbar-notification-dot" aria-hidden="true" /> : null}
           </button>
         </div>
-      </header> : <button className="app-mobile-menu runtime-mobile-menu" aria-label="打开导航" onClick={() => setMobileOpen(true)}><Menu size={19} /></button>}
+      </header>
       <main className={`app-main app-page ${isRuntimePage(route.page) ? "runtime-main" : ""}`}>
         {children}
       </main>

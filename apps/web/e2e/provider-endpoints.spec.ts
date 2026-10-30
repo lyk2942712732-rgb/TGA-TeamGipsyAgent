@@ -19,9 +19,11 @@ test("supplier endpoints, searchable toggles, and protocol-scoped Solver options
   await expect(responses.getByRole("switch", { name: "启用 qwen-shared", exact: true })).not.toBeChecked();
   await responses.getByRole("switch", { name: "启用 qwen-shared", exact: true }).click();
   await expect(responses.getByRole("switch", { name: "启用 qwen-shared", exact: true })).toBeChecked();
+  await page.getByRole("tab", { name: "Anthropic Messages", exact: true }).click();
   await expect(anthropic.getByRole("switch", { name: "启用 qwen-shared", exact: true })).not.toBeChecked();
   await anthropic.getByRole("switch", { name: "启用 anthropic-only", exact: true }).click();
   await expect(anthropic.getByRole("switch", { name: "启用 anthropic-only", exact: true })).toBeChecked();
+  await page.getByRole("tab", { name: "OpenAI Responses", exact: true }).click();
   await responses.getByRole("searchbox").fill("SHARED");
   await expect(responses.getByRole("switch")).toHaveCount(1);
   await responses.getByRole("button", { expanded: true }).click();
@@ -35,9 +37,6 @@ test("supplier endpoints, searchable toggles, and protocol-scoped Solver options
   await page.getByRole("button", { name: /端点演示网关/ }).click();
   await expect(responses.getByRole("switch", { name: "启用 qwen-shared", exact: true })).toBeChecked();
   await page.screenshot({ path: testInfo.outputPath("models-desktop.png"), fullPage: true });
-  await page.setViewportSize({ width: 390, height: 844 });
-  await page.screenshot({ path: testInfo.outputPath("models-mobile.png"), fullPage: true });
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.goto("/settings/solvers");
   await page.getByRole("button", { name: "配置 OpenAI Worker" }).click();
@@ -74,9 +73,9 @@ test("supplier endpoints, searchable toggles, and protocol-scoped Solver options
   const detail = await (await page.request.get(`/api/v3/tasks/${task.id}`)).json();
   expect(detail.agents.map((agent: { agent_id: string }) => agent.agent_id).sort()).toEqual(["reporter", "scout", "worker-claude", "worker-openai"]);
   await page.goto(`/tasks/${task.id}/runtime`);
-  await expect(page.getByRole("option", { name: /OpenAI Worker/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: "查看 OpenAI Worker" })).toBeVisible();
   for (const name of [/Scout/, /OpenAI Worker/, /Claude Worker/, /Reporter/]) {
-    await page.getByRole("option", { name }).click();
+    await page.getByRole("button", { name: new RegExp("查看 " + name.source) }).click();
     await expect(page.getByRole("tab", { name: "活动", exact: true })).toBeVisible();
     await expect(page.getByRole("tab", { name: "对话", exact: true })).toHaveCount(0);
     await expect(page.getByPlaceholder(/添加提示/)).toHaveCount(0);

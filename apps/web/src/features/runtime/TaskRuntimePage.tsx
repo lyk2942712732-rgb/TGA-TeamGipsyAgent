@@ -4,7 +4,7 @@ import { tga3RuntimeApi } from "../../api/tga3-runtime-control";
 import { deleteTask } from "../../api/tga3-tasks";
 import { ConfirmDialog } from "../../components/ui/ConfirmDialog";
 import { TGA3AgentInspector } from "./components/TGA3AgentInspector";
-import { TGA3AgentRail } from "./components/TGA3AgentRail";
+import { TGA3RuntimeGraph } from "./components/TGA3RuntimeGraph";
 import { TGA3TaskHeader } from "./components/TGA3TaskHeader";
 import { TGA3Workspace, type TGA3WorkspaceTab } from "./components/TGA3Workspace";
 import { useTGA3Runtime } from "./use-tga3-runtime";
@@ -18,7 +18,7 @@ export function TaskRuntimePage({ taskId }: { taskId: string }) {
   const requestedTab = params.get("tab") as TGA3WorkspaceTab | null;
   const [tab, setTab] = useState<TGA3WorkspaceTab>(requestedTab && VALID_TABS.includes(requestedTab) ? requestedTab : "blackboard");
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(params.get("agent"));
-  const [drawer, setDrawer] = useState<"agents" | "inspector" | null>(null);
+  const [inspectorOpen, setInspectorOpen] = useState(true);
   const [busy, setBusy] = useState(false); const [notice, setNotice] = useState<string | null>(null);
   const [remove, setRemove] = useState(false);
 
@@ -48,11 +48,11 @@ export function TaskRuntimePage({ taskId }: { taskId: string }) {
     <TGA3TaskHeader snapshot={snapshot} connection={connection} busy={busy} onRefresh={refresh} onStop={() => void stop()} onDelete={() => setRemove(true)} />
     {error ? <div className="runtime-sync-error" role="alert">实时同步暂时中断：{error}<button onClick={refresh}>重试</button></div> : null}
     {notice ? <div className="runtime-sync-notice" role="status">{notice}<button onClick={() => setNotice(null)}>关闭</button></div> : null}
-    <div className="runtime-mobile-switches"><button aria-expanded={drawer === "agents"} onClick={() => setDrawer(drawer === "agents" ? null : "agents")}>Agent</button><button aria-expanded={drawer === "inspector"} onClick={() => setDrawer(drawer === "inspector" ? null : "inspector")}>Agent 面板</button></div>
-    <div className="tga3-runtime-layout">
-      <div className="tga3-runtime-side tga3-agent-side" data-open={drawer === "agents"}><TGA3AgentRail agents={snapshot.agents} selectedAgentId={selectedAgentId} onSelect={(agentId) => { setSelectedAgentId(agentId); setDrawer(null); }} /></div>
+    <TGA3RuntimeGraph snapshot={snapshot} selectedAgentId={selectedAgentId} onSelectAgent={(id) => { setSelectedAgentId(id); setInspectorOpen(true); }} />
+    <div className="workbench-runtime-toggle"><button className="ref-secondary-button" aria-expanded={inspectorOpen} onClick={() => setInspectorOpen(value => !value)}>{inspectorOpen ? "收起 Agent 面板" : "展开 Agent 面板"}</button></div>
+    <div className={`workbench-runtime-grid ${inspectorOpen ? "" : "is-wide"}`}>
       <main><TGA3Workspace snapshot={snapshot} tab={tab} selectedAgentId={selectedAgentId} onTab={setTab} /></main>
-      <div className="tga3-runtime-side tga3-inspector-side" data-open={drawer === "inspector"}><TGA3AgentInspector snapshot={snapshot} agent={selectedAgent} onChanged={refresh} /></div>
+      {inspectorOpen ? <div className="workbench-inspector"><TGA3AgentInspector snapshot={snapshot} agent={selectedAgent} onChanged={refresh} /></div> : null}
     </div>
 
     <ConfirmDialog open={remove} title={`删除任务 ${current.task.title}`} description="将停止仍在运行的 Agent，并永久删除该任务的数据库记录、工作区、输入、产物和报告。" confirmLabel="彻底删除" danger busy={busy} onCancel={() => setRemove(false)} onConfirm={() => void confirmDelete()} />

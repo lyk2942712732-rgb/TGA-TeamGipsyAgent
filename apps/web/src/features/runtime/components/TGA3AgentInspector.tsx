@@ -13,9 +13,9 @@ const TABS: Array<[InspectorTab, string]> = [["overview", "概览"], ["activity"
 
 export function TGA3AgentInspector({ snapshot, agent, onChanged }: { snapshot: TGA3RuntimeSnapshot; agent: TGA3Agent | null; onChanged: () => void }) {
   const [tab, setTab] = useState<InspectorTab>("overview");
-  if (!agent) return <aside className="tga3-agent-inspector"><div className="tga3-empty"><Bot /><h3>未选择 Agent</h3><p>从左侧选择一个 Agent 查看状态和活动。</p></div></aside>;
+  if (!agent) return <aside className="tga3-agent-inspector"><div className="tga3-empty"><Bot /><h3>未选择 Agent</h3><p>从上方运行图选择一个 Agent 查看状态和活动。</p></div></aside>;
   return <aside className="tga3-agent-inspector">
-    <header><div><span>AGENT INSPECTOR</span><h2>{agent.display_name}</h2><p>{agent.agent_id} · {roleLabel(agent)}</p></div><span className={`tga3-state-pill tone-${stateTone(agent.actual_state)}`}><i />{stateLabel(agent.actual_state)}</span></header>
+    <header><div><h2>{agent.display_name}</h2><p>{agent.agent_id} · {roleLabel(agent)}</p></div><span className={`tga3-state-pill tone-${stateTone(agent.actual_state)}`}><i />{stateLabel(agent.actual_state)}</span></header>
     <div className="tga3-inspector-tabs" role="tablist">{TABS.map(([value, label]) => <button key={value} role="tab" aria-selected={tab === value} onClick={() => setTab(value)}>{label}</button>)}</div>
     <div className="tga3-inspector-body">
       {tab === "overview" ? <Overview agent={agent} /> : null}
@@ -30,6 +30,7 @@ function Overview({ agent }: { agent: TGA3Agent }) {
   return <div className="tga3-agent-overview">
     <Info title="运行身份"><Row label="角色" value={roleLabel(agent)} /><Row label="运行位置" value={agent.runtime_location === "container" ? "隔离容器" : "主服务"} /><Row label="执行后端" value={sdkLabel(agent.sdk)} /><Row label="期望状态" value={stateLabel(agent.desired_state)} /><Row label="实际状态" value={stateLabel(agent.actual_state)} /></Info>
     <Info title="模型"><Row label="供应商" value={agent.provider_id} /><Row label="模型" value={agent.model_id} /><Row label="协议" value={protocolLabel(agent.protocol)} /></Info>
+    {agent.role === "worker" && agent.metadata?.blackboard_cursor !== undefined ? <Info title="黑板同步"><Row label="已确认读取" value={`#${agent.metadata.blackboard_cursor}`} /><Row label="最近读取" value={agent.metadata.blackboard_read_at ? formatTime(new Date(agent.metadata.blackboard_read_at * 1000).toISOString()) : "尚未读取"} /></Info> : null}
     {agent.runtime_location === "container" ? <Info title="容器会话"><Row label="Container" value={agent.container_id || "尚未分配"} /><Row label="Session" value={agent.session_id || "尚未建立"} /></Info> : null}
     <Info title="可用工具"><div className="tga3-tool-tags">{tools.map((tool) => <span key={tool}>{tool}</span>)}</div></Info>
     {agent.actual_state === "failed" && agent.last_error ? <div className="tga3-agent-failure" role="alert"><strong>最近错误</strong><p>{agent.last_error}</p><small>{formatTime(agent.updated_at)}</small></div> : null}

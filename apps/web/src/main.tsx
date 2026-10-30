@@ -6,6 +6,8 @@ import { AppProviders } from "./app/providers";
 import "./styles/globals.css";
 import "./styles/reference.css";
 import "./styles/tga3-runtime.css";
+import "./styles/workbench.css";
+import "./styles/collaboration.css";
 
 createRoot(document.getElementById("root")!).render(
   <React.StrictMode>

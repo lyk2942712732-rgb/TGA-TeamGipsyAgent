@@ -30,7 +30,7 @@ function RoutePage({ route, navigate }: { route: AppRoute; navigate: (path: stri
   if (route.page === "dashboard") return <DashboardRoute />;
   if (route.page === "tasks") return <TaskListPage />;
   if (route.page === "approvals") return <ApprovalsPage />;
-  if (route.page === "new") return <><TaskListPage /><NewTaskPage onCancel={() => navigate("/tasks")} onCreated={(id) => navigate(`/tasks/${encodeURIComponent(id)}/runtime`)} /></>;
+  if (route.page === "new") return <NewTaskPage onCancel={() => navigate("/tasks")} onCreated={(id) => navigate(`/tasks/${encodeURIComponent(id)}/runtime`)} />;
   if (route.page === "runtime" && route.taskId) return <TaskRuntimePage taskId={route.taskId} />;
   if (route.page === "models") return <ModelsPage />;
   if (route.page === "skills") return <SkillsPage />;

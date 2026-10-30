@@ -9,7 +9,8 @@
     "preview": "vite preview --host 127.0.0.1 --port 4173",
     "test": "vitest run --config vitest.config.ts",
     "test:watch": "vitest --config vitest.config.ts",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "test:workbench": "playwright test --config playwright.workbench.config.ts"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.101.2",
@@ -17,7 +18,9 @@
     "lucide-react": "^1.24.0",
     "react": "^18.3.0",
     "react-dom": "^18.3.0",
+    "react-markdown": "^10.1.0",
     "react-router-dom": "^7.18.1",
+    "remark-gfm": "^4.0.1",
     "typescript": "^5.5.0",
     "vite": "^5.4.0"
   },

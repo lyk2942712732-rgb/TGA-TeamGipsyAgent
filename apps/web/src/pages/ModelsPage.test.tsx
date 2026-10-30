@@ -96,11 +96,13 @@ describe("ModelsPage protocol endpoints", () => {
     expect(modelSwitch).toHaveAttribute("aria-checked", "false");
     fireEvent.click(modelSwitch);
     await waitFor(() => expect(mocks.setProviderModelsEnabled).toHaveBeenCalledWith("gateway", "openai_responses", ["qwen-disabled"], true));
+    fireEvent.click(screen.getByRole("tab", { name: "Anthropic Messages" }));
     expect(within(screen.getByRole("region", { name: "Anthropic Messages 模型" })).getByRole("switch")).toHaveAttribute("aria-checked", "true");
   });
 
   it("refreshes and bulk disables only the targeted protocol endpoint", async () => {
     render(<ModelsPage />);
+    fireEvent.click(await screen.findByRole("tab", { name: "Anthropic Messages" }));
     const anthropic = await screen.findByRole("region", { name: "Anthropic Messages 模型" });
     fireEvent.click(within(anthropic).getByRole("button", { name: "读取可访问模型" }));
     await waitFor(() => expect(mocks.discoverProviderModels).toHaveBeenCalledWith("gateway", "anthropic"));

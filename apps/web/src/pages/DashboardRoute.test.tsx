@@ -25,7 +25,7 @@ describe("DashboardRoute", () => {
 
   it("loads the native TGA3 data sources", async () => {
     renderRoute();
-    expect(await screen.findByRole("heading", { name: "TGA3 控制台" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "工作台" })).toBeInTheDocument();
     expect(mocks.listTasks).toHaveBeenCalledTimes(1);
     expect(mocks.listAttention).toHaveBeenCalledTimes(1);
     expect(mocks.fetchSystemHealth).toHaveBeenCalledTimes(1);

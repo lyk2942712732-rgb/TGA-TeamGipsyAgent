@@ -12,7 +12,7 @@ export function PoliciesPage() {
   function prompt(valueText: string) { if (value && selected) setValue({ ...value, scenes: value.scenes.map((scene) => scene.id === selected.id ? { ...scene, system_prompt: valueText } : scene) }); }
   async function save() { if (!value) return; setBusy(true); setMessage(""); try { setValue(await tga3ConfigApi.saveScenes(value)); setMessage("场景提示词已保存，新任务会把所选提示词写入黑板。"); } catch (reason) { setMessage(reason instanceof Error ? reason.message : "保存失败"); } finally { setBusy(false); } }
   return <div className="ref-page scenes-page">
-    <header className="ref-page-head"><div><h1>场景</h1><p>为八种固定场景配置任务启动时写入黑板的提示词。</p></div><button className="ref-primary-button" disabled={!value || busy} onClick={() => void save()}><Save size={16} />{busy ? "保存中…" : "保存"}</button></header>
+    <header className="ref-page-head"><div><h1>场景</h1><p>维护八种固定题目场景的启动提示词。</p></div><button className="ref-primary-button" disabled={!value || busy} onClick={() => void save()}><Save size={16} />{busy ? "保存中…" : "保存"}</button></header>
     {message ? <p className="settings-message" role="status">{message}</p> : null}
     <div className="scene-settings-shell ref-card ref-fill">
       <nav className="scene-settings-tabs" aria-label="场景">{(value?.scenes ?? []).map((scene) => <button key={scene.id} className={selected?.id === scene.id ? "selected" : ""} onClick={() => setSelectedId(scene.id)}><strong>{scene.name}</strong><small>{scene.description}</small></button>)}</nav>

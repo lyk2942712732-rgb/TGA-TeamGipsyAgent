@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState, type DragEvent } from "react";
 import { tga3SkillsApi, type SkillMarkdownFile, type SkillSummary } from "../api/tga3-skills";
 import { ConfirmDialog } from "../components/ui/ConfirmDialog";
 import { EmptyState } from "../components/ui/EmptyState";
+import { Markdown } from "../components/ui/Markdown";
 
 export function SkillsPage() {
   const [skills, setSkills] = useState<SkillSummary[]>([]);
@@ -17,6 +18,7 @@ export function SkillsPage() {
   const [busy, setBusy] = useState(false);
   const [remove, setRemove] = useState(false);
   const [message, setMessage] = useState("");
+  const [preview, setPreview] = useState(false);
   const markdownInput = useRef<HTMLInputElement>(null);
   const dragDepth = useRef(0);
 
@@ -168,7 +170,8 @@ export function SkillsPage() {
               <label>文件名<input aria-label="文件名" disabled={entryFile} value={renameValue} onChange={(event) => setRenameValue(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") renameActiveFile(); }} /></label>
               {entryFile ? <span>SKILL.md 是固定入口文件</span> : <><button className="ref-secondary-button" disabled={renameValue === fileName(activeFile.path)} onClick={renameActiveFile}><Pencil size={14} />应用文件名</button><button className="skill-current-delete" onClick={() => removeFile(activeFile.path)}><Trash2 size={14} />删除文件</button></>}
             </div>
-            <textarea aria-label="Skill 文件内容" value={activeFile.content} onChange={(event) => setFiles((current) => current.map((item) => item.path === activeFile.path ? { ...item, content: event.target.value } : item))} spellCheck={false} />
+            <div className="workbench-tabs" role="tablist" aria-label="Skill 文件展示"><button role="tab" aria-selected={!preview} onClick={() => setPreview(false)}>编辑</button><button role="tab" aria-selected={preview} onClick={() => setPreview(true)}>阅读预览</button></div>
+            {preview ? <Markdown content={activeFile.content} /> : <textarea aria-label="Skill 文件内容" value={activeFile.content} onChange={(event) => setFiles((current) => current.map((item) => item.path === activeFile.path ? { ...item, content: event.target.value } : item))} spellCheck={false} />}
           </> : null}
         </> : <EmptyState title="请选择一个 Skill 包" description="也可以把 ZIP Skill 包直接拖到此页面。" />}
       </section>

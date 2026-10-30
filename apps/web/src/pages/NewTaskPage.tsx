@@ -80,8 +80,8 @@ export function NewTaskPage({ onCreated, onCancel = () => history.back() }: { on
     if (files.length) { event.preventDefault(); void upload(files); }
   }
 
-  return <div className="new-task-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onCancel(); }}>
-    <section className="new-task-modal" role="dialog" aria-modal="true" aria-labelledby="new-task-title">
+  return <div className="ref-page workbench-new-task">
+    <section className="new-task-modal" aria-labelledby="new-task-title">
       <header className="new-task-modal-head"><div><h1 id="new-task-title">创建任务</h1><p>选择场景并提供初始提示，也可以为本任务覆盖 Solver 默认模型。</p></div><button className="icon-button" aria-label="关闭" onClick={onCancel}><X size={20} /></button></header>
       <div className="new-task-modal-body">
         <label className="wide">任务名称<input autoFocus maxLength={100} value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：JWT 密钥泄露" /></label>
@@ -99,7 +99,7 @@ export function NewTaskPage({ onCreated, onCancel = () => history.back() }: { on
             {compatible.map((model) => <option key={`${model.provider_id}::${model.model_id}::${model.protocol}`} value={`${model.provider_id}::${model.model_id}::${model.protocol}`} disabled={!model.ready}>{model.provider_name} / {model.model_name}{model.ready ? "" : "（密钥不可用）"}</option>)}
           </select></label>;
         })}</div></fieldset> : null}
-        <aside className="new-task-config-note"><strong>{selected?.name ?? "场景"}提示词将自动进入黑板</strong><p>任务启动时写入场景提示词、当前描述和附件索引；上面的模型选择会保存为本任务 Agent 快照。</p></aside>
+        <aside className="new-task-config-note"><strong>Scout → Workers → Reporter</strong><p>{selected?.name ?? "场景"}提示词、题目描述和附件索引将自动进入黑板。</p></aside>
         {error ? <p className="inline-error" role="alert">{error}</p> : null}
       </div>
       <footer className="new-task-modal-actions"><button type="button" className="ref-secondary-button" disabled={busy} onClick={onCancel}>取消</button><button type="button" className="ref-primary-button" disabled={!ready} onClick={() => void submit()}><Play size={16} />{busy ? "创建中…" : "创建并启动"}</button></footer>

@@ -21,8 +21,10 @@ export function ModelsPage({ onConfiguredChange }: { onConfiguredChange?: (confi
   const [newKey, setNewKey] = useState("");
   const [newKeyLabel, setNewKeyLabel] = useState("");
   const [busy, setBusy] = useState(false);
+  const [activeProtocol, setActiveProtocol] = useState<ProviderProtocol>("openai_responses");
   const [message, setMessage] = useState("");
   const selected = catalog?.providers.find((provider) => provider.id === selectedId) ?? null;
+  const protocolToShow = selected?.endpoints[activeProtocol] ? activeProtocol : Object.keys(selected?.endpoints ?? {})[0] as ProviderProtocol | undefined;
 
   async function load(preferredId?: string) {
     const value = await fetchProviderCatalog();
@@ -105,7 +107,8 @@ export function ModelsPage({ onConfiguredChange }: { onConfiguredChange?: (confi
             <EndpointFields endpoints={endpoints} disabled={busy} onChange={setEndpoints} />
             <footer><button className="ref-secondary-button" type="button" disabled={busy} onClick={() => setEditingEndpoints(false)}>取消</button><button className="ref-primary-button" disabled={busy}>保存端点</button></footer>
           </form> : null}
-          <div className="provider-endpoint-lists">{Object.entries(selected.endpoints).map(([protocol, endpoint]) => <EndpointModels key={`${selected.id}:${protocol}`} protocol={protocol as ProviderProtocol} endpoint={endpoint} busy={busy}
+          <div className="workbench-tabs" role="tablist" aria-label="供应商协议端点">{Object.keys(selected.endpoints).map(protocol => <button key={protocol} role="tab" aria-selected={protocolToShow === protocol} onClick={() => setActiveProtocol(protocol as ProviderProtocol)}>{protocolName(protocol as ProviderProtocol)}</button>)}</div>
+          <div className="provider-endpoint-lists">{Object.entries(selected.endpoints).filter(([protocol]) => protocol === protocolToShow).map(([protocol, endpoint]) => <EndpointModels key={`${selected.id}:${protocol}`} protocol={protocol as ProviderProtocol} endpoint={endpoint} busy={busy}
             onRefresh={() => void perform(() => discoverProviderModels(selected.id, protocol as ProviderProtocol), "模型已读取；新增模型默认关闭，已有启用选择已保留。")}
             onEnabled={(ids, enabled) => void perform(() => setProviderModelsEnabled(selected.id, protocol as ProviderProtocol, ids, enabled), enabled ? "模型已启用，可在对应 Solver 中选择。" : "模型已关闭，后续任务无法选择该模型。")}
           />)}</div>
@@ -140,9 +143,10 @@ function EndpointFields({ endpoints, disabled, onChange }: { endpoints: Provider
 function EndpointModels({ protocol, endpoint, busy, onRefresh, onEnabled }: { protocol: ProviderProtocol; endpoint: ProviderEndpoint; busy: boolean; onRefresh: () => void; onEnabled: (ids: string[], enabled: boolean) => void }) {
   const [expanded, setExpanded] = useState(true);
   const [search, setSearch] = useState("");
+  const [onlyEnabled, setOnlyEnabled] = useState(false);
   const query = search.trim().toLocaleLowerCase();
   const visible = endpoint.models
-    .filter((model) => `${model.name} ${model.id}`.toLocaleLowerCase().includes(query))
+    .filter((model) => `${model.name} ${model.id}`.toLocaleLowerCase().includes(query) && (!onlyEnabled || model.enabled && model.available))
     .sort((a, b) => Number(b.enabled && b.available) - Number(a.enabled && a.available));
   const enabled = endpoint.models.filter((model) => model.enabled && model.available).length;
   return <section className="endpoint-models" aria-label={`${protocolName(protocol)} 模型`}>
@@ -151,7 +155,7 @@ function EndpointModels({ protocol, endpoint, busy, onRefresh, onEnabled }: { pr
     </button><button type="button" className="ref-secondary-button" disabled={busy} onClick={onRefresh}><RefreshCw size={14} />读取可访问模型</button></header>
     {expanded ? <div className="endpoint-models-body">
       <div className="endpoint-models-toolbar"><span>开启后可在对应 Solver 中选择</span><button disabled={busy || !endpoint.models.some((model) => model.available && !model.enabled)} onClick={() => onEnabled(endpoint.models.filter((model) => model.available).map((model) => model.id), true)}>全部开启</button><button disabled={busy || !enabled} onClick={() => onEnabled(endpoint.models.map((model) => model.id), false)}>全部关闭</button></div>
-      <label className="endpoint-model-search"><Search size={16} /><input type="search" aria-label={`搜索 ${protocolName(protocol)} 模型`} placeholder="搜索模型…" value={search} onChange={(event) => setSearch(event.target.value)} /></label>
+      <div className="provider-model-toolbar"><label className="endpoint-model-search"><Search size={16} /><input type="search" aria-label={`搜索 ${protocolName(protocol)} 模型`} placeholder="搜索模型…" value={search} onChange={(event) => setSearch(event.target.value)} /></label><label><input type="checkbox" checked={onlyEnabled} onChange={event => setOnlyEnabled(event.target.checked)} />仅看已启用</label></div>
       <div className="endpoint-model-rows">{visible.map((model) => <div key={model.id} className="endpoint-model-row" data-enabled={model.enabled && model.available}>
         <button type="button" role="switch" className="model-enable-switch" aria-label={`启用 ${model.name}`} aria-checked={model.enabled && model.available} disabled={busy || !model.available} onClick={() => onEnabled([model.id], !model.enabled)}><span /></button>
         <strong title={model.name}>{model.name}</strong>{!model.available ? <small>已不可访问</small> : <small>{model.enabled ? "已启用" : "未启用"}</small>}
