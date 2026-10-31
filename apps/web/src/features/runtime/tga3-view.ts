@@ -21,6 +21,12 @@ export const protocolLabel = (value: string) => ({ openai_responses: "OpenAI Res
 export const sdkLabel = (value: string) => ({ claude_cli: "Claude Code CLI", codex_cli: "Codex CLI" } as Record<string,string>)[value] ?? value;
 export const roleLabel = (agent: Pick<TGA3Agent, "role">) => ROLE_LABELS[agent.role] ?? agent.role;
 export const stateLabel = (value: string) => AGENT_STATE_LABELS[value] ?? TASK_STATE_LABELS[value] ?? value;
+export function agentStateLabel(agent: TGA3Agent): string {
+  if (agent.role === "scout" && ["starting", "running"].includes(agent.actual_state)) {
+    return ({ executing: "第一轮 · 侦察执行中", extracting: "第二轮 · Intel 提取中", importing: "Intel 导入黑板中" } as Record<string, string>)[agent.metadata?.scout_phase ?? ""] ?? stateLabel(agent.actual_state);
+  }
+  return stateLabel(agent.actual_state);
+}
 export function stateTone(value: string): "active" | "waiting" | "success" | "danger" | "muted" {
   if (["scouting", "running", "starting", "reporting", "finalizing"].includes(value)) return "active";
   if (["paused", "pause_requested", "idle"].includes(value)) return "waiting";

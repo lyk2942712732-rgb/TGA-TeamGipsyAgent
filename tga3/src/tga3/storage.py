@@ -46,7 +46,6 @@ class Storage(Protocol):
         self, task_id: UUID, agent_id: str, transform: Callable[[dict[str, Any]], dict[str, Any]]
     ) -> AgentRun: ...
     async def register_artifact(self, artifact: Artifact) -> Artifact: ...
-    async def validate_artifact_refs(self, task_id: UUID, refs: Sequence[ArtifactRef]) -> None: ...
     async def register_input_file(self, item: InputFile) -> InputFile: ...
     async def publish(self, task_id: UUID, actor: Actor, request: PublishRequest) -> BlackboardEntry: ...
     async def list_entries(
@@ -190,12 +189,9 @@ class InMemoryStorage:
     async def mutate_agent_metadata(self, task_id, agent_id, transform) -> AgentRun:
         async with self._locks[task_id]:
             current = await self.get_agent(task_id, agent_id)
-            return await self.update_agent(task_id, agent_id, metadata=transform(dict(current.metadata)))
-
-    async def validate_artifact_refs(self, task_id, refs) -> None:
-        _validate_publish(task_id=task_id, entries=[], artifacts=list(self.artifacts.values()), request=PublishRequest(
-            kind="intel", body={"claim": "validate evidence"}, artifact_refs=list(refs), idempotency_key="validate",
-        ))
+            updated = current.model_copy(update={"metadata": transform(dict(current.metadata)), "updated_at": utc_now()})
+            self.agents[task_id, agent_id] = updated
+            return updated
 
     async def register_artifact(self, artifact: Artifact) -> Artifact:
         await self.get_task(artifact.task_id)
@@ -494,15 +490,6 @@ class PostgresStorage:
                 "WHERE task_id=$1 AND agent_id=$2 RETURNING *", task_id, agent_id, _json(metadata),
             )
             return _agent(row)
-
-    async def validate_artifact_refs(self, task_id, refs) -> None:
-        if refs:
-            ids = [ref.artifact_id for ref in refs]
-            rows = await self.pool.fetch(
-                "SELECT id FROM artifacts WHERE task_id=$1 AND available AND id=ANY($2::uuid[])", task_id, ids,
-            )
-            if {row["id"] for row in rows} != set(ids):
-                raise FindingRejectedError("one or more artifacts are unavailable or belong to another task")
 
     async def register_artifact(self, artifact: Artifact) -> Artifact:
         row = await self.pool.fetchrow(

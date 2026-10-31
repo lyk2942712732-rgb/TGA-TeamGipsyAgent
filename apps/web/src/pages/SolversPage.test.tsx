@@ -2,7 +2,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const mocks = vi.hoisted(() => ({ agents: vi.fn(), models: vi.fn(), agentDefinitions: vi.fn(), saveAgents: vi.fn() }));
+const mocks = vi.hoisted(() => ({ agents: vi.fn(), models: vi.fn(), agentDefinitions: vi.fn(), saveAgents: vi.fn(), saveScoutSettings: vi.fn() }));
 vi.mock("../api/tga3-config", () => ({ tga3ConfigApi: mocks }));
 import { SolversPage } from "./SolversPage";
 
@@ -27,6 +27,7 @@ describe("SolversPage", () => {
     } }] });
     mocks.agentDefinitions.mockResolvedValue(Object.entries(agentConfig.agents).map(([id, agent]) => ({ ...agent, id, tools: ["blackboard.sync", "blackboard.publish", "artifact.register"], image: agent.role === "worker" ? `tga3-${id}:local` : null, image_health: agent.role === "worker" ? { status: "healthy", available: true, detail: "healthy" } : null })));
     mocks.saveAgents.mockImplementation(async (value) => value);
+    mocks.saveScoutSettings.mockImplementation(async (value) => ({ scout_timeout_seconds: value }));
   });
 
   it("shows the task phases and opens the selected Agent configuration", async () => {
@@ -36,6 +37,20 @@ describe("SolversPage", () => {
     expect(screen.getByLabelText("OpenAI Worker Solver 配置")).toBeInTheDocument();
     expect(screen.queryByLabelText("Agent 列表")).not.toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "运行与模型" })).toHaveAttribute("aria-selected", "true");
+  });
+  it("edits and saves the first Scout phase budget independently of extraction", async () => {
+    const scout = { ...agentConfig.agents["worker-openai"], display_name: "Scout", role: "scout" };
+    mocks.agents.mockResolvedValue({ ...agentConfig, agents: { ...agentConfig.agents, scout } });
+    mocks.agentDefinitions.mockResolvedValue([{ ...scout, id: "scout", scout_timeout_seconds: 300, scout_extract_timeout_seconds: 180, tools: [], image: null, image_health: null }]);
+    const user = userEvent.setup();
+    render(<SolversPage />);
+    await user.click(await screen.findByRole("button", { name: "配置 Scout" }));
+    const input = screen.getByRole("spinbutton", { name: "第一轮侦察时长（秒）" });
+    expect(input).toHaveValue(300);
+    await user.clear(input); await user.type(input, "120");
+    await user.click(within(screen.getByLabelText("Scout Solver 配置")).getByRole("button", { name: "保存配置" }));
+    await waitFor(() => expect(mocks.saveScoutSettings).toHaveBeenCalledWith(120));
+    expect(screen.getByText(/第二轮独立预算 180 秒/)).toBeInTheDocument();
   });
 
   it("keeps prompt edits when switching agents and saves the whole configuration", async () => {

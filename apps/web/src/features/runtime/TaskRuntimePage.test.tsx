@@ -35,6 +35,17 @@ describe("TaskRuntimePage", () => {
     expect(screen.getByRole("tab", { name: /共享黑板/ })).toBeInTheDocument();
     expect(screen.getByText("已发现入口")).toBeInTheDocument();
   });
+  it("shows the Scout execution and extraction phases in the task UI", () => {
+    const scout = { ...snapshot.agents[0], agent_id: "scout", display_name: "Scout", role: "scout", actual_state: "running", metadata: { scout_phase: "executing" } };
+    const data = { ...snapshot, task: { ...snapshot.task, state: "scouting" }, agents: [scout, ...snapshot.agents] };
+    useTGA3Runtime.mockReturnValue({ snapshot: data, connection: "live", refresh: vi.fn() });
+    const page = render(<MemoryRouter><TaskRuntimePage taskId="task" /></MemoryRouter>);
+    expect(screen.getAllByText("第一轮 · 侦察执行中").length).toBeGreaterThan(0);
+    useTGA3Runtime.mockReturnValue({ snapshot: { ...data, agents: [{ ...scout, metadata: { scout_phase: "extracting" } }, ...snapshot.agents] }, connection: "live", refresh: vi.fn() });
+    page.rerender(<MemoryRouter><TaskRuntimePage taskId="task" /></MemoryRouter>);
+    expect(screen.getAllByText("第二轮 · Intel 提取中").length).toBeGreaterThan(0);
+    expect(screen.queryByText("第一轮 · 侦察执行中")).not.toBeInTheDocument();
+  });
   it("expands cumulative reported tokens to the right and distinguishes missing usage", () => {
     useTGA3Runtime.mockReturnValue({ snapshot: { ...snapshot, agents: snapshot.agents.map((agent, index) => index === 0 ? {
       ...agent, metadata: { token_usage: { input_tokens: 1000, output_tokens: 200, cached_input_tokens: 500, cache_write_input_tokens: 0, total_tokens: 1200, reported: true, updated_at: "2026-01-01" } },

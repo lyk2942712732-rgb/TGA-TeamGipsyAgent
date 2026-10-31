@@ -6,7 +6,8 @@ import pytest
 
 from tga3.blackboard import Blackboard
 from tga3.config import TGA3Config
-from tga3.mcp_server import build_mcp
+from tga3.mcp_server import build_mcp, build_scout_mcp
+from tga3.scout_intel import ScoutIntelStore
 from tga3.storage import InMemoryStorage
 
 
@@ -24,6 +25,15 @@ def test_mcp_accepts_the_configured_container_gateway_host():
     assert "host.docker.internal:*" in security.allowed_hosts
 
 
+async def test_scout_mcp_exposes_only_json_writer_and_no_publication_tool():
+    config = TGA3Config(Path(__file__).parents[1] / "config")
+    board = Blackboard(InMemoryStorage())
+    tools = await build_scout_mcp(config, ScoutIntelStore(config, board)).list_tools()
+    assert [tool.name for tool in tools] == ["scout_write_intel"]
+    fields = tools[0].inputSchema["$defs"]["ScoutIntelInput"]["properties"]
+    assert set(fields) == {"task_id", "key", "claim", "detail", "topic", "evidence_paths"}
+
+
 async def test_mcp_publish_tool_exposes_one_discriminated_worker_contract():
     config = TGA3Config(Path(__file__).parents[1] / "config")
     mcp = build_mcp(
@@ -33,22 +43,19 @@ async def test_mcp_publish_tool_exposes_one_discriminated_worker_contract():
 
     tools = await mcp.list_tools()
     assert {tool.name for tool in tools} == {
-        "blackboard_sync", "blackboard_publish", "artifact_register", "scout_collect_intel",
+        "blackboard_sync", "blackboard_publish", "artifact_register",
     }
     publish = next(tool for tool in tools if tool.name == "blackboard_publish")
     request = publish.inputSchema["properties"]["request"]
 
     assert request["discriminator"]["propertyName"] == "kind"
-    assert set(request["discriminator"]["mapping"]) == {"intel", "finding", "final_candidate"}
-    assert len(request["oneOf"]) == 3
+    assert set(request["discriminator"]["mapping"]) == {"finding", "final_candidate"}
+    assert len(request["oneOf"]) == 2
     assert "body={claim, detail?}" in publish.description
-    intel_schema = publish.inputSchema["$defs"]["ScoutIntelPublication"]
     finding_schema = publish.inputSchema["$defs"]["WorkerFindingPublication"]
     final_schema = publish.inputSchema["$defs"]["WorkerFinalCandidatePublication"]
     assert "kind" in finding_schema["required"]
     assert "artifact_refs" in finding_schema["required"]
-    assert "artifact_refs" in intel_schema["properties"]
-    assert "artifact_refs" not in intel_schema["required"]
     assert "artifact_refs" not in final_schema["properties"]
 
 

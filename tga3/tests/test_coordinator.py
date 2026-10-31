@@ -28,6 +28,7 @@ async def test_task_start_launches_two_independent_worker_containers():
     assert (await storage.get_task(task.id)).state == RunState.RUNNING
     assert [spec.agent.agent_id for spec in containers.launched] == [
         "scout",
+        "scout",
         "worker-openai",
         "worker-claude",
     ]

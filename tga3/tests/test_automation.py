@@ -197,5 +197,5 @@ async def test_cli_reporter_starts_after_both_workers_stop(tmp_path):
     report = await storage.get_agent(task.id, "reporter")
     assert report.metadata["cli_session_id"] == "reporter-session"
     assert report.container_id == "fake-" + str(task.id) + "-reporter"
-    assert len(containers.launched) == 4
-    assert len(containers.stopped) == 4
+    assert len(containers.launched) == 5
+    assert len(containers.stopped) == 5

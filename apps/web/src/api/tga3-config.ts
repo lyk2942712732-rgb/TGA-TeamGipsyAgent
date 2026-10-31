@@ -31,6 +31,7 @@ export type ScenesConfig = { schema_version: number; scenes: SceneConfig[] };
 export type AgentDefinition = AgentConfig & {
   id: string;
   scout_timeout_seconds?: number;
+  scout_extract_timeout_seconds?: number;
   tools: string[];
   image: string | null;
   image_health: null | { status: "healthy" | "missing" | "unavailable"; available: boolean; detail: string; image_id?: string; size_bytes?: number; created?: string };
@@ -43,5 +44,6 @@ export const tga3ConfigApi = {
   scenes: () => requestJson<ScenesConfig>("/api/v3/config/scenes"),
   agentDefinitions: () => requestJson<AgentDefinition[]>("/api/v3/agent-definitions"),
   saveAgents: (value: AgentsConfig) => requestJson<AgentsConfig>("/api/v3/config/agents", { method: "PUT", headers: json, body: JSON.stringify(value) }),
+  saveScoutSettings: (seconds: number) => requestJson<{ scout_timeout_seconds: number }>("/api/v3/config/scout-settings", { method: "PUT", headers: json, body: JSON.stringify({ timeout_seconds: seconds }) }),
   saveScenes: (value: ScenesConfig) => requestJson<ScenesConfig>("/api/v3/config/scenes", { method: "PUT", headers: json, body: JSON.stringify(value) }),
 };

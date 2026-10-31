@@ -169,7 +169,7 @@ class WorkerFinalCandidatePublication(WorkerPublicationBase):
 
 
 AgentPublishRequest: TypeAlias = Annotated[
-    ScoutIntelPublication | WorkerFindingPublication | WorkerFinalCandidatePublication,
+    WorkerFindingPublication | WorkerFinalCandidatePublication,
     Field(discriminator="kind"),
 ]
 
@@ -178,11 +178,10 @@ def publication_contract(role: str | None = None) -> str:
     """Generate the compact prompt/tool description from the authoritative Pydantic models."""
 
     parts: list[str] = []
-    models = (
-        (ScoutIntelPublication,) if role == "scout" else (WorkerFindingPublication, WorkerFinalCandidatePublication)
-    )
-    if role is None:
-        models = (ScoutIntelPublication, *models)
+    if role == "scout":
+        return ("Scout executes reconnaissance first, then uses scout_write_intel to save /intels JSON. "
+                "No publishing tool.")
+    models = (WorkerFindingPublication, WorkerFinalCandidatePublication)
     for model in models:
         literal_kind = get_args(model.model_fields["kind"].annotation)[0]
         kind = literal_kind.value
@@ -198,7 +197,7 @@ def publication_contract(role: str | None = None) -> str:
             )
         parts.append(f"{kind}: body={{{body_fields}}}; {artifact_rule}")
     return (
-        "Scout collects intel drafts for automatic system handoff; Workers publish finding/final_candidate only. "
+        "Scout has no blackboard publishing tool; Workers publish finding/final_candidate only. "
         "Publication contract generated from Pydantic. Select the request branch by kind; "
         "extra fields are forbidden. " + " | ".join(parts)
     )

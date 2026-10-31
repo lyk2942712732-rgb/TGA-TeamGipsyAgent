@@ -77,3 +77,29 @@ test("token totals expand inline and realtime prompts persist on the shared blac
   expect(await page.locator(".tga3-realtime-prompt").evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
   await page.screenshot({ path: testInfo.outputPath("tokens-mobile.png"), fullPage: true });
 });
+
+
+test("Scout budget persists in Solver and task phases update live", async ({ page }, testInfo) => {
+  await page.goto("/settings/solvers");
+  await page.getByRole("button", { name: "配置 Scout" }).click();
+  let panel = page.getByLabel("Scout Solver 配置", { exact: true });
+  const budget = () => panel.getByRole("spinbutton", { name: "第一轮侦察时长（秒）" });
+  await expect(budget()).toHaveValue("300");
+  await budget().fill("120");
+  await panel.getByRole("button", { name: "保存配置" }).click();
+  await expect(page.locator(".settings-message")).toContainText("已保存");
+  await page.reload();
+  await page.getByRole("button", { name: "配置 Scout" }).click();
+  await expect(budget()).toHaveValue("120");
+  await budget().fill("300");
+  await panel.getByRole("button", { name: "保存配置" }).click();
+  await expect(page.locator(".settings-message")).toContainText("已保存");
+  await page.screenshot({ path: testInfo.outputPath("scout-solver-budget.png"), fullPage: true });
+  await page.request.post("http://127.0.0.1:18084/fixture/scout-phase/executing");
+  await page.goto("/tasks/00000000-0000-4000-8000-000000001042/runtime");
+  await expect(page.locator(".collab-agent-state").filter({ hasText: "第一轮 · 侦察执行中" })).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath("scout-executing.png"), fullPage: true });
+  await page.request.post("http://127.0.0.1:18084/fixture/scout-phase/extracting");
+  await expect(page.locator(".collab-agent-state").filter({ hasText: "第二轮 · Intel 提取中" })).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath("scout-extracting.png"), fullPage: true });
+});

@@ -12,19 +12,18 @@ from mcp.server.transport_security import TransportSecuritySettings
 
 from .blackboard import Blackboard
 from .config import TGA3Config
-from .domain import Actor, AgentPublishRequest, Artifact, ScoutIntelPublication, publication_contract
-from .scout_intel import ScoutIntelCollector
+from .domain import Actor, AgentPublishRequest, Artifact, publication_contract
+from .scout_intel import ScoutIntelInput, ScoutIntelStore
 
 
-def build_mcp(config: TGA3Config, blackboard: Blackboard) -> FastMCP:
-    collector = ScoutIntelCollector(blackboard)
+def _new_mcp(config: TGA3Config, name: str, instructions: str) -> FastMCP:
     hostname = urlsplit(config.runtime.blackboard_mcp_url).hostname
     if not hostname:
         raise ValueError("blackboard_mcp_url must be an absolute URL with a hostname")
     configured_host = f"[{hostname}]:*" if ":" in hostname else f"{hostname}:*"
-    mcp = FastMCP(
-        "tga3-blackboard",
-        instructions=config.runtime.mcp_instructions,
+    return FastMCP(
+        name,
+        instructions=instructions,
         streamable_http_path="/",
         stateless_http=True,
         json_response=True,
@@ -44,13 +43,17 @@ def build_mcp(config: TGA3Config, blackboard: Blackboard) -> FastMCP:
         ),
     )
 
+
+def build_mcp(config: TGA3Config, blackboard: Blackboard) -> FastMCP:
+    mcp = _new_mcp(config, "tga3-blackboard", config.runtime.mcp_instructions)
+
     @mcp.tool()
     async def blackboard_sync(task_id: str, after_seq: int = 0, limit: int = 200) -> dict[str, Any]:
         """Read compact blackboard entries after a sequence number."""
         result = await blackboard.sync(UUID(task_id), after_seq=after_seq, limit=limit)
         return result.model_dump(mode="json")
 
-    @mcp.tool(description=publication_contract())
+    @mcp.tool(description=publication_contract("worker"))
     async def blackboard_publish(
         request: AgentPublishRequest,
     ) -> dict[str, Any]:
@@ -59,8 +62,6 @@ def build_mcp(config: TGA3Config, blackboard: Blackboard) -> FastMCP:
         configured = config.agents.agents.get(identity.agent_id)
         if configured is None or configured.role != identity.role:
             raise ValueError("actor must match a configured Scout or Worker")
-        if isinstance(request, ScoutIntelPublication):
-            return await collector.collect(request)
         if request.kind.value == "final_candidate":
             run = await blackboard.storage.get_agent(request.task_id, identity.agent_id)
             task = await blackboard.storage.get_task(request.task_id)
@@ -72,18 +73,6 @@ def build_mcp(config: TGA3Config, blackboard: Blackboard) -> FastMCP:
             request.publish_request(),
         )
         return entry.model_dump(mode="json")
-
-    @mcp.tool()
-    async def scout_collect_intel(request: ScoutIntelPublication) -> dict[str, Any]:
-        """Immediately save one Scout observation durably; the system publishes it when scouting ends.
-
-        Use request={kind:intel,task_id,actor,topic,body:{claim,detail},idempotency_key,artifact_refs:[]}.
-        This collects Intel only, without writing the blackboard. Never wait until the end to collect.
-        """
-        configured = config.agents.agents.get(request.actor.agent_id)
-        if configured is None or configured.role != "scout" or request.actor.agent_id != "scout":
-            raise ValueError("only the configured Scout can collect Intel")
-        return await collector.collect(request)
 
     @mcp.tool()
     async def artifact_register(
@@ -120,4 +109,21 @@ def build_mcp(config: TGA3Config, blackboard: Blackboard) -> FastMCP:
     return mcp
 
 
-__all__ = ["build_mcp"]
+def build_scout_mcp(config: TGA3Config, store: ScoutIntelStore) -> FastMCP:
+    mcp = _new_mcp(config, "tga3-scout-intels", "Extract Intel from /artifacts; save JSON using scout_write_intel. "
+                   "The system imports all saved files after extraction. No blackboard publication tool is provided.")
+
+    @mcp.tool()
+    async def scout_write_intel(request: ScoutIntelInput) -> dict[str, Any]:
+        """Save one validated Intel JSON in /intels during Scout's second phase.
+
+        Fill request={task_id,key,claim,detail,topic,evidence_paths:[]}.
+        key is stable for retries. evidence_paths are existing paths relative to /artifacts;
+        the system handles artifact registration, JSON formatting and final blackboard import.
+        """
+        return await store.write(request)
+
+    return mcp
+
+
+__all__ = ["build_mcp", "build_scout_mcp"]

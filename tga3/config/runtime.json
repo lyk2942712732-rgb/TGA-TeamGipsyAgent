@@ -10,7 +10,7 @@
   "artifact_root": "./data/artifacts",
   "writeup_root": "./data/writeups",
   "skills_root": "./config/skills",
-  "mcp_instructions": "Scout 每得到一条有用信息立即调用 scout_collect_intel 保存 Intel 草稿；系统在侦察结束、超时或异常后自动统一写入黑板，Scout 不调用 blackboard_publish。原生钩子注入黑板和实时用户提示。Worker 消费 Intel，只发布 Finding 和 final_candidate。artifact_register 登记各自 /artifacts 中的证据。Worker 可只读复用 /recon 中的 Scout 原始资料，Reporter 只读消费全部证据。Shell、文件搜索和 Skills 读取使用 CLI 原生能力。",
+  "mcp_instructions": "Worker 消费系统从 Scout /intels JSON 导入的 Intel，只发布 Finding 和 final_candidate。artifact_register 登记各自 /artifacts 中的证据。Scout 第一轮仅执行与留存 artifacts，无 MCP 写入工具；第二轮通过独立 scout_write_intel 工具保存 JSON，由系统导入黑板。原生钩子注入黑板和实时用户提示。Worker 可只读复用 /recon 中的 Scout 材料，Reporter 只读消费证据。Shell、文件搜索和 Skills 读取使用 CLI 原生能力。",
   "worker_images": {
     "worker-openai": "tga3-worker-openai:local",
     "worker-claude": "tga3-worker-claude:local",
@@ -36,5 +36,7 @@
     "finalization_grace_seconds": 30
   },
   "cli_timeout_seconds": 1800,
-  "scout_timeout_seconds": 300
+  "scout_timeout_seconds": 300,
+  "intel_root": "data/intels",
+  "scout_extract_timeout_seconds": 180
 }

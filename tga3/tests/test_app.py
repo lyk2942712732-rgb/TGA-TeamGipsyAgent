@@ -182,7 +182,7 @@ def test_frontend_api_uses_safe_catalog_and_page_owned_config_documents(tmp_path
         )
         board = client.get(f"/api/v3/tasks/{task_id}/blackboard").json()["entries"]
         assert [entry["topic"] for entry in board] == ["scene", "task", "input"]
-        assert len(containers.launched) == 3
+        assert len(containers.launched) == 4
         assert next(item for item in containers.launched if item.agent.agent_id == "worker-openai").agent.model.id == (
             "gpt-task-override"
         )

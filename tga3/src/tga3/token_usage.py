@@ -49,8 +49,10 @@ class TokenUsageTracker:
     def read_updates(self, workspace: Path) -> tuple[dict, dict]:
         updates, positions = {}, {}
         paths = list((workspace / ".codex" / "sessions").rglob("*.jsonl"))
+        paths += list((workspace / ".codex-extract" / "sessions").rglob("*.jsonl"))
         paths += list((workspace / ".claude" / "projects").rglob("*.jsonl"))
         for path in paths:
+            journal_source = "codex-extract" if ".codex-extract" in path.parts else "codex"
             if path.is_symlink() or not path.resolve().is_relative_to(workspace.resolve()):
                 continue
             try:
@@ -76,10 +78,10 @@ class TokenUsageTracker:
                         usage, source = None, ""
                         if record.get("type") == "token_usage_record":
                             usage = payload.get("thread_token_usage")
-                            source = f"codex:{path.name}"
+                            source = f"{journal_source}:{path.name}"
                         elif record.get("type") == "event_msg" and payload.get("type") == "token_count":
                             usage = (payload.get("info") or {}).get("total_token_usage")
-                            source = f"codex:{path.name}"
+                            source = f"{journal_source}:{path.name}"
                         elif record.get("type") == "assistant":
                             message = record.get("message") or {}
                             usage = message.get("usage")

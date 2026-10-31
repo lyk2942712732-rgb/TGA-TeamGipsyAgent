@@ -273,6 +273,30 @@ def test_claude_has_no_fixed_turn_cap_and_installs_worker_hooks(cli_env, monkeyp
     assert "PreToolUse" in command[command.index("--settings") + 1]
 
 
+async def test_scout_contexts_are_independent_and_only_extraction_has_the_json_tool(cli_env, monkeypatch):
+    monkeypatch.setenv("TGA3_AGENT_ROLE", "scout")
+    monkeypatch.setenv("TGA3_SCOUT_PHASE", "executing")
+    monkeypatch.setenv("TGA3_ARTIFACTS", str(cli_env / "artifacts"))
+    first = CodexAdapter()
+    first.remember_session("execution-session")
+    first.command()
+    assert "mcp_servers" not in (cli_env / ".codex/config.toml").read_text()
+    await first.event({"type": "item.completed", "item": {
+        "type": "command_execution", "id": "probe", "command": "cat fixture.txt",
+        "aggregated_output": "verified raw result", "exit_code": 0, "status": "completed",
+    }}, noop)
+    raw = (cli_env / "artifacts/execution.jsonl").read_text()
+    assert "verified raw result" in raw
+    monkeypatch.setenv("TGA3_SCOUT_PHASE", "extracting")
+    monkeypatch.setenv("TGA3_SCOUT_INTEL_MCP_URL", "http://control/scout-mcp/")
+    second = CodexAdapter()
+    assert second.session_id is None
+    second.command()
+    config = (cli_env / ".codex-extract/config.toml").read_text()
+    assert "[mcp_servers.intel]" in config and "[mcp_servers.blackboard]" not in config
+    assert second.state_dir != first.state_dir
+
+
 async def test_inactivity_watchdog_stops_hung_cli_without_losing_session(cli_env, monkeypatch):
     monkeypatch.setenv("TGA3_CLI_IDLE_TIMEOUT_SECONDS", "0.05")
     script = cli_env / "hung.py"

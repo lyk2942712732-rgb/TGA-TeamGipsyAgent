@@ -19,7 +19,7 @@ from .docker_runtime import ContainerRuntime
 from .domain import USER_ACTOR, AgentState, PublishRequest, RunState
 from .errors import TGA3Error
 from .host_agents import Automation, CliHostModel, HostModel
-from .mcp_server import build_mcp
+from .mcp_server import build_mcp, build_scout_mcp
 from .model_discovery import discover_provider_models
 from .provider_profiles import PROVIDER_PROFILES, ProviderProtocol
 from .skills import MAX_ARCHIVE_BYTES, SkillCatalog
@@ -51,6 +51,11 @@ class RealtimePromptRequest(BaseModel):
     idempotency_key: str = Field(min_length=1, max_length=180)
 
 
+class ScoutSettingsRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    timeout_seconds: int = Field(ge=60, le=600)
+
+
 def create_app(
     config: TGA3Config,
     storage: Storage,
@@ -71,12 +76,13 @@ def create_app(
     )
     coordinator.change_handlers.append(automation.changed)
     mcp = build_mcp(config, coordinator.blackboard)
+    scout_mcp = build_scout_mcp(config, coordinator.scout_intel)
     delivery = BlackboardDelivery(config, storage, coordinator.blackboard)
     usage = TokenUsageTracker(config, storage)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
-        async with mcp.session_manager.run():
+        async with mcp.session_manager.run(), scout_mcp.session_manager.run():
             try:
                 yield
             finally:
@@ -305,8 +311,8 @@ def create_app(
     @api.get("/agent-definitions")
     async def agent_definitions() -> list[dict[str, Any]]:
         tools = {
-            "scout": ["Shell", "Read", "Edit", "Kali 侦察工具", "黑板自动同步", "scout_collect_intel",
-                      "artifact.register"],
+            "scout": ["第一轮：Shell / Kali 工具 / artifacts 留存", "第二轮：只读 artifacts",
+                      "scout_write_intel → /intels/*.json", "系统自动导入黑板"],
             "worker-openai": [
                 "Shell", "Read", "Edit", "原生黑板同步 Hook", "blackboard.publish",
                 "artifact.register",
@@ -324,6 +330,9 @@ def create_app(
             result.append({
                 "id": agent_id,
                 "scout_timeout_seconds": config.runtime.scout_timeout_seconds if binding.role == "scout" else None,
+                "scout_extract_timeout_seconds": (
+                    config.runtime.scout_extract_timeout_seconds if binding.role == "scout" else None
+                ),
                 **binding.model_dump(mode="json"),
                 "tools": tools.get(agent_id, []),
                 "image": image,
@@ -334,6 +343,13 @@ def create_app(
     @api.get("/config/models")
     async def read_models_config() -> dict:
         return config.export_document("models")
+
+    @api.put("/config/scout-settings")
+    async def write_scout_settings(body: ScoutSettingsRequest) -> dict:
+        async with config_lock:
+            updated = config.runtime.model_copy(update={"scout_timeout_seconds": body.timeout_seconds})
+            config.apply_document("runtime", updated)
+        return {"scout_timeout_seconds": config.runtime.scout_timeout_seconds}
 
     @api.get("/config/model-provider-presets")
     async def read_model_provider_presets() -> list[dict[str, object]]:
@@ -528,6 +544,7 @@ def create_app(
 
     app.include_router(api)
     app.mount("/mcp", mcp.streamable_http_app())
+    app.mount("/scout-mcp", scout_mcp.streamable_http_app())
     return app
 
 

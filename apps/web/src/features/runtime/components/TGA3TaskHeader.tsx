@@ -3,7 +3,7 @@ import { useState } from "react";
 import { tga3RuntimeApi } from "../../../api/tga3-runtime-control";
 import type { TGA3RuntimeSnapshot } from "../../../runtime/tga3-runtime";
 import type { TGA3Connection } from "../use-tga3-runtime";
-import { formatTime, stateLabel, stateTone } from "../tga3-view";
+import { agentStateLabel, formatTime, stateLabel, stateTone } from "../tga3-view";
 import { MODE_PROFILES } from "../../../modes";
 
 export function TGA3TaskHeader({ snapshot, connection, busy, onRefresh, onStop, onDelete }: { snapshot: TGA3RuntimeSnapshot; connection: TGA3Connection; busy: boolean; onRefresh: () => void; onStop: () => void; onDelete: () => void }) {
@@ -31,6 +31,7 @@ export function TGA3TaskHeader({ snapshot, connection, busy, onRefresh, onStop, 
       <Fact label="Agent" value={`${active} 活动 / ${agents.length} 总数`} />
       <Fact label="Intel" value={`${intel}`} /><Fact label="Finding" value={`${findings}`} /><Fact label="最终候选" value={`${finals}`} />
       <Fact label="同步" value={connectionLabel(connection)} />
+      {task.state === "scouting" && agents.find(agent => agent.role === "scout") ? <Fact label="Scout 阶段" value={agentStateLabel(agents.find(agent => agent.role === "scout")!)} /> : null}
       <div className="tga3-token-usage">
         <button type="button" className="tga3-task-fact tga3-token-toggle" aria-label="展开各智能体 Token 用量" aria-expanded={usageOpen} aria-controls="task-token-breakdown" onClick={() => setUsageOpen(value => !value)} title="累计输入与输出 Token，包含缓存输入；按 CLI 已上报用量统计">
           <span><small>累计 Token</small><b>{reported.length ? totalTokens.toLocaleString("en-US") : "未上报"}</b></span><ChevronRight size={15} />

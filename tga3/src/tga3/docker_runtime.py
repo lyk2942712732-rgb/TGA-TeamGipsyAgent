@@ -7,7 +7,7 @@ import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
+from typing import Literal, Protocol
 from uuid import UUID
 
 from .config import ResolvedAgent, TGA3Config
@@ -19,6 +19,8 @@ class LaunchSpec:
     task_id: UUID
     agent: ResolvedAgent
     report_input: str | None = None
+    scout_phase: Literal["executing", "extracting"] | None = None
+    phase_budget_seconds: float | None = None
 
 
 class ContainerRuntime(Protocol):
@@ -72,19 +74,26 @@ class DockerContainerRuntime:
         binding = spec.agent
         workspace, inputs, artifacts = self._task_paths(spec.task_id, binding.agent_id)
         is_reporter = binding.role == "reporter"
+        extracting = binding.role == "scout" and spec.scout_phase == "extracting"
+        phase_budget = int(spec.phase_budget_seconds if spec.phase_budget_seconds is not None else
+                           runtime.scout_extract_timeout_seconds if extracting else runtime.scout_timeout_seconds)
         if is_reporter:
             (workspace / "report-input.json").write_text(spec.report_input or "[]", encoding="utf-8")
             (workspace / "writeup.md").unlink(missing_ok=True)
         volumes = {
             str(workspace): {"bind": "/workspace", "mode": "rw"},
             str(inputs): {"bind": "/inputs", "mode": "ro"},
-            str(artifacts): {"bind": "/artifacts", "mode": "ro" if is_reporter else "rw"},
+            str(artifacts): {"bind": "/artifacts", "mode": "ro" if is_reporter or extracting else "rw"},
             str(self.config.skills_root): {"bind": "/skills", "mode": "ro"},
         }
         if binding.role == "worker":
             recon = self.config.resolve_path(runtime.artifact_root) / str(spec.task_id) / "scout"
             self._ensure_worker_directory(recon)
             volumes[str(recon)] = {"bind": "/recon", "mode": "ro"}
+        if extracting:
+            intels = self.config.resolve_path(runtime.intel_root) / str(spec.task_id) / "scout"
+            self._ensure_worker_directory(intels)
+            volumes[str(intels)] = {"bind": "/intels", "mode": "ro"}
         if is_reporter:
             volumes[str(workspace / "report-input.json")] = {"bind": "/workspace/report-input.json", "mode": "ro"}
         image = runtime.worker_images[binding.agent_id]
@@ -97,9 +106,14 @@ class DockerContainerRuntime:
             "TGA3_AGENT_RUNTIME": binding.runtime,
             "TGA3_AGENT_ROLE": binding.role,
             "TGA3_CLI_TIMEOUT_SECONDS": str(
-                runtime.scout_timeout_seconds + 30 if binding.role == "scout" else runtime.cli_timeout_seconds
+                phase_budget + 30 if binding.role == "scout" else runtime.cli_timeout_seconds
             ),
-            "TGA3_SCOUT_TIMEOUT_SECONDS": str(runtime.scout_timeout_seconds),
+            "TGA3_SCOUT_TIMEOUT_SECONDS": str(phase_budget if not extracting else runtime.scout_timeout_seconds),
+            "TGA3_SCOUT_EXTRACT_TIMEOUT_SECONDS": str(
+                phase_budget if extracting else runtime.scout_extract_timeout_seconds
+            ),
+            "TGA3_SCOUT_PHASE": spec.scout_phase or "executing",
+            "TGA3_SCOUT_INTEL_MCP_URL": runtime.blackboard_mcp_url.rstrip("/").removesuffix("/mcp") + "/scout-mcp/",
             "TGA3_SYSTEM_PROMPT": binding.system_prompt,
             "TGA3_CONTROL_WS_URL": runtime.control_ws_url,
             "TGA3_BLACKBOARD_MCP_URL": blackboard_mcp_url,

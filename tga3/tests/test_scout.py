@@ -1,132 +1,138 @@
 import asyncio
 from pathlib import Path
 
-import pytest
-from pydantic import SecretStr, TypeAdapter, ValidationError
+from pydantic import SecretStr
 
-from tga3.blackboard import Blackboard
 from tga3.config import TGA3Config
 from tga3.coordinator import TaskCoordinator
 from tga3.docker_runtime import FakeContainerRuntime
-from tga3.domain import Actor, AgentPublishRequest, PublishRequest, RunState, ScoutIntelPublication
-from tga3.errors import ContractError
-from tga3.scout_intel import ScoutIntelCollector
+from tga3.domain import RunState
+from tga3.scout_intel import ScoutIntelInput
 from tga3.storage import InMemoryStorage
 
 
-class WaitingScout(FakeContainerRuntime):
-    def __init__(self, storage):
+class TwoPhaseScout(FakeContainerRuntime):
+    def __init__(self, config, storage):
         super().__init__()
-        self.storage = storage
-        self.started = asyncio.Event()
-        self.finish = asyncio.Event()
+        self.config, self.storage = config, storage
+        self.executing = asyncio.Event()
+        self.extracting = asyncio.Event()
+        self.finish_execution = asyncio.Event()
+        self.finish_extraction = asyncio.Event()
+        self.execution_error = False
+
+    async def launch(self, spec):
+        if spec.agent.role == "worker":
+            assert any(entry.kind == "intel" for entry in await self.storage.list_entries(spec.task_id))
+            assert (spec.task_id, "scout") in self.stopped
+        return await super().launch(spec)
 
     async def scout(self, spec, emit):
         await self.launch(spec)
-        await ScoutIntelCollector(Blackboard(self.storage)).collect(ScoutIntelPublication(
-            task_id=spec.task_id, actor={"agent_id": "scout", "display_name": "Scout", "role": "scout"},
-            kind="intel", body={"claim": "ELF found"}, idempotency_key="scout-intel",
-        ))
-        self.started.set()
         try:
-            await self.finish.wait()
+            if spec.scout_phase == "executing":
+                root = self.config.resolve_path(self.config.runtime.artifact_root) / str(spec.task_id) / "scout"
+                root.mkdir(parents=True)
+                (root / "probe.txt").write_text("verified result")
+                self.executing.set()
+                await self.finish_execution.wait()
+                if self.execution_error:
+                    raise RuntimeError("simulated execution failure")
+            else:
+                await self.coordinator.scout_intel.write(ScoutIntelInput(
+                    task_id=spec.task_id, key="first", claim="verified result", evidence_paths=["probe.txt"],
+                ))
+                self.extracting.set()
+                await self.finish_extraction.wait()
         finally:
             await self.stop(spec.task_id, "scout")
 
 
-def setup():
+def setup(tmp_path):
     config = TGA3Config(Path(__file__).parents[1] / "config")
     for provider in config.models.providers:
         provider.api_keys[0].api_key = SecretStr("test-key")
+    config.runtime.artifact_root = str(tmp_path / "artifacts")
+    config.runtime.intel_root = str(tmp_path / "intels")
     storage = InMemoryStorage()
-    runtime = WaitingScout(storage)
-    return config, storage, runtime, TaskCoordinator(config, storage, runtime)
+    runtime = TwoPhaseScout(config, storage)
+    coordinator = TaskCoordinator(config, storage, runtime)
+    runtime.coordinator = coordinator
+    return config, storage, runtime, coordinator
 
 
-async def test_scout_finishes_and_stops_before_either_worker_starts():
-    _, storage, runtime, coordinator = setup()
-    task = await coordinator.create_and_start("serial", "inspect", "pwn")
-    await runtime.started.wait()
-    assert task.state == RunState.SCOUTING
-    assert [spec.agent.agent_id for spec in runtime.launched] == ["scout"]
+async def test_two_phases_keep_json_private_until_extraction_finishes(tmp_path):
+    _, storage, runtime, coordinator = setup(tmp_path)
+    task = await coordinator.create_and_start("two phases", "inspect", "pwn")
+    await runtime.executing.wait()
+    assert (await storage.get_agent(task.id, "scout")).metadata["scout_phase"] == "executing"
+    assert not list(coordinator.scout_intel.directory(task.id).glob("*.json"))
+    await storage.update_agent(task.id, "scout", metadata={"blackboard_cursor": 5, "blackboard_pending": None})
+    runtime.finish_execution.set()
+    await runtime.extracting.wait()
+    assert (await storage.get_agent(task.id, "scout")).metadata["scout_phase"] == "extracting"
+    assert "blackboard_cursor" not in (await storage.get_agent(task.id, "scout")).metadata
+    assert len(list(coordinator.scout_intel.directory(task.id).glob("*.json"))) == 1
     assert not any(entry.kind == "intel" for entry in await storage.list_entries(task.id))
-    assert (await storage.get_agent(task.id, "scout")).metadata["intel_draft_count"] == 1
-    with pytest.raises(ContractError, match="wait"):
-        await coordinator.blackboard.publish(
-            task.id, Actor(agent_id="worker-openai", display_name="Worker", role="worker"),
-            PublishRequest(kind="final_candidate", body={"conclusion": "x", "rationale": "x",
-                           "finding_ids": [task.id]}, idempotency_key="early"),
-        )
-    runtime.finish.set()
+    assert [spec.agent.agent_id for spec in runtime.launched] == ["scout", "scout"]
+    runtime.finish_extraction.set()
     await coordinator._startup_jobs[task.id]
-    assert (task.id, "scout") in runtime.stopped
-    assert [spec.agent.agent_id for spec in runtime.launched] == ["scout", "worker-openai", "worker-claude"]
+    assert [spec.agent.agent_id for spec in runtime.launched] == ["scout", "scout", "worker-openai", "worker-claude"]
     assert (await storage.get_task(task.id)).state == RunState.RUNNING
-    scout = await storage.get_agent(task.id, "scout")
-    assert scout.metadata["intel_count"] == 1
-    with pytest.raises(ContractError, match="during scouting"):
-        await coordinator.blackboard.publish(
-            task.id, Actor(agent_id="scout", display_name="Scout", role="scout"),
-            PublishRequest(kind="intel", body={"claim": "late"}, idempotency_key="late"),
-        )
+    assert (await storage.get_agent(task.id, "scout")).metadata["intel_imported_count"] == 1
 
 
-async def test_scout_timeout_keeps_partial_intel_and_launches_workers():
-    config, storage, runtime, coordinator = setup()
+async def test_execution_timeout_starts_extraction_with_an_independent_budget(tmp_path):
+    config, storage, runtime, coordinator = setup(tmp_path)
     config.runtime.scout_timeout_seconds = 0.02
+    runtime.finish_extraction.set()
     task = await coordinator.create_and_start("timeout", "inspect", "pwn")
     await coordinator._startup_jobs[task.id]
-    assert (await storage.get_agent(task.id, "scout")).metadata["finish_reason"] == "timeout"
+    scout = await storage.get_agent(task.id, "scout")
+    assert scout.metadata["scout_executing_result"]["finish_reason"] == "timeout"
+    assert scout.metadata["scout_extracting_result"]["finish_reason"] == "completed"
+    assert scout.metadata["intel_count"] == 1
     assert (await storage.get_task(task.id)).state == RunState.RUNNING
-    assert any(entry.kind == "intel" for entry in await storage.list_entries(task.id))
-    assert (task.id, "scout") in runtime.stopped
 
 
-async def test_cancel_during_scout_never_starts_workers():
-    _, storage, runtime, coordinator = setup()
+async def test_extraction_timeout_imports_already_saved_json(tmp_path):
+    config, storage, runtime, coordinator = setup(tmp_path)
+    config.runtime.scout_extract_timeout_seconds = 0.02
+    runtime.finish_execution.set()
+    task = await coordinator.create_and_start("extract timeout", "inspect", "pwn")
+    await coordinator._startup_jobs[task.id]
+    scout = await storage.get_agent(task.id, "scout")
+    assert scout.metadata["scout_extracting_result"]["finish_reason"] == "timeout"
+    assert scout.metadata["intel_count"] == 1
+
+
+async def test_execution_failure_still_extracts_saved_artifacts(tmp_path):
+    _, storage, runtime, coordinator = setup(tmp_path)
+    runtime.execution_error = True
+    runtime.finish_execution.set()
+    runtime.finish_extraction.set()
+    task = await coordinator.create_and_start("failed execution", "inspect", "pwn")
+    await coordinator._startup_jobs[task.id]
+    scout = await storage.get_agent(task.id, "scout")
+    assert scout.metadata["scout_executing_result"]["finish_reason"] == "error"
+    assert scout.metadata["intel_count"] == 1
+
+
+async def test_cancel_in_first_phase_does_not_start_extraction_or_workers(tmp_path):
+    _, storage, runtime, coordinator = setup(tmp_path)
     task = await coordinator.create_and_start("cancel", "inspect", "pwn")
-    await runtime.started.wait()
+    await runtime.executing.wait()
     await coordinator.stop_task(task.id)
-    assert [spec.agent.agent_id for spec in runtime.launched] == ["scout"]
+    assert len(runtime.launched) == 1
     assert (await storage.get_task(task.id)).state == RunState.CANCELLED
-    assert (task.id, "scout") in runtime.stopped
+
+
+async def test_cancel_in_second_phase_imports_json_without_starting_workers(tmp_path):
+    _, storage, runtime, coordinator = setup(tmp_path)
+    runtime.finish_execution.set()
+    task = await coordinator.create_and_start("cancel extraction", "inspect", "pwn")
+    await runtime.extracting.wait()
+    await coordinator.stop_task(task.id)
+    assert [spec.agent.agent_id for spec in runtime.launched] == ["scout", "scout"]
     assert any(entry.kind == "intel" for entry in await storage.list_entries(task.id))
-
-
-async def test_scout_crash_flushes_collected_intel_before_workers_launch():
-    _, storage, runtime, coordinator = setup()
-    original = runtime.scout
-
-    async def crash(spec, emit):
-        runtime.finish.set()
-        await original(spec, emit)
-        raise RuntimeError("simulated scout failure")
-
-    runtime.scout = crash
-    task = await coordinator.create_and_start("crash", "inspect", "pwn")
-    await coordinator._startup_jobs[task.id]
-    assert (await storage.get_agent(task.id, "scout")).metadata["finish_reason"] == "error"
-    assert (await storage.get_task(task.id)).state == RunState.RUNNING
-    assert any(entry.kind == "intel" for entry in await storage.list_entries(task.id))
-
-
-async def test_collector_recreation_replays_drafts_without_duplicate_blackboard_entries():
-    _, storage, runtime, coordinator = setup()
-    task = await coordinator.create_and_start("replay", "inspect", "pwn")
-    await runtime.started.wait()
-    await ScoutIntelCollector(coordinator.blackboard).flush(task.id)
-    await ScoutIntelCollector(coordinator.blackboard).flush(task.id)
-    assert sum(entry.kind == "intel" for entry in await storage.list_entries(task.id)) == 1
-    with pytest.raises(ContractError, match="closed"):
-        await coordinator.scout_intel.collect(ScoutIntelPublication(
-            task_id=task.id, actor={"agent_id": "scout", "display_name": "Scout", "role": "scout"},
-            kind="intel", body={"claim": "too late"}, idempotency_key="late",
-        ))
-    runtime.finish.set()
-    await coordinator._startup_jobs[task.id]
-
-
-def test_worker_cannot_publish_intel_and_scout_cannot_publish_findings():
-    adapter = TypeAdapter(AgentPublishRequest)
-    with pytest.raises(ValidationError):
-        adapter.validate_python({"kind": "intel", "actor": {"agent_id": "worker-openai", "role": "worker"}})
+    assert (await storage.get_task(task.id)).state == RunState.CANCELLED

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import shutil
 from collections.abc import Awaitable, Callable
 from pathlib import Path
@@ -29,7 +30,7 @@ from .domain import (
 from .events import TaskEvents
 from .gateway import AgentGateway
 from .provider_profiles import ProviderProtocol
-from .scout_intel import ScoutIntelCollector
+from .scout_intel import ScoutIntelStore
 from .storage import Storage
 
 
@@ -42,7 +43,7 @@ class TaskCoordinator:
         self.gateway = AgentGateway(self.handle_agent_event)
         self.events = TaskEvents(storage)
         self.blackboard = Blackboard(storage, self.blackboard_changed)
-        self.scout_intel = ScoutIntelCollector(self.blackboard)
+        self.scout_intel = ScoutIntelStore(config, self.blackboard)
         self.change_handlers: list[Callable[[UUID, int], Awaitable[None]]] = []
 
     def actor_for(self, run: AgentRun) -> Actor:
@@ -123,6 +124,8 @@ class TaskCoordinator:
             task_id, "scout", desired_state=AgentState.RUNNING, actual_state=AgentState.STARTING
         )
         actor = self.actor_for(scout)
+        budgets = {"executing": self.config.runtime.scout_timeout_seconds,
+                   "extracting": self.config.runtime.scout_extract_timeout_seconds}
 
         async def emit(method: str, params: dict) -> None:
             if method == "container.started":
@@ -134,39 +137,60 @@ class TaskCoordinator:
                 await self.handle_agent_event(task_id, "scout", method, params)
 
         try:
-            await self.events.announce_status(task_id, actor, AgentState.STARTING.value)
-            timed_out = False
-            scout_error = None
-            try:
-                async with asyncio.timeout(self.config.runtime.scout_timeout_seconds):
-                    await self.containers.scout(LaunchSpec(task_id=task_id, agent=bindings["scout"]), emit)
-            except TimeoutError:
-                timed_out = True
-            except Exception as exc:
-                scout_error = str(exc)
-            # scout() only returns after the container and its tool processes have stopped.
-            await self.scout_intel.flush(task_id)
-            entries = (await self.blackboard.sync(task_id, limit=10_000)).entries
-            intel_count = sum(entry.kind == EntryKind.INTEL for entry in entries)
-            state = AgentState.FAILED if scout_error else AgentState.STOPPED if timed_out else AgentState.COMPLETED
+            outcomes = {}
+            for phase, budget in budgets.items():
+                def phase_metadata(metadata, current_phase=phase, current_budget=budget):
+                    if current_phase == "extracting":
+                        metadata = {key: value for key, value in metadata.items() if not key.startswith("blackboard_")}
+                    return {**metadata, "scout_phase": current_phase, "scout_phase_budget_seconds": current_budget}
+
+                await self.storage.mutate_agent_metadata(task_id, "scout", phase_metadata)
+                await self.storage.update_agent(task_id, "scout", actual_state=AgentState.STARTING)
+                label = "第一轮：侦察执行中" if phase == "executing" else "第二轮：Intel 提取中"
+                await self.events.emit(task_id, actor=actor, kind=EventKind.SYSTEM,
+                                       text=f"{label}（独立预算 {budget} 秒）", channel_agent_id="scout",
+                                       payload={"scout_phase": phase, "budget_seconds": budget})
+                reason, error = "completed", None
+                try:
+                    async with asyncio.timeout(budget):
+                        await self.containers.scout(
+                            LaunchSpec(task_id=task_id, agent=bindings["scout"], scout_phase=phase,
+                                       phase_budget_seconds=budget), emit,
+                        )
+                except TimeoutError:
+                    reason = "timeout"
+                except Exception as exc:
+                    reason, error = "error", str(exc)
+                outcomes[phase] = {"finish_reason": reason, "error": error, "budget_seconds": budget}
+                await self.storage.update_agent(
+                    task_id, "scout", metadata={f"scout_{phase}_result": outcomes[phase]},
+                )
+                if phase == "executing":
+                    root = self.config.resolve_path(self.config.runtime.artifact_root) / str(task_id) / "scout"
+                    root.mkdir(parents=True, exist_ok=True)
+                    status = root / f".scout-status-{uuid4()}.tmp"
+                    status.write_text(
+                        json.dumps(outcomes[phase], ensure_ascii=False, indent=2), encoding="utf-8",
+                    )
+                    status.replace(root / "scout-execution-status.json")
+            await self.storage.update_agent(task_id, "scout", metadata={"scout_phase": "importing"})
+            intel_count = await self.scout_intel.flush(task_id)
+            result = outcomes["extracting"]
+            state = (AgentState.FAILED if result["finish_reason"] == "error" else
+                     AgentState.STOPPED if result["finish_reason"] == "timeout" else AgentState.COMPLETED)
             await self.storage.update_agent(
-                task_id, "scout", desired_state=state, actual_state=state,
-                last_error=scout_error,
-                metadata={"finish_reason": "error" if scout_error else "timeout" if timed_out else "completed",
+                task_id, "scout", desired_state=state, actual_state=state, last_error=result["error"],
+                metadata={"scout_phase": "completed", "finish_reason": result["finish_reason"],
                           "intel_count": intel_count},
             )
             await self.events.announce_status(
-                task_id, actor, state.value,
-                f"侦察异常，已交接已有成果：{scout_error}" if scout_error
-                else "侦察预算已用尽，保留已有成果" if timed_out else "侦察结束"
+                task_id, actor, state.value, f"系统已从 /intels 导入 {intel_count} 条 Intel"
             )
             await self.events.emit(
                 task_id, actor=SYSTEM_ACTOR, kind=EventKind.SYSTEM,
-                text=f"Scout 已交接 {intel_count} 条 Intel，开始启动两个 Worker。"
-                     + ("未获得 Intel，Worker 将从题面与原始材料开始。" if not intel_count else ""),
-                payload={"intel_count": intel_count, "timed_out": timed_out, "error": scout_error},
+                text=f"Scout 两轮结束，系统已导入 {intel_count} 条 Intel，开始启动两个 Worker。",
+                payload={"intel_count": intel_count, "scout_phases": outcomes},
             )
-            # Open the Worker write phase before launching either container.
             await self.storage.update_task(task_id, state=RunState.RUNNING)
             for agent_id in self.config.worker_agent_ids:
                 run = await self.storage.update_agent(
@@ -404,6 +428,7 @@ class TaskCoordinator:
         await self.cancel_startup(task_id)
         await self.containers.stop(task_id, "scout")
         if (await self.storage.get_task(task_id)).state == RunState.SCOUTING:
+            await self.storage.update_agent(task_id, "scout", metadata={"scout_phase": "importing"})
             await self.scout_intel.flush(task_id)
         workers = await self._worker_runs(task_id)
         for run in workers:
@@ -440,6 +465,7 @@ class TaskCoordinator:
             self.config.runtime.workspace_root,
             self.config.runtime.input_root,
             self.config.runtime.artifact_root,
+            self.config.runtime.intel_root,
             self.config.runtime.writeup_root,
         ):
             path = self.config.resolve_path(raw_root) / str(task_id)

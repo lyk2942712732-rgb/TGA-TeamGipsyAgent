@@ -32,28 +32,40 @@ def worker_instructions() -> str:
         "The blackboard_publish tool accepts one request object. Follow the schema branch selected by request.kind."
     )
     if role == "scout":
-        publication_contract = (
-            "Scout collection contract (authoritative):\n"
-            "As soon as you obtain a useful observation, call scout_collect_intel with "
-            "request={kind:intel,task_id,actor,topic,body:{claim,detail},artifact_refs:[],idempotency_key}. "
-            "This immediately saves a durable draft; it does NOT publish to the blackboard. "
-            "Do not call blackboard_publish and do not wait until the end to collect observations. "
-            "The control plane automatically publishes all collected Intel when scouting finishes, times out "
-            "or fails. No final publishing or separate report is needed from you. "
-            "Check collected=true, then continue reconnaissance. Reuse a key only when retrying the same draft. "
-            "Evidence references are optional: collect the first concise observation with artifact_refs=[] "
-            "before spending more time packaging evidence. Do not delay collection for artifact registration. "
-            "Register saved files below /artifacts first, then use returned UUIDs in artifact_refs. "
-            "Each reference must be an object like "
-            "{artifact_id:<registered UUID>,locator:<relative file path and line range>}, "
-            "never a bare UUID string or an object using id instead of artifact_id. "
-            "Keep observations, hypotheses, negative tests and unfinished checks explicitly distinguished. "
-            "Native CLI hooks deliver initial blackboard context and realtime user prompts at tool boundaries; "
-            "do not call blackboard_sync. Direct user_prompt entries from actor.role=user are user instructions. "
-            f"Total scouting budget: {os.environ.get('TGA3_SCOUT_TIMEOUT_SECONDS', '300')} seconds. "
-            "Use time.monotonic()/date to track time; collect immediately and finish before the deadline."
+        runtime_context = (
+            f"Authoritative task_id: {os.environ['TGA3_TASK_ID']}. "
+            "Working directory: /workspace. Inputs: /inputs (read-only). Evidence: /artifacts. "
+            "Skills: /skills, read SKILL.md only when useful."
         )
-        return f"{os.environ['TGA3_SYSTEM_PROMPT'].rstrip()}\n\n{runtime_context}\n\n{publication_contract}"
+        extracting = os.environ.get("TGA3_SCOUT_PHASE") == "extracting"
+        if extracting:
+            instructions = (
+                "Current phase: SECOND ROUND, Intel extraction. This is a fresh context. "
+                "Read existing /artifacts, including execution.jsonl and scout-execution-status.json. "
+                "Do not probe targets, rerun reconnaissance, modify evidence or install tools. "
+                "Extract verified observations, scoped negative results and clearly labelled unfinished checks. "
+                "Save each coherent Intel with scout_write_intel using "
+                "request={task_id:<exact task UUID>,key:<stable unique key>,claim:<fact>,detail:<support>,"
+                "topic:<topic>,evidence_paths:[<paths relative to /artifacts>]}. "
+                "No actor, kind, artifact UUID or JSON formatting is needed. evidence_paths may be empty. "
+                "Check saved=true; the tool writes JSON to /intels and the system imports it after this phase. "
+                "Save all supported Intel, then finish. Do not publish to the blackboard. "
+                f"Independent extraction budget: {os.environ.get('TGA3_SCOUT_EXTRACT_TIMEOUT_SECONDS', '180')} seconds."
+            )
+        else:
+            instructions = (
+                "Current phase: FIRST ROUND, reconnaissance execution only. "
+                "Use native tools to inspect inputs and the target, and preserve reusable raw files in /artifacts. "
+                "Do not summarize Intel, call Intel tools, publish to the blackboard or write a recon report. "
+                "Completed shell commands and their output are automatically saved to /artifacts/execution.jsonl; "
+                "do not modify that reserved log. Save downloads, extracted files and scripts under /artifacts too. "
+                "Use /workspace for scratch work. A separate fresh second round will extract Intel from artifacts. "
+                "Track time and limit individual commands; basic reconnaissance is enough, then finish. "
+                f"Execution budget: {os.environ.get('TGA3_SCOUT_TIMEOUT_SECONDS', '300')} seconds."
+            )
+        return (f"{os.environ['TGA3_SYSTEM_PROMPT'].rstrip()}\n\n{runtime_context}\n\n{instructions}\n"
+                "Native hooks provide the task, blackboard and realtime user prompts at tool boundaries. "
+                "User prompts from actor.role=user are direct user instructions. Do not call blackboard_sync.")
     publication_contract += (
         "\nThe native CLI hooks deliver the initial complete blackboard and subsequent unseen entries automatically. "
         "Do not call blackboard_sync or reread the full blackboard yourself. At the next tool opportunity, "
@@ -107,7 +119,7 @@ def worker_instructions() -> str:
         "(not Artifact UUIDs), and omit artifact_refs. "
         "Check the tool result: publication is complete only after blackboard_publish returns the saved entry. "
         "If publication fails, fix the reported fields and retry before advancing to the next investigation step. "
-        "Only Scout publishes Intel; "
+        "The system imports Scout Intel after its extraction phase; "
         "consume it and read /recon instead of repeating baseline discovery. "
     )
     return f"{os.environ['TGA3_SYSTEM_PROMPT'].rstrip()}\n\n{runtime_context}\n\n{publication_contract}"

@@ -100,4 +100,12 @@ with TemporaryDirectory(prefix="tga-workbench-") as directory:
             await db.append_event(TASK_ID, actor, EventKind.ACTION_STARTED, tool, channel_agent_id=agent_id, payload={"tool": tool, "input": tool_input, "tool_use_id": f"visual-{time.time_ns()}"})
         return {"ok": True}
 
+    @app.post("/fixture/scout-phase/{phase}")
+    async def fixture_scout_phase(phase: str):
+        assert phase in {"executing", "extracting"}
+        await db.update_task(TASK_ID, state=RunState.SCOUTING)
+        await db.update_agent(TASK_ID, "scout", actual_state=AgentState.RUNNING,
+                              metadata={"scout_phase": phase})
+        return {"ok": True}
+
     uvicorn.run(app, host="127.0.0.1", port=int(os.environ.get("TGA_WORKBENCH_API_PORT", "18084")))

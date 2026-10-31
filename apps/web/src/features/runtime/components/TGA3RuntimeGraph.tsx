@@ -3,7 +3,7 @@ import { useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } fro
 import type { TGA3Agent, TGA3RuntimeSnapshot } from "../../../runtime/tga3-runtime";
 import { agentNode, compact, currentAgentAction, latestAgentEntry, modelNode, runtimeActivityEvents, type RuntimeActivity } from "../runtime-activity";
 import { activityRoute, labelPlacement, phaseRoute, type GraphBox, type GraphPoint } from "../runtime-geometry";
-import { formatTime, sdkLabel, stateLabel } from "../tga3-view";
+import { agentStateLabel, formatTime, sdkLabel, stateLabel } from "../tga3-view";
 import { useRuntimeActivities } from "../use-runtime-activities";
 
 const ORDER = ["scout", "worker-openai", "worker-claude", "reporter"];
@@ -37,7 +37,7 @@ export function TGA3RuntimeGraph({ snapshot, selectedAgentId, onSelectAgent }: {
     const node = agentNode(id), action = currentAgentAction(snapshot, value), entry = latestAgentEntry(snapshot.blackboard, id);
     return <button type="button" className="collab-node collab-agent" data-graph-node={node} data-active={active.has(node)} aria-label={`查看 ${value.display_name}`} aria-pressed={selectedAgentId === id} onClick={() => selectNode(node)}>
       <span className="collab-node-title"><strong>{value.display_name}</strong><Terminal size={14} /></span>
-      <span className="collab-agent-state">{value.actual_state === "completed" ? <Check size={11} /> : ["running", "starting"].includes(value.actual_state) ? <Play size={11} /> : <Minus size={11} />}{stateLabel(value.actual_state)}</span>
+      <span className="collab-agent-state">{value.actual_state === "completed" ? <Check size={11} /> : ["running", "starting"].includes(value.actual_state) ? <Play size={11} /> : <Minus size={11} />}{agentStateLabel(value)}</span>
       <span className="collab-agent-action" title={action?.detail}>{action ? <><Terminal size={12} /><span>{action.pending ? "" : "最近："}{action.text}</span></> : <><Clock3 size={12} /><span>{idleAction(value, entry?.seq)}</span></>}</span>
       {models ? <span className="collab-model" data-graph-node={modelNode(id)}><BrainCircuit size={12} /><span>{value.model_name ?? value.model_id}<small>{sdkLabel(value.sdk)}</small></span></span> : null}
     </button>;
@@ -61,10 +61,10 @@ export function TGA3RuntimeGraph({ snapshot, selectedAgentId, onSelectAgent }: {
       </div>
       <div className="collab-labels" aria-hidden="true">{labels.map(({ key, activity, point }) => <span key={key} style={{ left: point.x, top: point.y }}>{activity.shortLabel}</span>)}</div>
     </div><div className="collab-now" aria-live="polite">{activities.length ? activities.map(activity => <div key={activity.id} className={activity.to ? "interaction" : "action"}><Terminal size={13} /><span>{activity.label}<small>{activity.to ? `${nodeName(activity.from, agents)} → ${nodeName(activity.to, agents)}` : compact(activity.detail, 90)}</small></span></div>) : <span className="collab-idle">{terminal ? "本次运行交互已完成" : "等待新的动作与交互；节点保留最近执行状态"}</span>}</div>
-    {selected ? <div className="collab-detail"><div><h3>{nodeName(selected, agents)}</h3><small>{detail ? formatTime(new Date(detail.at).toISOString()) : "节点详情"}</small></div><div>{detail ? <><p>{detail.label}</p><pre>{detail.detail}</pre></> : selectedAgent ? <><p>{sdkLabel(selectedAgent.sdk)} / {selectedAgent.model_name ?? selectedAgent.model_id}</p><p>{stateLabel(selectedAgent.actual_state)}{selectedAgent.metadata?.blackboard_cursor !== undefined ? ` · 黑板已读至 #${selectedAgent.metadata.blackboard_cursor}` : ""}</p></> : <p>{resourceDetail(selected, snapshot)}</p>}</div><button type="button" aria-label="关闭节点详情" onClick={() => setSelected(null)}><X size={14} /></button></div> : null}</> : null}
+    {selected ? <div className="collab-detail"><div><h3>{nodeName(selected, agents)}</h3><small>{detail ? formatTime(new Date(detail.at).toISOString()) : "节点详情"}</small></div><div>{detail ? <><p>{detail.label}</p><pre>{detail.detail}</pre></> : selectedAgent ? <><p>{sdkLabel(selectedAgent.sdk)} / {selectedAgent.model_name ?? selectedAgent.model_id}</p><p>{agentStateLabel(selectedAgent)}{selectedAgent.metadata?.blackboard_cursor !== undefined ? ` · 黑板已读至 #${selectedAgent.metadata.blackboard_cursor}` : ""}</p></> : <p>{resourceDetail(selected, snapshot)}</p>}</div><button type="button" aria-label="关闭节点详情" onClick={() => setSelected(null)}><X size={14} /></button></div> : null}</> : null}
     <footer className="collab-foot"><span><i />当前交互 <i className="passive" />阶段与关联</span><small>点击节点查看动作详情</small></footer>
   </section>;
 }
 function idleAction(agent: TGA3Agent, seq?: number) { if (agent.actual_state === "failed") return "执行失败，查看最近错误"; if (["paused", "pause_requested"].includes(agent.actual_state)) return "保留原 CLI 会话"; if (seq) return `最近写入黑板 #${seq}`; if (["completed", "stopped"].includes(agent.actual_state)) return "本阶段执行结束"; return agent.role === "reporter" ? "等待最终候选" : "等待新的执行事件"; }
 function nodeName(id: string, agents: TGA3Agent[]) { if (id.startsWith("agent:") || id.startsWith("model:")) { const a = agents.find(item => item.agent_id === id.slice(6)); return id.startsWith("model:") ? a?.model_name ?? a?.model_id ?? "模型" : a?.display_name ?? id.slice(6); } return ({ input: "任务输入", blackboard: "黑板", skills: "Skills", output: "报告" } as Record<string, string>)[id] ?? id; }
-function resourceDetail(id: string, snapshot: TGA3RuntimeSnapshot) { return id === "blackboard" ? `共享事实已写入至 #${snapshot.task.blackboard_seq}。Scout 发布 Intel，Workers 发布 Findings 与最终候选，Reporter 读取最终快照。` : id === "skills" ? "Agent 根据需要读取 /skills 下的能力包。未发生读取时不显示交互。" : id === "input" ? "题目描述和附件索引进入黑板，原始文件只读提供给各 Agent。" : "Reporter 根据最终黑板与只读证据生成 Markdown Writeup。"; }
+function resourceDetail(id: string, snapshot: TGA3RuntimeSnapshot) { return id === "blackboard" ? `共享事实已写入至 #${snapshot.task.blackboard_seq}。系统导入 Scout 的 Intel JSON，Workers 发布 Findings 与最终候选，Reporter 读取最终快照。` : id === "skills" ? "Agent 根据需要读取 /skills 下的能力包。未发生读取时不显示交互。" : id === "input" ? "题目描述和附件索引进入黑板，原始文件只读提供给各 Agent。" : "Reporter 根据最终黑板与只读证据生成 Markdown Writeup。"; }

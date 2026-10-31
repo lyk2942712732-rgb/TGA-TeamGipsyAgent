@@ -17,6 +17,23 @@ class FakeContainers:
         return SimpleNamespace(id="container-id")
 
 
+def test_extraction_mounts_artifacts_and_intels_read_only_with_its_own_budget(tmp_path):
+    config = TGA3Config(Path(__file__).parents[1] / "config")
+    for provider in config.models.providers:
+        provider.api_keys[0].api_key = SecretStr("test-key")
+    for name in ["workspace_root", "input_root", "artifact_root", "intel_root"]:
+        setattr(config.runtime, name, str(tmp_path / name))
+    containers = FakeContainers()
+    runtime = DockerContainerRuntime.__new__(DockerContainerRuntime)
+    runtime.config, runtime.client = config, SimpleNamespace(containers=containers)
+    runtime._launch_sync(LaunchSpec(task_id=uuid4(), agent=config.resolve_agent("scout"), scout_phase="extracting"))
+    mounts = {value["bind"]: value["mode"] for value in containers.kwargs["volumes"].values()}
+    assert mounts["/artifacts"] == mounts["/intels"] == "ro"
+    environment = containers.kwargs["environment"]
+    assert environment["TGA3_CLI_TIMEOUT_SECONDS"] == str(config.runtime.scout_extract_timeout_seconds + 30)
+    assert environment["TGA3_SCOUT_PHASE"] == "extracting"
+
+
 def test_workers_get_private_workspaces_and_evidence_reporter_gets_read_only_union(tmp_path):
     config = TGA3Config(Path(__file__).parents[1] / "config")
     config.runtime.workspace_root = str(tmp_path / "workspaces")

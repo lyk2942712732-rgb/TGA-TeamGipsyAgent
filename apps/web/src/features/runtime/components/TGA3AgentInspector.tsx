@@ -5,7 +5,7 @@ import { fetchAgentModelOptions } from "../../../api/tga3-tasks";
 import type { ProviderProtocol } from "../../../api/tga3-config";
 import type { TaskMode } from "../../../modes";
 import type { TGA3Agent, TGA3RuntimeSnapshot } from "../../../runtime/tga3-runtime";
-import { BOARD_KIND_LABELS, bodyText, formatTime, protocolLabel, roleLabel, sdkLabel, stateLabel, stateTone } from "../tga3-view";
+import { BOARD_KIND_LABELS, bodyText, formatTime, protocolLabel, roleLabel, sdkLabel, agentStateLabel, stateLabel, stateTone } from "../tga3-view";
 import { EventCard } from "./TGA3Workspace";
 
 type InspectorTab = "overview" | "activity" | "control";
@@ -15,7 +15,7 @@ export function TGA3AgentInspector({ snapshot, agent, onChanged }: { snapshot: T
   const [tab, setTab] = useState<InspectorTab>("overview");
   if (!agent) return <aside className="tga3-agent-inspector"><div className="tga3-empty"><Bot /><h3>未选择 Agent</h3><p>从上方运行图选择一个 Agent 查看状态和活动。</p></div></aside>;
   return <aside className="tga3-agent-inspector">
-    <header><div><h2>{agent.display_name}</h2><p>{agent.agent_id} · {roleLabel(agent)}</p></div><span className={`tga3-state-pill tone-${stateTone(agent.actual_state)}`}><i />{stateLabel(agent.actual_state)}</span></header>
+    <header><div><h2>{agent.display_name}</h2><p>{agent.agent_id} · {roleLabel(agent)}</p></div><span className={`tga3-state-pill tone-${stateTone(agent.actual_state)}`}><i />{agentStateLabel(agent)}</span></header>
     <div className="tga3-inspector-tabs" role="tablist">{TABS.map(([value, label]) => <button key={value} role="tab" aria-selected={tab === value} onClick={() => setTab(value)}>{label}</button>)}</div>
     <div className="tga3-inspector-body">
       {tab === "overview" ? <Overview agent={agent} /> : null}
@@ -28,7 +28,7 @@ export function TGA3AgentInspector({ snapshot, agent, onChanged }: { snapshot: T
 function Overview({ agent }: { agent: TGA3Agent }) {
   const tools = agentTools(agent);
   return <div className="tga3-agent-overview">
-    <Info title="运行身份"><Row label="角色" value={roleLabel(agent)} /><Row label="运行位置" value={agent.runtime_location === "container" ? "隔离容器" : "主服务"} /><Row label="执行后端" value={sdkLabel(agent.sdk)} /><Row label="期望状态" value={stateLabel(agent.desired_state)} /><Row label="实际状态" value={stateLabel(agent.actual_state)} /></Info>
+    <Info title="运行身份"><Row label="角色" value={roleLabel(agent)} /><Row label="运行位置" value={agent.runtime_location === "container" ? "隔离容器" : "主服务"} /><Row label="执行后端" value={sdkLabel(agent.sdk)} /><Row label="期望状态" value={stateLabel(agent.desired_state)} /><Row label="实际状态" value={agentStateLabel(agent)} /></Info>
     <Info title="模型"><Row label="供应商" value={agent.provider_id} /><Row label="模型" value={agent.model_id} /><Row label="协议" value={protocolLabel(agent.protocol)} /></Info>
     {agent.role === "worker" && agent.metadata?.blackboard_cursor !== undefined ? <Info title="黑板同步"><Row label="已确认读取" value={`#${agent.metadata.blackboard_cursor}`} /><Row label="最近读取" value={agent.metadata.blackboard_read_at ? formatTime(new Date(agent.metadata.blackboard_read_at * 1000).toISOString()) : "尚未读取"} /></Info> : null}
     {agent.runtime_location === "container" ? <Info title="容器会话"><Row label="Container" value={agent.container_id || "尚未分配"} /><Row label="Session" value={agent.session_id || "尚未建立"} /></Info> : null}
@@ -58,5 +58,5 @@ function Controls({ snapshot, agent, onChanged }: { snapshot: TGA3RuntimeSnapsho
 
 function Info({ title, children }: { title: string; children: ReactNode }) { return <section className="tga3-info"><h3>{title}</h3><dl>{children}</dl></section>; }
 function Row({ label, value }: { label: string; value: string }) { return <div><dt>{label}</dt><dd>{value}</dd></div>; }
-function agentTools(agent: TGA3Agent) { if (agent.role === "scout") return ["Intel 收集", "Kali 侦察工具", "Shell", "文件系统", "Skills"]; if (agent.role === "reporter") return ["共享黑板只读", "Skills", "Markdown Writeup"]; return ["共享黑板", "Skills", "Shell", "文件系统", "网络工具"]; }
+function agentTools(agent: TGA3Agent) { if (agent.role === "scout") return agent.metadata?.scout_phase === "extracting" ? ["只读 artifacts", "Intel JSON 写入"] : ["原始结果留存", "Kali 侦察工具", "Shell", "文件系统", "Skills"]; if (agent.role === "reporter") return ["共享黑板只读", "Skills", "Markdown Writeup"]; return ["共享黑板", "Skills", "Shell", "文件系统", "网络工具"]; }
 function errorText(reason: unknown) { return reason instanceof Error ? reason.message : "操作失败"; }

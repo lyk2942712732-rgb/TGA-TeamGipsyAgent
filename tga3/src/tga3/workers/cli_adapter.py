@@ -28,6 +28,9 @@ class CliAdapter(AgentAdapter):
     def __init__(self) -> None:
         self.workspace = Path(os.environ.get("TGA3_WORKSPACE", "/workspace"))
         self.state_dir = self.workspace / ".tga3"
+        self.scout_phase = os.environ.get("TGA3_SCOUT_PHASE", "executing")
+        if os.environ.get("TGA3_AGENT_ROLE") == "scout":
+            self.state_dir /= self.scout_phase
         self.state_dir.mkdir(parents=True, exist_ok=True)
         self.pointer = self.state_dir / f"{self.runtime}-session.json"
         self.session_id: str | None = None
@@ -283,7 +286,8 @@ class CodexAdapter(CliAdapter):
     def command(self) -> tuple[list[str], dict[str, str]]:
         if self.protocol != "openai_responses":
             raise ValueError("Codex CLI requires the Responses protocol")
-        cli_home = self.workspace / ".codex"
+        cli_home = self.workspace / (".codex-extract" if os.environ.get("TGA3_AGENT_ROLE") == "scout"
+                                     and self.scout_phase == "extracting" else ".codex")
         cli_home.mkdir(exist_ok=True)
         instructions = (
             os.environ["TGA3_SYSTEM_PROMPT"]
@@ -311,12 +315,15 @@ class CodexAdapter(CliAdapter):
                 'env_key = "CODEX_API_KEY"',
                 'wire_api = "responses"',
             ]
-        if not self.reporter:
+        if not self.reporter and os.environ.get("TGA3_AGENT_ROLE") != "scout":
             config += [
                 "[mcp_servers.blackboard]",
                 f"url = {json.dumps(os.environ['TGA3_BLACKBOARD_MCP_URL'])}",
                 "required = true",
             ]
+        elif not self.reporter and self.scout_phase == "extracting":
+            config += ["[mcp_servers.intel]",
+                       f"url = {json.dumps(os.environ['TGA3_SCOUT_INTEL_MCP_URL'])}", "required = true"]
         if os.environ.get("TGA3_AGENT_ROLE") in {"scout", "worker"}:
             config += ['disabled_tools = ["blackboard_sync"]']
         if self.hook_config():
@@ -341,6 +348,14 @@ class CodexAdapter(CliAdapter):
         elif kind in {"item.started", "item.completed"}:
             item = value.get("item", {})
             item_type = item.get("type")
+            if (kind == "item.completed" and item_type == "command_execution"
+                    and os.environ.get("TGA3_AGENT_ROLE") == "scout" and self.scout_phase == "executing"):
+                evidence = Path(os.environ.get("TGA3_ARTIFACTS", "/artifacts"))
+                evidence.mkdir(parents=True, exist_ok=True)
+                with (evidence / "execution.jsonl").open("a", encoding="utf-8") as output:
+                    output.write(json.dumps({key: item.get(key) for key in
+                                             ("id", "command", "aggregated_output", "exit_code", "status")},
+                                            ensure_ascii=False) + "\n")
             if item_type == "agent_message" and kind == "item.completed":
                 self.final_output = str(item.get("text", ""))
             elif item_type in {"command_execution", "mcp_tool_call", "file_change", "web_search"}:

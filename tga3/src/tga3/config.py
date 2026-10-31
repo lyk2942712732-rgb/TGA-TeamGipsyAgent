@@ -207,11 +207,13 @@ class RuntimeConfig(BaseModel):
     workspace_root: str
     input_root: str
     artifact_root: str
+    intel_root: str = "data/intels"
     writeup_root: str
     skills_root: str
     mcp_instructions: str = Field(min_length=1)
     cli_timeout_seconds: int = Field(default=1800, ge=30, le=86400)
     scout_timeout_seconds: int = Field(default=300, ge=60, le=600)
+    scout_extract_timeout_seconds: int = Field(default=180, ge=30, le=600)
     worker_images: dict[str, str]
     worker_cycle_prompts: WorkerCyclePromptsConfig
     docker: DockerConfig = Field(default_factory=DockerConfig)
@@ -345,6 +347,7 @@ class TGA3Config:
             self.runtime.workspace_root,
             self.runtime.input_root,
             self.runtime.artifact_root,
+            self.runtime.intel_root,
             self.runtime.writeup_root,
             self.runtime.skills_root,
         ):

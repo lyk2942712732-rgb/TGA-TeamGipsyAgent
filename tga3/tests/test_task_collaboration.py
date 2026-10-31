@@ -1,6 +1,7 @@
 import asyncio
 import json
 from pathlib import Path
+from shutil import copytree
 
 import httpx
 import pytest
@@ -10,16 +11,19 @@ from tga3.blackboard import Blackboard
 from tga3.blackboard_delivery import BlackboardDelivery
 from tga3.config import TGA3Config
 from tga3.docker_runtime import FakeContainerRuntime
-from tga3.domain import USER_ACTOR, AgentRun, PublishRequest, RunState, ScoutIntelPublication
-from tga3.errors import ConflictError, FindingRejectedError
-from tga3.scout_intel import ScoutIntelCollector
+from tga3.domain import USER_ACTOR, AgentRun, PublishRequest, RunState
+from tga3.errors import ConflictError, ContractError
+from tga3.scout_intel import ScoutIntelInput, ScoutIntelStore
 from tga3.storage import InMemoryStorage
 from tga3.token_usage import TokenUsageTracker
 
 
 async def setup(tmp_path):
-    config = TGA3Config(Path(__file__).parents[1] / "config")
+    copytree(Path(__file__).parents[1] / "config", tmp_path / "config")
+    config = TGA3Config(tmp_path / "config")
     config.runtime.workspace_root = str(tmp_path / "workspaces")
+    config.runtime.intel_root = str(tmp_path / "intels")
+    config.runtime.artifact_root = str(tmp_path / "artifacts")
     storage = InMemoryStorage()
     task = await storage.create_task("collaboration", "pwn")
     await storage.update_task(task.id, state=RunState.SCOUTING)
@@ -64,36 +68,34 @@ async def test_realtime_user_prompt_bypasses_delivery_interval_for_scout_and_wor
     assert "direct user instructions" in update["context"]
 
 
-async def test_collector_deduplicates_concurrent_retries_and_rejects_bad_evidence(tmp_path):
-    _, storage, task = await setup(tmp_path)
-    collector = ScoutIntelCollector(Blackboard(storage))
-    request = ScoutIntelPublication(
-        task_id=task.id, actor={"agent_id": "scout", "display_name": "Scout", "role": "scout"},
-        kind="intel", body={"claim": "confirmed entry"}, idempotency_key="entry",
-    )
-    await asyncio.gather(*(collector.collect(request) for _ in range(8)))
-    assert (await storage.get_agent(task.id, "scout")).metadata["intel_draft_count"] == 1
+async def test_json_tool_is_phase_gated_and_deduplicates_concurrent_retries(tmp_path):
+    config, storage, task = await setup(tmp_path)
+    store = ScoutIntelStore(config, Blackboard(storage))
+    request = ScoutIntelInput(task_id=task.id, key="entry", claim="confirmed entry")
+    with pytest.raises(ContractError, match="extraction"):
+        await store.write(request)
+    await storage.update_agent(task.id, "scout", metadata={"scout_phase": "extracting"})
+    await asyncio.gather(*(store.write(request) for _ in range(8)))
+    assert len(list(store.directory(task.id).glob("*.json"))) == 1
+    assert not await storage.list_entries(task.id)
+    assert "intel_drafts" not in (await storage.get_agent(task.id, "scout")).metadata
     with pytest.raises(ConflictError):
-        changed = request.body.model_copy(update={"claim": "changed"})
-        await collector.collect(request.model_copy(update={"body": changed}))
-    with pytest.raises(FindingRejectedError):
-        bad = request.model_dump(mode="json")
-        bad["artifact_refs"] = [{"artifact_id": str(task.id), "locator": "missing:1"}]
-        await collector.collect(ScoutIntelPublication.model_validate(bad))
+        await store.write(request.model_copy(update={"claim": "changed"}))
+    with pytest.raises(ContractError, match="Evidence"):
+        await store.write(ScoutIntelInput(task_id=task.id, key="bad", claim="bad", evidence_paths=["../missing"]))
 
 
-async def test_handoff_preserves_collection_order_despite_jsonb_object_key_order(tmp_path):
-    _, storage, task = await setup(tmp_path)
-    collector = ScoutIntelCollector(Blackboard(storage))
+async def test_json_files_survive_store_restart_and_import_in_order_without_duplicates(tmp_path):
+    config, storage, task = await setup(tmp_path)
+    board = Blackboard(storage)
+    store = ScoutIntelStore(config, board)
+    await storage.update_agent(task.id, "scout", metadata={"scout_phase": "extracting"})
     for key in ["z-first", "a-second"]:
-        await collector.collect(ScoutIntelPublication(
-            task_id=task.id, actor={"agent_id": "scout", "display_name": "Scout", "role": "scout"},
-            kind="intel", body={"claim": key}, idempotency_key=key,
-        ))
-    await storage.mutate_agent_metadata(task.id, "scout", lambda metadata: {
-        **metadata, "intel_drafts": dict(sorted(metadata["intel_drafts"].items())),
-    })
-    await collector.flush(task.id)
+        receipt = await store.write(ScoutIntelInput(task_id=task.id, key=key, claim=key))
+        assert receipt["saved"] and receipt["path"].startswith("/intels/")
+    restarted = ScoutIntelStore(config, board)
+    await restarted.flush(task.id)
+    await restarted.flush(task.id)
     assert [entry.body["claim"] for entry in await storage.list_entries(task.id)] == ["z-first", "a-second"]
 
 
@@ -101,6 +103,31 @@ def append(path, record):
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as journal:
         journal.write(json.dumps(record) + "\n")
+
+
+async def test_scout_time_setting_persists_and_rejects_out_of_range_values(tmp_path):
+    config, storage, _ = await setup(tmp_path)
+    app = create_app(config, storage, FakeContainerRuntime())
+    original_models = (tmp_path / "config/models.json").read_bytes()
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.put("/api/v3/config/scout-settings", json={"timeout_seconds": 120})
+        assert response.status_code == 200
+        assert TGA3Config(tmp_path / "config").runtime.scout_timeout_seconds == 120
+        for invalid in [0, 59, 601, 120.5]:
+            rejected = await client.put("/api/v3/config/scout-settings", json={"timeout_seconds": invalid})
+            assert rejected.status_code == 422
+        assert (tmp_path / "config/models.json").read_bytes() == original_models
+
+
+async def test_both_scout_contexts_contribute_to_one_cumulative_usage(tmp_path):
+    config, storage, task = await setup(tmp_path)
+    root = Path(config.runtime.workspace_root) / str(task.id) / "scout"
+    for home, inputs in [(".codex", 100), (".codex-extract", 200)]:
+        append(root / home / "sessions/same-name.jsonl", {"type": "event_msg", "payload": {
+            "type": "token_count", "info": {"total_token_usage": {"input_tokens": inputs, "output_tokens": 20}},
+        }})
+    await TokenUsageTracker(config, storage).refresh_task(task.id)
+    assert (await storage.get_agent(task.id, "scout")).metadata["token_usage"]["total_tokens"] == 340
 
 
 async def test_native_usage_includes_cached_inputs_and_survives_polling_and_tracker_restart(tmp_path):
