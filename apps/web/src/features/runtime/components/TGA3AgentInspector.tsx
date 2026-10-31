@@ -58,5 +58,5 @@ function Controls({ snapshot, agent, onChanged }: { snapshot: TGA3RuntimeSnapsho
 
 function Info({ title, children }: { title: string; children: ReactNode }) { return <section className="tga3-info"><h3>{title}</h3><dl>{children}</dl></section>; }
 function Row({ label, value }: { label: string; value: string }) { return <div><dt>{label}</dt><dd>{value}</dd></div>; }
-function agentTools(agent: TGA3Agent) { if (agent.role === "scout") return ["Intel 发布", "Kali 侦察工具", "Shell", "文件系统", "Skills"]; if (agent.role === "reporter") return ["共享黑板只读", "Skills", "Markdown Writeup"]; return ["共享黑板", "Skills", "Shell", "文件系统", "网络工具"]; }
+function agentTools(agent: TGA3Agent) { if (agent.role === "scout") return ["Intel 收集", "Kali 侦察工具", "Shell", "文件系统", "Skills"]; if (agent.role === "reporter") return ["共享黑板只读", "Skills", "Markdown Writeup"]; return ["共享黑板", "Skills", "Shell", "文件系统", "网络工具"]; }
 function errorText(reason: unknown) { return reason instanceof Error ? reason.message : "操作失败"; }

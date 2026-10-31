@@ -190,7 +190,7 @@ def create_app(
                 {
                     **item.model_dump(mode="json"),
                     "metadata": {k: v for k, v in item.metadata.items()
-                                 if k not in {"token_usage_sources", "intel_drafts"}},
+                                 if k not in {"token_usage_sources", "intel_drafts", "intel_draft_order"}},
                     "display_name": config.agents.agents[item.agent_id].display_name,
                     "role": config.agents.agents[item.agent_id].role,
                     "model_name": historical_model_name(item),

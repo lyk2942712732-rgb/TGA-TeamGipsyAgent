@@ -82,6 +82,21 @@ async def test_collector_deduplicates_concurrent_retries_and_rejects_bad_evidenc
         await collector.collect(ScoutIntelPublication.model_validate(bad))
 
 
+async def test_handoff_preserves_collection_order_despite_jsonb_object_key_order(tmp_path):
+    _, storage, task = await setup(tmp_path)
+    collector = ScoutIntelCollector(Blackboard(storage))
+    for key in ["z-first", "a-second"]:
+        await collector.collect(ScoutIntelPublication(
+            task_id=task.id, actor={"agent_id": "scout", "display_name": "Scout", "role": "scout"},
+            kind="intel", body={"claim": key}, idempotency_key=key,
+        ))
+    await storage.mutate_agent_metadata(task.id, "scout", lambda metadata: {
+        **metadata, "intel_drafts": dict(sorted(metadata["intel_drafts"].items())),
+    })
+    await collector.flush(task.id)
+    assert [entry.body["claim"] for entry in await storage.list_entries(task.id)] == ["z-first", "a-second"]
+
+
 def append(path, record):
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as journal:

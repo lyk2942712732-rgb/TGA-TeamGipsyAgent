@@ -26,8 +26,11 @@ class ScoutIntelCollector:
             existing = drafts.get(request.idempotency_key)
             if existing is not None and existing != payload:
                 raise ConflictError("Intel collection key already belongs to a different observation")
+            order = list(metadata.get("intel_draft_order", drafts))
+            if existing is None:
+                order.append(request.idempotency_key)
             drafts[request.idempotency_key] = payload
-            return {**metadata, "intel_drafts": drafts, "intel_draft_count": len(drafts)}
+            return {**metadata, "intel_drafts": drafts, "intel_draft_order": order, "intel_draft_count": len(drafts)}
 
         run = await self.storage.mutate_agent_metadata(request.task_id, "scout", save)
         return {"collected": True, "published": False, "collected_count": run.metadata["intel_draft_count"],
@@ -38,8 +41,9 @@ class ScoutIntelCollector:
             task_id, "scout", lambda metadata: {**metadata, "intel_collection_closed": True},
         )
         count = 0
-        for payload in run.metadata.get("intel_drafts", {}).values():
-            request = ScoutIntelPublication.model_validate(payload)
+        drafts = run.metadata.get("intel_drafts", {})
+        for key in run.metadata.get("intel_draft_order", drafts):
+            request = ScoutIntelPublication.model_validate(drafts[key])
             await self.board.publish(task_id, request.actor, request.publish_request())
             count += 1
         await self.storage.update_agent(task_id, "scout", metadata={"intel_flushed_count": count})
