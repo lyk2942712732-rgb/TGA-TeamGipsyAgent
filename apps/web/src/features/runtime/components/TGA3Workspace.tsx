@@ -1,14 +1,15 @@
 import { File, FileText, Flag, Grid2X2, Lightbulb, List, Maximize2, MessageSquareText, Search, ShieldCheck, X } from "lucide-react";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import type { TGA3BoardEntry, TGA3TaskEvent, TGA3RuntimeSnapshot } from "../../../runtime/tga3-runtime";
 import { BOARD_KIND_LABELS, EVENT_KIND_LABELS, bodyText, formatTime, listStrings } from "../tga3-view";
 import { TGA3ReportReader } from "./TGA3ReportReader";
+import { tga3RuntimeApi } from "../../../api/tga3-runtime-control";
 
 export type TGA3WorkspaceTab = "blackboard" | "events" | "findings" | "inputs" | "report" | "runtime";
 const TABS: Array<[TGA3WorkspaceTab, string]> = [["blackboard", "共享黑板"], ["events", "执行事件"], ["findings", "Findings"], ["inputs", "输入与文件"], ["report", "报告"], ["runtime", "运行图"]];
 
-export function TGA3Workspace({ snapshot, tab, selectedAgentId, onTab }: { snapshot: TGA3RuntimeSnapshot; tab: TGA3WorkspaceTab; selectedAgentId: string | null; onTab: (tab: TGA3WorkspaceTab) => void }) {
+export function TGA3Workspace({ snapshot, tab, selectedAgentId, onTab, onChanged }: { snapshot: TGA3RuntimeSnapshot; tab: TGA3WorkspaceTab; selectedAgentId: string | null; onTab: (tab: TGA3WorkspaceTab) => void; onChanged?: () => void }) {
   const effectiveTab = TABS.some(([value]) => value === tab) ? tab : "blackboard";
   return <section className="tga3-workspace" aria-label="TGA3 任务工作区">
     <header><div><span>SHARED TASK STATE</span><h2>任务工作区</h2></div><p>黑板是 Agent 之间唯一的协作通道</p></header>
@@ -16,7 +17,7 @@ export function TGA3Workspace({ snapshot, tab, selectedAgentId, onTab }: { snaps
       {TABS.map(([value, label]) => <button key={value} role="tab" aria-selected={effectiveTab === value} onClick={() => onTab(value)}>{label}{tabCount(value, snapshot) ? <small>{tabCount(value, snapshot)}</small> : null}</button>)}
     </div>
     <div className="tga3-workspace-panel" role="tabpanel">
-      {effectiveTab === "blackboard" ? <BlackboardPanel entries={snapshot.blackboard} /> : null}
+      {effectiveTab === "blackboard" ? <BlackboardPanel entries={snapshot.blackboard} taskId={snapshot.task.id} acceptingPrompts={["scouting", "running"].includes(snapshot.task.state)} onChanged={onChanged} /> : null}
       {effectiveTab === "events" ? <EventsPanel messages={snapshot.events} selectedAgentId={selectedAgentId} /> : null}
       {effectiveTab === "findings" ? <FindingsPanel entries={snapshot.blackboard} /> : null}
       {effectiveTab === "inputs" ? <InputsPanel entries={snapshot.blackboard} /> : null}
@@ -26,12 +27,13 @@ export function TGA3Workspace({ snapshot, tab, selectedAgentId, onTab }: { snaps
   </section>;
 }
 
-function BlackboardPanel({ entries }: { entries: TGA3BoardEntry[] }) {
+function BlackboardPanel({ entries, taskId, acceptingPrompts, onChanged }: { entries: TGA3BoardEntry[]; taskId: string; acceptingPrompts: boolean; onChanged?: () => void }) {
   const [kind, setKind] = useState(""); const [query, setQuery] = useState("");
   const [view, setView] = useState<"tiles" | "details">("details");
   const [focused, setFocused] = useState<TGA3BoardEntry | null>(null);
   const visible = useMemo(() => [...entries].reverse().filter((entry) => (!kind || entry.kind === kind) && (!query.trim() || `${entry.topic} ${bodyText(entry)} ${entry.actor.display_name}`.toLowerCase().includes(query.trim().toLowerCase()))), [entries, kind, query]);
   return <div className="tga3-board-panel">
+    <RealtimePrompt taskId={taskId} accepting={acceptingPrompts} onChanged={onChanged} />
     <div className="tga3-panel-toolbar tga3-board-toolbar">
       <label><Search size={14} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索黑板内容" /></label>
       <div className="tga3-board-toolbar-actions">
@@ -48,6 +50,31 @@ function BlackboardPanel({ entries }: { entries: TGA3BoardEntry[] }) {
       : <Empty icon={<ShieldCheck />} title="黑板尚无匹配内容" detail="场景提示、用户输入、Intel、Finding 和最终候选会按顺序写入这里。" />}
     {focused ? <BoardFocus entry={focused} onClose={() => setFocused(null)} /> : null}
   </div>;
+}
+
+function RealtimePrompt({ taskId, accepting, onChanged }: { taskId: string; accepting: boolean; onChanged?: () => void }) {
+  const [text, setText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState("");
+  const [error, setError] = useState("");
+  const key = useRef("");
+  const sending = useRef(false);
+  async function send() {
+    if (sending.current || !text.trim() || !accepting) return;
+    sending.current = true; setBusy(true); setError(""); setNotice("");
+    key.current ||= globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    try {
+      await tga3RuntimeApi.addPrompt(taskId, text.trim(), key.current);
+      setText(""); key.current = ""; setNotice("提示已写入黑板，将在下一次工具调用前送达。"); onChanged?.();
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "提示发送失败，请重试。"); }
+    finally { sending.current = false; setBusy(false); }
+  }
+  return <form className="tga3-realtime-prompt" onSubmit={event => { event.preventDefault(); void send(); }}>
+    <label htmlFor="realtime-prompt">实时提示</label>
+    <textarea id="realtime-prompt" value={text} disabled={!accepting || busy} maxLength={20000} rows={2} onChange={event => { setText(event.target.value); key.current = ""; setNotice(""); setError(""); }} placeholder={accepting ? "补充线索或调整任务方向" : "任务已结束或正在收尾，无法追加提示"} />
+    <div><small>{accepting ? "对 Scout 和两个 Worker 共享，已写入的提示会保留在黑板。" : "当前任务不接收实时提示。"}</small><button className="ref-primary-button" type="submit" disabled={!accepting || busy || !text.trim()}>{busy ? "正在写入…" : "写入黑板"}</button></div>
+    {notice ? <p role="status">{notice}</p> : null}{error ? <p role="alert">{error}</p> : null}
+  </form>;
 }
 
 function BoardTile({ entry, onOpen, focused = false }: { entry: TGA3BoardEntry; onOpen?: () => void; focused?: boolean }) {

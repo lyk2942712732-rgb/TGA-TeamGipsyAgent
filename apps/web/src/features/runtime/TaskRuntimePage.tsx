@@ -51,7 +51,7 @@ export function TaskRuntimePage({ taskId }: { taskId: string }) {
     <TGA3RuntimeGraph snapshot={snapshot} selectedAgentId={selectedAgentId} onSelectAgent={(id) => { setSelectedAgentId(id); setInspectorOpen(true); }} />
     <div className="workbench-runtime-toggle"><button className="ref-secondary-button" aria-expanded={inspectorOpen} onClick={() => setInspectorOpen(value => !value)}>{inspectorOpen ? "收起 Agent 面板" : "展开 Agent 面板"}</button></div>
     <div className={`workbench-runtime-grid ${inspectorOpen ? "" : "is-wide"}`}>
-      <main><TGA3Workspace snapshot={snapshot} tab={tab} selectedAgentId={selectedAgentId} onTab={setTab} /></main>
+      <main><TGA3Workspace snapshot={snapshot} tab={tab} selectedAgentId={selectedAgentId} onTab={setTab} onChanged={refresh} /></main>
       {inspectorOpen ? <div className="workbench-inspector"><TGA3AgentInspector snapshot={snapshot} agent={selectedAgent} onChanged={refresh} /></div> : null}
     </div>
 

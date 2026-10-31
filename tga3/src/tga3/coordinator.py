@@ -29,6 +29,7 @@ from .domain import (
 from .events import TaskEvents
 from .gateway import AgentGateway
 from .provider_profiles import ProviderProtocol
+from .scout_intel import ScoutIntelCollector
 from .storage import Storage
 
 
@@ -41,6 +42,7 @@ class TaskCoordinator:
         self.gateway = AgentGateway(self.handle_agent_event)
         self.events = TaskEvents(storage)
         self.blackboard = Blackboard(storage, self.blackboard_changed)
+        self.scout_intel = ScoutIntelCollector(self.blackboard)
         self.change_handlers: list[Callable[[UUID, int], Awaitable[None]]] = []
 
     def actor_for(self, run: AgentRun) -> Actor:
@@ -134,29 +136,35 @@ class TaskCoordinator:
         try:
             await self.events.announce_status(task_id, actor, AgentState.STARTING.value)
             timed_out = False
+            scout_error = None
             try:
                 async with asyncio.timeout(self.config.runtime.scout_timeout_seconds):
                     await self.containers.scout(LaunchSpec(task_id=task_id, agent=bindings["scout"]), emit)
             except TimeoutError:
                 timed_out = True
+            except Exception as exc:
+                scout_error = str(exc)
             # scout() only returns after the container and its tool processes have stopped.
+            await self.scout_intel.flush(task_id)
             entries = (await self.blackboard.sync(task_id, limit=10_000)).entries
             intel_count = sum(entry.kind == EntryKind.INTEL for entry in entries)
-            state = AgentState.STOPPED if timed_out else AgentState.COMPLETED
-            current = await self.storage.get_agent(task_id, "scout")
+            state = AgentState.FAILED if scout_error else AgentState.STOPPED if timed_out else AgentState.COMPLETED
             await self.storage.update_agent(
                 task_id, "scout", desired_state=state, actual_state=state,
-                metadata={**current.metadata, "finish_reason": "timeout" if timed_out else "completed",
+                last_error=scout_error,
+                metadata={"finish_reason": "error" if scout_error else "timeout" if timed_out else "completed",
                           "intel_count": intel_count},
             )
             await self.events.announce_status(
-                task_id, actor, state.value, "侦察预算已用尽，保留已有成果" if timed_out else "侦察结束"
+                task_id, actor, state.value,
+                f"侦察异常，已交接已有成果：{scout_error}" if scout_error
+                else "侦察预算已用尽，保留已有成果" if timed_out else "侦察结束"
             )
             await self.events.emit(
                 task_id, actor=SYSTEM_ACTOR, kind=EventKind.SYSTEM,
                 text=f"Scout 已交接 {intel_count} 条 Intel，开始启动两个 Worker。"
                      + ("未获得 Intel，Worker 将从题面与原始材料开始。" if not intel_count else ""),
-                payload={"intel_count": intel_count, "timed_out": timed_out},
+                payload={"intel_count": intel_count, "timed_out": timed_out, "error": scout_error},
             )
             # Open the Worker write phase before launching either container.
             await self.storage.update_task(task_id, state=RunState.RUNNING)
@@ -395,6 +403,8 @@ class TaskCoordinator:
     async def stop_task(self, task_id: UUID) -> None:
         await self.cancel_startup(task_id)
         await self.containers.stop(task_id, "scout")
+        if (await self.storage.get_task(task_id)).state == RunState.SCOUTING:
+            await self.scout_intel.flush(task_id)
         workers = await self._worker_runs(task_id)
         for run in workers:
             await self.storage.update_agent(task_id, run.agent_id, desired_state=AgentState.STOPPING)

@@ -1,6 +1,7 @@
 """Real API, isolated storage and deterministic sample data for design verification."""
 import asyncio
 import hashlib
+import json
 import os
 import sys
 import time
@@ -44,6 +45,18 @@ with TemporaryDirectory(prefix="tga-workbench-") as directory:
             state = AgentState.COMPLETED if agent_id == "scout" else AgentState.CREATED if agent_id == "reporter" else AgentState.RUNNING
             await db.upsert_agent(AgentRun(task_id=TASK_ID, agent_id=agent_id, sdk=definition.runtime, provider_id="workbench", model_id=definition.model_id, protocol=definition.protocol, actual_state=state, desired_state=state, metadata={"blackboard_cursor": 3, "blackboard_read_at": time.time()} if definition.role == "worker" else {}))
         user = Actor(agent_id="user", display_name="用户", role="user")
+        for agent_id, inputs, outputs in [("scout", 1000, 200), ("worker-openai", 2000, 400)]:
+            journal = Path(config.runtime.workspace_root) / str(TASK_ID) / agent_id / ".codex/sessions/usage.jsonl"
+            journal.parent.mkdir(parents=True, exist_ok=True)
+            journal.write_text(json.dumps({"type": "event_msg", "payload": {"type": "token_count", "info": {
+                "total_token_usage": {"input_tokens": inputs, "output_tokens": outputs},
+            }}}) + "\n")
+        journal = Path(config.runtime.workspace_root) / str(TASK_ID) / "worker-claude/.claude/projects/-workspace/usage.jsonl"
+        journal.parent.mkdir(parents=True, exist_ok=True)
+        journal.write_text(json.dumps({"type": "assistant", "message": {"id": "fixture-1", "usage": {
+            "input_tokens": 500, "cache_read_input_tokens": 400, "cache_creation_input_tokens": 100,
+            "output_tokens": 300,
+        }}}) + "\n")
         scout = Actor(agent_id="scout", display_name="Scout", role="scout")
         codex = Actor(agent_id="worker-openai", display_name="OpenAI Worker", role="worker")
         claude = Actor(agent_id="worker-claude", display_name="Claude Worker", role="worker")

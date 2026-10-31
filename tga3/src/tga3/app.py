@@ -16,7 +16,7 @@ from .blackboard_delivery import BlackboardDelivery
 from .config import AgentsConfig, ModelConfig, ModelsConfig, RuntimeConfig, ScenesConfig, TGA3Config
 from .coordinator import TaskCoordinator
 from .docker_runtime import ContainerRuntime
-from .domain import AgentState, RunState
+from .domain import USER_ACTOR, AgentState, PublishRequest, RunState
 from .errors import TGA3Error
 from .host_agents import Automation, CliHostModel, HostModel
 from .mcp_server import build_mcp
@@ -24,6 +24,7 @@ from .model_discovery import discover_provider_models
 from .provider_profiles import PROVIDER_PROFILES, ProviderProtocol
 from .skills import MAX_ARCHIVE_BYTES, SkillCatalog
 from .storage import Storage
+from .token_usage import TokenUsageTracker
 
 
 class ModelRequest(BaseModel):
@@ -42,6 +43,12 @@ class ModelEnabledRequest(BaseModel):
 class SkillPackageRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     files: dict[str, str] = Field(min_length=1)
+
+
+class RealtimePromptRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    text: str = Field(min_length=1, max_length=20000)
+    idempotency_key: str = Field(min_length=1, max_length=180)
 
 
 def create_app(
@@ -65,6 +72,7 @@ def create_app(
     coordinator.change_handlers.append(automation.changed)
     mcp = build_mcp(config, coordinator.blackboard)
     delivery = BlackboardDelivery(config, storage, coordinator.blackboard)
+    usage = TokenUsageTracker(config, storage)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
@@ -167,6 +175,7 @@ def create_app(
     @api.get("/tasks/{task_id}")
     async def get_task(task_id: UUID) -> dict[str, Any]:
         task = await storage.get_task(task_id)
+        await usage.refresh_task(task_id)
         agents = await storage.list_agents(task_id)
 
         def historical_model_name(agent) -> str:
@@ -180,6 +189,8 @@ def create_app(
             "agents": [
                 {
                     **item.model_dump(mode="json"),
+                    "metadata": {k: v for k, v in item.metadata.items()
+                                 if k not in {"token_usage_sources", "intel_drafts"}},
                     "display_name": config.agents.agents[item.agent_id].display_name,
                     "role": config.agents.agents[item.agent_id].role,
                     "model_name": historical_model_name(item),
@@ -206,6 +217,18 @@ def create_app(
     @api.get("/tasks/{task_id}/blackboard")
     async def blackboard(task_id: UUID, after_seq: int = 0, limit: int = 500) -> dict[str, Any]:
         return (await coordinator.blackboard.sync(task_id, after_seq=after_seq, limit=limit)).model_dump(mode="json")
+
+    @api.post("/tasks/{task_id}/blackboard/prompts")
+    async def realtime_prompt(task_id: UUID, body: RealtimePromptRequest) -> dict[str, Any]:
+        task = await storage.get_task(task_id)
+        if task.state not in {RunState.SCOUTING, RunState.RUNNING}:
+            raise ValueError("当前任务已停止接收实时提示")
+        entry = await coordinator.blackboard.publish(
+            task_id, USER_ACTOR,
+            PublishRequest(kind="user_prompt", topic="realtime", body={"text": body.text},
+                           idempotency_key=f"realtime:{body.idempotency_key}"),
+        )
+        return entry.model_dump(mode="json")
 
     @api.get("/tasks/{task_id}/events")
     async def events(task_id: UUID, after_seq: int = 0, limit: int = 500) -> list[dict[str, Any]]:
@@ -282,7 +305,7 @@ def create_app(
     @api.get("/agent-definitions")
     async def agent_definitions() -> list[dict[str, Any]]:
         tools = {
-            "scout": ["Shell", "Read", "Edit", "Kali 侦察工具", "blackboard.sync", "blackboard.publish Intel",
+            "scout": ["Shell", "Read", "Edit", "Kali 侦察工具", "黑板自动同步", "scout_collect_intel",
                       "artifact.register"],
             "worker-openai": [
                 "Shell", "Read", "Edit", "原生黑板同步 Hook", "blackboard.publish",

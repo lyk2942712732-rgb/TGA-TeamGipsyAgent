@@ -53,3 +53,27 @@ test("all workbench pages, native task interactions, saved Solver settings and d
   await page.screenshot({ path: testInfo.outputPath("report-reading.png"), fullPage: true });
   expect(errors).toEqual([]);
 });
+
+test("token totals expand inline and realtime prompts persist on the shared blackboard", async ({ page }, testInfo) => {
+  await page.goto("/tasks/00000000-0000-4000-8000-000000001042/runtime");
+  const toggle = page.getByRole("button", { name: "展开各智能体 Token 用量" });
+  await expect(toggle).toContainText("4,900");
+  await toggle.click();
+  const breakdown = page.getByRole("group", { name: "各智能体累计 Token" });
+  await expect(breakdown).toContainText("1,200");
+  await expect(breakdown).toContainText("2,400");
+  await expect(breakdown).toContainText("1,300");
+  await expect(breakdown).toContainText("未上报");
+  await page.getByRole("textbox", { name: "实时提示" }).fill("联调提示：先复用 Scout 材料，再验证入口。");
+  await page.getByRole("button", { name: "写入黑板" }).click();
+  await expect(page.locator(".tga3-board-card").filter({ hasText: "联调提示：先复用 Scout 材料，再验证入口。" })).toHaveCount(1);
+  await page.screenshot({ path: testInfo.outputPath("tokens-and-realtime-prompt.png"), fullPage: true });
+  await page.reload();
+  await expect(page.locator(".tga3-board-card").filter({ hasText: "联调提示：先复用 Scout 材料，再验证入口。" })).toHaveCount(1);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await toggle.click();
+  await expect(breakdown).toBeVisible();
+  expect(await page.locator(".tga3-token-usage").evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
+  expect(await page.locator(".tga3-realtime-prompt").evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
+  await page.screenshot({ path: testInfo.outputPath("tokens-mobile.png"), fullPage: true });
+});

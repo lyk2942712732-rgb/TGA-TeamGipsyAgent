@@ -49,7 +49,7 @@ class CliAdapter(AgentAdapter):
         self.stderr: deque[str] = deque(maxlen=80)
 
     def hook_config(self) -> dict:
-        if os.environ.get("TGA3_AGENT_ROLE") != "worker":
+        if os.environ.get("TGA3_AGENT_ROLE") not in {"scout", "worker"}:
             return {}
         command = "python -m tga3.workers.blackboard_hook"
         return {"hooks": {event: [{"hooks": [{"type": "command", "command": command, "timeout": 15}]}]
@@ -258,7 +258,7 @@ class CliAdapter(AgentAdapter):
             detail = detail.replace(self.api_key, "[redacted]") if self.api_key else detail
             failure = self.failure.replace(self.api_key, "[redacted]") if self.api_key else self.failure
             raise CliError(f"{self.runtime} failed (exit={process.returncode}): {failure}\n{detail}")
-        if os.environ.get("TGA3_AGENT_ROLE") == "worker":
+        if os.environ.get("TGA3_AGENT_ROLE") in {"scout", "worker"}:
             from .blackboard_hook import checkpoint
             # The completed model turn confirms it consumed the last injected context.
             # Acknowledgement must never fetch fresh content outside a tool opportunity.
@@ -317,7 +317,7 @@ class CodexAdapter(CliAdapter):
                 f"url = {json.dumps(os.environ['TGA3_BLACKBOARD_MCP_URL'])}",
                 "required = true",
             ]
-        if os.environ.get("TGA3_AGENT_ROLE") == "worker":
+        if os.environ.get("TGA3_AGENT_ROLE") in {"scout", "worker"}:
             config += ['disabled_tools = ["blackboard_sync"]']
         if self.hook_config():
             (cli_home / "hooks.json").write_text(json.dumps(self.hook_config()), encoding="utf-8")

@@ -198,7 +198,7 @@ def publication_contract(role: str | None = None) -> str:
             )
         parts.append(f"{kind}: body={{{body_fields}}}; {artifact_rule}")
     return (
-        "Scout publishes intel only; Workers publish finding/final_candidate only. "
+        "Scout collects intel drafts for automatic system handoff; Workers publish finding/final_candidate only. "
         "Publication contract generated from Pydantic. Select the request branch by kind; "
         "extra fields are forbidden. " + " | ".join(parts)
     )

@@ -12,10 +12,12 @@ from mcp.server.transport_security import TransportSecuritySettings
 
 from .blackboard import Blackboard
 from .config import TGA3Config
-from .domain import Actor, AgentPublishRequest, Artifact, publication_contract
+from .domain import Actor, AgentPublishRequest, Artifact, ScoutIntelPublication, publication_contract
+from .scout_intel import ScoutIntelCollector
 
 
 def build_mcp(config: TGA3Config, blackboard: Blackboard) -> FastMCP:
+    collector = ScoutIntelCollector(blackboard)
     hostname = urlsplit(config.runtime.blackboard_mcp_url).hostname
     if not hostname:
         raise ValueError("blackboard_mcp_url must be an absolute URL with a hostname")
@@ -57,6 +59,8 @@ def build_mcp(config: TGA3Config, blackboard: Blackboard) -> FastMCP:
         configured = config.agents.agents.get(identity.agent_id)
         if configured is None or configured.role != identity.role:
             raise ValueError("actor must match a configured Scout or Worker")
+        if isinstance(request, ScoutIntelPublication):
+            return await collector.collect(request)
         if request.kind.value == "final_candidate":
             run = await blackboard.storage.get_agent(request.task_id, identity.agent_id)
             task = await blackboard.storage.get_task(request.task_id)
@@ -68,6 +72,18 @@ def build_mcp(config: TGA3Config, blackboard: Blackboard) -> FastMCP:
             request.publish_request(),
         )
         return entry.model_dump(mode="json")
+
+    @mcp.tool()
+    async def scout_collect_intel(request: ScoutIntelPublication) -> dict[str, Any]:
+        """Immediately save one Scout observation durably; the system publishes it when scouting ends.
+
+        Use request={kind:intel,task_id,actor,topic,body:{claim,detail},idempotency_key,artifact_refs:[]}.
+        This collects Intel only, without writing the blackboard. Never wait until the end to collect.
+        """
+        configured = config.agents.agents.get(request.actor.agent_id)
+        if configured is None or configured.role != "scout" or request.actor.agent_id != "scout":
+            raise ValueError("only the configured Scout can collect Intel")
+        return await collector.collect(request)
 
     @mcp.tool()
     async def artifact_register(

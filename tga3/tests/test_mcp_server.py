@@ -32,7 +32,9 @@ async def test_mcp_publish_tool_exposes_one_discriminated_worker_contract():
     )
 
     tools = await mcp.list_tools()
-    assert {tool.name for tool in tools} == {"blackboard_sync", "blackboard_publish", "artifact_register"}
+    assert {tool.name for tool in tools} == {
+        "blackboard_sync", "blackboard_publish", "artifact_register", "scout_collect_intel",
+    }
     publish = next(tool for tool in tools if tool.name == "blackboard_publish")
     request = publish.inputSchema["properties"]["request"]
 

@@ -3,7 +3,7 @@
 两个 Worker 在独立 Kali 容器中并行运行 Codex CLI 和 Claude Code CLI。
 出现最终候选后，控制层等待收尾宽限期、停止并回收 Worker，固定黑板快照，
 再用与 Codex Worker 相同的镜像启动一次性 Reporter 容器。
-Scout 先使用独立 Codex CLI 容器侦察并发布 Intel，结束或达到预算后再启动两个 Worker；最后由 Reporter 汇总。
+Scout 先使用独立 Codex CLI 容器侦察，随发现随收集 Intel；控制层在侦察结束或达到预算后统一写入黑板，再启动两个 Worker；最后由 Reporter 汇总。
 
 ```text
 Web UI → FastAPI 控制层 → PostgreSQL / 共享黑板 / MCP
@@ -25,6 +25,9 @@ CLI 管理私有会话、工具执行和上下文压缩；不再使用 Agents SD
 - `.tga3/*-session.json` 只保存 CLI 会话指针；PG `agent_runs.metadata.cli_session_id` 保存对应标识。
 - `agent_runs.session_id` 仍是控制通道标识，不用于 CLI resume。
 - Scout 默认总预算 300 秒，由 runtime.scout_timeout_seconds 配置为 60–600 秒；其证据只读挂载到 Worker 的 /recon。
+- Scout 通过 `scout_collect_intel` 即时保存 `claim/detail`，草稿持久化到 PostgreSQL `agent_runs.metadata.intel_drafts`（JSONB）。收集不会提前发布；正常结束、超时、异常或用户停止时由控制层关闭收集区并自动写入黑板。稳定的 `idempotency_key` 保证重试不重复；旧版 Scout 的 `blackboard_publish` 调用也转为收集，不直接发布。系统不会把计划或未经确认的自然语言说明猜测为 Intel。
+- 任务顶部显示累计 Token，点击向右展开 Scout、两个 Worker 和 Reporter 各自用量。控制层增量读取各任务的 Codex/Claude 原生 JSONL，用量及去重检查点持久化在 Agent metadata；重新打开历史任务会回填现存日志。总数为输入加输出（包含缓存输入，缓存命中不重复相加），没有原生用量记录时显示“未上报”，不估算。
+- 共享黑板支持实时用户提示；Scout 和两个 Worker 的原生钩子在下一个工具调用前注入这些提示，绕过普通同步间隔。运行中的工具会先完成；收尾和终态任务不再接收新提示。
 - PostgreSQL 保存任务、共享黑板、只读执行事件和证据/报告索引。
 - `/inputs` 只读、Worker `/artifacts` 可写、Reporter `/artifacts` 与快照只读。
 - Worker 通过 HTTP MCP 访问黑板、注册证据和读取 Skills。发布协议维持 Intel / Finding / final_candidate。
@@ -71,6 +74,7 @@ Worker 不在 Compose 中常驻；创建任务时由 Docker SDK 动态启动，�
 - `POST /api/v3/tasks`：multipart 创建任务；字段为 `title`、`scene_id`、`prompt` 和零到多个 `files`，写完初始黑板后启动 Worker。
 - `POST /api/v3/tasks/{id}/files`：追加共享只读输入文件。
 - `GET /api/v3/tasks/{id}/blackboard`：黑板增量。
+- `POST /api/v3/tasks/{id}/blackboard/prompts`：写入实时提示，JSON 为 `{text, idempotency_key}`；仅在侦察/运行阶段接收。
 - `GET /api/v3/tasks/{id}/events` 与 `/events/stream`：只读执行事件和 SSE。
 - `POST /api/v3/tasks/{id}/agents/{agent}/pause|resume|model`：单独控制容器 Worker。
 - `GET /api/v3/tasks/{id}/writeup/download`：下载最终 Markdown writeup。

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { TGA3RuntimeSnapshot } from "../../runtime/tga3-runtime";
@@ -7,6 +7,7 @@ const useTGA3Runtime = vi.hoisted(() => vi.fn());
 vi.mock("./use-tga3-runtime", () => ({ useTGA3Runtime: (...args: unknown[]) => useTGA3Runtime(...args) }));
 vi.mock("../../api/tga3-tasks", async (original) => ({ ...await original<typeof import("../../api/tga3-tasks")>(), fetchAgentModelOptions: vi.fn(async () => ({ scene_id: "pwn", agents: [], models: [] })) }));
 import { TaskRuntimePage } from "./TaskRuntimePage";
+import { tga3RuntimeApi } from "../../api/tga3-runtime-control";
 
 const snapshot: TGA3RuntimeSnapshot = {
   task: { id: "task", title: "Native TGA3 task", scene_id: "pwn", state: "running", blackboard_seq: 3, event_seq: 2, created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:01:00Z" },
@@ -33,6 +34,46 @@ describe("TaskRuntimePage", () => {
     expect(screen.getByRole("region", { name: "实时运行图" })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: /共享黑板/ })).toBeInTheDocument();
     expect(screen.getByText("已发现入口")).toBeInTheDocument();
+  });
+  it("expands cumulative reported tokens to the right and distinguishes missing usage", () => {
+    useTGA3Runtime.mockReturnValue({ snapshot: { ...snapshot, agents: snapshot.agents.map((agent, index) => index === 0 ? {
+      ...agent, metadata: { token_usage: { input_tokens: 1000, output_tokens: 200, cached_input_tokens: 500, cache_write_input_tokens: 0, total_tokens: 1200, reported: true, updated_at: "2026-01-01" } },
+    } : agent) }, connection: "live", refresh: vi.fn() });
+    render(<MemoryRouter><TaskRuntimePage taskId="task" /></MemoryRouter>);
+    const toggle = screen.getByRole("button", { name: "展开各智能体 Token 用量" });
+    expect(toggle).toHaveTextContent("1,200");
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(toggle);
+    const breakdown = screen.getByRole("group", { name: "各智能体累计 Token" });
+    expect(within(breakdown).getByText("1,200")).toBeInTheDocument();
+    expect(within(breakdown).getByText("未上报")).toBeInTheDocument();
+    fireEvent.click(toggle);
+    expect(screen.queryByRole("group", { name: "各智能体累计 Token" })).not.toBeInTheDocument();
+  });
+  it("writes a realtime prompt and refreshes only after it is saved", async () => {
+    const addPrompt = vi.spyOn(tga3RuntimeApi, "addPrompt").mockResolvedValue({});
+    const refresh = vi.fn();
+    useTGA3Runtime.mockReturnValue({ snapshot, connection: "live", refresh });
+    render(<MemoryRouter><TaskRuntimePage taskId="task" /></MemoryRouter>);
+    fireEvent.change(screen.getByRole("textbox", { name: "实时提示" }), { target: { value: "先检查附件" } });
+    fireEvent.click(screen.getByRole("button", { name: "写入黑板" }));
+    await waitFor(() => expect(addPrompt).toHaveBeenCalledWith("task", "先检查附件", expect.any(String)));
+    await waitFor(() => expect(refresh).toHaveBeenCalledOnce());
+    expect(screen.getByRole("textbox", { name: "实时提示" })).toHaveValue("");
+    addPrompt.mockRestore();
+  });
+  it("retains failed prompt text and disables submission for terminal tasks", async () => {
+    const addPrompt = vi.spyOn(tga3RuntimeApi, "addPrompt").mockRejectedValue(new Error("连接失败"));
+    const page = render(<MemoryRouter><TaskRuntimePage taskId="task" /></MemoryRouter>);
+    fireEvent.change(screen.getByRole("textbox", { name: "实时提示" }), { target: { value: "保留这个提示" } });
+    fireEvent.click(screen.getByRole("button", { name: "写入黑板" }));
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("连接失败"));
+    expect(screen.getByRole("textbox", { name: "实时提示" })).toHaveValue("保留这个提示");
+    useTGA3Runtime.mockReturnValue({ snapshot: { ...snapshot, task: { ...snapshot.task, state: "cancelled" } }, connection: "offline", refresh: vi.fn() });
+    page.rerender(<MemoryRouter><TaskRuntimePage taskId="task" /></MemoryRouter>);
+    expect(screen.getByRole("textbox", { name: "实时提示" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "写入黑板" })).toBeDisabled();
+    addPrompt.mockRestore();
   });
   it("switches shared blackboard entries between details and square tiles", () => {
     render(<MemoryRouter initialEntries={["/tasks/task/runtime?tab=blackboard"]}><TaskRuntimePage taskId="task" /></MemoryRouter>);

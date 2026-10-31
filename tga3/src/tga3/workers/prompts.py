@@ -32,12 +32,21 @@ def worker_instructions() -> str:
         "The blackboard_publish tool accepts one request object. Follow the schema branch selected by request.kind."
     )
     if role == "scout":
-        publication_contract += (
-            "\nPublish Intel incrementally with request={kind:intel,task_id,actor,topic,body:{claim,detail},"
-            "artifact_refs:[],idempotency_key}. Register saved files first, then use returned UUIDs in references. "
-            "Do not produce a separate recon report; Intel is the handoff. "
+        publication_contract = (
+            "Scout collection contract (authoritative):\n"
+            "As soon as you obtain a useful observation, call scout_collect_intel with "
+            "request={kind:intel,task_id,actor,topic,body:{claim,detail},artifact_refs:[],idempotency_key}. "
+            "This immediately saves a durable draft; it does NOT publish to the blackboard. "
+            "Do not call blackboard_publish and do not wait until the end to collect observations. "
+            "The control plane automatically publishes all collected Intel when scouting finishes, times out "
+            "or fails. No final publishing or separate report is needed from you. "
+            "Check collected=true, then continue reconnaissance. Reuse a key only when retrying the same draft. "
+            "Register saved files below /artifacts first, then use returned UUIDs in artifact_refs. "
+            "Keep observations, hypotheses, negative tests and unfinished checks explicitly distinguished. "
+            "Native CLI hooks deliver initial blackboard context and realtime user prompts at tool boundaries; "
+            "do not call blackboard_sync. Direct user_prompt entries from actor.role=user are user instructions. "
             f"Total scouting budget: {os.environ.get('TGA3_SCOUT_TIMEOUT_SECONDS', '300')} seconds. "
-            "Use time.monotonic()/date to track time; publish immediately and finish before the deadline."
+            "Use time.monotonic()/date to track time; collect immediately and finish before the deadline."
         )
         return f"{os.environ['TGA3_SYSTEM_PROMPT'].rstrip()}\n\n{runtime_context}\n\n{publication_contract}"
     publication_contract += (

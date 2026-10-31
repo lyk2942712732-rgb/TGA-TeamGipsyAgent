@@ -4,11 +4,15 @@ export type TGA3Task = {
   id: string; title: string; scene_id: string; state: string; blackboard_seq: number; event_seq: number;
   final_snapshot_seq?: number | null; created_at: string; updated_at: string;
 };
+export type TGA3TokenUsage = {
+  input_tokens: number; output_tokens: number; cached_input_tokens: number;
+  cache_write_input_tokens: number; total_tokens: number; reported: boolean; updated_at: string;
+};
 export type TGA3Agent = {
   agent_id: string; sdk: string; desired_state: string; actual_state: string; provider_id: string; model_id: string;
   model_name?: string; protocol: string; display_name: string; role: string; runtime_location: string; container_id?: string | null;
   session_id?: string | null; updated_at: string; last_error?: string | null;
-  metadata?: { blackboard_cursor?: number; blackboard_read_at?: number; cli_session_id?: string };
+  metadata?: { blackboard_cursor?: number; blackboard_read_at?: number; cli_session_id?: string; token_usage?: TGA3TokenUsage };
 };
 export type TGA3Actor = { agent_id: string; display_name: string; role: string; sdk?: string | null; model?: string | null };
 export type TGA3BoardEntry = {

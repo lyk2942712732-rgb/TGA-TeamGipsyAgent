@@ -50,8 +50,7 @@ class CliHostModel:
             if method == "container.started":
                 await self.storage.update_agent(task_id, "reporter", container_id=params["container_id"])
             elif method == "agent.session":
-                run = await self.storage.get_agent(task_id, "reporter")
-                await self.storage.update_agent(task_id, "reporter", metadata={**run.metadata, **params})
+                await self.storage.update_agent(task_id, "reporter", metadata=params)
             else:
                 await self.events.emit(
                     task_id,

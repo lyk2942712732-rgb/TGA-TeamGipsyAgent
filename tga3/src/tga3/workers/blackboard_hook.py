@@ -11,7 +11,7 @@ import httpx
 
 
 def checkpoint(event: dict) -> dict:
-    if os.environ.get("TGA3_AGENT_ROLE") != "worker":
+    if os.environ.get("TGA3_AGENT_ROLE") not in {"scout", "worker"}:
         return {}
     state_dir = Path(os.environ.get("TGA3_WORKSPACE", "/workspace")) / ".tga3"
     state_dir.mkdir(parents=True, exist_ok=True)

@@ -26,8 +26,9 @@ async def scout() -> None:
         print(json.dumps({"method": method, "params": params}, ensure_ascii=False), flush=True)
 
     output = await CodexAdapter().run_cycle(
-        "开始本题侦察。先读取黑板与原始输入，实际使用适合本题的现成工具，及时发布 Intel。"
-        "在总预算内完成交接；不要生成独立简报，也不要进入持续工作循环。", emit
+        "开始本题侦察。先阅读钩子注入的黑板与原始输入，实际使用适合本题的现成工具。"
+        "每获得一条有用信息，立即调用 scout_collect_intel 保存；结束时系统自动统一写入黑板。"
+        "不要调用 blackboard_publish，不要等待最后再收集，不要生成独立简报。", emit
     )
     if output.strip():
         await emit("agent.output.delta", {"text": output})

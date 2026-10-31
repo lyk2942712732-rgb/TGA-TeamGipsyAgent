@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections import defaultdict
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any, Protocol
 from uuid import UUID, uuid4
@@ -42,7 +42,11 @@ class Storage(Protocol):
     async def get_agent(self, task_id: UUID, agent_id: str) -> AgentRun: ...
     async def list_agents(self, task_id: UUID) -> list[AgentRun]: ...
     async def update_agent(self, task_id: UUID, agent_id: str, **changes: Any) -> AgentRun: ...
+    async def mutate_agent_metadata(
+        self, task_id: UUID, agent_id: str, transform: Callable[[dict[str, Any]], dict[str, Any]]
+    ) -> AgentRun: ...
     async def register_artifact(self, artifact: Artifact) -> Artifact: ...
+    async def validate_artifact_refs(self, task_id: UUID, refs: Sequence[ArtifactRef]) -> None: ...
     async def register_input_file(self, item: InputFile) -> InputFile: ...
     async def publish(self, task_id: UUID, actor: Actor, request: PublishRequest) -> BlackboardEntry: ...
     async def list_entries(
@@ -182,6 +186,16 @@ class InMemoryStorage:
         run = AgentRun.model_validate({**run.model_dump(), **changes})
         self.agents[(task_id, agent_id)] = run
         return run
+
+    async def mutate_agent_metadata(self, task_id, agent_id, transform) -> AgentRun:
+        async with self._locks[task_id]:
+            current = await self.get_agent(task_id, agent_id)
+            return await self.update_agent(task_id, agent_id, metadata=transform(dict(current.metadata)))
+
+    async def validate_artifact_refs(self, task_id, refs) -> None:
+        _validate_publish(task_id=task_id, entries=[], artifacts=list(self.artifacts.values()), request=PublishRequest(
+            kind="intel", body={"claim": "validate evidence"}, artifact_refs=list(refs), idempotency_key="validate",
+        ))
 
     async def register_artifact(self, artifact: Artifact) -> Artifact:
         await self.get_task(artifact.task_id)
@@ -466,6 +480,29 @@ class PostgresStorage:
         if row is None:
             raise NotFoundError(f"agent not found: {task_id}/{agent_id}")
         return _agent(row)
+
+    async def mutate_agent_metadata(self, task_id, agent_id, transform) -> AgentRun:
+        async with self.pool.acquire() as conn, conn.transaction():
+            row = await conn.fetchrow(
+                "SELECT * FROM agent_runs WHERE task_id=$1 AND agent_id=$2 FOR UPDATE", task_id, agent_id,
+            )
+            if row is None:
+                raise NotFoundError(f"agent not found: {task_id}/{agent_id}")
+            metadata = transform(dict(_agent(row).metadata))
+            row = await conn.fetchrow(
+                "UPDATE agent_runs SET metadata=$3::jsonb,updated_at=now() "
+                "WHERE task_id=$1 AND agent_id=$2 RETURNING *", task_id, agent_id, _json(metadata),
+            )
+            return _agent(row)
+
+    async def validate_artifact_refs(self, task_id, refs) -> None:
+        if refs:
+            ids = [ref.artifact_id for ref in refs]
+            rows = await self.pool.fetch(
+                "SELECT id FROM artifacts WHERE task_id=$1 AND available AND id=ANY($2::uuid[])", task_id, ids,
+            )
+            if {row["id"] for row in rows} != set(ids):
+                raise FindingRejectedError("one or more artifacts are unavailable or belong to another task")
 
     async def register_artifact(self, artifact: Artifact) -> Artifact:
         row = await self.pool.fetchrow(
