@@ -189,7 +189,9 @@ class InMemoryStorage:
     async def mutate_agent_metadata(self, task_id, agent_id, transform) -> AgentRun:
         async with self._locks[task_id]:
             current = await self.get_agent(task_id, agent_id)
-            updated = current.model_copy(update={"metadata": transform(dict(current.metadata)), "updated_at": utc_now()})
+            updated = current.model_copy(update={
+                "metadata": transform(dict(current.metadata)), "updated_at": utc_now(),
+            })
             self.agents[task_id, agent_id] = updated
             return updated
 
