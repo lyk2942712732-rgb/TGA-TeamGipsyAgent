@@ -106,7 +106,8 @@ async def test_claude_max_turns_is_resumable(cli_env, monkeypatch):
 async def test_cli_cancellation_stops_the_process(cli_env):
     script = cli_env / "sleep.py"
     script.write_text(
-        "import os,time;from pathlib import Path;Path('pid').write_text(str(os.getpid()));time.sleep(120)"
+        "import os,time;from pathlib import Path;Path('pid.tmp').write_text(str(os.getpid()));"
+        "Path('pid.tmp').replace('pid');time.sleep(120)"
     )
     adapter = CodexAdapter()
     adapter.command = lambda: ([sys.executable, str(script)], dict(os.environ))
@@ -362,7 +363,8 @@ async def test_cancellation_also_stops_tool_in_separate_session(cli_env):
     script.write_text("""import os,subprocess,sys,time
 from pathlib import Path
 child=subprocess.Popen([sys.executable,'-c','import time;time.sleep(120)'],start_new_session=True)
-Path('child-pid').write_text(str(child.pid))
+Path('child-pid.tmp').write_text(str(child.pid))
+Path('child-pid.tmp').replace('child-pid')
 time.sleep(120)
 """)
     adapter = CodexAdapter()
