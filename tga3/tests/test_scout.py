@@ -3,12 +3,14 @@ from pathlib import Path
 
 from pydantic import SecretStr
 
+from tga3.action_logs import read_action_log
 from tga3.config import TGA3Config
 from tga3.coordinator import TaskCoordinator
 from tga3.docker_runtime import FakeContainerRuntime
 from tga3.domain import RunState
 from tga3.scout_intel import ScoutIntelInput
 from tga3.storage import InMemoryStorage
+from tga3.workers.action_journal import ActionJournal
 
 
 class TwoPhaseScout(FakeContainerRuntime):
@@ -32,16 +34,22 @@ class TwoPhaseScout(FakeContainerRuntime):
             await self.launch(spec)
         try:
             if spec.scout_phase == "executing":
-                root = self.config.task_path(spec.task_id, "logs", "scout")
+                root = self.config.task_path(spec.task_id, "workspaces", "scout")
                 root.mkdir(parents=True)
-                (root / "probe.txt").write_text("verified result")
+                journal = ActionJournal(self.config.task_path(spec.task_id, "logs", "scout"),
+                                        identity={"task_id": str(spec.task_id), "agent_id": "scout"},
+                                        output_directory=root)
+                journal.record("probe", "shell", result={"aggregated_output": "verified result"}, status="completed")
+                self.action = read_action_log(journal.directory)["actions"][0]
                 self.executing.set()
                 await self.finish_execution.wait()
                 if self.execution_error:
                     raise RuntimeError("simulated execution failure")
             else:
                 await self.coordinator.scout_intel.write(ScoutIntelInput(
-                    task_id=spec.task_id, key="first", claim="verified result", evidence_paths=["probe.txt"],
+                    task_id=spec.task_id, key="first", claim="verified result",
+                    evidence_paths=[self.action["artifact"]["output_path"]],
+                    source_action_ids=[self.action["action_id"]],
                 ))
                 self.extracting.set()
                 await self.finish_extraction.wait()

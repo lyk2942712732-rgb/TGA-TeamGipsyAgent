@@ -8,8 +8,9 @@ from pathlib import Path
 from tempfile import NamedTemporaryFile
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from .action_logs import read_action_log, resolve_action_sources
 from .blackboard import Blackboard
 from .config import TGA3Config
 from .domain import Actor, RunState, ScoutIntelPublication
@@ -25,14 +26,36 @@ class ScoutIntelInput(BaseModel):
     detail: str = Field(default="", max_length=8000)
     topic: str = Field(default="general", min_length=1, max_length=200)
     evidence_paths: list[str] = Field(default_factory=list, max_length=30)
+    source_action_ids: list[str] = Field(default_factory=list, max_length=100)
 
 
-class ScoutIntelDocument(BaseModel):
+class ScoutIntelDocument(ScoutIntelPublication):
     model_config = ConfigDict(extra="forbid")
-    schema_version: int = Field(default=1, ge=1, le=1)
+    schema_version: int = Field(default=2, ge=2, le=2)
     sequence: int = Field(ge=1)
-    input: ScoutIntelInput
-    publication: ScoutIntelPublication
+    key: str
+    evidence_paths: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def flatten_legacy_document(cls, value):
+        if isinstance(value, dict) and "input" in value and "publication" in value:
+            request = ScoutIntelInput.model_validate(value["input"])
+            publication = ScoutIntelPublication.model_validate(value["publication"])
+            return {**publication.model_dump(), "schema_version": 2, "sequence": value["sequence"],
+                    "key": request.key, "evidence_paths": request.evidence_paths}
+        return value
+
+    @property
+    def input(self) -> ScoutIntelInput:
+        return ScoutIntelInput(task_id=self.task_id, key=self.key, claim=self.body.claim, detail=self.body.detail,
+                               topic=self.topic, evidence_paths=self.evidence_paths,
+                               source_action_ids=self.source_action_ids)
+
+    @property
+    def publication(self) -> ScoutIntelPublication:
+        return ScoutIntelPublication.model_validate({field: getattr(self, field)
+                                                     for field in ScoutIntelPublication.model_fields})
 
 
 class ScoutIntelStore:
@@ -62,6 +85,10 @@ class ScoutIntelStore:
             run = await self.storage.get_agent(request.task_id, "scout")
             if task.state != RunState.SCOUTING or run.metadata.get("scout_phase") != "extracting":
                 raise ContractError("Intel JSON can be written only during Scout extraction")
+            sources = resolve_action_sources(self.config.task_path(request.task_id, "logs", "scout"),
+                                             request.task_id, "scout", request.source_action_ids,
+                                             request.evidence_paths)
+            request = request.model_copy(update={"source_action_ids": sources})
             documents = self.documents(request.task_id)
             for document in documents:
                 if document.input.key == request.key:
@@ -71,12 +98,13 @@ class ScoutIntelStore:
             configured = self.config.agents.agents["scout"]
             actor = Actor(agent_id="scout", display_name=configured.display_name, role="scout",
                           sdk=run.sdk, model=run.model_id)
-            root = self.config.task_path(request.task_id, "logs", "scout")
+            root = self.config.task_path(request.task_id, "workspaces", "scout")
             references = await register_evidence(self.board, request.task_id, actor, root, request.evidence_paths)
             publication = ScoutIntelPublication(
                 task_id=request.task_id, actor=actor.model_dump(), kind="intel", topic=request.topic,
                 body={"claim": request.claim, "detail": request.detail}, artifact_refs=references,
                 idempotency_key=f"scout-json:{request.key}",
+                source_action_ids=request.source_action_ids,
             )
             sequence = max((item.sequence for item in documents), default=0) + 1
             document = ScoutIntelDocument(sequence=sequence, input=request, publication=publication)
@@ -110,13 +138,13 @@ class ScoutIntelStore:
             documents = self.documents(task_id)
             for document in documents:
                 await self.board.publish(task_id, document.publication.actor, document.publication.publish_request())
-            root = self.config.task_path(task_id, "logs", "scout")
-            records = {path.relative_to(root).as_posix() for path in root.rglob("*.json")}
-            covered = {str(Path(relative).as_posix()).removeprefix("./")
-                       for document in documents for relative in document.input.evidence_paths}
+            actions = read_action_log(self.config.task_path(task_id, "logs", "scout"),
+                                      task_id=task_id, agent_id="scout")["actions"]
+            records = {action["action_id"] for action in actions}
+            covered = {source for document in documents for source in document.input.source_action_ids}
             await self.storage.update_agent(task_id, "scout", metadata={
-                "intel_imported_count": len(documents), "log_json_count": len(records),
-                "log_json_covered_count": len(records & covered),
-                "log_json_uncovered": sorted(records - covered),
+                "intel_imported_count": len(documents), "action_count": len(records),
+                "action_covered_count": len(records & covered),
+                "action_uncovered": sorted(records - covered),
             })
             return len(documents)

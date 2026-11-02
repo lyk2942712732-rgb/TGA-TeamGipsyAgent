@@ -33,7 +33,7 @@ async def test_scout_mcp_exposes_only_json_writer_and_no_publication_tool():
     tools = await build_scout_mcp(config, ScoutIntelStore(config, board)).list_tools()
     assert [tool.name for tool in tools] == ["scout_write_intel"]
     fields = tools[0].inputSchema["$defs"]["ScoutIntelInput"]["properties"]
-    assert set(fields) == {"task_id", "key", "claim", "detail", "topic", "evidence_paths"}
+    assert set(fields) == {"task_id", "key", "claim", "detail", "topic", "evidence_paths", "source_action_ids"}
 
 
 async def test_mcp_publish_tool_exposes_one_discriminated_worker_contract():
@@ -79,7 +79,7 @@ async def test_finding_publication_registers_private_evidence_and_deduplicates_r
     mcp = build_mcp(config, board)
     hashes = []
     for agent_id in ("worker-openai", "worker-claude"):
-        root = config.task_path(task.id, "workspaces", agent_id) / "art"
+        root = config.task_path(task.id, "workspaces", agent_id)
         root.mkdir(parents=True)
         (root / "proof.txt").write_text(agent_id)
         request = {
@@ -106,7 +106,7 @@ async def test_finding_rejects_invalid_paths_before_registering_any_evidence(tmp
     config.runtime.task_root = str(tmp_path / "tasks")
     storage = InMemoryStorage()
     task = await storage.create_task("evidence", "pwn")
-    root = config.task_path(task.id, "workspaces", "worker-openai") / "art"
+    root = config.task_path(task.id, "workspaces", "worker-openai")
     root.mkdir(parents=True)
     (root / "proof.txt").write_text("proof")
     mcp = build_mcp(config, Blackboard(storage))
@@ -143,8 +143,8 @@ async def test_finding_rejects_symlink_to_another_workers_evidence(tmp_path):
     config.runtime.task_root = str(tmp_path / "tasks")
     storage = InMemoryStorage()
     task = await storage.create_task("symlink", "pwn")
-    root = config.task_path(task.id, "workspaces", "worker-openai") / "art"
-    other = config.task_path(task.id, "workspaces", "worker-claude") / "art"
+    root = config.task_path(task.id, "workspaces", "worker-openai")
+    other = config.task_path(task.id, "workspaces", "worker-claude")
     root.mkdir(parents=True)
     other.mkdir(parents=True)
     (other / "proof.txt").write_text("other worker")
@@ -161,3 +161,32 @@ async def test_finding_rejects_symlink_to_another_workers_evidence(tmp_path):
     with pytest.raises(Exception, match="symlink"):
         await mcp.call_tool("blackboard_publish", {"request": request})
     assert not storage.artifacts
+
+
+async def test_finding_infers_action_sources_from_its_workspace_evidence(tmp_path):
+    from tga3.action_logs import read_action_log
+    from tga3.workers.action_journal import ActionJournal
+
+    config = TGA3Config(Path(__file__).parents[1] / "config")
+    config.runtime.task_root = str(tmp_path / "tasks")
+    storage = InMemoryStorage()
+    task = await storage.create_task("action sources", "pwn")
+    root = config.task_path(task.id, "workspaces", "worker-openai")
+    logs = config.task_path(task.id, "logs", "worker-openai")
+    journal = ActionJournal(logs, identity={"task_id": str(task.id), "agent_id": "worker-openai"},
+                            output_directory=root)
+    journal.record("item_0", "shell", result={"aggregated_output": "verified"}, status="completed")
+    action = read_action_log(logs)["actions"][0]
+    assert action["action_id"].startswith("worker-openai-action-")
+    mcp = build_mcp(config, Blackboard(storage))
+    request = {"kind": "finding", "task_id": str(task.id),
+               "actor": {"agent_id": "worker-openai", "display_name": "Worker", "role": "worker"},
+               "body": {"claim": "verified"}, "evidence_paths": [action["artifact"]["output_path"]],
+               "idempotency_key": "source-fixture"}
+    result = result_payload(await mcp.call_tool("blackboard_publish", {"request": request}))
+    assert result["source_action_ids"] == [action["action_id"]]
+    assert (await storage.list_entries(task.id))[0].source_action_ids == [action["action_id"]]
+    request.update(source_action_ids=["worker-claude-action-unknown"], idempotency_key="invalid-source")
+    with pytest.raises(Exception, match="unknown action"):
+        await mcp.call_tool("blackboard_publish", {"request": request})
+    assert len(storage.artifacts) == 1

@@ -21,10 +21,12 @@ def worker_instructions() -> str:
         f"- actor: {json.dumps(actor, ensure_ascii=False, separators=(',', ':'))}\n"
         "For every blackboard tool call, use the exact task_id and actor above. "
         "Never invent a placeholder task ID or actor."
-        " Your CLI working directory is /workspace/art. Your private output directory is /workspace/art; "
+        " Your CLI working directory is /workspace. Your private output directory is /workspace; "
         "The runtime stores structured execution records in /logs. "
-        "Each finished log has result_path pointing to its matching saved result body and output_paths listing "
-        "generated files, all relative to /workspace/art. Reuse these files as evidence when sufficient. "
+        f"Each action in /logs/{actor['agent_id']}-actions.json has artifact.output_path "
+        "pointing to its saved result body "
+        "and artifact.attachments listing "
+        "generated files, all relative to /workspace. Reuse these files as evidence when sufficient. "
         "Use native CLI file/list/search tools "
         "to discover /skills and read each package's SKILL.md, then follow its referenced documents."
     )
@@ -36,23 +38,23 @@ def worker_instructions() -> str:
     if role == "scout":
         runtime_context = (
             f"Authoritative task_id: {os.environ['TGA3_TASK_ID']}. "
-            "Working directory: /workspace/art. Inputs: /inputs (read-only). Output files: "
-            "/workspace/art. Execution records: /logs. "
-            "Log result_path and output_paths point to files relative to /workspace/art. "
+            "Working directory: /workspace. Inputs: /inputs (read-only). Output files: "
+            "/workspace. Execution records: /logs. "
+            "Action artifact paths are relative to /workspace; output bodies are saved in /workspace/result/. "
             "Skills: /skills, read SKILL.md only when useful."
         )
         extracting = os.environ.get("TGA3_SCOUT_PHASE") == "extracting"
         if extracting:
             instructions = (
                 "Current phase: SECOND ROUND, Intel extraction in the SAME CLI session and container. "
-                "Read existing /logs JSON records and files in /workspace/art. "
+                "Read the actions array in /logs/scout-actions.json and files in /workspace. "
                 "Do not probe targets, rerun reconnaissance, modify evidence or install tools. "
                 "Extract verified observations, scoped negative results and clearly labelled unfinished checks. "
-                "Summarize EVERY log JSON, including failed and unfinished actions, into Intel. "
-                "Include its relative JSON filename in evidence_paths so coverage can be verified. "
+                "Summarize EVERY action record, including failed and unfinished actions, into Intel. "
+                "Include its unique action_id in source_action_ids so per-action coverage can be verified. "
                 "Save each coherent Intel with scout_write_intel using "
                 "request={task_id:<exact task UUID>,key:<stable unique key>,claim:<fact>,detail:<support>,"
-                "topic:<topic>,evidence_paths:[<paths relative to /logs>]}. "
+                "topic:<topic>,source_action_ids:[<action_id>],evidence_paths:[<paths relative to /workspace>]}. "
                 "No actor, kind, artifact UUID or JSON formatting is needed. evidence_paths may be empty. "
                 "Check saved=true; the tool writes JSON to /intels and the system imports it after this phase. "
                 "Save all supported Intel, then finish. Do not publish to the blackboard. "
@@ -62,11 +64,11 @@ def worker_instructions() -> str:
             instructions = (
                 "Current phase: FIRST ROUND, reconnaissance execution only. "
                 "Use native tools to inspect inputs and the target, and preserve reusable raw "
-                "files in /workspace/art/. "
+                "files in /workspace/. "
                 "Do not summarize Intel, call Intel tools, publish to the blackboard or write a recon report. "
-                "Tool calls and their output are automatically saved as JSON records under /logs; "
+                "Tool calls and their output are automatically saved as records in /logs/scout-actions.json; "
                 "do not modify those reserved records. Save downloads, extracted files and "
-                "scripts under /workspace/art/. "
+                "scripts under /workspace/. "
                 "Use /workspace for scratch work. Then continue in this same session to extract Intel from logs. "
                 "Track time and limit individual commands; basic reconnaissance is enough, then finish. "
                 f"Execution budget: {os.environ.get('TGA3_SCOUT_TIMEOUT_SECONDS', '300')} seconds."
@@ -88,7 +90,7 @@ def worker_instructions() -> str:
             "actor": actor,
             "topic": "<specific result topic>",
             "body": {"claim": "<verified fact>", "detail": "<verified supporting details>"},
-            "evidence_paths": ["<evidence file relative to /workspace/art>"],
+            "evidence_paths": ["<evidence file relative to /workspace>"],
             "idempotency_key": "<unique key for this entry>",
         },
     }
@@ -119,7 +121,7 @@ def worker_instructions() -> str:
         "it does not mean you should add a nested finding object. "
         "Every publication requires a non-empty idempotency_key in request, not in body. "
         "Use a different key for each new logical entry and keep the same key when retrying that entry. "
-        "Save evidence under /workspace/art, then publish finding with evidence_paths relative to that directory. "
+        "Save evidence under /workspace, then publish finding with evidence_paths relative to that directory. "
         "The server validates paths and registers evidence automatically. Provide paths, never evidence UUIDs. "
         "For final_candidate, use the body shown above, reference published Finding entry UUIDs in finding_ids "
         "and omit evidence_paths. "

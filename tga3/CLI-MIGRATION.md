@@ -61,7 +61,7 @@ Reporter 的快照、证据、输入和 Skills 只读挂载，不连接可写黑
 
 ## 目录与工具边界
 
-CLI 使用控制层传入的工作目录（当前为容器内 `/workspace/art`），不会自动创建容器间隔离。
+CLI 使用控制层传入的工作目录（当前为容器内 `/workspace`），不会自动创建容器间隔离。
 宿主机为每个任务维护以下目录；两个 Worker 的相同容器内路径指向不同宿主目录：
 
 ```text
@@ -76,7 +76,7 @@ skills/                             → 全部 /skills（只读）
 ```
 
 Worker 无法通过挂载访问对方工作目录或证据目录；双方通过公共黑板共享已验证结论。
-Reporter 从 `/evidence/<agent-id>/` 读取执行记录、从 `/evidence-files/<agent-id>/` 读取生成文件；报告写入 `/workspace/art/writeup.md`。
+Reporter 从 `/evidence/<agent-id>/` 读取执行记录、从 `/evidence-files/<agent-id>/` 读取生成文件；报告写入 `/workspace/result/writeup.md`。
 
 文件读写、搜索、Shell 与 Skills 文档读取直接使用 CLI 原生能力，删除重复的 Skills MCP 工具。
 Worker MCP 只保留 `blackboard_sync` 和 `blackboard_publish`；Finding 在 evidence_paths 中提供相对路径，服务端按发布 Worker
@@ -106,7 +106,7 @@ npm run build
 `runtime.scout_timeout_seconds` 默认 300，允许 60–600 秒；控制层限制包含容器启动的总时间，
 超时先终止并回收 Scout 再启动 Worker，已有 Intel 与证据保留。正常结束但没有 Intel 时
 提示 Worker 从原始材料开始；执行错误则任务失败，不悄悄绕过错误。
-Scout 的 /logs 独立保存在 tasks/<task-id>/logs/scout；各智能体生成文件保存在 tasks/<task-id>/workspaces/<agent-id>/art。已移除 /recon。
+Scout 的 /logs/scout-actions.json 位于 tasks/<task-id>/logs/scout；各智能体生成文件保存在 tasks/<task-id>/workspaces/<agent-id>。已移除 /recon。
 Reporter 只读查看 Scout 与两个 Worker 的证据。只有 Intel 作为交接，不生成额外侦察简报。
 
 ## Worker 连续执行与黑板同步

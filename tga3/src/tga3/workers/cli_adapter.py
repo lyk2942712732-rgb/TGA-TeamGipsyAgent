@@ -28,7 +28,7 @@ class CliAdapter(AgentAdapter):
 
     def __init__(self) -> None:
         self.workspace = Path(os.environ.get("TGA3_WORKSPACE", "/workspace"))
-        self.output_dir = self.workspace / "art"
+        self.output_dir = self.workspace
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.state_dir = self.workspace / ".tga3"
         self.scout_phase = os.environ.get("TGA3_SCOUT_PHASE", "executing")
@@ -305,7 +305,7 @@ class CodexAdapter(CliAdapter):
             + "\nRead /workspace/report-input.json and read-only records in /evidence and files in /evidence-files. "
             "Skills are in /skills; read SKILL.md and referenced files directly. "
             "Records and files are grouped by agent. Save your own output files in "
-            "/workspace/art/. Do not contact targets or change evidence. "
+            "/workspace/result/. Do not contact targets or change evidence. "
             "Use only recorded commands/code for reproduction steps; if absent, state they were not recorded. "
             "Never invent example commands. Return only Markdown."
             if self.reporter

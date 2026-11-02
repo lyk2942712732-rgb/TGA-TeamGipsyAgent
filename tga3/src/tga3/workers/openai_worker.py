@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 
+from ..action_logs import read_action_log
 from .cli_adapter import CodexAdapter
 from .prompts import worker_instructions
 from .runtime import WorkerSession
@@ -19,7 +20,7 @@ async def report() -> None:
     )
     if not output.strip():
         raise RuntimeError("Reporter returned an empty report")
-    Path("/workspace/art/writeup.md").write_text(output, encoding="utf-8")
+    Path("/workspace/result/writeup.md").write_text(output, encoding="utf-8")
 
 
 async def scout() -> None:
@@ -42,21 +43,23 @@ async def scout() -> None:
         result = {"finish_reason": "completed", "error": None, "budget_seconds": budget}
         try:
             async with asyncio.timeout(budget):
-                prompt = ("执行第一轮基础侦察，将生成文件保存到 /workspace/art。执行记录由系统保存到 /logs。"
-                          "达到基础侦察目标后结束本轮；随后会在当前会话继续整理 Intel。")
+                prompt = ("现在只执行第一轮基础侦察，将生成文件保存到 /workspace。"
+                          "系统将正文保存到 /workspace/result，动作汇集到 /logs/scout-actions.json。"
+                          "完成后立即结束本轮回复，等待运行时下一条消息切换第二轮，不自行提取 Intel。")
                 while True:
                     if phase == "extracting":
-                        missing = uncovered_logs(adapter.journal.directory, intels)
+                        missing = uncovered_actions(adapter.journal.directory, intels)
                         prompt = (worker_instructions()
-                                  + "\n继续当前会话的第二轮。逐条概括以下尚未覆盖的 log JSON，"
-                                  "每条至少对应一份 Intel，evidence_paths 必须引用该 JSON 文件。"
+                                  + "\n继续当前会话的第二轮。逐条概括以下尚未覆盖的 action，"
+                                  "每条至少对应一份 Intel，source_action_ids 引用动作 ID。"
+                                  "evidence_paths 提供 artifact 中相对于 /workspace 的正文或附件路径。"
                                   "包括失败、超时和未完成记录，准确描述实际结果，不能推断为目标不存在漏洞。"
                                   "使用 scout_write_intel 保存；不要重新侦察。\n"
                                   + json.dumps(missing, ensure_ascii=False))
                     output = await adapter.run_cycle(prompt, emit)
                     if output.strip():
                         await emit("agent.output.delta", {"text": output})
-                    if phase == "executing" or not uncovered_logs(adapter.journal.directory, intels):
+                    if phase == "executing" or not uncovered_actions(adapter.journal.directory, intels):
                         break
         except TimeoutError:
             result["finish_reason"] = "timeout"
@@ -68,14 +71,13 @@ async def scout() -> None:
         temporary.replace(path)
 
 
-def uncovered_logs(logs: Path, intels: Path) -> list[str]:
+def uncovered_actions(logs: Path, intels: Path) -> list[str]:
     covered = set()
     for path in intels.glob("*.json"):
         document = json.loads(path.read_text(encoding="utf-8"))
-        covered.update(Path(relative).as_posix().removeprefix("./")
-                       for relative in document.get("input", {}).get("evidence_paths", []))
-    return [path.relative_to(logs).as_posix() for path in sorted(logs.rglob("*.json"))
-            if path.relative_to(logs).as_posix() not in covered]
+        covered.update(document.get("source_action_ids", document.get("input", {}).get("source_action_ids", [])))
+    return [action["action_id"] for action in read_action_log(logs)["actions"]
+            if action["action_id"] not in covered]
 
 
 def main() -> None:

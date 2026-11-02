@@ -160,3 +160,30 @@ async def test_scout_reuses_container_after_execution_and_cleans_up_after_extrac
     assert stops == [(task_id, "scout")]
     assert [method for method, _ in events] == ["container.started", "agent.session"]
     assert task_id not in runtime._scouts
+
+
+def test_reporter_mounts_only_result_bodies_and_manifest_attachments(tmp_path):
+    from tga3.workers.action_journal import ActionJournal
+
+    config = TGA3Config(Path(__file__).parents[1] / "config")
+    config.runtime.task_root = str(tmp_path / "tasks")
+    for provider in config.models.providers:
+        provider.api_keys[0].api_key = SecretStr("test-key")
+    task_id = uuid4()
+    root = config.task_path(task_id, "workspaces", "worker-openai")
+    root.mkdir(parents=True)
+    journal = ActionJournal(config.task_path(task_id, "logs", "worker-openai"),
+                            identity={"task_id": str(task_id), "agent_id": "worker-openai"}, output_directory=root)
+    journal.record("download", "shell")
+    (root / "download.bin").write_bytes(b"fixture")
+    (root / ".codex").mkdir()
+    (root / ".codex/config.toml").write_text("private CLI settings")
+    journal.record("download", "shell", result={"aggregated_output": "downloaded"}, status="completed")
+    containers = FakeContainers()
+    runtime = DockerContainerRuntime.__new__(DockerContainerRuntime)
+    runtime.config, runtime.client = config, SimpleNamespace(containers=containers)
+    runtime._launch_sync(LaunchSpec(task_id=task_id, agent=config.resolve_agent("reporter")))
+    mounts = {value["bind"]: value["mode"] for value in containers.kwargs["volumes"].values()}
+    assert mounts["/evidence-files/worker-openai/result"] == "ro"
+    assert mounts["/evidence-files/worker-openai/download.bin"] == "ro"
+    assert not any(".codex" in path for path in mounts)

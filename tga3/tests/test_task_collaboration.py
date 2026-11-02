@@ -180,21 +180,60 @@ async def test_usage_retries_partial_lines_and_counts_new_sessions_separately(tm
     assert (await storage.get_agent(task.id, "scout")).metadata["token_usage"]["total_tokens"] == 26
 
 
-async def test_intel_relative_log_paths_are_registered_and_linked_by_server(tmp_path):
+async def test_intel_actions_and_workspace_paths_are_registered_and_linked_by_server(tmp_path):
+    from tga3.action_logs import read_action_log
+    from tga3.workers.action_journal import ActionJournal
+
     config, storage, task = await setup(tmp_path)
     board = Blackboard(storage)
     store = ScoutIntelStore(config, board)
-    root = config.task_path(task.id, "logs", "scout")
-    root.mkdir(parents=True)
-    (root / "action-1.json").write_text('{"result":{"output":"observed"}}')
+    root = config.task_path(task.id, "workspaces", "scout")
+    logs = config.task_path(task.id, "logs", "scout")
+    journal = ActionJournal(logs, identity={"task_id": str(task.id), "agent_id": "scout"}, output_directory=root)
+    journal.record("probe", "shell", result={"aggregated_output": "observed"}, status="completed")
+    action = read_action_log(logs)["actions"][0]
     await storage.update_agent(task.id, "scout", metadata={"scout_phase": "extracting"})
     for key in ("first", "second"):
-        await store.write(ScoutIntelInput(task_id=task.id, key=key, claim=key, evidence_paths=["action-1.json"]))
+        await store.write(ScoutIntelInput(task_id=task.id, key=key, claim=key,
+                                         source_action_ids=[action["action_id"]],
+                                         evidence_paths=[action["artifact"]["output_path"]]))
     assert len(storage.artifacts) == 1
     assert not await storage.list_entries(task.id)
     await store.flush(task.id)
     entries = await storage.list_entries(task.id)
     assert len(entries) == 2
+    assert entries[0].source_action_ids == entries[1].source_action_ids == [action["action_id"]]
+    saved = json.loads(next(store.directory(task.id).glob("*.json")).read_text(encoding="utf-8"))
+    assert saved["source_action_ids"] == [action["action_id"]]
+    assert saved["body"]["claim"] in {"first", "second"}
+    assert "input" not in saved and "publication" not in saved
     assert storage.links[entries[0].id] == storage.links[entries[1].id]
-    assert Path(next(iter(storage.artifacts.values())).storage_path) == root / "action-1.json"
-    assert (await storage.get_agent(task.id, "scout")).metadata["log_json_covered_count"] == 1
+    assert Path(next(iter(storage.artifacts.values())).storage_path) == root / action["artifact"]["output_path"]
+    assert (await storage.get_agent(task.id, "scout")).metadata["action_covered_count"] == 1
+
+
+async def test_scout_coverage_counts_actions_inside_one_prefixed_manifest(tmp_path):
+    from tga3.action_logs import read_action_log
+    from tga3.workers.action_journal import ActionJournal
+
+    config, storage, task = await setup(tmp_path)
+    board = Blackboard(storage)
+    store = ScoutIntelStore(config, board)
+    logs = config.task_path(task.id, "logs", "scout")
+    root = config.task_path(task.id, "workspaces", "scout")
+    journal = ActionJournal(logs, identity={"task_id": str(task.id), "agent_id": "scout"}, output_directory=root)
+    for index in range(2):
+        journal.record("item_0", "shell", result={"aggregated_output": str(index)}, status="completed")
+    actions = read_action_log(logs)["actions"]
+    assert len(list(logs.glob("*.json"))) == 1
+    assert all(action["action_id"].startswith("scout-action-") for action in actions)
+    await storage.update_agent(task.id, "scout", metadata={"scout_phase": "extracting"})
+    for index, action in enumerate(actions):
+        await store.write(ScoutIntelInput(task_id=task.id, key=str(index), claim=str(index),
+                                         source_action_ids=[action["action_id"]],
+                                         evidence_paths=[action["artifact"]["output_path"]]))
+        await store.flush(task.id)
+        metadata = (await storage.get_agent(task.id, "scout")).metadata
+        assert metadata["action_count"] == 2
+        assert metadata["action_covered_count"] == index + 1
+        assert len(metadata["action_uncovered"]) == 1 - index

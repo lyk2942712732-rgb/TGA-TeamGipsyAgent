@@ -229,6 +229,7 @@ class InMemoryStorage:
                 topic=request.topic,
                 body=request.validated_body().model_dump(mode="json"),
                 idempotency_key=request.idempotency_key,
+                source_action_ids=request.source_action_ids,
             )
             self.entries[task_id].append(entry)
             if request.artifact_refs:
@@ -322,6 +323,7 @@ def _entry(row: Any) -> BlackboardEntry:
     data = dict(row)
     data["actor"] = _object(data["actor"])
     data["body"] = _object(data["body"])
+    data["source_action_ids"] = _object(data.get("source_action_ids", []))
     # ``actor_id`` is a denormalized PostgreSQL-only column used by the
     # idempotency index.  It is intentionally not part of the public blackboard
     # contract, whose canonical actor identity lives in ``actor``.
@@ -345,7 +347,16 @@ class PostgresStorage:
     async def connect(cls, dsn: str, *, min_size: int = 1, max_size: int = 10) -> PostgresStorage:
         import asyncpg
 
-        return cls(await asyncpg.create_pool(dsn, min_size=min_size, max_size=max_size))
+        pool = await asyncpg.create_pool(dsn, min_size=min_size, max_size=max_size)
+        try:
+            async with pool.acquire() as connection:
+                await connection.execute("ALTER TABLE IF EXISTS blackboard_entries "
+                                         "ADD COLUMN IF NOT EXISTS source_action_ids JSONB "
+                                         "NOT NULL DEFAULT '[]'::jsonb")
+        except Exception:
+            await pool.close()
+            raise
+        return cls(pool)
 
     async def close(self) -> None:
         await self.pool.close()
@@ -566,8 +577,9 @@ class PostgresStorage:
                 raise NotFoundError(f"task not found: {task_id}")
             entry_id = uuid4()
             row = await conn.fetchrow(
-                """INSERT INTO blackboard_entries(id,task_id,seq,actor,actor_id,kind,topic,body,idempotency_key)
-                   VALUES($1,$2,$3,$4::jsonb,$5,$6,$7,$8::jsonb,$9) RETURNING *""",
+                """INSERT INTO blackboard_entries(
+                       id,task_id,seq,actor,actor_id,kind,topic,body,idempotency_key,source_action_ids)
+                   VALUES($1,$2,$3,$4::jsonb,$5,$6,$7,$8::jsonb,$9,$10::jsonb) RETURNING *""",
                 entry_id,
                 task_id,
                 seq,
@@ -577,6 +589,7 @@ class PostgresStorage:
                 request.topic,
                 _json(request.validated_body().model_dump(mode="json")),
                 request.idempotency_key,
+                _json(request.source_action_ids),
             )
             for ref in request.artifact_refs:
                 await conn.execute(

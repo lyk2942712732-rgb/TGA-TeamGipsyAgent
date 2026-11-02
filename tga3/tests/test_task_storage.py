@@ -1,4 +1,3 @@
-import json
 from pathlib import Path
 from uuid import uuid4
 
@@ -6,7 +5,6 @@ import pytest
 
 from tga3.config import TGA3Config
 from tga3.task_storage import KINDS, migration_plan, relocate_path
-from tga3.workers.action_journal import ActionJournal
 
 
 def configuration(tmp_path):
@@ -55,30 +53,6 @@ def test_migration_refuses_overlapping_roots(tmp_path):
         migration_plan(config)
 
 
-def test_execution_record_keeps_pending_state_full_output_and_redacts_credentials(tmp_path):
-    journal = ActionJournal(tmp_path, identity={"agent_id": "worker"}, secret='key"private')
-    journal.record("tool-1", "shell", inputs={"command": "print fixture"})
-    path = next(tmp_path.glob("*.json"))
-    pending = json.loads(path.read_text(encoding="utf-8"))
-    assert pending["status"] == "started"
-    output = "x" * 20_000 + 'key"private'
-    journal.record("tool-1", "shell", result={"output": output, "exit_code": 7}, status="failed")
-    record = json.loads(path.read_text(encoding="utf-8"))
-    assert len(list(tmp_path.glob("*.json"))) == 1
-    assert record["input"]["command"] == "print fixture"
-    assert record["status"] == "failed" and record["result"]["exit_code"] == 7
-    assert record["result"]["output"] == "x" * 20_000 + "[redacted]"
-    # A later CLI cycle can reuse a native tool id without overwriting history.
-    journal.record("tool-1", "shell", inputs={"command": "next cycle"})
-    assert len(list(tmp_path.glob("*.json"))) == 2
-
-
-def test_read_only_extraction_does_not_write_execution_records(tmp_path):
-    journal = ActionJournal(tmp_path / "readonly", identity={}, enabled=False)
-    journal.record("tool-1", "read", result={"text": "fixture"}, status="completed")
-    assert not (tmp_path / "readonly").exists()
-
-
 def test_migration_renames_task_artifacts_to_logs_and_relocates_evidence_paths(tmp_path):
     config = configuration(tmp_path)
     task_id = uuid4()
@@ -93,70 +67,3 @@ def test_migration_renames_task_artifacts_to_logs_and_relocates_evidence_paths(t
     config.task_path(task_id, "logs").mkdir()
     with pytest.raises(FileExistsError):
         migration_plan(config)
-
-
-
-def test_execution_log_tracks_modified_and_partial_outputs_without_claiming_unchanged_files(tmp_path):
-    output = tmp_path / "art"
-    output.mkdir()
-    (output / "existing.txt").write_text("old")
-    (output / "untouched.txt").write_text("untouched")
-    journal = ActionJournal(tmp_path / "logs", identity={}, output_directory=output)
-    journal.record("redirect", "shell", inputs={"command": "fixture > existing.txt"})
-    (output / "existing.txt").write_text("new body")
-    (output / "nested").mkdir()
-    (output / "nested/new.txt").write_text("partial body")
-    journal.interrupt_pending()
-    record = json.loads(next((tmp_path / "logs").glob("*.json")).read_text(encoding="utf-8"))
-    assert record["status"] == "interrupted"
-    assert record["output_paths"] == ["existing.txt", "nested/new.txt"]
-    assert not journal.pending
-
-
-def test_delayed_cli_start_event_still_records_files_created_by_a_fast_command(tmp_path):
-    output = tmp_path / "art"
-    output.mkdir()
-    journal = ActionJournal(tmp_path / "logs", identity={}, output_directory=output)
-    (output / "fast.txt").write_text("written before the start event was consumed")
-    journal.record("fast", "shell", inputs={"command": "fixture > fast.txt"})
-    journal.record("fast", "shell", result={"output": ""}, status="completed")
-    record = json.loads(next((tmp_path / "logs").glob("*.json")).read_text(encoding="utf-8"))
-    assert record["output_paths"] == ["fast.txt"]
-
-
-@pytest.mark.parametrize("result,body,extension", [
-    ({"type": "command_execution", "aggregated_output": "stdout body"}, "stdout body", ".txt"),
-    ({"type": "tool_result", "content": "claude tool body"}, "claude tool body", ".txt"),
-    ({"type": "mcp_tool_call", "result": {"content": [{"text": "saved"}]}},
-     {"content": [{"text": "saved"}]}, ".json"),
-])
-def test_each_action_has_a_matching_result_body_file(tmp_path, result, body, extension):
-    output = tmp_path / "art"
-    journal = ActionJournal(tmp_path / "logs", identity={}, output_directory=output)
-    journal.record("action", "fixture", inputs={"command": "fixture"})
-    journal.record("action", "fixture", result=result, status="completed")
-    path = next((tmp_path / "logs").glob("action-*.json"))
-    record = json.loads(path.read_text(encoding="utf-8"))
-    assert record["result_path"] == path.stem + ".result" + extension
-    saved = (output / record["result_path"]).read_text(encoding="utf-8")
-    assert (json.loads(saved) if extension == ".json" else saved) == body
-    assert record["result"] == result
-    journal.record("next", "fixture", result={"aggregated_output": "next body"}, status="completed")
-    records = [json.loads(p.read_text(encoding="utf-8")) for p in (tmp_path / "logs").glob("*.json")]
-    assert all(record["output_paths"] == [] for record in records)
-    assert len({record["result_path"] for record in records}) == 2
-
-
-def test_saved_result_body_redacts_credentials_and_interrupted_action_has_explicit_status(tmp_path):
-    output = tmp_path / "art"
-    journal = ActionJournal(tmp_path / "logs", identity={}, secret='key"private', output_directory=output)
-    journal.record("done", "shell", result={"aggregated_output": 'output key"private'}, status="completed")
-    record = json.loads(next((tmp_path / "logs").glob("*.json")).read_text(encoding="utf-8"))
-    assert (output / record["result_path"]).read_text(encoding="utf-8") == "output [redacted]"
-    journal.record("partial", "shell")
-    journal.interrupt_pending()
-    interrupted = next(json.loads(p.read_text(encoding="utf-8")) for p in (tmp_path / "logs").glob("*.json")
-                       if json.loads(p.read_text(encoding="utf-8"))["status"] == "interrupted")
-    body = json.loads((output / interrupted["result_path"]).read_text(encoding="utf-8"))
-    assert body["result_received"] is False
-    assert body["status"] == "interrupted"

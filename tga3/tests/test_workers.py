@@ -114,16 +114,16 @@ async def test_cli_cancellation_stops_the_process(cli_env):
     adapter.command = lambda: ([sys.executable, str(script)], dict(os.environ))
     task = asyncio.create_task(adapter.run_cycle("continue", noop))
     for _ in range(200):
-        if (cli_env / "art/pid").is_file():
+        if (cli_env / "pid").is_file():
             break
         await asyncio.sleep(0.01)
-    assert (cli_env / "art/pid").is_file()
+    assert (cli_env / "pid").is_file()
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await asyncio.wait_for(task, 8)
     if os.name == "posix":
         with pytest.raises(ProcessLookupError):
-            os.kill(int((cli_env / "art/pid").read_text()), 0)
+            os.kill(int((cli_env / "pid").read_text()), 0)
 
 
 def test_worker_prompt_injects_exact_blackboard_identity(monkeypatch):
@@ -288,7 +288,8 @@ async def test_scout_resumes_same_session_and_only_extraction_has_the_json_tool(
         "type": "command_execution", "id": "probe", "command": "cat fixture.txt",
         "aggregated_output": "verified raw result", "exit_code": 0, "status": "completed",
     }}, noop)
-    raw = next((cli_env / "logs").glob("action-*.json")).read_text(encoding="utf-8")
+    manifest = json.loads((cli_env / "logs/worker-openai-actions.json").read_text(encoding="utf-8"))
+    raw = (cli_env / manifest["actions"][0]["artifact"]["output_path"]).read_text(encoding="utf-8")
     assert "verified raw result" in raw
     monkeypatch.setenv("TGA3_SCOUT_PHASE", "extracting")
     monkeypatch.setenv("TGA3_SCOUT_INTEL_MCP_URL", "http://control/scout-mcp/")
@@ -379,11 +380,11 @@ time.sleep(120)
     adapter.command = lambda: ([sys.executable, str(script)], dict(os.environ))
     task = asyncio.create_task(adapter.run_cycle("continue", noop))
     for _ in range(200):
-        if (cli_env / "art/child-pid").is_file():
+        if (cli_env / "child-pid").is_file():
             break
         await asyncio.sleep(0.01)
-    assert (cli_env / "art/child-pid").is_file()
-    child = int((cli_env / "art/child-pid").read_text())
+    assert (cli_env / "child-pid").is_file()
+    child = int((cli_env / "child-pid").read_text())
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await asyncio.wait_for(task, 8)
@@ -438,7 +439,7 @@ async def test_stopping_a_paused_worker_does_not_launch_a_queued_cli(monkeypatch
 
 
 async def test_scout_runs_both_phases_on_one_adapter_and_retries_uncovered_json(cli_env, monkeypatch):
-    from tga3.workers.openai_worker import scout, uncovered_logs
+    from tga3.workers.openai_worker import scout, uncovered_actions
 
     monkeypatch.setenv("TGA3_AGENT_ROLE", "scout")
     monkeypatch.setenv("TGA3_SCOUT_TIMEOUT_SECONDS", "2")
@@ -461,11 +462,11 @@ async def test_scout_runs_both_phases_on_one_adapter_and_retries_uncovered_json(
                                        result={"output": str(index)}, status="completed")
         else:
             assert not adapter.journal.enabled
-            missing = uncovered_logs(adapter.journal.directory, intels)
+            missing = uncovered_actions(adapter.journal.directory, intels)
             assert missing and missing[0] in prompt
             # Simulate an incomplete model turn: only one of two records is summarized.
             (intels / f"{len(phases)}.json").write_text(json.dumps({
-                "input": {"evidence_paths": [missing[0]]},
+                "input": {"source_action_ids": [missing[0]]},
             }))
         sessions.append(adapter.session_id)
         return "saved"
@@ -475,14 +476,14 @@ async def test_scout_runs_both_phases_on_one_adapter_and_retries_uncovered_json(
     assert phases == ["executing", "extracting", "extracting"]
     assert len({id(adapter) for adapter in adapters}) == 1
     assert sessions == ["same-scout-session"] * 3
-    assert not uncovered_logs(cli_env / "logs", intels)
+    assert not uncovered_actions(cli_env / "logs", intels)
     for phase in ("executing", "extracting"):
         assert json.loads((state / f"scout-{phase}-result.json").read_text())["finish_reason"] == "completed"
 
 
 @pytest.mark.parametrize("adapter_type", [CodexAdapter, ClaudeAdapter])
 async def test_execution_log_keeps_tool_response_without_expanding_output_file(cli_env, adapter_type):
-    output = cli_env / "art/result.txt"
+    output = cli_env / "result.txt"
     adapter = adapter_type()
     if adapter_type is CodexAdapter:
         item = {"type": "command_execution", "id": "redirected", "command": "fixture > result.txt",
@@ -498,8 +499,7 @@ async def test_execution_log_keeps_tool_response_without_expanding_output_file(c
         await adapter.event({"type": "user", "message": {"content": [{
             "type": "tool_result", "tool_use_id": "redirected", "content": "",
         }]}}, noop)
-    record = json.loads(next((cli_env / "logs").glob("action-*.json")).read_text(encoding="utf-8"))
-    assert record["result"]["aggregated_output" if adapter_type is CodexAdapter else "content"] == ""
-    assert record["output_paths"] == ["result.txt"]
-    assert (cli_env / "art" / record["result_path"]).read_text(encoding="utf-8") == ""
+    record = json.loads((cli_env / "logs/worker-openai-actions.json").read_text(encoding="utf-8"))["actions"][0]
+    assert record["artifact"]["attachments"] == ["result.txt"]
+    assert (cli_env / record["artifact"]["output_path"]).read_text(encoding="utf-8") == ""
     assert "body exists only in the output file" not in json.dumps(record)

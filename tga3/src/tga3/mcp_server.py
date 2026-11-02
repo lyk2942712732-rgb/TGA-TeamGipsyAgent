@@ -9,6 +9,7 @@ from uuid import UUID
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 
+from .action_logs import resolve_action_sources
 from .blackboard import Blackboard
 from .config import TGA3Config
 from .domain import Actor, AgentPublishRequest, EntryKind, publication_contract
@@ -71,7 +72,11 @@ def build_mcp(config: TGA3Config, blackboard: Blackboard) -> FastMCP:
         await blackboard.check_write(request.task_id, actor, request.kind)
         references = None
         if request.kind == EntryKind.FINDING:
-            root = config.task_path(request.task_id, "workspaces", actor.agent_id) / "art"
+            root = config.task_path(request.task_id, "workspaces", actor.agent_id)
+            request.source_action_ids = resolve_action_sources(
+                config.task_path(request.task_id, "logs", actor.agent_id), request.task_id, actor.agent_id,
+                request.source_action_ids, request.evidence_paths,
+            )
             references = await register_evidence(blackboard, request.task_id, actor, root, request.evidence_paths)
         entry = await blackboard.publish(request.task_id, actor, request.publish_request(artifact_refs=references))
         return entry.model_dump(mode="json")
@@ -87,8 +92,9 @@ def build_scout_mcp(config: TGA3Config, store: ScoutIntelStore) -> FastMCP:
     async def scout_write_intel(request: ScoutIntelInput) -> dict[str, Any]:
         """Save one validated Intel JSON in /intels during Scout's second phase.
 
-        Fill request={task_id,key,claim,detail,topic,evidence_paths:[]}.
-        key is stable for retries. evidence_paths are existing paths relative to /logs;
+        Fill request={task_id,key,claim,detail,topic,source_action_ids:[],evidence_paths:[]}.
+        key is stable for retries. source_action_ids identify records in /logs/scout-actions.json;
+        evidence_paths are relative to /workspace;
         the system handles artifact registration, JSON formatting and final blackboard import.
         """
         return await store.write(request)

@@ -6,7 +6,7 @@
   "listen_host": "0.0.0.0",
   "listen_port": 8083,
   "skills_root": "./config/skills",
-  "mcp_instructions": "Worker 消费系统从 Scout /intels JSON 导入的 Intel，只发布 Finding 和 final_candidate。Finding 使用 evidence_paths 提供各自 /workspace/art 中的证据相对路径，由服务端自动校验和登记。Scout 第一轮仅执行与留存 logs，无 MCP 写入工具；第二轮通过独立 scout_write_intel 工具保存 JSON，由系统导入黑板。原生钩子注入黑板和实时用户提示。Reporter 只读消费证据。Shell、文件搜索和 Skills 读取使用 CLI 原生能力。",
+  "mcp_instructions": "Worker 消费系统从 Scout /intels JSON 导入的 Intel，只发布 Finding 和 final_candidate。Finding 使用 evidence_paths 提供各自 /workspace 中的证据相对路径，由服务端自动校验和登记。Scout 第一轮仅执行与留存 logs，无 MCP 写入工具；第二轮通过独立 scout_write_intel 工具保存 JSON，由系统导入黑板。原生钩子注入黑板和实时用户提示。Reporter 只读消费证据。Shell、文件搜索和 Skills 读取使用 CLI 原生能力。",
   "worker_images": {
     "worker-openai": "tga3-worker-openai:local",
     "worker-claude": "tga3-worker-claude:local",

@@ -1,33 +1,43 @@
-"""Durable execution records, separate from files produced by tools."""
+"""One atomic actions.json per agent; result bodies and attachments stay in its workspace."""
 
 from __future__ import annotations
 
 import json
 import os
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
+
+from ..action_logs import action_log_name, read_action_log
 
 
 class ActionJournal:
     def __init__(self, directory: Path, *, identity: dict, secret: str = "", enabled: bool = True,
                  output_directory: Path | None = None):
-        self.directory, self.identity = directory, identity
+        self.directory = directory
+        self.identity = {**identity, "agent_id": identity.get("agent_id") or "agent"}
         self.secret, self.enabled = secret, enabled
-        self.pending: dict[str, tuple[Path, dict]] = {}
-        self.output_directory = output_directory
+        self.agent_prefix = self.identity.get("agent_id") or "agent"
+        self.manifest_path = self.directory / action_log_name(self.agent_prefix)
+        self.output_directory = output_directory or directory.parent / "workspace"
+        self.pending: dict[str, dict] = {}
         self.output_snapshots: dict[str, dict] = {}
         self.output_baseline = self._snapshot()
 
     def _snapshot(self) -> dict:
         result = {}
-        if self.output_directory is not None:
-            for path in self.output_directory.rglob("*"):
+        ignored = {".tga3", ".codex", ".codex-extract", ".claude", ".git"}
+        for current, directories, names in os.walk(self.output_directory, followlinks=False):
+            root = Path(current)
+            directories[:] = [name for name in directories if name not in ignored
+                               and not (root == self.output_directory and name == "result")
+                               and not (root / name).is_symlink()
+                               and (root / name).resolve() != self.directory.resolve()]
+            for name in names:
+                path = root / name
                 try:
-                    if (path.parent == self.output_directory and path.name.startswith("action-")
-                            and path.name.endswith((".result.txt", ".result.json"))):
-                        continue
-                    if path.is_symlink() or not path.is_file():
+                    if path.is_symlink() or name == "report-input.json":
                         continue
                     stat = path.stat()
                     result[path.relative_to(self.output_directory).as_posix()] = (
@@ -37,10 +47,35 @@ class ActionJournal:
                     continue
         return result
 
+    @contextmanager
+    def _lock(self):
+        # Lock a separate inode because actions.json itself is atomically replaced.
+        self.directory.mkdir(parents=True, exist_ok=True)
+        with (self.directory / ".actions.lock").open("a+b") as lock:
+            if lock.tell() == 0:
+                lock.write(b"0")
+                lock.flush()
+            lock.seek(0)
+            if os.name == "nt":
+                import msvcrt
+                msvcrt.locking(lock.fileno(), msvcrt.LK_LOCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                lock.seek(0)
+                if os.name == "nt":
+                    msvcrt.locking(lock.fileno(), msvcrt.LK_UNLCK, 1)
+                else:
+                    fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+
     def _write(self, path: Path, content: str) -> None:
         if self.secret:
             content = content.replace(self.secret, "[redacted]")
             content = content.replace(json.dumps(self.secret, ensure_ascii=False)[1:-1], "[redacted]")
+        path.parent.mkdir(parents=True, exist_ok=True)
         temporary = path.with_suffix(f".{uuid4().hex}.tmp")
         try:
             with temporary.open("w", encoding="utf-8") as output:
@@ -51,8 +86,7 @@ class ActionJournal:
         finally:
             temporary.unlink(missing_ok=True)
 
-    def _save_result(self, log_path: Path, result, status: str, output_paths: list[str]) -> str:
-        """Every finished action gets a matching body file, including empty CLI responses."""
+    def _save_result(self, action_id: str, result, status: str, attachments: list[str]) -> str:
         body = result
         if isinstance(result, dict):
             if "aggregated_output" in result:
@@ -62,49 +96,54 @@ class ActionJournal:
             elif result.get("type") == "mcp_tool_call":
                 body = result.get("result") if result.get("result") is not None else result
         if result is None:
-            body = {"status": status, "result_received": False, "output_paths": output_paths}
+            body = {"status": status, "result_received": False, "attachments": attachments}
         extension = ".txt" if isinstance(body, str) else ".json"
-        relative = log_path.stem + ".result" + extension
-        self.output_directory.mkdir(parents=True, exist_ok=True)
+        relative = "result/" + action_id + extension
         self._write(self.output_directory / relative,
                     body if isinstance(body, str) else json.dumps(body, ensure_ascii=False, indent=2) + "\n")
         return relative
 
-    def record(self, action_id: str, tool: str, *, inputs=None, result=None, status="started") -> None:
+    def record(self, tool_call_id: str, tool: str, *, inputs=None, result=None, status="started") -> None:
         if not self.enabled:
             return
-        self.directory.mkdir(parents=True, exist_ok=True)
         now = datetime.now(UTC).isoformat()
-        path, record = self.pending.get(action_id, (self.directory / f"action-{uuid4().hex}.json", {
-            "schema_version": 1, **self.identity, "action_id": action_id,
-            "tool": tool, "started_at": now,
-        }))
-        record = {**record, "updated_at": now, "status": status}
         current_outputs = self._snapshot()
-        if status == "started":
-            # A fast command can write its file before its streamed start event is consumed.
-            self.output_snapshots.setdefault(action_id, self.output_baseline)
-            record.setdefault("output_paths", [])
-        else:
-            before = self.output_snapshots.pop(action_id, self.output_baseline)
-            record["output_paths"] = sorted(
-                path for path, fingerprint in current_outputs.items() if before.get(path) != fingerprint
-            )
-        self.output_baseline = current_outputs
+        record = self.pending.get(tool_call_id, {
+            "action_id": self.agent_prefix + "-action-" + uuid4().hex, "tool_call_id": tool_call_id,
+            "action": {"tool": tool}, "started_at": now,
+            "artifact": {"output_path": None, "attachments": []},
+        })
+        record = {**record, "updated_at": now, "status": status}
         if inputs is not None:
-            record["input"] = inputs
-        if result is not None:
-            record["result"] = result
-        if status != "started" and self.output_directory is not None:
-            record["result_path"] = self._save_result(path, record.get("result"), status, record["output_paths"])
-        content = json.dumps(record, ensure_ascii=False, indent=2)
-        self._write(path, content + "\n")
+            record["action"] = {"tool": tool, "input": inputs}
+            if isinstance(inputs, dict) and inputs.get("command") is not None:
+                record["action"]["command"] = inputs["command"]
         if status == "started":
-            self.pending[action_id] = path, record
+            # Stream delivery may lag behind a very fast command's file writes.
+            self.output_snapshots.setdefault(tool_call_id, self.output_baseline)
         else:
-            self.pending.pop(action_id, None)
+            before = self.output_snapshots.pop(tool_call_id, self.output_baseline)
+            attachments = sorted(path for path, value in current_outputs.items() if before.get(path) != value)
+            record["artifact"] = {"output_path": self._save_result(record["action_id"], result, status, attachments),
+                                  "attachments": attachments}
+            record["exit_code"] = result.get("exit_code") if isinstance(result, dict) else None
+        self.output_baseline = current_outputs
+        with self._lock():
+            document = read_action_log(self.directory, task_id=self.identity.get("task_id"),
+                                       agent_id=self.identity.get("agent_id"))
+            document.update({"schema_version": 2, **self.identity, "updated_at": now})
+            index = next((i for i, entry in enumerate(document["actions"])
+                          if entry["action_id"] == record["action_id"]), None)
+            if index is None:
+                document["actions"].append(record)
+            else:
+                document["actions"][index] = record
+            self._write(self.manifest_path, json.dumps(document, ensure_ascii=False, indent=2) + "\n")
+        if status == "started":
+            self.pending[tool_call_id] = record
+        else:
+            self.pending.pop(tool_call_id, None)
 
     def interrupt_pending(self) -> None:
-        """Keep paths to partial output files even when the CLI never emitted tool completion."""
-        for action_id, (_, record) in list(self.pending.items()):
-            self.record(action_id, record["tool"], status="interrupted")
+        for tool_call_id, record in list(self.pending.items()):
+            self.record(tool_call_id, record["action"]["tool"], status="interrupted")

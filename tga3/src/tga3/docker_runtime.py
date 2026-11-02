@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Literal, Protocol
 from uuid import UUID
 
+from .action_logs import read_action_log
 from .config import ResolvedAgent, TGA3Config
 from .errors import RuntimeUnavailableError
 
@@ -65,7 +66,7 @@ class DockerContainerRuntime:
             logs = logs / agent_id
         inputs.mkdir(parents=True, exist_ok=True)
         self._ensure_worker_directory(workspace)
-        self._ensure_worker_directory(workspace / "art")
+        self._ensure_worker_directory(workspace / "result")
         self._ensure_worker_directory(logs)
         return workspace, inputs, logs
 
@@ -80,7 +81,8 @@ class DockerContainerRuntime:
                            runtime.scout_extract_timeout_seconds if extracting else runtime.scout_timeout_seconds)
         if is_reporter:
             (workspace / "report-input.json").write_text(spec.report_input or "[]", encoding="utf-8")
-            (workspace / "art" / "writeup.md").unlink(missing_ok=True)
+            (workspace / "result").mkdir(exist_ok=True)
+            (workspace / "result" / "writeup.md").unlink(missing_ok=True)
         volumes = {
             str(workspace): {"bind": "/workspace", "mode": "rw"},
             str(inputs): {"bind": "/inputs", "mode": "ro"},
@@ -95,9 +97,17 @@ class DockerContainerRuntime:
             volumes[str(self.config.task_path(spec.task_id, "logs"))] = {"bind": "/evidence", "mode": "ro"}
             for agent_id in self.config.agents.agents:
                 if agent_id != binding.agent_id:
-                    files = self.config.task_path(spec.task_id, "workspaces", agent_id) / "art"
-                    self._ensure_worker_directory(files)
-                    volumes[str(files)] = {"bind": f"/evidence-files/{agent_id}", "mode": "ro"}
+                    root = self.config.task_path(spec.task_id, "workspaces", agent_id)
+                    self._ensure_worker_directory(root / "result")
+                    volumes[str(root / "result")] = {"bind": f"/evidence-files/{agent_id}/result", "mode": "ro"}
+                    actions = read_action_log(self.config.task_path(spec.task_id, "logs", agent_id))["actions"]
+                    for action in actions:
+                        for relative in action.get("artifact", {}).get("attachments", []):
+                            path = (root / relative).resolve()
+                            if not path.is_relative_to(root.resolve()):
+                                raise RuntimeUnavailableError("Reporter attachment escapes the agent workspace")
+                            if path.is_file():
+                                volumes[str(path)] = {"bind": f"/evidence-files/{agent_id}/{relative}", "mode": "ro"}
             volumes[str(workspace / "report-input.json")] = {"bind": "/workspace/report-input.json", "mode": "ro"}
         image = runtime.worker_images[binding.agent_id]
         blackboard_mcp_url = f"{runtime.blackboard_mcp_url.rstrip('/')}/"
@@ -247,7 +257,7 @@ class DockerContainerRuntime:
                 detail = raw.decode(errors="replace")[-12000:]
                 raise RuntimeUnavailableError(detail.replace(key, "[redacted]") if key else detail)
             workspace, _, _ = self._task_paths(spec.task_id, spec.agent.agent_id)
-            path = workspace / "art" / "writeup.md"
+            path = workspace / "result" / "writeup.md"
             if path.is_symlink():
                 raise RuntimeUnavailableError("Reporter output must be a regular file")
             result = path.read_text(encoding="utf-8")

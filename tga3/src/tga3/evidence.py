@@ -21,7 +21,9 @@ async def register_evidence(
     for relative in paths:
         if (not relative.strip() or "\x00" in relative or "\\" in relative
                 or PurePosixPath(relative).is_absolute() or PureWindowsPath(relative).drive
-                or ".." in PurePosixPath(relative).parts):
+                or ".." in PurePosixPath(relative).parts
+                or (PurePosixPath(relative).parts and PurePosixPath(relative).parts[0]
+                    in {".codex", ".claude", ".tga3", ".codex-extract"})):
             raise ContractError(f"Evidence path must be relative and cannot escape the agent directory: {relative}")
         path = (root / relative).resolve()
         if not path.is_relative_to(root) or not path.is_file():

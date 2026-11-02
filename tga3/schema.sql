@@ -65,6 +65,7 @@ CREATE TABLE blackboard_entries (
     topic TEXT NOT NULL,
     body JSONB NOT NULL,
     idempotency_key TEXT NOT NULL,
+    source_action_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (task_id, seq),
     UNIQUE (task_id, actor_id, idempotency_key)

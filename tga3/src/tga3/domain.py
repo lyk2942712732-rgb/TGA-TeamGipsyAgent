@@ -137,6 +137,7 @@ class WorkerPublicationBase(BaseModel):
             body=payload["body"],
             artifact_refs=artifact_refs if artifact_refs is not None else payload.get("artifact_refs", []),
             idempotency_key=payload["idempotency_key"],
+            source_action_ids=payload.get("source_action_ids", []),
         )
 
 
@@ -145,9 +146,11 @@ class WorkerFindingPublication(WorkerPublicationBase):
     body: FindingBody
     evidence_paths: list[Annotated[str, Field(min_length=1, max_length=1000)]] = Field(
         min_length=1, max_length=30,
-        description="Evidence file paths relative to your own /workspace/art. "
+        description="Evidence file paths relative to your own /workspace. "
                     "The server validates and registers them automatically; no evidence UUIDs are needed.",
     )
+    source_action_ids: list[str] = Field(default_factory=list, max_length=100,
+                                        description="Prefixed action IDs in your own agent action manifest.")
 
 
 class ScoutActor(Actor):
@@ -158,6 +161,7 @@ class ScoutIntelPublication(WorkerPublicationBase):
     actor: ScoutActor
     kind: Literal[EntryKind.INTEL]
     body: FindingBody
+    source_action_ids: list[str] = Field(default_factory=list)
     artifact_refs: list[ArtifactRef] = Field(
         default_factory=list,
         description="Optional registered evidence references supporting this verified intermediate intelligence.",
@@ -190,7 +194,7 @@ def publication_contract(role: str | None = None) -> str:
         body_fields = ", ".join(
             f"{name}{'' if field.is_required() else '?'}" for name, field in body_model.model_fields.items()
         )
-        evidence_rule = ("evidence_paths=required non-empty (relative to /workspace/art)"
+        evidence_rule = ("evidence_paths=required non-empty (relative to /workspace); source_action_ids=optional"
                          if "evidence_paths" in model.model_fields else "evidence_paths=forbidden")
         parts.append(f"{kind}: body={{{body_fields}}}; {evidence_rule}")
     return (
@@ -216,6 +220,7 @@ class PublishRequest(BaseModel):
     body: dict[str, Any]
     artifact_refs: list[ArtifactRef] = Field(default_factory=list)
     idempotency_key: str = Field(min_length=1, max_length=200)
+    source_action_ids: list[str] = Field(default_factory=list, max_length=100)
 
     @model_validator(mode="after")
     def check_contract(self) -> PublishRequest:
@@ -240,6 +245,7 @@ class BlackboardEntry(BaseModel):
     topic: str
     body: dict[str, Any]
     idempotency_key: str
+    source_action_ids: list[str] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=utc_now)
 
 
@@ -251,6 +257,8 @@ class BlackboardSyncResult(BaseModel):
 
 
 class Artifact(BaseModel):
+    """Registered evidence file index; an action's artifact bundles its output and attachments."""
+
     model_config = ConfigDict(extra="forbid", frozen=True)
     id: UUID = Field(default_factory=uuid4)
     task_id: UUID
