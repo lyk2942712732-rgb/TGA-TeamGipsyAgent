@@ -46,7 +46,8 @@ class ActionJournal:
         record = {**record, "updated_at": now, "status": status}
         current_outputs = self._snapshot()
         if status == "started":
-            self.output_snapshots.setdefault(action_id, current_outputs)
+            # A fast command can write its file before its streamed start event is consumed.
+            self.output_snapshots.setdefault(action_id, self.output_baseline)
             record.setdefault("output_paths", [])
         else:
             before = self.output_snapshots.pop(action_id, self.output_baseline)

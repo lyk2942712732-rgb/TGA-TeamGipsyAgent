@@ -111,3 +111,14 @@ def test_execution_log_tracks_modified_and_partial_outputs_without_claiming_unch
     assert record["status"] == "interrupted"
     assert record["output_paths"] == ["existing.txt", "nested/new.txt"]
     assert not journal.pending
+
+
+def test_delayed_cli_start_event_still_records_files_created_by_a_fast_command(tmp_path):
+    output = tmp_path / "art"
+    output.mkdir()
+    journal = ActionJournal(tmp_path / "logs", identity={}, output_directory=output)
+    (output / "fast.txt").write_text("written before the start event was consumed")
+    journal.record("fast", "shell", inputs={"command": "fixture > fast.txt"})
+    journal.record("fast", "shell", result={"output": ""}, status="completed")
+    record = json.loads(next((tmp_path / "logs").glob("*.json")).read_text(encoding="utf-8"))
+    assert record["output_paths"] == ["fast.txt"]
