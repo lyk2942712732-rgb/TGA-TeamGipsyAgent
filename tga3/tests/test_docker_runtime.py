@@ -1,11 +1,14 @@
+import json
 from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
 
+import pytest
 from pydantic import SecretStr
 
 from tga3.config import TGA3Config
 from tga3.docker_runtime import DockerContainerRuntime, LaunchSpec
+from tga3.errors import RuntimeUnavailableError
 
 
 class FakeContainers:
@@ -17,7 +20,7 @@ class FakeContainers:
         return SimpleNamespace(id="container-id")
 
 
-def test_extraction_mounts_artifacts_and_intels_read_only_with_its_own_budget(tmp_path):
+def test_scout_mounts_intels_once_for_both_phases(tmp_path):
     config = TGA3Config(Path(__file__).parents[1] / "config")
     for provider in config.models.providers:
         provider.api_keys[0].api_key = SecretStr("test-key")
@@ -25,12 +28,12 @@ def test_extraction_mounts_artifacts_and_intels_read_only_with_its_own_budget(tm
     containers = FakeContainers()
     runtime = DockerContainerRuntime.__new__(DockerContainerRuntime)
     runtime.config, runtime.client = config, SimpleNamespace(containers=containers)
-    runtime._launch_sync(LaunchSpec(task_id=uuid4(), agent=config.resolve_agent("scout"), scout_phase="extracting"))
+    runtime._launch_sync(LaunchSpec(task_id=uuid4(), agent=config.resolve_agent("scout"), scout_phase="executing"))
     mounts = {value["bind"]: value["mode"] for value in containers.kwargs["volumes"].values()}
-    assert mounts["/artifacts"] == mounts["/intels"] == "ro"
+    assert mounts["/artifacts"] == "rw" and mounts["/intels"] == "ro"
     environment = containers.kwargs["environment"]
-    assert environment["TGA3_CLI_TIMEOUT_SECONDS"] == str(config.runtime.scout_extract_timeout_seconds + 30)
-    assert environment["TGA3_SCOUT_PHASE"] == "extracting"
+    assert environment["TGA3_SCOUT_EXTRACT_TIMEOUT_SECONDS"] == str(config.runtime.scout_extract_timeout_seconds)
+    assert environment["TGA3_SCOUT_PHASE"] == "executing"
 
 
 def test_workers_get_private_workspaces_and_evidence_reporter_gets_read_only_union(tmp_path):
@@ -103,3 +106,57 @@ def test_reporter_uses_codex_image_and_read_only_evidence(tmp_path):
     assert args["volumes"][str(tmp_path / "artifacts")]["mode"] == "rw"
     assert args["volumes"][str(tmp_path / "workspace/report-input.json")]["mode"] == "ro"
     assert args["cap_add"] == []
+
+
+@pytest.mark.parametrize("execution_reason", ["completed", "timeout", "error"])
+async def test_scout_reuses_container_after_execution_and_cleans_up_after_extraction(tmp_path, execution_reason):
+    config = TGA3Config(Path(__file__).parents[1] / "config")
+    config.runtime.task_root = str(tmp_path / "tasks")
+    for provider in config.models.providers:
+        provider.api_keys[0].api_key = SecretStr("test-key")
+    task_id = uuid4()
+    state = config.task_path(task_id, "workspaces", "scout") / ".tga3"
+    state.mkdir(parents=True)
+    events, launches, stops = [], [], []
+
+    class Container:
+        status = "running"
+
+        def reload(self):
+            phase = "extracting" if (state / "scout-extract-request").exists() else "executing"
+            reason = execution_reason if phase == "executing" else "completed"
+            (state / f"scout-{phase}-result.json").write_text(json.dumps({
+                "finish_reason": reason, "error": "fixture failure" if reason == "error" else None,
+            }))
+
+        def logs(self):
+            return b'{"method":"agent.session","params":{"cli_session_id":"same-session"}}\n'
+
+    container = Container()
+    runtime = DockerContainerRuntime.__new__(DockerContainerRuntime)
+    runtime.config = config
+    runtime.client = SimpleNamespace(containers=SimpleNamespace(get=lambda _: container))
+
+    async def launch(spec):
+        launches.append(spec)
+        return "same-container"
+
+    async def stop(task, agent):
+        stops.append((task, agent))
+
+    async def emit(method, params):
+        events.append((method, params))
+
+    runtime.launch, runtime.stop = launch, stop
+    first = LaunchSpec(task_id=task_id, agent=config.resolve_agent("scout"), scout_phase="executing")
+    if execution_reason == "completed":
+        await runtime.scout(first, emit)
+    else:
+        with pytest.raises(TimeoutError if execution_reason == "timeout" else RuntimeUnavailableError):
+            await runtime.scout(first, emit)
+    assert not stops
+    await runtime.scout(LaunchSpec(task_id=task_id, agent=first.agent, scout_phase="extracting"), emit)
+    assert len(launches) == 1
+    assert stops == [(task_id, "scout")]
+    assert [method for method, _ in events] == ["container.started", "agent.session"]
+    assert task_id not in runtime._scouts

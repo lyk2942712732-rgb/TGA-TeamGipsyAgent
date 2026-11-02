@@ -28,7 +28,8 @@ class TwoPhaseScout(FakeContainerRuntime):
         return await super().launch(spec)
 
     async def scout(self, spec, emit):
-        await self.launch(spec)
+        if spec.scout_phase == "executing":
+            await self.launch(spec)
         try:
             if spec.scout_phase == "executing":
                 root = self.config.task_path(spec.task_id, "artifacts", "scout")
@@ -45,7 +46,8 @@ class TwoPhaseScout(FakeContainerRuntime):
                 self.extracting.set()
                 await self.finish_extraction.wait()
         finally:
-            await self.stop(spec.task_id, "scout")
+            if spec.scout_phase == "extracting":
+                await self.stop(spec.task_id, "scout")
 
 
 def setup(tmp_path):
@@ -70,13 +72,13 @@ async def test_two_phases_keep_json_private_until_extraction_finishes(tmp_path):
     runtime.finish_execution.set()
     await runtime.extracting.wait()
     assert (await storage.get_agent(task.id, "scout")).metadata["scout_phase"] == "extracting"
-    assert "blackboard_cursor" not in (await storage.get_agent(task.id, "scout")).metadata
+    assert (await storage.get_agent(task.id, "scout")).metadata["blackboard_cursor"] == 5
     assert len(list(coordinator.scout_intel.directory(task.id).glob("*.json"))) == 1
     assert not any(entry.kind == "intel" for entry in await storage.list_entries(task.id))
-    assert [spec.agent.agent_id for spec in runtime.launched] == ["scout", "scout"]
+    assert [spec.agent.agent_id for spec in runtime.launched] == ["scout"]
     runtime.finish_extraction.set()
     await coordinator._startup_jobs[task.id]
-    assert [spec.agent.agent_id for spec in runtime.launched] == ["scout", "scout", "worker-openai", "worker-claude"]
+    assert [spec.agent.agent_id for spec in runtime.launched] == ["scout", "worker-openai", "worker-claude"]
     assert (await storage.get_task(task.id)).state == RunState.RUNNING
     assert (await storage.get_agent(task.id, "scout")).metadata["intel_imported_count"] == 1
 
@@ -132,6 +134,6 @@ async def test_cancel_in_second_phase_imports_json_without_starting_workers(tmp_
     task = await coordinator.create_and_start("cancel extraction", "inspect", "pwn")
     await runtime.extracting.wait()
     await coordinator.stop_task(task.id)
-    assert [spec.agent.agent_id for spec in runtime.launched] == ["scout", "scout"]
+    assert [spec.agent.agent_id for spec in runtime.launched] == ["scout"]
     assert any(entry.kind == "intel" for entry in await storage.list_entries(task.id))
     assert (await storage.get_task(task.id)).state == RunState.CANCELLED

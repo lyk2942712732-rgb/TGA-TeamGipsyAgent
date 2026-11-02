@@ -120,5 +120,13 @@ class ScoutIntelStore:
             documents = self.documents(task_id)
             for document in documents:
                 await self.board.publish(task_id, document.publication.actor, document.publication.publish_request())
-            await self.storage.update_agent(task_id, "scout", metadata={"intel_imported_count": len(documents)})
+            root = self.config.task_path(task_id, "artifacts", "scout")
+            records = {path.relative_to(root).as_posix() for path in root.rglob("*.json")}
+            covered = {str(Path(relative).as_posix()).removeprefix("./")
+                       for document in documents for relative in document.input.evidence_paths}
+            await self.storage.update_agent(task_id, "scout", metadata={
+                "intel_imported_count": len(documents), "artifact_json_count": len(records),
+                "artifact_json_covered_count": len(records & covered),
+                "artifact_json_uncovered": sorted(records - covered),
+            })
             return len(documents)

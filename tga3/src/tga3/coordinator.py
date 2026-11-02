@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import json
 import shutil
 from collections.abc import Awaitable, Callable
 from pathlib import Path
@@ -141,8 +140,6 @@ class TaskCoordinator:
             outcomes = {}
             for phase, budget in budgets.items():
                 def phase_metadata(metadata, current_phase=phase, current_budget=budget):
-                    if current_phase == "extracting":
-                        metadata = {key: value for key, value in metadata.items() if not key.startswith("blackboard_")}
                     return {**metadata, "scout_phase": current_phase, "scout_phase_budget_seconds": current_budget}
 
                 await self.storage.mutate_agent_metadata(task_id, "scout", phase_metadata)
@@ -153,7 +150,8 @@ class TaskCoordinator:
                                        payload={"scout_phase": phase, "budget_seconds": budget})
                 reason, error = "completed", None
                 try:
-                    async with asyncio.timeout(budget):
+                    # The in-container deadline includes CLI process-tree cleanup.
+                    async with asyncio.timeout(budget + 10):
                         await self.containers.scout(
                             LaunchSpec(task_id=task_id, agent=bindings["scout"], scout_phase=phase,
                                        phase_budget_seconds=budget), emit,
@@ -166,14 +164,6 @@ class TaskCoordinator:
                 await self.storage.update_agent(
                     task_id, "scout", metadata={f"scout_{phase}_result": outcomes[phase]},
                 )
-                if phase == "executing":
-                    root = self.config.task_path(task_id, "artifacts", "scout")
-                    root.mkdir(parents=True, exist_ok=True)
-                    status = root / f".scout-status-{uuid4()}.tmp"
-                    status.write_text(
-                        json.dumps(outcomes[phase], ensure_ascii=False, indent=2), encoding="utf-8",
-                    )
-                    status.replace(root / "scout-execution-status.json")
             await self.storage.update_agent(task_id, "scout", metadata={"scout_phase": "importing"})
             intel_count = await self.scout_intel.flush(task_id)
             result = outcomes["extracting"]

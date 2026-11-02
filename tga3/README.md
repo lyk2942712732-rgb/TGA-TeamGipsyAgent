@@ -3,7 +3,7 @@
 两个 Worker 在独立 Kali 容器中并行运行 Codex CLI 和 Claude Code CLI。
 出现最终候选后，控制层等待收尾宽限期、停止并回收 Worker，固定黑板快照，
 再用与 Codex Worker 相同的镜像启动一次性 Reporter 容器。
-Scout 分两轮：第一轮实际执行并留存 artifacts，第二轮使用独立上下文提取 Intel，通过参数化工具保存 /intels JSON；控制层统一导入后才启动两个 Worker。
+Scout 分两轮：第一轮实际执行并留存 artifacts，第二轮在原容器、原 CLI 会话中逐条概括 artifact JSON 为 Intel，通过参数化工具保存 /intels JSON；控制层统一导入后才启动两个 Worker。
 
 ```text
 Web UI → FastAPI 控制层 → PostgreSQL / 共享黑板 / MCP
@@ -24,8 +24,8 @@ CLI 管理私有会话、工具执行和上下文压缩；不再使用 Agents SD
 - Claude 会话：每个 Worker 工作目录的 `.claude/`。
 - `.tga3/*-session.json` 只保存 CLI 会话指针；PG `agent_runs.metadata.cli_session_id` 保存对应标识。
 - `agent_runs.session_id` 仍是控制通道标识，不用于 CLI resume。
-- Scout 第一轮默认 300 秒，可在 Solver 配置中设置为 60–600 秒；结束或超时后启动第二轮，第二轮使用独立的 180 秒预算（runtime.scout_extract_timeout_seconds）。两轮的 CLI 会话独立，Token 统计合并到 Scout。
-- 各智能体的生成文件放在 `/workspace/art/`，CLI 默认在此执行；工具调用开始时保存独立 `/artifacts/action-*.json`，完成后原子更新同一记录，包含输入、完整输出、退出状态、时间及智能体身份。Scout 第二轮只读记录和生成文件，不向该记录目录写入。Intel 的提取与黑板读取规则保持不变。
+- Scout 第一轮默认 300 秒，可在 Solver 配置中设置为 60–600 秒；结束或超时后启动第二轮，第二轮使用独立的 180 秒预算（runtime.scout_extract_timeout_seconds）。两轮仅区分工作内容，复用同一容器、CLI 会话和上下文，Token 统计归于 Scout。
+- 各智能体的生成文件放在 `/workspace/art/`，CLI 默认在此执行；工具调用开始时保存独立 `/artifacts/action-*.json`，完成后原子更新同一记录，包含输入、完整输出、退出状态、时间及智能体身份。Scout 第二轮按规则只读记录和生成文件，并暂停执行日志写入，避免把提取操作递归变成新 artifact。运行时核对每条 JSON 是否被 Intel 的 evidence_paths 覆盖，遗漏时在原会话继续提取。
 - 任务顶部显示累计 Token，点击向右展开 Scout、两个 Worker 和 Reporter 各自用量。控制层增量读取各任务的 Codex/Claude 原生 JSONL，用量及去重检查点持久化在 Agent metadata；重新打开历史任务会回填现存日志。总数为输入加输出（包含缓存输入，缓存命中不重复相加），没有原生用量记录时显示“未上报”，不估算。
 - 共享黑板支持实时用户提示；Scout 和两个 Worker 的原生钩子在下一个工具调用前注入这些提示，绕过普通同步间隔。运行中的工具会先完成；收尾和终态任务不再接收新提示。 任务顶部、运行图和 Agent 面板显示 Scout 当前处于“第一轮·侦察执行中”或“第二轮·Intel 提取中”。
 - PostgreSQL 保存任务、共享黑板、只读执行事件和证据/报告索引。

@@ -41,10 +41,12 @@ def worker_instructions() -> str:
         extracting = os.environ.get("TGA3_SCOUT_PHASE") == "extracting"
         if extracting:
             instructions = (
-                "Current phase: SECOND ROUND, Intel extraction. This is a fresh context. "
+                "Current phase: SECOND ROUND, Intel extraction in the SAME CLI session and container. "
                 "Read existing /artifacts JSON records and files in /workspace/art. "
                 "Do not probe targets, rerun reconnaissance, modify evidence or install tools. "
                 "Extract verified observations, scoped negative results and clearly labelled unfinished checks. "
+                "Summarize EVERY artifact JSON, including failed and unfinished actions, into Intel. "
+                "Include its relative JSON filename in evidence_paths so coverage can be verified. "
                 "Save each coherent Intel with scout_write_intel using "
                 "request={task_id:<exact task UUID>,key:<stable unique key>,claim:<fact>,detail:<support>,"
                 "topic:<topic>,evidence_paths:[<paths relative to /artifacts>]}. "
@@ -62,7 +64,7 @@ def worker_instructions() -> str:
                 "Tool calls and their output are automatically saved as JSON records under /artifacts; "
                 "do not modify those reserved records. Save downloads, extracted files and "
                 "scripts under /workspace/art/. "
-                "Use /workspace for scratch work. A separate fresh second round will extract Intel from artifacts. "
+                "Use /workspace for scratch work. Then continue in this same session to extract Intel from artifacts. "
                 "Track time and limit individual commands; basic reconnaissance is enough, then finish. "
                 f"Execution budget: {os.environ.get('TGA3_SCOUT_TIMEOUT_SECONDS', '300')} seconds."
             )

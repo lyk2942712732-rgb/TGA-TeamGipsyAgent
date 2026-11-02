@@ -87,8 +87,7 @@ class DockerContainerRuntime:
             str(artifacts): {"bind": "/artifacts", "mode": "ro" if extracting else "rw"},
             str(self.config.skills_root): {"bind": "/skills", "mode": "ro"},
         }
-        if extracting:
-            volumes[str(workspace / "art")] = {"bind": "/workspace/art", "mode": "ro"}
+        if binding.role == "scout":
             intels = self.config.task_path(spec.task_id, "intels", "scout")
             self._ensure_worker_directory(intels)
             volumes[str(intels)] = {"bind": "/intels", "mode": "ro"}
@@ -153,21 +152,37 @@ class DockerContainerRuntime:
         return container.id
 
     async def scout(self, spec: LaunchSpec, emit) -> None:
-        """One CLI turn; the coordinator owns the total deadline and cancels this call."""
-        launch = asyncio.create_task(self.launch(spec))
-        offset = 0
-        pending = b""
+        """Drive two work phases inside one container and one resumed CLI session."""
+        if not hasattr(self, "_scouts"):
+            self._scouts = {}
+        phase = spec.scout_phase or "executing"
+        workspace = self.config.task_path(spec.task_id, "workspaces", spec.agent.agent_id)
+        state_dir = workspace / ".tga3"
+        result_path = state_dir / f"scout-{phase}-result.json"
+        launch = None
         try:
-            container_id = await asyncio.shield(launch)
-            await emit("container.started", {"container_id": container_id})
+            if phase == "executing":
+                for name in ("scout-executing-result.json", "scout-extracting-result.json", "scout-extract-request"):
+                    (state_dir / name).unlink(missing_ok=True)
+                launch = asyncio.create_task(self.launch(spec))
+                container_id = await asyncio.shield(launch)
+                self._scouts[spec.task_id] = {"id": container_id, "offset": 0, "pending": b""}
+                await emit("container.started", {"container_id": container_id})
+            else:
+                if spec.task_id not in self._scouts:
+                    raise RuntimeUnavailableError("Scout extraction requires its original running container")
+                container_id = self._scouts[spec.task_id]["id"]
+                # The coordinator has already switched MCP permissions to extraction.
+                (state_dir / "scout-extract-request").touch()
+            state = self._scouts[spec.task_id]
             container = await asyncio.to_thread(self.client.containers.get, container_id)
             while True:
                 await asyncio.to_thread(container.reload)
                 raw = await asyncio.to_thread(container.logs)
-                pending += raw[offset:]
-                offset = len(raw)
-                lines = pending.split(b"\n")
-                pending = lines.pop()
+                state["pending"] += raw[state["offset"]:]
+                state["offset"] = len(raw)
+                lines = state["pending"].split(b"\n")
+                state["pending"] = lines.pop()
                 for line in lines:
                     try:
                         event = json.loads(line)
@@ -178,18 +193,27 @@ class DockerContainerRuntime:
                         "agent.output.delta", "agent.recovery",
                     }:
                         await emit(event["method"], event.get("params", {}))
-                if container.status in {"exited", "dead"}:
-                    if container.attrs["State"].get("ExitCode") != 0:
-                        key = spec.agent.api_key.get_secret_value()
-                        detail = raw.decode(errors="replace")[-12000:]
-                        raise RuntimeUnavailableError(detail.replace(key, "[redacted]") if key else detail)
+                if result_path.is_file():
+                    result = json.loads(result_path.read_text(encoding="utf-8"))
+                    if result["finish_reason"] == "timeout":
+                        raise TimeoutError
+                    if result["finish_reason"] == "error":
+                        raise RuntimeUnavailableError(result["error"])
                     return
+                if container.status in {"exited", "dead"}:
+                    key = spec.agent.api_key.get_secret_value()
+                    detail = raw.decode(errors="replace")[-12000:]
+                    raise RuntimeUnavailableError(detail.replace(key, "[redacted]") if key else detail)
                 await asyncio.sleep(0.5)
         finally:
             try:
-                await launch
+                if launch is not None:
+                    container_id = await launch
+                    self._scouts.setdefault(spec.task_id, {"id": container_id, "offset": 0, "pending": b""})
             finally:
-                await self.stop(spec.task_id, spec.agent.agent_id)
+                if phase == "extracting":
+                    self._scouts.pop(spec.task_id, None)
+                    await self.stop(spec.task_id, spec.agent.agent_id)
 
     async def report(self, spec: LaunchSpec, emit) -> str:
         launch = asyncio.create_task(self.launch(spec))
@@ -254,6 +278,8 @@ class DockerContainerRuntime:
 
     async def stop(self, task_id: UUID, agent_id: str) -> None:
         await asyncio.to_thread(self._stop_sync, task_id, agent_id)
+        if agent_id == "scout":
+            getattr(self, "_scouts", {}).pop(task_id, None)
 
     def _image_status_sync(self, image: str) -> dict[str, object]:
         try:
@@ -299,10 +325,10 @@ class FakeContainerRuntime:
             await self.stop(spec.task_id, spec.agent.agent_id)
 
     async def scout(self, spec: LaunchSpec, emit) -> None:
-        container_id = await self.launch(spec)
-        try:
+        if spec.scout_phase != "extracting":
+            container_id = await self.launch(spec)
             await emit("container.started", {"container_id": container_id})
-        finally:
+        else:
             await self.stop(spec.task_id, spec.agent.agent_id)
 
     async def stop(self, task_id: UUID, agent_id: str) -> None:

@@ -32,8 +32,6 @@ class CliAdapter(AgentAdapter):
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.state_dir = self.workspace / ".tga3"
         self.scout_phase = os.environ.get("TGA3_SCOUT_PHASE", "executing")
-        if os.environ.get("TGA3_AGENT_ROLE") == "scout":
-            self.state_dir /= self.scout_phase
         self.state_dir.mkdir(parents=True, exist_ok=True)
         self.pointer = self.state_dir / f"{self.runtime}-session.json"
         self.session_id: str | None = None
@@ -296,8 +294,7 @@ class CodexAdapter(CliAdapter):
     def command(self) -> tuple[list[str], dict[str, str]]:
         if self.protocol != "openai_responses":
             raise ValueError("Codex CLI requires the Responses protocol")
-        cli_home = self.workspace / (".codex-extract" if os.environ.get("TGA3_AGENT_ROLE") == "scout"
-                                     and self.scout_phase == "extracting" else ".codex")
+        cli_home = self.workspace / ".codex"
         cli_home.mkdir(exist_ok=True)
         instructions = (
             os.environ["TGA3_SYSTEM_PROMPT"]

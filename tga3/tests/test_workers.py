@@ -1,4 +1,5 @@
 import asyncio
+import json
 import os
 import sys
 import tomllib
@@ -275,7 +276,7 @@ def test_claude_has_no_fixed_turn_cap_and_installs_worker_hooks(cli_env, monkeyp
     assert "PreToolUse" in command[command.index("--settings") + 1]
 
 
-async def test_scout_contexts_are_independent_and_only_extraction_has_the_json_tool(cli_env, monkeypatch):
+async def test_scout_resumes_same_session_and_only_extraction_has_the_json_tool(cli_env, monkeypatch):
     monkeypatch.setenv("TGA3_AGENT_ROLE", "scout")
     monkeypatch.setenv("TGA3_SCOUT_PHASE", "executing")
     monkeypatch.setenv("TGA3_ARTIFACTS", str(cli_env / "artifacts"))
@@ -292,11 +293,18 @@ async def test_scout_contexts_are_independent_and_only_extraction_has_the_json_t
     monkeypatch.setenv("TGA3_SCOUT_PHASE", "extracting")
     monkeypatch.setenv("TGA3_SCOUT_INTEL_MCP_URL", "http://control/scout-mcp/")
     second = CodexAdapter()
-    assert second.session_id is None
-    second.command()
-    config = (cli_env / ".codex-extract/config.toml").read_text()
+    assert second.session_id == "execution-session"
+    command, _ = second.command()
+    assert command[command.index("resume") + 1] == "execution-session"
+    config = (cli_env / ".codex/config.toml").read_text()
     assert "[mcp_servers.intel]" in config and "[mcp_servers.blackboard]" not in config
-    assert second.state_dir != first.state_dir
+    assert second.state_dir == first.state_dir
+    assert not (cli_env / ".codex-extract").exists()
+    count = len(list((cli_env / "artifacts").glob("*.json")))
+    await second.event({"type": "item.completed", "item": {
+        "type": "command_execution", "id": "read", "command": "cat /artifacts/action.json",
+    }}, noop)
+    assert len(list((cli_env / "artifacts").glob("*.json"))) == count
 
 
 async def test_inactivity_watchdog_stops_hung_cli_without_losing_session(cli_env, monkeypatch):
@@ -427,3 +435,46 @@ async def test_stopping_a_paused_worker_does_not_launch_a_queued_cli(monkeypatch
     session.stop.set()
     session.paused.set()
     await asyncio.wait_for(task, 1)
+
+
+async def test_scout_runs_both_phases_on_one_adapter_and_retries_uncovered_json(cli_env, monkeypatch):
+    from tga3.workers.openai_worker import scout, uncovered_artifacts
+
+    monkeypatch.setenv("TGA3_AGENT_ROLE", "scout")
+    monkeypatch.setenv("TGA3_SCOUT_TIMEOUT_SECONDS", "2")
+    monkeypatch.setenv("TGA3_SCOUT_EXTRACT_TIMEOUT_SECONDS", "2")
+    intels = cli_env / "intels"
+    intels.mkdir()
+    monkeypatch.setenv("TGA3_INTELS", str(intels))
+    state = cli_env / ".tga3"
+    state.mkdir()
+    (state / "scout-extract-request").touch()
+    adapters, sessions, phases = [], [], []
+
+    async def cycle(adapter, prompt, emit):
+        adapters.append(adapter)
+        phases.append(adapter.scout_phase)
+        if adapter.scout_phase == "executing":
+            adapter.remember_session("same-scout-session")
+            for index in range(2):
+                adapter.journal.record(str(index), "shell", inputs={"command": "fixture"},
+                                       result={"output": str(index)}, status="completed")
+        else:
+            assert not adapter.journal.enabled
+            missing = uncovered_artifacts(adapter.journal.directory, intels)
+            assert missing and missing[0] in prompt
+            # Simulate an incomplete model turn: only one of two records is summarized.
+            (intels / f"{len(phases)}.json").write_text(json.dumps({
+                "input": {"evidence_paths": [missing[0]]},
+            }))
+        sessions.append(adapter.session_id)
+        return "saved"
+
+    monkeypatch.setattr(CodexAdapter, "run_cycle", cycle)
+    await asyncio.wait_for(scout(), timeout=3)
+    assert phases == ["executing", "extracting", "extracting"]
+    assert len({id(adapter) for adapter in adapters}) == 1
+    assert sessions == ["same-scout-session"] * 3
+    assert not uncovered_artifacts(cli_env / "artifacts", intels)
+    for phase in ("executing", "extracting"):
+        assert json.loads((state / f"scout-{phase}-result.json").read_text())["finish_reason"] == "completed"
