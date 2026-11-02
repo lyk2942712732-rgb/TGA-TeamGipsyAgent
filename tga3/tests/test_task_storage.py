@@ -122,3 +122,41 @@ def test_delayed_cli_start_event_still_records_files_created_by_a_fast_command(t
     journal.record("fast", "shell", result={"output": ""}, status="completed")
     record = json.loads(next((tmp_path / "logs").glob("*.json")).read_text(encoding="utf-8"))
     assert record["output_paths"] == ["fast.txt"]
+
+
+@pytest.mark.parametrize("result,body,extension", [
+    ({"type": "command_execution", "aggregated_output": "stdout body"}, "stdout body", ".txt"),
+    ({"type": "tool_result", "content": "claude tool body"}, "claude tool body", ".txt"),
+    ({"type": "mcp_tool_call", "result": {"content": [{"text": "saved"}]}},
+     {"content": [{"text": "saved"}]}, ".json"),
+])
+def test_each_action_has_a_matching_result_body_file(tmp_path, result, body, extension):
+    output = tmp_path / "art"
+    journal = ActionJournal(tmp_path / "logs", identity={}, output_directory=output)
+    journal.record("action", "fixture", inputs={"command": "fixture"})
+    journal.record("action", "fixture", result=result, status="completed")
+    path = next((tmp_path / "logs").glob("action-*.json"))
+    record = json.loads(path.read_text(encoding="utf-8"))
+    assert record["result_path"] == path.stem + ".result" + extension
+    saved = (output / record["result_path"]).read_text(encoding="utf-8")
+    assert (json.loads(saved) if extension == ".json" else saved) == body
+    assert record["result"] == result
+    journal.record("next", "fixture", result={"aggregated_output": "next body"}, status="completed")
+    records = [json.loads(p.read_text(encoding="utf-8")) for p in (tmp_path / "logs").glob("*.json")]
+    assert all(record["output_paths"] == [] for record in records)
+    assert len({record["result_path"] for record in records}) == 2
+
+
+def test_saved_result_body_redacts_credentials_and_interrupted_action_has_explicit_status(tmp_path):
+    output = tmp_path / "art"
+    journal = ActionJournal(tmp_path / "logs", identity={}, secret='key"private', output_directory=output)
+    journal.record("done", "shell", result={"aggregated_output": 'output key"private'}, status="completed")
+    record = json.loads(next((tmp_path / "logs").glob("*.json")).read_text(encoding="utf-8"))
+    assert (output / record["result_path"]).read_text(encoding="utf-8") == "output [redacted]"
+    journal.record("partial", "shell")
+    journal.interrupt_pending()
+    interrupted = next(json.loads(p.read_text(encoding="utf-8")) for p in (tmp_path / "logs").glob("*.json")
+                       if json.loads(p.read_text(encoding="utf-8"))["status"] == "interrupted")
+    body = json.loads((output / interrupted["result_path"]).read_text(encoding="utf-8"))
+    assert body["result_received"] is False
+    assert body["status"] == "interrupted"

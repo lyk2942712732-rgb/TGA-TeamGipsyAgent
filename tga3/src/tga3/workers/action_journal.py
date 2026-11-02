@@ -24,6 +24,9 @@ class ActionJournal:
         if self.output_directory is not None:
             for path in self.output_directory.rglob("*"):
                 try:
+                    if (path.parent == self.output_directory and path.name.startswith("action-")
+                            and path.name.endswith((".result.txt", ".result.json"))):
+                        continue
                     if path.is_symlink() or not path.is_file():
                         continue
                     stat = path.stat()
@@ -33,6 +36,39 @@ class ActionJournal:
                 except OSError:
                     continue
         return result
+
+    def _write(self, path: Path, content: str) -> None:
+        if self.secret:
+            content = content.replace(self.secret, "[redacted]")
+            content = content.replace(json.dumps(self.secret, ensure_ascii=False)[1:-1], "[redacted]")
+        temporary = path.with_suffix(f".{uuid4().hex}.tmp")
+        try:
+            with temporary.open("w", encoding="utf-8") as output:
+                output.write(content)
+                output.flush()
+                os.fsync(output.fileno())
+            os.replace(temporary, path)
+        finally:
+            temporary.unlink(missing_ok=True)
+
+    def _save_result(self, log_path: Path, result, status: str, output_paths: list[str]) -> str:
+        """Every finished action gets a matching body file, including empty CLI responses."""
+        body = result
+        if isinstance(result, dict):
+            if "aggregated_output" in result:
+                body = result["aggregated_output"]
+            elif result.get("type") == "tool_result":
+                body = result.get("content", "")
+            elif result.get("type") == "mcp_tool_call":
+                body = result.get("result") if result.get("result") is not None else result
+        if result is None:
+            body = {"status": status, "result_received": False, "output_paths": output_paths}
+        extension = ".txt" if isinstance(body, str) else ".json"
+        relative = log_path.stem + ".result" + extension
+        self.output_directory.mkdir(parents=True, exist_ok=True)
+        self._write(self.output_directory / relative,
+                    body if isinstance(body, str) else json.dumps(body, ensure_ascii=False, indent=2) + "\n")
+        return relative
 
     def record(self, action_id: str, tool: str, *, inputs=None, result=None, status="started") -> None:
         if not self.enabled:
@@ -59,19 +95,10 @@ class ActionJournal:
             record["input"] = inputs
         if result is not None:
             record["result"] = result
+        if status != "started" and self.output_directory is not None:
+            record["result_path"] = self._save_result(path, record.get("result"), status, record["output_paths"])
         content = json.dumps(record, ensure_ascii=False, indent=2)
-        if self.secret:
-            # Redact the JSON representation as well as ordinary literal occurrences.
-            content = content.replace(json.dumps(self.secret, ensure_ascii=False)[1:-1], "[redacted]")
-        temporary = path.with_suffix(f".{uuid4().hex}.tmp")
-        try:
-            with temporary.open("w", encoding="utf-8") as output:
-                output.write(content + "\n")
-                output.flush()
-                os.fsync(output.fileno())
-            os.replace(temporary, path)
-        finally:
-            temporary.unlink(missing_ok=True)
+        self._write(path, content + "\n")
         if status == "started":
             self.pending[action_id] = path, record
         else:

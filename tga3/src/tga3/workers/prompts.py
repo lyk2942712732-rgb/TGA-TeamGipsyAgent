@@ -23,6 +23,8 @@ def worker_instructions() -> str:
         "Never invent a placeholder task ID or actor."
         " Your CLI working directory is /workspace/art. Your private output directory is /workspace/art; "
         "The runtime stores structured execution records in /logs. "
+        "Each finished log has result_path pointing to its matching saved result body and output_paths listing "
+        "generated files, all relative to /workspace/art. Reuse these files as evidence when sufficient. "
         "Use native CLI file/list/search tools "
         "to discover /skills and read each package's SKILL.md, then follow its referenced documents."
     )
@@ -36,6 +38,7 @@ def worker_instructions() -> str:
             f"Authoritative task_id: {os.environ['TGA3_TASK_ID']}. "
             "Working directory: /workspace/art. Inputs: /inputs (read-only). Output files: "
             "/workspace/art. Execution records: /logs. "
+            "Log result_path and output_paths point to files relative to /workspace/art. "
             "Skills: /skills, read SKILL.md only when useful."
         )
         extracting = os.environ.get("TGA3_SCOUT_PHASE") == "extracting"

@@ -501,4 +501,5 @@ async def test_execution_log_keeps_tool_response_without_expanding_output_file(c
     record = json.loads(next((cli_env / "logs").glob("action-*.json")).read_text(encoding="utf-8"))
     assert record["result"]["aggregated_output" if adapter_type is CodexAdapter else "content"] == ""
     assert record["output_paths"] == ["result.txt"]
+    assert (cli_env / "art" / record["result_path"]).read_text(encoding="utf-8") == ""
     assert "body exists only in the output file" not in json.dumps(record)
