@@ -22,7 +22,7 @@ def worker_instructions() -> str:
         "For every blackboard tool call, use the exact task_id and actor above. "
         "Never invent a placeholder task ID or actor."
         " Your CLI working directory is /workspace/art. Your private output directory is /workspace/art; "
-        "The runtime stores structured execution records in /artifacts. "
+        "The runtime stores structured execution records in /logs. "
         "Use native CLI file/list/search tools "
         "to discover /skills and read each package's SKILL.md, then follow its referenced documents."
     )
@@ -35,21 +35,21 @@ def worker_instructions() -> str:
         runtime_context = (
             f"Authoritative task_id: {os.environ['TGA3_TASK_ID']}. "
             "Working directory: /workspace/art. Inputs: /inputs (read-only). Output files: "
-            "/workspace/art. Execution records: /artifacts. "
+            "/workspace/art. Execution records: /logs. "
             "Skills: /skills, read SKILL.md only when useful."
         )
         extracting = os.environ.get("TGA3_SCOUT_PHASE") == "extracting"
         if extracting:
             instructions = (
                 "Current phase: SECOND ROUND, Intel extraction in the SAME CLI session and container. "
-                "Read existing /artifacts JSON records and files in /workspace/art. "
+                "Read existing /logs JSON records and files in /workspace/art. "
                 "Do not probe targets, rerun reconnaissance, modify evidence or install tools. "
                 "Extract verified observations, scoped negative results and clearly labelled unfinished checks. "
-                "Summarize EVERY artifact JSON, including failed and unfinished actions, into Intel. "
+                "Summarize EVERY log JSON, including failed and unfinished actions, into Intel. "
                 "Include its relative JSON filename in evidence_paths so coverage can be verified. "
                 "Save each coherent Intel with scout_write_intel using "
                 "request={task_id:<exact task UUID>,key:<stable unique key>,claim:<fact>,detail:<support>,"
-                "topic:<topic>,evidence_paths:[<paths relative to /artifacts>]}. "
+                "topic:<topic>,evidence_paths:[<paths relative to /logs>]}. "
                 "No actor, kind, artifact UUID or JSON formatting is needed. evidence_paths may be empty. "
                 "Check saved=true; the tool writes JSON to /intels and the system imports it after this phase. "
                 "Save all supported Intel, then finish. Do not publish to the blackboard. "
@@ -61,10 +61,10 @@ def worker_instructions() -> str:
                 "Use native tools to inspect inputs and the target, and preserve reusable raw "
                 "files in /workspace/art/. "
                 "Do not summarize Intel, call Intel tools, publish to the blackboard or write a recon report. "
-                "Tool calls and their output are automatically saved as JSON records under /artifacts; "
+                "Tool calls and their output are automatically saved as JSON records under /logs; "
                 "do not modify those reserved records. Save downloads, extracted files and "
                 "scripts under /workspace/art/. "
-                "Use /workspace for scratch work. Then continue in this same session to extract Intel from artifacts. "
+                "Use /workspace for scratch work. Then continue in this same session to extract Intel from logs. "
                 "Track time and limit individual commands; basic reconnaissance is enough, then finish. "
                 f"Execution budget: {os.environ.get('TGA3_SCOUT_TIMEOUT_SECONDS', '300')} seconds."
             )
@@ -85,9 +85,7 @@ def worker_instructions() -> str:
             "actor": actor,
             "topic": "<specific result topic>",
             "body": {"claim": "<verified fact>", "detail": "<verified supporting details>"},
-            "artifact_refs": [
-                {"artifact_id": "<UUID returned by artifact_register>", "locator": "<evidence location>"}
-            ],
+            "evidence_paths": ["<evidence file relative to /workspace/art>"],
             "idempotency_key": "<unique key for this entry>",
         },
     }
@@ -111,17 +109,17 @@ def worker_instructions() -> str:
         + json.dumps(finding_example, ensure_ascii=False)
         + "\nFinal candidate tool argument example:\n"
         + json.dumps(final_candidate_example, ensure_ascii=False)
-        + "\nKeep kind, task_id, actor, body, artifact_refs and idempotency_key directly inside request. "
+        + "\nKeep kind, task_id, actor, body, evidence_paths and idempotency_key directly inside request. "
         "For finding, body contains only claim and detail: put all supporting explanation in detail. "
         "Do not add detail_extra, title, summary, flag, or a finding/intel wrapper. "
         "A validation error path such as request.finding.body.detail_extra identifies the selected schema branch; "
         "it does not mean you should add a nested finding object. "
         "Every publication requires a non-empty idempotency_key in request, not in body. "
         "Use a different key for each new logical entry and keep the same key when retrying that entry. "
-        "Save evidence, call artifact_register, then publish finding with at least one returned Artifact UUID. "
-        "Artifact references are objects with artifact_id and locator, never bare UUID strings or file paths as IDs. "
+        "Save evidence under /workspace/art, then publish finding with evidence_paths relative to that directory. "
+        "The server validates paths and registers evidence automatically. Provide paths, never evidence UUIDs. "
         "For final_candidate, use the body shown above, reference published Finding entry UUIDs in finding_ids "
-        "(not Artifact UUIDs), and omit artifact_refs. "
+        "and omit evidence_paths. "
         "Check the tool result: publication is complete only after blackboard_publish returns the saved entry. "
         "If publication fails, fix the reported fields and retry before advancing to the next investigation step. "
         "The system imports Scout Intel after its extraction phase; "

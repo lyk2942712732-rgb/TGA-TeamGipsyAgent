@@ -32,7 +32,7 @@ class TwoPhaseScout(FakeContainerRuntime):
             await self.launch(spec)
         try:
             if spec.scout_phase == "executing":
-                root = self.config.task_path(spec.task_id, "artifacts", "scout")
+                root = self.config.task_path(spec.task_id, "logs", "scout")
                 root.mkdir(parents=True)
                 (root / "probe.txt").write_text("verified result")
                 self.executing.set()

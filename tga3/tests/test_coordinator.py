@@ -86,7 +86,7 @@ async def test_delete_task_keeps_files_when_database_delete_fails(tmp_path):
     task = await storage.create_task("delete", "penetration_test")
     await storage.update_task(task.id, state=RunState.CANCELLED)
     task_paths = [config.task_path(task.id, kind)
-                  for kind in ("workspaces", "inputs", "artifacts", "intels", "writeups")]
+                  for kind in ("workspaces", "inputs", "logs", "intels", "writeups")]
     for path in task_paths:
         path.mkdir(parents=True)
         (path / "keep.txt").write_text("recoverable", encoding="utf-8")

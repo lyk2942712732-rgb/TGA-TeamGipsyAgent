@@ -7,7 +7,7 @@ from zipfile import ZipFile
 import pytest
 from pydantic import TypeAdapter, ValidationError
 
-from tga3.domain import AgentPublishRequest, EntryKind, PublishRequest, publication_contract
+from tga3.domain import AgentPublishRequest, ArtifactRef, EntryKind, PublishRequest, publication_contract
 from tga3.errors import NotFoundError
 from tga3.protocol import RpcMessage
 from tga3.skills import SkillCatalog
@@ -40,10 +40,11 @@ def test_worker_publication_contract_is_discriminated_strict_and_generated_from_
         "task_id": task_id,
         "actor": {"agent_id": "worker-openai", "display_name": "OpenAI Worker", "role": "worker"},
         "body": {"claim": "verified", "detail": "reproduced"},
-        "artifact_refs": [{"artifact_id": uuid4(), "locator": "stdout:1"}],
+        "evidence_paths": ["proof.txt"],
         "idempotency_key": "finding-1",
     })
-    assert finding.publish_request().body == {"claim": "verified", "detail": "reproduced"}
+    internal = finding.publish_request(artifact_refs=[ArtifactRef(artifact_id=uuid4(), locator="proof.txt")])
+    assert internal.body == {"claim": "verified", "detail": "reproduced"}
 
     with pytest.raises(ValidationError):
         adapter.validate_python({
@@ -59,7 +60,7 @@ def test_worker_publication_contract_is_discriminated_strict_and_generated_from_
             "task_id": task_id,
             "actor": {"agent_id": "worker-openai", "display_name": "OpenAI Worker", "role": "worker"},
             "body": {"title": "wrong", "summary": "wrong"},
-            "artifact_refs": [{"artifact_id": uuid4(), "locator": "stdout:1"}],
+            "evidence_paths": ["proof.txt"],
             "idempotency_key": "finding-wrong",
         })
     with pytest.raises(ValidationError):
@@ -72,7 +73,7 @@ def test_worker_publication_contract_is_discriminated_strict_and_generated_from_
                 "rationale": "verified",
                 "finding_ids": [uuid4()],
             },
-            "artifact_refs": [{"artifact_id": uuid4(), "locator": "stdout:1"}],
+            "evidence_paths": ["proof.txt"],
             "idempotency_key": "final-wrong",
         })
 
@@ -80,7 +81,7 @@ def test_worker_publication_contract_is_discriminated_strict_and_generated_from_
     assert schema["discriminator"]["propertyName"] == "kind"
     assert set(schema["discriminator"]["mapping"]) == {"finding", "final_candidate"}
     summary = publication_contract()
-    assert "finding: body={claim, detail?}; artifact_refs=required non-empty" in summary
+    assert "finding: body={claim, detail?}; evidence_paths=required non-empty" in summary
     assert "body={conclusion, rationale, answer_type?, finding_ids}" in summary
 
 

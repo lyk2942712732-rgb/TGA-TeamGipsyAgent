@@ -12,8 +12,9 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from .blackboard import Blackboard
 from .config import TGA3Config
-from .domain import Actor, Artifact, RunState, ScoutIntelPublication
+from .domain import Actor, RunState, ScoutIntelPublication
 from .errors import ConflictError, ContractError
+from .evidence import register_evidence
 
 
 class ScoutIntelInput(BaseModel):
@@ -70,19 +71,8 @@ class ScoutIntelStore:
             configured = self.config.agents.agents["scout"]
             actor = Actor(agent_id="scout", display_name=configured.display_name, role="scout",
                           sdk=run.sdk, model=run.model_id)
-            root = self.config.task_path(request.task_id, "artifacts", "scout").resolve()
-            references = []
-            for relative in request.evidence_paths:
-                path = (root / relative).resolve()
-                if not path.is_relative_to(root) or not path.is_file():
-                    raise ContractError(f"Evidence is not a file under /artifacts: {relative}")
-                content = path.read_bytes()
-                artifact = await self.board.register_artifact(Artifact(
-                    task_id=request.task_id, created_by=actor, name=relative, storage_path=str(path),
-                    media_type="application/octet-stream", sha256=hashlib.sha256(content).hexdigest(),
-                    size_bytes=len(content),
-                ))
-                references.append({"artifact_id": artifact.id, "locator": relative})
+            root = self.config.task_path(request.task_id, "logs", "scout")
+            references = await register_evidence(self.board, request.task_id, actor, root, request.evidence_paths)
             publication = ScoutIntelPublication(
                 task_id=request.task_id, actor=actor.model_dump(), kind="intel", topic=request.topic,
                 body={"claim": request.claim, "detail": request.detail}, artifact_refs=references,
@@ -120,13 +110,13 @@ class ScoutIntelStore:
             documents = self.documents(task_id)
             for document in documents:
                 await self.board.publish(task_id, document.publication.actor, document.publication.publish_request())
-            root = self.config.task_path(task_id, "artifacts", "scout")
+            root = self.config.task_path(task_id, "logs", "scout")
             records = {path.relative_to(root).as_posix() for path in root.rglob("*.json")}
             covered = {str(Path(relative).as_posix()).removeprefix("./")
                        for document in documents for relative in document.input.evidence_paths}
             await self.storage.update_agent(task_id, "scout", metadata={
-                "intel_imported_count": len(documents), "artifact_json_count": len(records),
-                "artifact_json_covered_count": len(records & covered),
-                "artifact_json_uncovered": sorted(records - covered),
+                "intel_imported_count": len(documents), "log_json_count": len(records),
+                "log_json_covered_count": len(records & covered),
+                "log_json_uncovered": sorted(records - covered),
             })
             return len(documents)

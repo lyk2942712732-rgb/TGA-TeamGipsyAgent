@@ -10,10 +10,29 @@ from uuid import uuid4
 
 
 class ActionJournal:
-    def __init__(self, directory: Path, *, identity: dict, secret: str = "", enabled: bool = True):
+    def __init__(self, directory: Path, *, identity: dict, secret: str = "", enabled: bool = True,
+                 output_directory: Path | None = None):
         self.directory, self.identity = directory, identity
         self.secret, self.enabled = secret, enabled
         self.pending: dict[str, tuple[Path, dict]] = {}
+        self.output_directory = output_directory
+        self.output_snapshots: dict[str, dict] = {}
+        self.output_baseline = self._snapshot()
+
+    def _snapshot(self) -> dict:
+        result = {}
+        if self.output_directory is not None:
+            for path in self.output_directory.rglob("*"):
+                try:
+                    if path.is_symlink() or not path.is_file():
+                        continue
+                    stat = path.stat()
+                    result[path.relative_to(self.output_directory).as_posix()] = (
+                        stat.st_mtime_ns, stat.st_ctime_ns, stat.st_size, stat.st_ino,
+                    )
+                except OSError:
+                    continue
+        return result
 
     def record(self, action_id: str, tool: str, *, inputs=None, result=None, status="started") -> None:
         if not self.enabled:
@@ -25,6 +44,16 @@ class ActionJournal:
             "tool": tool, "started_at": now,
         }))
         record = {**record, "updated_at": now, "status": status}
+        current_outputs = self._snapshot()
+        if status == "started":
+            self.output_snapshots.setdefault(action_id, current_outputs)
+            record.setdefault("output_paths", [])
+        else:
+            before = self.output_snapshots.pop(action_id, self.output_baseline)
+            record["output_paths"] = sorted(
+                path for path, fingerprint in current_outputs.items() if before.get(path) != fingerprint
+            )
+        self.output_baseline = current_outputs
         if inputs is not None:
             record["input"] = inputs
         if result is not None:
@@ -46,3 +75,8 @@ class ActionJournal:
             self.pending[action_id] = path, record
         else:
             self.pending.pop(action_id, None)
+
+    def interrupt_pending(self) -> None:
+        """Keep paths to partial output files even when the CLI never emitted tool completion."""
+        for action_id, (_, record) in list(self.pending.items()):
+            self.record(action_id, record["tool"], status="interrupted")

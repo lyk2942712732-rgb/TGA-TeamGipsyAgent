@@ -10,7 +10,7 @@ from uuid import UUID
 
 from .config import TGA3Config
 
-KINDS = {"inputs": "input_root", "workspaces": "workspace_root", "artifacts": "artifact_root",
+KINDS = {"inputs": "input_root", "workspaces": "workspace_root", "logs": "artifact_root",
          "intels": "intel_root", "writeups": "writeup_root"}
 TABLES = ("input_files", "artifacts", "writeups")
 
@@ -33,6 +33,19 @@ def migration_plan(config: TGA3Config) -> list[tuple[Path, Path]]:
                 raise ValueError(f"unsafe legacy task directory: {source}")
             target = config.task_path(task_id, kind)
             if target.exists():
+                raise FileExistsError(f"refusing to merge existing task data: {target}")
+            plan.append((source, target))
+    # Upgrade the previous task-first layout without rewriting historical log contents.
+    if root.exists():
+        for task in sorted(root.iterdir()):
+            task_id = UUID(task.name)
+            source = task / "artifacts"
+            if not source.exists():
+                continue
+            if task.is_symlink() or source.is_symlink() or not source.is_dir():
+                raise ValueError(f"unsafe legacy task logs: {source}")
+            target = config.task_path(task_id, "logs")
+            if target.exists() or any(destination == target for _, destination in plan):
                 raise FileExistsError(f"refusing to merge existing task data: {target}")
             plan.append((source, target))
     return plan

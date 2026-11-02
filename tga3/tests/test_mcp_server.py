@@ -1,11 +1,13 @@
 import json
+import os
 from pathlib import Path
-from uuid import uuid4
+from uuid import UUID
 
 import pytest
 
 from tga3.blackboard import Blackboard
 from tga3.config import TGA3Config
+from tga3.domain import RunState
 from tga3.mcp_server import build_mcp, build_scout_mcp
 from tga3.scout_intel import ScoutIntelStore
 from tga3.storage import InMemoryStorage
@@ -43,7 +45,7 @@ async def test_mcp_publish_tool_exposes_one_discriminated_worker_contract():
 
     tools = await mcp.list_tools()
     assert {tool.name for tool in tools} == {
-        "blackboard_sync", "blackboard_publish", "artifact_register",
+        "blackboard_sync", "blackboard_publish",
     }
     publish = next(tool for tool in tools if tool.name == "blackboard_publish")
     request = publish.inputSchema["properties"]["request"]
@@ -55,41 +57,107 @@ async def test_mcp_publish_tool_exposes_one_discriminated_worker_contract():
     finding_schema = publish.inputSchema["$defs"]["WorkerFindingPublication"]
     final_schema = publish.inputSchema["$defs"]["WorkerFinalCandidatePublication"]
     assert "kind" in finding_schema["required"]
-    assert "artifact_refs" in finding_schema["required"]
+    assert "evidence_paths" in finding_schema["required"]
+    assert "artifact_refs" not in finding_schema["properties"]
     assert "artifact_refs" not in final_schema["properties"]
 
 
-async def test_artifact_registration_uses_the_publishing_workers_private_directory(tmp_path):
+def result_payload(result):
+    if isinstance(result, tuple):
+        result = result[1]
+    if not isinstance(result, dict):
+        result = json.loads(result[0].text)
+    return result
+
+
+async def test_finding_publication_registers_private_evidence_and_deduplicates_retries(tmp_path):
     config = TGA3Config(Path(__file__).parents[1] / "config")
     config.runtime.task_root = str(tmp_path / "tasks")
     storage = InMemoryStorage()
     task = await storage.create_task("evidence", "pwn")
-    mcp = build_mcp(config, Blackboard(storage))
+    board = Blackboard(storage)
+    mcp = build_mcp(config, board)
     hashes = []
     for agent_id in ("worker-openai", "worker-claude"):
         root = config.task_path(task.id, "workspaces", agent_id) / "art"
         root.mkdir(parents=True)
         (root / "proof.txt").write_text(agent_id)
-        arguments = {
-            "task_id": str(task.id),
+        request = {
+            "kind": "finding", "task_id": str(task.id),
             "actor": {"agent_id": agent_id, "display_name": agent_id, "role": "worker"},
-            "relative_path": "proof.txt", "name": "proof",
+            "body": {"claim": "verified fixture"}, "evidence_paths": ["proof.txt", "./proof.txt"],
+            "idempotency_key": "fixture",
         }
-        result = await mcp.call_tool("artifact_register", arguments)
-        # FastMCP's return shape varies across supported releases.
-        if isinstance(result, tuple):
-            result = result[1]
-        if not isinstance(result, dict):
-            result = json.loads(result[0].text)
-        assert Path(result["storage_path"]) == root / "proof.txt"
-        hashes.append(result["sha256"])
-        arguments["relative_path"] = "../outside.txt"
-        with pytest.raises(Exception, match="escapes"):
-            await mcp.call_tool("artifact_register", arguments)
+        result = result_payload(await mcp.call_tool("blackboard_publish", {"request": request}))
+        links = await board.inspect_finding(task.id, UUID(result["id"]))
+        assert len(links) == 1
+        evidence = storage.artifacts[links[0].artifact_id]
+        assert Path(evidence.storage_path) == root / "proof.txt"
+        hashes.append(evidence.sha256)
+        retried = result_payload(await mcp.call_tool("blackboard_publish", {"request": request}))
+        assert retried["id"] == result["id"]
+        assert len(storage.artifacts) == len(hashes)
     assert hashes[0] != hashes[1]
-    with pytest.raises(Exception, match="only configured Scout or Workers"):
-        await mcp.call_tool("artifact_register", {
-            "task_id": str(uuid4()),
-            "actor": {"agent_id": "reporter", "display_name": "Reporter", "role": "reporter"},
-            "relative_path": "proof.txt", "name": "proof",
-        })
+
+
+@pytest.mark.parametrize("relative", ["../outside.txt", "/etc/passwd", "C:/secret", "missing.txt", "nested/../../x"])
+async def test_finding_rejects_invalid_paths_before_registering_any_evidence(tmp_path, relative):
+    config = TGA3Config(Path(__file__).parents[1] / "config")
+    config.runtime.task_root = str(tmp_path / "tasks")
+    storage = InMemoryStorage()
+    task = await storage.create_task("evidence", "pwn")
+    root = config.task_path(task.id, "workspaces", "worker-openai") / "art"
+    root.mkdir(parents=True)
+    (root / "proof.txt").write_text("proof")
+    mcp = build_mcp(config, Blackboard(storage))
+    with pytest.raises(Exception, match="Evidence"):
+        await mcp.call_tool("blackboard_publish", {"request": {
+            "kind": "finding", "task_id": str(task.id),
+            "actor": {"agent_id": "worker-openai", "display_name": "Worker", "role": "worker"},
+            "body": {"claim": "fixture"}, "evidence_paths": ["proof.txt", relative],
+            "idempotency_key": "bad",
+        }})
+    assert not storage.artifacts
+    assert not await storage.list_entries(task.id)
+
+
+async def test_closed_task_rejects_finding_before_creating_evidence_records(tmp_path):
+    config = TGA3Config(Path(__file__).parents[1] / "config")
+    config.runtime.task_root = str(tmp_path / "tasks")
+    storage = InMemoryStorage()
+    task = await storage.create_task("closed", "pwn")
+    await storage.update_task(task.id, state=RunState.COMPLETED)
+    mcp = build_mcp(config, Blackboard(storage))
+    with pytest.raises(Exception, match="closed"):
+        await mcp.call_tool("blackboard_publish", {"request": {
+            "kind": "finding", "task_id": str(task.id),
+            "actor": {"agent_id": "worker-openai", "display_name": "Worker", "role": "worker"},
+            "body": {"claim": "fixture"}, "evidence_paths": ["proof.txt"], "idempotency_key": "closed",
+        }})
+    assert not storage.artifacts
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Linux evidence symlink isolation")
+async def test_finding_rejects_symlink_to_another_workers_evidence(tmp_path):
+    config = TGA3Config(Path(__file__).parents[1] / "config")
+    config.runtime.task_root = str(tmp_path / "tasks")
+    storage = InMemoryStorage()
+    task = await storage.create_task("symlink", "pwn")
+    root = config.task_path(task.id, "workspaces", "worker-openai") / "art"
+    other = config.task_path(task.id, "workspaces", "worker-claude") / "art"
+    root.mkdir(parents=True)
+    other.mkdir(parents=True)
+    (other / "proof.txt").write_text("other worker")
+    (root / "proof.txt").symlink_to(other / "proof.txt")
+    mcp = build_mcp(config, Blackboard(storage))
+    request = {"kind": "finding", "task_id": str(task.id),
+               "actor": {"agent_id": "worker-openai", "display_name": "Worker", "role": "worker"},
+               "body": {"claim": "fixture"}, "evidence_paths": ["proof.txt"], "idempotency_key": "escape"}
+    with pytest.raises(Exception, match="Evidence"):
+        await mcp.call_tool("blackboard_publish", {"request": request})
+    (root / "proof.txt").unlink()
+    root.rmdir()
+    root.symlink_to(other, target_is_directory=True)
+    with pytest.raises(Exception, match="symlink"):
+        await mcp.call_tool("blackboard_publish", {"request": request})
+    assert not storage.artifacts

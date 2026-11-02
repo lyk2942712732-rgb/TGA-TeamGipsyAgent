@@ -208,7 +208,7 @@ class RuntimeConfig(BaseModel):
     # Legacy roots are accepted only to locate data during migration.
     workspace_root: str = "data/workspaces"
     input_root: str = "data/inputs"
-    artifact_root: str = "data/artifacts"
+    artifact_root: str = "data/logs"
     intel_root: str = "data/intels"
     writeup_root: str = "data/writeups"
     skills_root: str
@@ -345,11 +345,11 @@ class TGA3Config:
         root = self.resolve_path(self.runtime.task_root)
         path = root / str(UUID(str(task_id)))
         if kind is not None:
-            if kind not in {"inputs", "workspaces", "artifacts", "intels", "writeups"}:
+            if kind not in {"inputs", "workspaces", "logs", "intels", "writeups"}:
                 raise ValueError(f"unknown task directory: {kind}")
             path /= kind
         if agent_id is not None:
-            if kind not in {"workspaces", "artifacts", "intels"} or agent_id not in self.agents.agents:
+            if kind not in {"workspaces", "logs", "intels"} or agent_id not in self.agents.agents:
                 raise ValueError(f"invalid agent directory: {agent_id}")
             path /= agent_id
         if not path.resolve().is_relative_to(root):
@@ -357,7 +357,7 @@ class TGA3Config:
         return path
 
     def ensure_task_directories(self, task_id: UUID | str) -> None:
-        for kind in ("inputs", "workspaces", "artifacts", "intels", "writeups"):
+        for kind in ("inputs", "workspaces", "logs", "intels", "writeups"):
             self.task_path(task_id, kind).mkdir(parents=True, exist_ok=True)
 
     @property

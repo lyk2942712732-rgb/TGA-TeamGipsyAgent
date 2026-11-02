@@ -34,7 +34,7 @@ def artifact(task_id, actor) -> Artifact:
         task_id=task_id,
         created_by=actor,
         name="proof.txt",
-        storage_path="/artifacts/proof.txt",
+        storage_path="/logs/proof.txt",
         media_type="text/plain",
         sha256="a" * 64,
         size_bytes=5,

@@ -77,3 +77,37 @@ def test_read_only_extraction_does_not_write_execution_records(tmp_path):
     journal = ActionJournal(tmp_path / "readonly", identity={}, enabled=False)
     journal.record("tool-1", "read", result={"text": "fixture"}, status="completed")
     assert not (tmp_path / "readonly").exists()
+
+
+def test_migration_renames_task_artifacts_to_logs_and_relocates_evidence_paths(tmp_path):
+    config = configuration(tmp_path)
+    task_id = uuid4()
+    old = config.task_path(task_id) / "artifacts"
+    raw = old / "scout/action-1.json"
+    raw.parent.mkdir(parents=True)
+    raw.write_text('{"result":{"output":"original"}}')
+    plan = migration_plan(config)
+    assert plan == [(old, config.task_path(task_id, "logs"))]
+    assert relocate_path(str(raw), plan) == str(config.task_path(task_id, "logs", "scout") / raw.name)
+    assert raw.read_text() == '{"result":{"output":"original"}}'
+    config.task_path(task_id, "logs").mkdir()
+    with pytest.raises(FileExistsError):
+        migration_plan(config)
+
+
+
+def test_execution_log_tracks_modified_and_partial_outputs_without_claiming_unchanged_files(tmp_path):
+    output = tmp_path / "art"
+    output.mkdir()
+    (output / "existing.txt").write_text("old")
+    (output / "untouched.txt").write_text("untouched")
+    journal = ActionJournal(tmp_path / "logs", identity={}, output_directory=output)
+    journal.record("redirect", "shell", inputs={"command": "fixture > existing.txt"})
+    (output / "existing.txt").write_text("new body")
+    (output / "nested").mkdir()
+    (output / "nested/new.txt").write_text("partial body")
+    journal.interrupt_pending()
+    record = json.loads(next((tmp_path / "logs").glob("*.json")).read_text(encoding="utf-8"))
+    assert record["status"] == "interrupted"
+    assert record["output_paths"] == ["existing.txt", "nested/new.txt"]
+    assert not journal.pending

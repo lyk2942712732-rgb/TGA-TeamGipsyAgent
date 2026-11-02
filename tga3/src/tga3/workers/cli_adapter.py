@@ -52,11 +52,12 @@ class CliAdapter(AgentAdapter):
         self.output_history_since = time.monotonic()
         self.stderr: deque[str] = deque(maxlen=80)
         self.journal = ActionJournal(
-            Path(os.environ.get("TGA3_ARTIFACTS", "/artifacts")),
+            Path(os.environ.get("TGA3_LOGS", "/logs")),
             identity={"task_id": os.environ.get("TGA3_TASK_ID"),
                       "agent_id": os.environ.get("TGA3_AGENT_ID"), "runtime": self.runtime},
             secret=self.api_key,
             enabled=not (os.environ.get("TGA3_AGENT_ROLE") == "scout" and self.scout_phase == "extracting"),
+            output_directory=self.output_dir,
         )
 
     def hook_config(self) -> dict:
@@ -263,7 +264,10 @@ class CliAdapter(AgentAdapter):
             exchange_task.cancel()
             watchdog_task.cancel()
             await asyncio.gather(exchange_task, watchdog_task, return_exceptions=True)
-            await self._terminate(process)
+            try:
+                await self._terminate(process)
+            finally:
+                self.journal.interrupt_pending()
         if process.returncode or self.failure or not self.completed:
             detail = "\n".join(self.stderr)
             detail = detail.replace(self.api_key, "[redacted]") if self.api_key else detail

@@ -198,7 +198,7 @@ class InMemoryStorage:
     async def register_artifact(self, artifact: Artifact) -> Artifact:
         await self.get_task(artifact.task_id)
         if artifact.id in self.artifacts:
-            raise ConflictError(f"artifact already exists: {artifact.id}")
+            return self.artifacts[artifact.id]
         self.artifacts[artifact.id] = artifact
         return artifact
 
@@ -498,7 +498,8 @@ class PostgresStorage:
             """INSERT INTO artifacts(
                    id,task_id,created_by,name,storage_path,media_type,sha256,size_bytes,available,created_at
                )
-               VALUES($1,$2,$3::jsonb,$4,$5,$6,$7,$8,$9,$10) RETURNING *""",
+               VALUES($1,$2,$3::jsonb,$4,$5,$6,$7,$8,$9,$10)
+               ON CONFLICT(id) DO UPDATE SET id=EXCLUDED.id RETURNING *""",
             artifact.id,
             artifact.task_id,
             _json(artifact.created_by.model_dump(mode="json")),

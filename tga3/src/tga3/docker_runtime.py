@@ -60,20 +60,20 @@ class DockerContainerRuntime:
     def _task_paths(self, task_id: UUID, agent_id: str) -> tuple[Path, Path, Path]:
         workspace = self.config.task_path(task_id, "workspaces", agent_id)
         inputs = self.config.task_path(task_id, "inputs")
-        artifacts = self.config.task_path(task_id, "artifacts")
+        logs = self.config.task_path(task_id, "logs")
         if agent_id in self.config.agents.agents:
-            artifacts = artifacts / agent_id
+            logs = logs / agent_id
         inputs.mkdir(parents=True, exist_ok=True)
         self._ensure_worker_directory(workspace)
         self._ensure_worker_directory(workspace / "art")
-        self._ensure_worker_directory(artifacts)
-        return workspace, inputs, artifacts
+        self._ensure_worker_directory(logs)
+        return workspace, inputs, logs
 
     def _launch_sync(self, spec: LaunchSpec) -> str:
         runtime = self.config.runtime
         docker_cfg = runtime.docker
         binding = spec.agent
-        workspace, inputs, artifacts = self._task_paths(spec.task_id, binding.agent_id)
+        workspace, inputs, logs = self._task_paths(spec.task_id, binding.agent_id)
         is_reporter = binding.role == "reporter"
         extracting = binding.role == "scout" and spec.scout_phase == "extracting"
         phase_budget = int(spec.phase_budget_seconds if spec.phase_budget_seconds is not None else
@@ -84,7 +84,7 @@ class DockerContainerRuntime:
         volumes = {
             str(workspace): {"bind": "/workspace", "mode": "rw"},
             str(inputs): {"bind": "/inputs", "mode": "ro"},
-            str(artifacts): {"bind": "/artifacts", "mode": "ro" if extracting else "rw"},
+            str(logs): {"bind": "/logs", "mode": "ro" if extracting else "rw"},
             str(self.config.skills_root): {"bind": "/skills", "mode": "ro"},
         }
         if binding.role == "scout":
@@ -92,7 +92,7 @@ class DockerContainerRuntime:
             self._ensure_worker_directory(intels)
             volumes[str(intels)] = {"bind": "/intels", "mode": "ro"}
         if is_reporter:
-            volumes[str(self.config.task_path(spec.task_id, "artifacts"))] = {"bind": "/evidence", "mode": "ro"}
+            volumes[str(self.config.task_path(spec.task_id, "logs"))] = {"bind": "/evidence", "mode": "ro"}
             for agent_id in self.config.agents.agents:
                 if agent_id != binding.agent_id:
                     files = self.config.task_path(spec.task_id, "workspaces", agent_id) / "art"

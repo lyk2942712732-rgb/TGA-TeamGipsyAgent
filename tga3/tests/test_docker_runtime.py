@@ -30,7 +30,7 @@ def test_scout_mounts_intels_once_for_both_phases(tmp_path):
     runtime.config, runtime.client = config, SimpleNamespace(containers=containers)
     runtime._launch_sync(LaunchSpec(task_id=uuid4(), agent=config.resolve_agent("scout"), scout_phase="executing"))
     mounts = {value["bind"]: value["mode"] for value in containers.kwargs["volumes"].values()}
-    assert mounts["/artifacts"] == "rw" and mounts["/intels"] == "ro"
+    assert mounts["/logs"] == "rw" and mounts["/intels"] == "ro"
     environment = containers.kwargs["environment"]
     assert environment["TGA3_SCOUT_EXTRACT_TIMEOUT_SECONDS"] == str(config.runtime.scout_extract_timeout_seconds)
     assert environment["TGA3_SCOUT_PHASE"] == "executing"
@@ -57,12 +57,12 @@ def test_workers_get_private_workspaces_and_evidence_reporter_gets_read_only_uni
     assert len({paths[key]["/workspace"][0] for key in paths}) == 4
     assert first["/inputs"] == second["/inputs"] == reporter["/inputs"]
     assert all("/recon" not in mounts for mounts in paths.values())
-    assert first["/artifacts"][0] != second["/artifacts"][0]
+    assert first["/logs"][0] != second["/logs"][0]
     for key, content in (("worker-openai", "first"), ("worker-claude", "second")):
-        (paths[key]["/artifacts"][0] / "proof.txt").write_text(content)
+        (paths[key]["/logs"][0] / "proof.txt").write_text(content)
         assert (reporter["/evidence"][0] / key / "proof.txt").read_text() == content
     assert reporter["/evidence"][1] == "ro"
-    assert reporter["/artifacts"][1] == "rw"
+    assert reporter["/logs"][1] == "rw"
 
 
 def test_worker_container_uses_stable_non_root_identity(tmp_path: Path):
@@ -76,7 +76,7 @@ def test_worker_container_uses_stable_non_root_identity(tmp_path: Path):
     runtime.client = SimpleNamespace(containers=containers)
     workspace = tmp_path / "workspace"
     inputs = tmp_path / "inputs"
-    artifacts = tmp_path / "artifacts"
+    artifacts = tmp_path / "logs"
     for path in (workspace, inputs, artifacts):
         path.mkdir()
     runtime._task_paths = lambda _task_id, _agent_id: (workspace, inputs, artifacts)
@@ -86,7 +86,7 @@ def test_worker_container_uses_stable_non_root_identity(tmp_path: Path):
     assert containers.kwargs["environment"]["HOME"] == "/home/tga3"
     assert containers.kwargs["environment"]["TGA3_BLACKBOARD_MCP_URL"].endswith("/mcp/")
     assert containers.kwargs["volumes"][str(workspace)] == {"bind": "/workspace", "mode": "rw"}
-    assert containers.kwargs["volumes"][str(artifacts)] == {"bind": "/artifacts", "mode": "rw"}
+    assert containers.kwargs["volumes"][str(artifacts)] == {"bind": "/logs", "mode": "rw"}
 
 
 def test_reporter_uses_codex_image_and_read_only_evidence(tmp_path):
@@ -95,15 +95,15 @@ def test_reporter_uses_codex_image_and_read_only_evidence(tmp_path):
     containers = FakeContainers()
     runtime = DockerContainerRuntime.__new__(DockerContainerRuntime)
     runtime.config, runtime.client = config, SimpleNamespace(containers=containers)
-    for name in ("workspace", "inputs", "artifacts"):
+    for name in ("workspace", "inputs", "logs"):
         (tmp_path / name).mkdir()
-    runtime._task_paths = lambda *_: tuple(tmp_path / name for name in ("workspace", "inputs", "artifacts"))
+    runtime._task_paths = lambda *_: tuple(tmp_path / name for name in ("workspace", "inputs", "logs"))
     spec = LaunchSpec(task_id=uuid4(), agent=config.resolve_agent("reporter"), report_input="[]")
     runtime._launch_sync(spec)
     args = containers.kwargs
     assert args["image"] == config.runtime.worker_images["worker-openai"]
     assert args["environment"]["TGA3_AGENT_ROLE"] == "reporter"
-    assert args["volumes"][str(tmp_path / "artifacts")]["mode"] == "rw"
+    assert args["volumes"][str(tmp_path / "logs")]["mode"] == "rw"
     assert args["volumes"][str(tmp_path / "workspace/report-input.json")]["mode"] == "ro"
     assert args["cap_add"] == []
 

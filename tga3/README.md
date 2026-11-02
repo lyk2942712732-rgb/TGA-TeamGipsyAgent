@@ -3,7 +3,7 @@
 两个 Worker 在独立 Kali 容器中并行运行 Codex CLI 和 Claude Code CLI。
 出现最终候选后，控制层等待收尾宽限期、停止并回收 Worker，固定黑板快照，
 再用与 Codex Worker 相同的镜像启动一次性 Reporter 容器。
-Scout 分两轮：第一轮实际执行并留存 artifacts，第二轮在原容器、原 CLI 会话中逐条概括 artifact JSON 为 Intel，通过参数化工具保存 /intels JSON；控制层统一导入后才启动两个 Worker。
+Scout 分两轮：第一轮实际执行并留存 logs，第二轮在原容器、原 CLI 会话中逐条概括 log JSON 为 Intel，通过参数化工具保存 /intels JSON；控制层统一导入后才启动两个 Worker。
 
 ```text
 Web UI → FastAPI 控制层 → PostgreSQL / 共享黑板 / MCP
@@ -25,12 +25,12 @@ CLI 管理私有会话、工具执行和上下文压缩；不再使用 Agents SD
 - `.tga3/*-session.json` 只保存 CLI 会话指针；PG `agent_runs.metadata.cli_session_id` 保存对应标识。
 - `agent_runs.session_id` 仍是控制通道标识，不用于 CLI resume。
 - Scout 第一轮默认 300 秒，可在 Solver 配置中设置为 60–600 秒；结束或超时后启动第二轮，第二轮使用独立的 180 秒预算（runtime.scout_extract_timeout_seconds）。两轮仅区分工作内容，复用同一容器、CLI 会话和上下文，Token 统计归于 Scout。
-- 各智能体的生成文件放在 `/workspace/art/`，CLI 默认在此执行；工具调用开始时保存独立 `/artifacts/action-*.json`，完成后原子更新同一记录，包含输入、完整输出、退出状态、时间及智能体身份。Scout 第二轮按规则只读记录和生成文件，并暂停执行日志写入，避免把提取操作递归变成新 artifact。运行时核对每条 JSON 是否被 Intel 的 evidence_paths 覆盖，遗漏时在原会话继续提取。
+- 各智能体的生成文件放在 `/workspace/art/`，CLI 默认在此执行；工具调用开始时保存独立 `/logs/action-*.json`，完成后原子更新同一记录，包含输入、CLI 实际返回的输出正文、退出状态、时间及智能体身份。`result` 直接保存 CLI 结果对象（Codex 通常为 `aggregated_output`，Claude 为 `content`），不会自动读取输出文件；CLI 自身截断的内容无法在日志中恢复。`output_paths` 记录本次工具执行期间新增或修改的输出文件，相对于该智能体的 `/workspace/art/`；例如重定向输出时 `result.aggregated_output` 可以为空，而 `output_paths` 为 `["result.txt"]`。未改动的既有文件不列入；工具中断时仍记录已生成的部分文件。并发工具的文件变化可能重叠。Scout 第二轮按规则只读记录和生成文件，并暂停执行日志写入，避免把提取操作递归变成新日志。运行时核对每条 JSON 是否被 Intel 的 evidence_paths 覆盖，遗漏时在原会话继续提取。
 - 任务顶部显示累计 Token，点击向右展开 Scout、两个 Worker 和 Reporter 各自用量。控制层增量读取各任务的 Codex/Claude 原生 JSONL，用量及去重检查点持久化在 Agent metadata；重新打开历史任务会回填现存日志。总数为输入加输出（包含缓存输入，缓存命中不重复相加），没有原生用量记录时显示“未上报”，不估算。
 - 共享黑板支持实时用户提示；Scout 和两个 Worker 的原生钩子在下一个工具调用前注入这些提示，绕过普通同步间隔。运行中的工具会先完成；收尾和终态任务不再接收新提示。 任务顶部、运行图和 Agent 面板显示 Scout 当前处于“第一轮·侦察执行中”或“第二轮·Intel 提取中”。
 - PostgreSQL 保存任务、共享黑板、只读执行事件和证据/报告索引。
-- `/inputs` 只读；`/workspace` 私有；`/artifacts` 是各智能体自己的 JSON 执行记录。Reporter 通过只读 `/evidence/<agent-id>` 和 `/evidence-files/<agent-id>` 查看记录和生成文件，自身记录仍写入自己的 `/artifacts`。已移除 `/recon`。
-- Worker 通过 HTTP MCP 访问黑板、注册证据和读取 Skills。发布协议维持 Intel / Finding / final_candidate。
+- `/inputs` 只读；`/workspace` 私有；`/logs` 是各智能体自己的 JSON 执行记录。Reporter 通过只读 `/evidence/<agent-id>` 和 `/evidence-files/<agent-id>` 查看记录和生成文件，自身记录仍写入自己的 `/logs`。已移除 `/recon`。
+- Worker 使用 `blackboard_publish` 发布 Finding 时提供 `evidence_paths`（相对于自己的 `/workspace/art/`），服务端校验并自动登记文件元数据和证据关联。模型无需调用额外登记工具或提供证据 UUID。Scout 的 `scout_write_intel` 使用相对于 `/logs/` 的路径，同样由服务端登记，Intel JSON 统一导入后写入关联。Skills 使用 CLI 原生工具读取。
 - CLI 周期在安全点消费合并后的黑板更新；暂停、停止和超时会回收 CLI 的工具进程组。
 
 任务文件统一按 `runtime.task_root`（默认 `data/tasks`）组织：
@@ -39,7 +39,7 @@ CLI 管理私有会话、工具执行和上下文压缩；不再使用 Agents SD
 data/tasks/<任务ID>/
 ├── inputs/
 ├── workspaces/<agent-id>/art/   生成文件；CLI 会话和状态在 art 的同级隐藏目录
-├── artifacts/<agent-id>/       JSON 执行记录
+├── logs/<agent-id>/            JSON 执行记录
 ├── intels/scout/               已保存的 Intel JSON
 └── writeups/                   最终报告
 ```
@@ -51,9 +51,9 @@ data/tasks/<任务ID>/
 python -m tga3.task_storage --config-dir /path/to/tga3/config --journal /backup/task-storage-migration.json
 ```
 
-迁移以重命名保留全部历史内容，同时事务更新 PostgreSQL 中附件、证据、报告的路径。
+迁移同时支持旧的类型优先目录和任务内 `artifacts/` 到 `logs/` 的升级，以重命名保留全部历史内容，同时事务更新 PostgreSQL 中附件、证据、报告的路径。
 既有目录发生冲突时拒绝覆盖；失败会回滚本轮移动，恢复日志保存原始路径。
-历史文件内容及原生会话不改写，历史 artifacts 中已有的原始证据仍保留，避免破坏旧引用。
+历史文件内容及原生会话不改写，历史 logs 中已有的原始证据仍保留，避免破坏旧引用。
 
 详细构建、认证及旧配置迁移说明见 [CLI 迁移说明](CLI-MIGRATION.md)。
 

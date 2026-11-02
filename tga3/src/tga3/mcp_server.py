@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 from typing import Any
 from urllib.parse import urlsplit
 from uuid import UUID
@@ -12,7 +11,8 @@ from mcp.server.transport_security import TransportSecuritySettings
 
 from .blackboard import Blackboard
 from .config import TGA3Config
-from .domain import Actor, AgentPublishRequest, Artifact, publication_contract
+from .domain import Actor, AgentPublishRequest, EntryKind, publication_contract
+from .evidence import register_evidence
 from .scout_intel import ScoutIntelInput, ScoutIntelStore
 
 
@@ -67,50 +67,20 @@ def build_mcp(config: TGA3Config, blackboard: Blackboard) -> FastMCP:
             task = await blackboard.storage.get_task(request.task_id)
             if run.metadata.get("blackboard_cursor", -1) < task.blackboard_seq:
                 raise ValueError("Unread blackboard updates: run the native checkpoint before resubmitting")
-        entry = await blackboard.publish(
-            request.task_id,
-            Actor.model_validate(request.actor),
-            request.publish_request(),
-        )
+        actor = Actor.model_validate(request.actor)
+        await blackboard.check_write(request.task_id, actor, request.kind)
+        references = None
+        if request.kind == EntryKind.FINDING:
+            root = config.task_path(request.task_id, "workspaces", actor.agent_id) / "art"
+            references = await register_evidence(blackboard, request.task_id, actor, root, request.evidence_paths)
+        entry = await blackboard.publish(request.task_id, actor, request.publish_request(artifact_refs=references))
         return entry.model_dump(mode="json")
-
-    @mcp.tool()
-    async def artifact_register(
-        task_id: str,
-        actor: dict[str, Any],
-        relative_path: str,
-        name: str,
-        media_type: str = "application/octet-stream",
-    ) -> dict[str, Any]:
-        """Register a file already written below /workspace/art; returns an artifact id for a Finding."""
-        task_uuid = UUID(task_id)
-        identity = Actor.model_validate(actor)
-        configured = config.agents.agents.get(identity.agent_id)
-        if configured is None or configured.role not in {"scout", "worker"} or identity.role != configured.role:
-            raise ValueError("only configured Scout or Workers can register evidence")
-        task_root = (config.task_path(task_uuid, "workspaces", identity.agent_id) / "art").resolve()
-        path = (task_root / relative_path).resolve()
-        if task_root != path and task_root not in path.parents:
-            raise ValueError("artifact path escapes the task artifact directory")
-        if not path.is_file():
-            raise FileNotFoundError(f"artifact not found: {relative_path}")
-        digest = hashlib.sha256(path.read_bytes()).hexdigest()
-        artifact = Artifact(
-            task_id=task_uuid,
-            created_by=identity,
-            name=name,
-            storage_path=str(path),
-            media_type=media_type,
-            sha256=digest,
-            size_bytes=path.stat().st_size,
-        )
-        return (await blackboard.register_artifact(artifact)).model_dump(mode="json")
 
     return mcp
 
 
 def build_scout_mcp(config: TGA3Config, store: ScoutIntelStore) -> FastMCP:
-    mcp = _new_mcp(config, "tga3-scout-intels", "Extract Intel from /artifacts; save JSON using scout_write_intel. "
+    mcp = _new_mcp(config, "tga3-scout-intels", "Extract Intel from /logs; save JSON using scout_write_intel. "
                    "The system imports all saved files after extraction. No blackboard publication tool is provided.")
 
     @mcp.tool()
@@ -118,7 +88,7 @@ def build_scout_mcp(config: TGA3Config, store: ScoutIntelStore) -> FastMCP:
         """Save one validated Intel JSON in /intels during Scout's second phase.
 
         Fill request={task_id,key,claim,detail,topic,evidence_paths:[]}.
-        key is stable for retries. evidence_paths are existing paths relative to /artifacts;
+        key is stable for retries. evidence_paths are existing paths relative to /logs;
         the system handles artifact registration, JSON formatting and final blackboard import.
         """
         return await store.write(request)

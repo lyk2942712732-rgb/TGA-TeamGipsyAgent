@@ -68,9 +68,9 @@ CLI 使用控制层传入的工作目录（当前为容器内 `/workspace/art`�
 tasks/<task-id>/workspaces/worker-openai/   → Codex /workspace（读写）
 tasks/<task-id>/workspaces/worker-claude/   → Claude /workspace（读写）
 tasks/<task-id>/workspaces/reporter/        → Reporter /workspace（读写）
-tasks/<task-id>/artifacts/worker-openai/    → Codex /artifacts（读写）
-tasks/<task-id>/artifacts/worker-claude/    → Claude /artifacts（读写）
-tasks/<task-id>/artifacts/            → Reporter /evidence（只读）
+tasks/<task-id>/logs/worker-openai/    → Codex /logs（读写）
+tasks/<task-id>/logs/worker-claude/    → Claude /logs（读写）
+tasks/<task-id>/logs/            → Reporter /evidence（只读）
 inputs/<task-id>/                    → 全部 /inputs（只读）
 skills/                             → 全部 /skills（只读）
 ```
@@ -79,7 +79,7 @@ Worker 无法通过挂载访问对方工作目录或证据目录；双方通过�
 Reporter 从 `/evidence/<agent-id>/` 读取执行记录、从 `/evidence-files/<agent-id>/` 读取生成文件；报告写入 `/workspace/art/writeup.md`。
 
 文件读写、搜索、Shell 与 Skills 文档读取直接使用 CLI 原生能力，删除重复的 Skills MCP 工具。
-MCP 只保留 `blackboard_sync`、`blackboard_publish`、`artifact_register`；证据登记按发布 Worker
+Worker MCP 只保留 `blackboard_sync` 和 `blackboard_publish`；Finding 在 evidence_paths 中提供相对路径，服务端按发布 Worker
 定位私有目录并拒绝目录穿越。Skills 配置中心仍负责管理文档包。
 执行页面仅保留状态、活动和控制，不提供 Worker/Reporter 聊天或问答转发。
 PostgreSQL 使用 task_events 和 task_runs.event_seq 保存只读执行事件，不提供对话写入接口。
@@ -106,7 +106,7 @@ npm run build
 `runtime.scout_timeout_seconds` 默认 300，允许 60–600 秒；控制层限制包含容器启动的总时间，
 超时先终止并回收 Scout 再启动 Worker，已有 Intel 与证据保留。正常结束但没有 Intel 时
 提示 Worker 从原始材料开始；执行错误则任务失败，不悄悄绕过错误。
-Scout 的 /artifacts 独立保存在 tasks/<task-id>/artifacts/scout；各智能体生成文件保存在 tasks/<task-id>/workspaces/<agent-id>/art。已移除 /recon。
+Scout 的 /logs 独立保存在 tasks/<task-id>/logs/scout；各智能体生成文件保存在 tasks/<task-id>/workspaces/<agent-id>/art。已移除 /recon。
 Reporter 只读查看 Scout 与两个 Worker 的证据。只有 Intel 作为交接，不生成额外侦察简报。
 
 ## Worker 连续执行与黑板同步

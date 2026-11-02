@@ -311,7 +311,7 @@ def create_app(
     @api.get("/agent-definitions")
     async def agent_definitions() -> list[dict[str, Any]]:
         tools = {
-            "scout": ["第一轮：Shell / Kali 工具 / artifacts 留存", "第二轮：只读 artifacts",
+            "scout": ["第一轮：Shell / Kali 工具 / logs 留存", "第二轮：只读 logs",
                       "scout_write_intel → /intels/*.json", "系统自动导入黑板"],
             "worker-openai": [
                 "Shell", "Read", "Edit", "原生黑板同步 Hook", "blackboard.publish",

@@ -28,7 +28,7 @@ def cli_env(monkeypatch, tmp_path):
         "TGA3_AGENT_DISPLAY_NAME": "Worker",
         "TGA3_AGENT_RUNTIME": "codex_cli",
         "TGA3_WORKSPACE": str(tmp_path),
-        "TGA3_ARTIFACTS": str(tmp_path / "artifacts"),
+        "TGA3_LOGS": str(tmp_path / "logs"),
     }
     for key, value in values.items():
         monkeypatch.setenv(key, value)
@@ -143,8 +143,8 @@ def test_worker_prompt_injects_exact_blackboard_identity(monkeypatch):
     assert '"agent_id":"worker-openai"' in prompt
     assert "Never invent a placeholder task ID or actor." in prompt
     assert "intel: body={claim, detail?}; artifact_refs=optional" not in prompt
-    assert "body={claim, detail?}; artifact_refs=required non-empty" in prompt
-    assert "body={conclusion, rationale, answer_type?, finding_ids}; artifact_refs=forbidden" in prompt
+    assert "body={claim, detail?}; evidence_paths=required non-empty" in prompt
+    assert "body={conclusion, rationale, answer_type?, finding_ids}; evidence_paths=forbidden" in prompt
     assert "blackboard_publish tool accepts one request object" in prompt
 
 
@@ -279,7 +279,7 @@ def test_claude_has_no_fixed_turn_cap_and_installs_worker_hooks(cli_env, monkeyp
 async def test_scout_resumes_same_session_and_only_extraction_has_the_json_tool(cli_env, monkeypatch):
     monkeypatch.setenv("TGA3_AGENT_ROLE", "scout")
     monkeypatch.setenv("TGA3_SCOUT_PHASE", "executing")
-    monkeypatch.setenv("TGA3_ARTIFACTS", str(cli_env / "artifacts"))
+    monkeypatch.setenv("TGA3_LOGS", str(cli_env / "logs"))
     first = CodexAdapter()
     first.remember_session("execution-session")
     first.command()
@@ -288,7 +288,7 @@ async def test_scout_resumes_same_session_and_only_extraction_has_the_json_tool(
         "type": "command_execution", "id": "probe", "command": "cat fixture.txt",
         "aggregated_output": "verified raw result", "exit_code": 0, "status": "completed",
     }}, noop)
-    raw = next((cli_env / "artifacts").glob("action-*.json")).read_text(encoding="utf-8")
+    raw = next((cli_env / "logs").glob("action-*.json")).read_text(encoding="utf-8")
     assert "verified raw result" in raw
     monkeypatch.setenv("TGA3_SCOUT_PHASE", "extracting")
     monkeypatch.setenv("TGA3_SCOUT_INTEL_MCP_URL", "http://control/scout-mcp/")
@@ -300,11 +300,11 @@ async def test_scout_resumes_same_session_and_only_extraction_has_the_json_tool(
     assert "[mcp_servers.intel]" in config and "[mcp_servers.blackboard]" not in config
     assert second.state_dir == first.state_dir
     assert not (cli_env / ".codex-extract").exists()
-    count = len(list((cli_env / "artifacts").glob("*.json")))
+    count = len(list((cli_env / "logs").glob("*.json")))
     await second.event({"type": "item.completed", "item": {
-        "type": "command_execution", "id": "read", "command": "cat /artifacts/action.json",
+        "type": "command_execution", "id": "read", "command": "cat /logs/action.json",
     }}, noop)
-    assert len(list((cli_env / "artifacts").glob("*.json"))) == count
+    assert len(list((cli_env / "logs").glob("*.json"))) == count
 
 
 async def test_inactivity_watchdog_stops_hung_cli_without_losing_session(cli_env, monkeypatch):
@@ -438,7 +438,7 @@ async def test_stopping_a_paused_worker_does_not_launch_a_queued_cli(monkeypatch
 
 
 async def test_scout_runs_both_phases_on_one_adapter_and_retries_uncovered_json(cli_env, monkeypatch):
-    from tga3.workers.openai_worker import scout, uncovered_artifacts
+    from tga3.workers.openai_worker import scout, uncovered_logs
 
     monkeypatch.setenv("TGA3_AGENT_ROLE", "scout")
     monkeypatch.setenv("TGA3_SCOUT_TIMEOUT_SECONDS", "2")
@@ -461,7 +461,7 @@ async def test_scout_runs_both_phases_on_one_adapter_and_retries_uncovered_json(
                                        result={"output": str(index)}, status="completed")
         else:
             assert not adapter.journal.enabled
-            missing = uncovered_artifacts(adapter.journal.directory, intels)
+            missing = uncovered_logs(adapter.journal.directory, intels)
             assert missing and missing[0] in prompt
             # Simulate an incomplete model turn: only one of two records is summarized.
             (intels / f"{len(phases)}.json").write_text(json.dumps({
@@ -475,6 +475,30 @@ async def test_scout_runs_both_phases_on_one_adapter_and_retries_uncovered_json(
     assert phases == ["executing", "extracting", "extracting"]
     assert len({id(adapter) for adapter in adapters}) == 1
     assert sessions == ["same-scout-session"] * 3
-    assert not uncovered_artifacts(cli_env / "artifacts", intels)
+    assert not uncovered_logs(cli_env / "logs", intels)
     for phase in ("executing", "extracting"):
         assert json.loads((state / f"scout-{phase}-result.json").read_text())["finish_reason"] == "completed"
+
+
+@pytest.mark.parametrize("adapter_type", [CodexAdapter, ClaudeAdapter])
+async def test_execution_log_keeps_tool_response_without_expanding_output_file(cli_env, adapter_type):
+    output = cli_env / "art/result.txt"
+    adapter = adapter_type()
+    if adapter_type is CodexAdapter:
+        item = {"type": "command_execution", "id": "redirected", "command": "fixture > result.txt",
+                "aggregated_output": "", "exit_code": 0, "status": "completed"}
+        await adapter.event({"type": "item.started", "item": {**item, "status": "in_progress"}}, noop)
+        output.write_text("body exists only in the output file")
+        await adapter.event({"type": "item.completed", "item": item}, noop)
+    else:
+        await adapter.event({"type": "assistant", "message": {"content": [{
+            "type": "tool_use", "id": "redirected", "name": "Bash", "input": {"command": "fixture > result.txt"},
+        }]}}, noop)
+        output.write_text("body exists only in the output file")
+        await adapter.event({"type": "user", "message": {"content": [{
+            "type": "tool_result", "tool_use_id": "redirected", "content": "",
+        }]}}, noop)
+    record = json.loads(next((cli_env / "logs").glob("action-*.json")).read_text(encoding="utf-8"))
+    assert record["result"]["aggregated_output" if adapter_type is CodexAdapter else "content"] == ""
+    assert record["output_paths"] == ["result.txt"]
+    assert "body exists only in the output file" not in json.dumps(record)

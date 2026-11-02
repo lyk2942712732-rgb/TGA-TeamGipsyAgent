@@ -178,3 +178,23 @@ async def test_usage_retries_partial_lines_and_counts_new_sessions_separately(tm
     (root / "two.jsonl").write_text(record + "\n")
     await tracker.refresh_task(task.id)
     assert (await storage.get_agent(task.id, "scout")).metadata["token_usage"]["total_tokens"] == 26
+
+
+async def test_intel_relative_log_paths_are_registered_and_linked_by_server(tmp_path):
+    config, storage, task = await setup(tmp_path)
+    board = Blackboard(storage)
+    store = ScoutIntelStore(config, board)
+    root = config.task_path(task.id, "logs", "scout")
+    root.mkdir(parents=True)
+    (root / "action-1.json").write_text('{"result":{"output":"observed"}}')
+    await storage.update_agent(task.id, "scout", metadata={"scout_phase": "extracting"})
+    for key in ("first", "second"):
+        await store.write(ScoutIntelInput(task_id=task.id, key=key, claim=key, evidence_paths=["action-1.json"]))
+    assert len(storage.artifacts) == 1
+    assert not await storage.list_entries(task.id)
+    await store.flush(task.id)
+    entries = await storage.list_entries(task.id)
+    assert len(entries) == 2
+    assert storage.links[entries[0].id] == storage.links[entries[1].id]
+    assert Path(next(iter(storage.artifacts.values())).storage_path) == root / "action-1.json"
+    assert (await storage.get_agent(task.id, "scout")).metadata["log_json_covered_count"] == 1

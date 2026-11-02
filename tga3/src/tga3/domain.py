@@ -64,7 +64,7 @@ SYSTEM_ACTOR = Actor(agent_id="system", display_name="TGA3", role="system")
 
 class ArtifactRef(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
-    artifact_id: UUID = Field(description="UUID returned by artifact_register for evidence in this task.")
+    artifact_id: UUID = Field(description="Server-assigned UUID of a registered evidence file in this task.")
     locator: str = Field(
         min_length=1,
         max_length=1000,
@@ -129,13 +129,13 @@ class WorkerPublicationBase(BaseModel):
         description="Stable unique key for this logical publication; reuse it only when retrying the same entry.",
     )
 
-    def publish_request(self) -> PublishRequest:
+    def publish_request(self, *, artifact_refs: list[ArtifactRef] | None = None) -> PublishRequest:
         payload = self.model_dump(mode="json")
         return PublishRequest(
             kind=payload["kind"],
             topic=payload["topic"],
             body=payload["body"],
-            artifact_refs=payload.get("artifact_refs", []),
+            artifact_refs=artifact_refs if artifact_refs is not None else payload.get("artifact_refs", []),
             idempotency_key=payload["idempotency_key"],
         )
 
@@ -143,9 +143,10 @@ class WorkerPublicationBase(BaseModel):
 class WorkerFindingPublication(WorkerPublicationBase):
     kind: Literal[EntryKind.FINDING]
     body: FindingBody
-    artifact_refs: list[ArtifactRef] = Field(
-        min_length=1,
-        description="One or more registered evidence references. Required only for finding.",
+    evidence_paths: list[Annotated[str, Field(min_length=1, max_length=1000)]] = Field(
+        min_length=1, max_length=30,
+        description="Evidence file paths relative to your own /workspace/art. "
+                    "The server validates and registers them automatically; no evidence UUIDs are needed.",
     )
 
 
@@ -189,13 +190,9 @@ def publication_contract(role: str | None = None) -> str:
         body_fields = ", ".join(
             f"{name}{'' if field.is_required() else '?'}" for name, field in body_model.model_fields.items()
         )
-        artifact_field = model.model_fields.get("artifact_refs")
-        artifact_rule = "artifact_refs=forbidden"
-        if artifact_field is not None:
-            artifact_rule = (
-                "artifact_refs=required non-empty" if artifact_field.is_required() else "artifact_refs=optional"
-            )
-        parts.append(f"{kind}: body={{{body_fields}}}; {artifact_rule}")
+        evidence_rule = ("evidence_paths=required non-empty (relative to /workspace/art)"
+                         if "evidence_paths" in model.model_fields else "evidence_paths=forbidden")
+        parts.append(f"{kind}: body={{{body_fields}}}; {evidence_rule}")
     return (
         "Scout has no blackboard publishing tool; Workers publish finding/final_candidate only. "
         "Publication contract generated from Pydantic. Select the request branch by kind; "

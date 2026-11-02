@@ -34,9 +34,9 @@ class Blackboard:
         self.storage = storage
         self.on_change = on_change
 
-    async def publish(self, task_id: UUID, actor: Actor, request: PublishRequest) -> BlackboardEntry:
-        if request.kind not in _WRITE_POLICY.get(actor.role, frozenset()):
-            raise ContractError(f"{actor.role} cannot publish {request.kind.value}")
+    async def check_write(self, task_id: UUID, actor: Actor, kind: EntryKind) -> None:
+        if kind not in _WRITE_POLICY.get(actor.role, frozenset()):
+            raise ContractError(f"{actor.role} cannot publish {kind.value}")
         task = await self.storage.get_task(task_id)
         if actor.role == "scout" and task.state != RunState.SCOUTING:
             raise ContractError("Scout can publish only during scouting")
@@ -44,6 +44,9 @@ class Blackboard:
             raise ContractError("Workers must wait for Scout handoff")
         if task.state in {RunState.REPORTING, RunState.COMPLETED, RunState.FAILED, RunState.CANCELLED}:
             raise ContractError("task is closed for blackboard writes")
+
+    async def publish(self, task_id: UUID, actor: Actor, request: PublishRequest) -> BlackboardEntry:
+        await self.check_write(task_id, actor, request.kind)
         entry = await self.storage.publish(task_id, actor, request)
         if self.on_change:
             await self.on_change(task_id, entry.seq)
