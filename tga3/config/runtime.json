@@ -5,12 +5,8 @@
   "blackboard_mcp_url": "http://host.docker.internal:8083/mcp",
   "listen_host": "0.0.0.0",
   "listen_port": 8083,
-  "workspace_root": "./data/workspaces",
-  "input_root": "./data/inputs",
-  "artifact_root": "./data/artifacts",
-  "writeup_root": "./data/writeups",
   "skills_root": "./config/skills",
-  "mcp_instructions": "Worker 消费系统从 Scout /intels JSON 导入的 Intel，只发布 Finding 和 final_candidate。artifact_register 登记各自 /artifacts 中的证据。Scout 第一轮仅执行与留存 artifacts，无 MCP 写入工具；第二轮通过独立 scout_write_intel 工具保存 JSON，由系统导入黑板。原生钩子注入黑板和实时用户提示。Worker 可只读复用 /recon 中的 Scout 材料，Reporter 只读消费证据。Shell、文件搜索和 Skills 读取使用 CLI 原生能力。",
+  "mcp_instructions": "Worker 消费系统从 Scout /intels JSON 导入的 Intel，只发布 Finding 和 final_candidate。artifact_register 登记各自 /workspace/art 中的证据。Scout 第一轮仅执行与留存 artifacts，无 MCP 写入工具；第二轮通过独立 scout_write_intel 工具保存 JSON，由系统导入黑板。原生钩子注入黑板和实时用户提示。Reporter 只读消费证据。Shell、文件搜索和 Skills 读取使用 CLI 原生能力。",
   "worker_images": {
     "worker-openai": "tga3-worker-openai:local",
     "worker-claude": "tga3-worker-claude:local",
@@ -37,6 +33,6 @@
   },
   "cli_timeout_seconds": 1800,
   "scout_timeout_seconds": 300,
-  "intel_root": "data/intels",
-  "scout_extract_timeout_seconds": 180
+  "scout_extract_timeout_seconds": 180,
+  "task_root": "data/tasks"
 }

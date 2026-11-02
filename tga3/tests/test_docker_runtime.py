@@ -21,8 +21,7 @@ def test_extraction_mounts_artifacts_and_intels_read_only_with_its_own_budget(tm
     config = TGA3Config(Path(__file__).parents[1] / "config")
     for provider in config.models.providers:
         provider.api_keys[0].api_key = SecretStr("test-key")
-    for name in ["workspace_root", "input_root", "artifact_root", "intel_root"]:
-        setattr(config.runtime, name, str(tmp_path / name))
+    config.runtime.task_root = str(tmp_path / "tasks")
     containers = FakeContainers()
     runtime = DockerContainerRuntime.__new__(DockerContainerRuntime)
     runtime.config, runtime.client = config, SimpleNamespace(containers=containers)
@@ -36,9 +35,7 @@ def test_extraction_mounts_artifacts_and_intels_read_only_with_its_own_budget(tm
 
 def test_workers_get_private_workspaces_and_evidence_reporter_gets_read_only_union(tmp_path):
     config = TGA3Config(Path(__file__).parents[1] / "config")
-    config.runtime.workspace_root = str(tmp_path / "workspaces")
-    config.runtime.input_root = str(tmp_path / "inputs")
-    config.runtime.artifact_root = str(tmp_path / "artifacts")
+    config.runtime.task_root = str(tmp_path / "tasks")
     for provider in config.models.providers:
         provider.api_keys[0].api_key = SecretStr("test-key")
     containers = FakeContainers()
@@ -56,12 +53,13 @@ def test_workers_get_private_workspaces_and_evidence_reporter_gets_read_only_uni
     first, second, reporter = (paths[key] for key in ("worker-openai", "worker-claude", "reporter"))
     assert len({paths[key]["/workspace"][0] for key in paths}) == 4
     assert first["/inputs"] == second["/inputs"] == reporter["/inputs"]
-    assert first["/recon"] == second["/recon"] == (paths["scout"]["/artifacts"][0], "ro")
+    assert all("/recon" not in mounts for mounts in paths.values())
     assert first["/artifacts"][0] != second["/artifacts"][0]
     for key, content in (("worker-openai", "first"), ("worker-claude", "second")):
         (paths[key]["/artifacts"][0] / "proof.txt").write_text(content)
-        assert (reporter["/artifacts"][0] / key / "proof.txt").read_text() == content
-    assert reporter["/artifacts"][1] == "ro"
+        assert (reporter["/evidence"][0] / key / "proof.txt").read_text() == content
+    assert reporter["/evidence"][1] == "ro"
+    assert reporter["/artifacts"][1] == "rw"
 
 
 def test_worker_container_uses_stable_non_root_identity(tmp_path: Path):
@@ -102,6 +100,6 @@ def test_reporter_uses_codex_image_and_read_only_evidence(tmp_path):
     args = containers.kwargs
     assert args["image"] == config.runtime.worker_images["worker-openai"]
     assert args["environment"]["TGA3_AGENT_ROLE"] == "reporter"
-    assert args["volumes"][str(tmp_path / "artifacts")]["mode"] == "ro"
+    assert args["volumes"][str(tmp_path / "artifacts")]["mode"] == "rw"
     assert args["volumes"][str(tmp_path / "workspace/report-input.json")]["mode"] == "ro"
     assert args["cap_add"] == []

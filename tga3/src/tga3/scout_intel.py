@@ -40,7 +40,7 @@ class ScoutIntelStore:
         self.locks = defaultdict(asyncio.Lock)
 
     def directory(self, task_id: UUID) -> Path:
-        return self.config.resolve_path(self.config.runtime.intel_root) / str(task_id) / "scout"
+        return self.config.task_path(task_id, "intels", "scout")
 
     def documents(self, task_id: UUID) -> list[ScoutIntelDocument]:
         result = []
@@ -70,8 +70,7 @@ class ScoutIntelStore:
             configured = self.config.agents.agents["scout"]
             actor = Actor(agent_id="scout", display_name=configured.display_name, role="scout",
                           sdk=run.sdk, model=run.model_id)
-            root = (self.config.resolve_path(self.config.runtime.artifact_root)
-                    / str(request.task_id) / "scout").resolve()
+            root = self.config.task_path(request.task_id, "artifacts", "scout").resolve()
             references = []
             for relative in request.evidence_paths:
                 path = (root / relative).resolve()

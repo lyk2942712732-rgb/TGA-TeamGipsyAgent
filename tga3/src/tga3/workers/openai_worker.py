@@ -18,7 +18,7 @@ async def report() -> None:
     )
     if not output.strip():
         raise RuntimeError("Reporter returned an empty report")
-    Path("/workspace/writeup.md").write_text(output, encoding="utf-8")
+    Path("/workspace/art/writeup.md").write_text(output, encoding="utf-8")
 
 
 async def scout() -> None:
@@ -27,11 +27,12 @@ async def scout() -> None:
 
     extracting = os.environ.get("TGA3_SCOUT_PHASE") == "extracting"
     prompt = (
-        "现在执行 Scout 第二轮：只读 /artifacts 中的执行日志和留存文件，提取可复用的 Intel。"
+        "现在执行 Scout 第二轮：只读 /artifacts 中的执行记录和 /workspace/art 中的留存文件，提取可复用的 Intel。"
         "使用 scout_write_intel 参数化工具保存到 /intels。只需填写 task_id、key、claim、detail、topic、evidence_paths。"
         "所有有依据的 Intel 保存后结束，系统会导入黑板；不要重新侦察或连接目标。"
         if extracting else
-        "现在执行 Scout 第一轮：根据题目与附件实际执行基础侦察，把工具输出和可复用文件保存到 /artifacts。"
+        "现在执行 Scout 第一轮：根据题目与附件实际执行基础侦察，把生成文件保存到 /workspace/art。"
+        "系统自动将执行记录保存到 /artifacts。"
         "只执行和留存材料，不提取或整理 Intel，不调用任何 Intel/黑板写入工具；达到基础侦察目标后结束。"
     )
     output = await CodexAdapter().run_cycle(prompt, emit)

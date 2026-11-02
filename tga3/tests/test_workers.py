@@ -27,6 +27,7 @@ def cli_env(monkeypatch, tmp_path):
         "TGA3_AGENT_DISPLAY_NAME": "Worker",
         "TGA3_AGENT_RUNTIME": "codex_cli",
         "TGA3_WORKSPACE": str(tmp_path),
+        "TGA3_ARTIFACTS": str(tmp_path / "artifacts"),
     }
     for key, value in values.items():
         monkeypatch.setenv(key, value)
@@ -111,16 +112,16 @@ async def test_cli_cancellation_stops_the_process(cli_env):
     adapter.command = lambda: ([sys.executable, str(script)], dict(os.environ))
     task = asyncio.create_task(adapter.run_cycle("continue", noop))
     for _ in range(200):
-        if (cli_env / "pid").is_file():
+        if (cli_env / "art/pid").is_file():
             break
         await asyncio.sleep(0.01)
-    assert (cli_env / "pid").is_file()
+    assert (cli_env / "art/pid").is_file()
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await asyncio.wait_for(task, 8)
     if os.name == "posix":
         with pytest.raises(ProcessLookupError):
-            os.kill(int((cli_env / "pid").read_text()), 0)
+            os.kill(int((cli_env / "art/pid").read_text()), 0)
 
 
 def test_worker_prompt_injects_exact_blackboard_identity(monkeypatch):
@@ -285,7 +286,7 @@ async def test_scout_contexts_are_independent_and_only_extraction_has_the_json_t
         "type": "command_execution", "id": "probe", "command": "cat fixture.txt",
         "aggregated_output": "verified raw result", "exit_code": 0, "status": "completed",
     }}, noop)
-    raw = (cli_env / "artifacts/execution.jsonl").read_text()
+    raw = next((cli_env / "artifacts").glob("action-*.json")).read_text(encoding="utf-8")
     assert "verified raw result" in raw
     monkeypatch.setenv("TGA3_SCOUT_PHASE", "extracting")
     monkeypatch.setenv("TGA3_SCOUT_INTEL_MCP_URL", "http://control/scout-mcp/")
@@ -368,11 +369,11 @@ time.sleep(120)
     adapter.command = lambda: ([sys.executable, str(script)], dict(os.environ))
     task = asyncio.create_task(adapter.run_cycle("continue", noop))
     for _ in range(200):
-        if (cli_env / "child-pid").is_file():
+        if (cli_env / "art/child-pid").is_file():
             break
         await asyncio.sleep(0.01)
-    assert (cli_env / "child-pid").is_file()
-    child = int((cli_env / "child-pid").read_text())
+    assert (cli_env / "art/child-pid").is_file()
+    child = int((cli_env / "art/child-pid").read_text())
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await asyncio.wait_for(task, 8)

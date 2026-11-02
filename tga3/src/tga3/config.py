@@ -6,7 +6,7 @@ import json
 import os
 from pathlib import Path
 from typing import Any, Literal
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, model_validator
 
@@ -204,11 +204,13 @@ class RuntimeConfig(BaseModel):
     blackboard_mcp_url: str
     listen_host: str = "0.0.0.0"
     listen_port: int = Field(default=8083, ge=1, le=65535)
-    workspace_root: str
-    input_root: str
-    artifact_root: str
+    task_root: str = "data/tasks"
+    # Legacy roots are accepted only to locate data during migration.
+    workspace_root: str = "data/workspaces"
+    input_root: str = "data/inputs"
+    artifact_root: str = "data/artifacts"
     intel_root: str = "data/intels"
-    writeup_root: str
+    writeup_root: str = "data/writeups"
     skills_root: str
     mcp_instructions: str = Field(min_length=1)
     cli_timeout_seconds: int = Field(default=1800, ge=30, le=86400)
@@ -338,17 +340,33 @@ class TGA3Config:
         path = Path(raw)
         return path.resolve() if path.is_absolute() else (self.project_root / path).resolve()
 
+    def task_path(self, task_id: UUID | str, kind: str | None = None, agent_id: str | None = None) -> Path:
+        """Resolve task storage centrally, without exposing other tasks to a container."""
+        root = self.resolve_path(self.runtime.task_root)
+        path = root / str(UUID(str(task_id)))
+        if kind is not None:
+            if kind not in {"inputs", "workspaces", "artifacts", "intels", "writeups"}:
+                raise ValueError(f"unknown task directory: {kind}")
+            path /= kind
+        if agent_id is not None:
+            if kind not in {"workspaces", "artifacts", "intels"} or agent_id not in self.agents.agents:
+                raise ValueError(f"invalid agent directory: {agent_id}")
+            path /= agent_id
+        if not path.resolve().is_relative_to(root):
+            raise ValueError("task directory escapes task root")
+        return path
+
+    def ensure_task_directories(self, task_id: UUID | str) -> None:
+        for kind in ("inputs", "workspaces", "artifacts", "intels", "writeups"):
+            self.task_path(task_id, kind).mkdir(parents=True, exist_ok=True)
+
     @property
     def skills_root(self) -> Path:
         return self.resolve_path(self.runtime.skills_root)
 
     def ensure_directories(self) -> None:
         for value in (
-            self.runtime.workspace_root,
-            self.runtime.input_root,
-            self.runtime.artifact_root,
-            self.runtime.intel_root,
-            self.runtime.writeup_root,
+            self.runtime.task_root,
             self.runtime.skills_root,
         ):
             self.resolve_path(value).mkdir(parents=True, exist_ok=True)

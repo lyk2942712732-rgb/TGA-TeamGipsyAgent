@@ -14,7 +14,7 @@ from tga3.storage import InMemoryStorage
 @pytest.mark.asyncio
 async def test_final_candidate_freezes_snapshot_and_generates_writeup(tmp_path: Path):
     config = TGA3Config(Path(__file__).parents[1] / "config")
-    config.runtime.writeup_root = str(tmp_path)
+    config.runtime.task_root = str(tmp_path / "tasks")
     config.runtime.cadence.finalization_grace_seconds = 0
     storage = InMemoryStorage()
     task = await storage.create_task("report", "penetration_test")
@@ -73,7 +73,7 @@ async def test_final_candidate_freezes_snapshot_and_generates_writeup(tmp_path: 
     completed = await storage.get_task(task.id)
     assert completed.state == RunState.COMPLETED
     assert completed.final_snapshot_seq == 2
-    assert (tmp_path / str(task.id) / "writeup.md").is_file()
+    assert (config.task_path(task.id, "writeups") / "writeup.md").is_file()
     writeup = await storage.latest_writeup(task.id)
     assert writeup.task_id == task.id
     assert writeup.snapshot_seq == 2
@@ -86,7 +86,7 @@ async def test_reporter_failure_stops_workers_and_finishes_host_states(tmp_path:
             raise RuntimeError("Max turns (2) exceeded")
 
     config = TGA3Config(Path(__file__).parents[1] / "config")
-    config.runtime.writeup_root = str(tmp_path)
+    config.runtime.task_root = str(tmp_path / "tasks")
     config.runtime.cadence.finalization_grace_seconds = 0
     storage = InMemoryStorage()
     task = await storage.create_task("report failure", "penetration_test")
@@ -138,7 +138,7 @@ async def test_cli_reporter_starts_after_both_workers_stop(tmp_path):
     from tga3.host_agents import CliHostModel
 
     config = TGA3Config(Path(__file__).parents[1] / "config")
-    config.runtime.writeup_root = str(tmp_path / "reports")
+    config.runtime.task_root = str(tmp_path / "tasks")
     config.runtime.cadence.finalization_grace_seconds = 0
     for provider in config.models.providers:
         provider.api_keys[0].api_key = SecretStr("test-key")

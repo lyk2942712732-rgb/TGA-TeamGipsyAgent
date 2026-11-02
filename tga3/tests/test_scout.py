@@ -31,7 +31,7 @@ class TwoPhaseScout(FakeContainerRuntime):
         await self.launch(spec)
         try:
             if spec.scout_phase == "executing":
-                root = self.config.resolve_path(self.config.runtime.artifact_root) / str(spec.task_id) / "scout"
+                root = self.config.task_path(spec.task_id, "artifacts", "scout")
                 root.mkdir(parents=True)
                 (root / "probe.txt").write_text("verified result")
                 self.executing.set()
@@ -52,8 +52,7 @@ def setup(tmp_path):
     config = TGA3Config(Path(__file__).parents[1] / "config")
     for provider in config.models.providers:
         provider.api_keys[0].api_key = SecretStr("test-key")
-    config.runtime.artifact_root = str(tmp_path / "artifacts")
-    config.runtime.intel_root = str(tmp_path / "intels")
+    config.runtime.task_root = str(tmp_path / "tasks")
     storage = InMemoryStorage()
     runtime = TwoPhaseScout(config, storage)
     coordinator = TaskCoordinator(config, storage, runtime)

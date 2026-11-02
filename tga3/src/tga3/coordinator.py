@@ -77,6 +77,7 @@ class TaskCoordinator:
             for agent_id, configured in self.config.agents.agents.items()
         }
         task = await self.storage.create_task(title, scene.id, task_id)
+        self.config.ensure_task_directories(task.id)
         await self.storage.update_task(task.id, state=RunState.STARTING)
         for agent_id, configured in self.config.agents.agents.items():
             resolved = resolved_agents.get(agent_id)
@@ -166,7 +167,7 @@ class TaskCoordinator:
                     task_id, "scout", metadata={f"scout_{phase}_result": outcomes[phase]},
                 )
                 if phase == "executing":
-                    root = self.config.resolve_path(self.config.runtime.artifact_root) / str(task_id) / "scout"
+                    root = self.config.task_path(task_id, "artifacts", "scout")
                     root.mkdir(parents=True, exist_ok=True)
                     status = root / f".scout-status-{uuid4()}.tmp"
                     status.write_text(
@@ -243,7 +244,7 @@ class TaskCoordinator:
         await self.storage.get_task(task_id)
         name = Path(raw_name or "upload.bin").name
         item_id = uuid4()
-        root = self.config.resolve_path(self.config.runtime.input_root) / str(task_id)
+        root = self.config.task_path(task_id, "inputs")
         root.mkdir(parents=True, exist_ok=True)
         path = root / f"{item_id}-{name}"
         path.write_bytes(content)
@@ -461,15 +462,8 @@ class TaskCoordinator:
         # cleanup is intentionally best-effort and only begins after the database
         # transaction has committed.
         await self.storage.delete_task(task_id)
-        for raw_root in (
-            self.config.runtime.workspace_root,
-            self.config.runtime.input_root,
-            self.config.runtime.artifact_root,
-            self.config.runtime.intel_root,
-            self.config.runtime.writeup_root,
-        ):
-            path = self.config.resolve_path(raw_root) / str(task_id)
-            await asyncio.to_thread(shutil.rmtree, path, True)
+        path = self.config.task_path(task_id)
+        await asyncio.to_thread(shutil.rmtree, path, True)
 
 
 __all__ = ["TaskCoordinator"]

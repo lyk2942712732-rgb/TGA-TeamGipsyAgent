@@ -21,9 +21,7 @@ from tga3.token_usage import TokenUsageTracker
 async def setup(tmp_path):
     copytree(Path(__file__).parents[1] / "config", tmp_path / "config")
     config = TGA3Config(tmp_path / "config")
-    config.runtime.workspace_root = str(tmp_path / "workspaces")
-    config.runtime.intel_root = str(tmp_path / "intels")
-    config.runtime.artifact_root = str(tmp_path / "artifacts")
+    config.runtime.task_root = str(tmp_path / "tasks")
     storage = InMemoryStorage()
     task = await storage.create_task("collaboration", "pwn")
     await storage.update_task(task.id, state=RunState.SCOUTING)
@@ -121,7 +119,7 @@ async def test_scout_time_setting_persists_and_rejects_out_of_range_values(tmp_p
 
 async def test_both_scout_contexts_contribute_to_one_cumulative_usage(tmp_path):
     config, storage, task = await setup(tmp_path)
-    root = Path(config.runtime.workspace_root) / str(task.id) / "scout"
+    root = config.task_path(task.id, "workspaces") / "scout"
     for home, inputs in [(".codex", 100), (".codex-extract", 200)]:
         append(root / home / "sessions/same-name.jsonl", {"type": "event_msg", "payload": {
             "type": "token_count", "info": {"total_token_usage": {"input_tokens": inputs, "output_tokens": 20}},
@@ -132,7 +130,7 @@ async def test_both_scout_contexts_contribute_to_one_cumulative_usage(tmp_path):
 
 async def test_native_usage_includes_cached_inputs_and_survives_polling_and_tracker_restart(tmp_path):
     config, storage, task = await setup(tmp_path)
-    base = Path(config.runtime.workspace_root) / str(task.id)
+    base = config.task_path(task.id, "workspaces")
     codex = base / "scout/.codex/sessions/2026/10/31/session.jsonl"
     usage = {"input_tokens": 1000, "cached_input_tokens": 600, "output_tokens": 200, "total_tokens": 1200}
     append(codex, {"type": "token_usage_record", "payload": {"thread_token_usage": usage}})
@@ -165,7 +163,7 @@ async def test_native_usage_includes_cached_inputs_and_survives_polling_and_trac
 
 async def test_usage_retries_partial_lines_and_counts_new_sessions_separately(tmp_path):
     config, storage, task = await setup(tmp_path)
-    root = Path(config.runtime.workspace_root) / str(task.id) / "scout/.codex/sessions"
+    root = config.task_path(task.id, "workspaces") / "scout/.codex/sessions"
     root.mkdir(parents=True)
     record = json.dumps({"type": "event_msg", "payload": {"type": "token_count", "info": {
         "total_token_usage": {"input_tokens": 10, "output_tokens": 3},

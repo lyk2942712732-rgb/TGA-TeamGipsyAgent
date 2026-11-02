@@ -81,18 +81,13 @@ async def test_delete_task_keeps_files_when_database_delete_fails(tmp_path):
             raise RuntimeError("database delete failed")
 
     config = configured()
-    roots = [tmp_path / name for name in ("workspaces", "inputs", "artifacts", "writeups")]
-    (
-        config.runtime.workspace_root,
-        config.runtime.input_root,
-        config.runtime.artifact_root,
-        config.runtime.writeup_root,
-    ) = tuple(str(root) for root in roots)
+    config.runtime.task_root = str(tmp_path / "tasks")
     storage = FailingDeleteStorage()
     coordinator = TaskCoordinator(config, storage, FakeContainerRuntime())
     task = await storage.create_task("delete", "penetration_test")
     await storage.update_task(task.id, state=RunState.CANCELLED)
-    task_paths = [root / str(task.id) for root in roots]
+    task_paths = [config.task_path(task.id, kind)
+                  for kind in ("workspaces", "inputs", "artifacts", "intels", "writeups")]
     for path in task_paths:
         path.mkdir(parents=True)
         (path / "keep.txt").write_text("recoverable", encoding="utf-8")

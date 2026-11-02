@@ -67,8 +67,7 @@ def test_discovery_and_enable_state_are_scoped_to_protocol_and_persist(tmp_path)
     config = TGA3Config(config_dir)
     for provider in config.models.providers:
         provider.api_keys[0].api_key = SecretStr("test-only")
-    for attribute in ("workspace_root", "input_root", "artifact_root", "writeup_root"):
-        setattr(config.runtime, attribute, str(tmp_path / attribute))
+    config.runtime.task_root = str(tmp_path / "tasks")
     original_agents = deepcopy(config.export_document("agents"))
     provider = config.models.provider("openai")
     sibling_before = provider.endpoint("openai_chat_completions").model_dump(mode="json")

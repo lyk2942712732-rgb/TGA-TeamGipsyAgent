@@ -21,8 +21,8 @@ def worker_instructions() -> str:
         f"- actor: {json.dumps(actor, ensure_ascii=False, separators=(',', ':'))}\n"
         "For every blackboard tool call, use the exact task_id and actor above. "
         "Never invent a placeholder task ID or actor."
-        " Your CLI working directory is /workspace. Your private output directory is /artifacts; "
-        "only your own evidence files are mounted there. Workers can read Scout evidence at /recon. "
+        " Your CLI working directory is /workspace/art. Your private output directory is /workspace/art; "
+        "The runtime stores structured execution records in /artifacts. "
         "Use native CLI file/list/search tools "
         "to discover /skills and read each package's SKILL.md, then follow its referenced documents."
     )
@@ -34,14 +34,15 @@ def worker_instructions() -> str:
     if role == "scout":
         runtime_context = (
             f"Authoritative task_id: {os.environ['TGA3_TASK_ID']}. "
-            "Working directory: /workspace. Inputs: /inputs (read-only). Evidence: /artifacts. "
+            "Working directory: /workspace/art. Inputs: /inputs (read-only). Output files: "
+            "/workspace/art. Execution records: /artifacts. "
             "Skills: /skills, read SKILL.md only when useful."
         )
         extracting = os.environ.get("TGA3_SCOUT_PHASE") == "extracting"
         if extracting:
             instructions = (
                 "Current phase: SECOND ROUND, Intel extraction. This is a fresh context. "
-                "Read existing /artifacts, including execution.jsonl and scout-execution-status.json. "
+                "Read existing /artifacts JSON records and files in /workspace/art. "
                 "Do not probe targets, rerun reconnaissance, modify evidence or install tools. "
                 "Extract verified observations, scoped negative results and clearly labelled unfinished checks. "
                 "Save each coherent Intel with scout_write_intel using "
@@ -55,10 +56,12 @@ def worker_instructions() -> str:
         else:
             instructions = (
                 "Current phase: FIRST ROUND, reconnaissance execution only. "
-                "Use native tools to inspect inputs and the target, and preserve reusable raw files in /artifacts. "
+                "Use native tools to inspect inputs and the target, and preserve reusable raw "
+                "files in /workspace/art/. "
                 "Do not summarize Intel, call Intel tools, publish to the blackboard or write a recon report. "
-                "Completed shell commands and their output are automatically saved to /artifacts/execution.jsonl; "
-                "do not modify that reserved log. Save downloads, extracted files and scripts under /artifacts too. "
+                "Tool calls and their output are automatically saved as JSON records under /artifacts; "
+                "do not modify those reserved records. Save downloads, extracted files and "
+                "scripts under /workspace/art/. "
                 "Use /workspace for scratch work. A separate fresh second round will extract Intel from artifacts. "
                 "Track time and limit individual commands; basic reconnaissance is enough, then finish. "
                 f"Execution budget: {os.environ.get('TGA3_SCOUT_TIMEOUT_SECONDS', '300')} seconds."
@@ -120,7 +123,7 @@ def worker_instructions() -> str:
         "Check the tool result: publication is complete only after blackboard_publish returns the saved entry. "
         "If publication fails, fix the reported fields and retry before advancing to the next investigation step. "
         "The system imports Scout Intel after its extraction phase; "
-        "consume it and read /recon instead of repeating baseline discovery. "
+        "consume it through the existing blackboard delivery. "
     )
     return f"{os.environ['TGA3_SYSTEM_PROMPT'].rstrip()}\n\n{runtime_context}\n\n{publication_contract}"
 

@@ -82,13 +82,13 @@ def build_mcp(config: TGA3Config, blackboard: Blackboard) -> FastMCP:
         name: str,
         media_type: str = "application/octet-stream",
     ) -> dict[str, Any]:
-        """Register a file already written below /artifacts; returns an artifact id for a Finding."""
+        """Register a file already written below /workspace/art; returns an artifact id for a Finding."""
         task_uuid = UUID(task_id)
         identity = Actor.model_validate(actor)
         configured = config.agents.agents.get(identity.agent_id)
         if configured is None or configured.role not in {"scout", "worker"} or identity.role != configured.role:
             raise ValueError("only configured Scout or Workers can register evidence")
-        task_root = (config.resolve_path(config.runtime.artifact_root) / str(task_uuid) / identity.agent_id).resolve()
+        task_root = (config.task_path(task_uuid, "workspaces", identity.agent_id) / "art").resolve()
         path = (task_root / relative_path).resolve()
         if task_root != path and task_root not in path.parents:
             raise ValueError("artifact path escapes the task artifact directory")

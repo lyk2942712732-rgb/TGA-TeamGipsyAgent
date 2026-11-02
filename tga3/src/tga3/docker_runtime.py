@@ -58,13 +58,14 @@ class DockerContainerRuntime:
         path.chmod(0o770)
 
     def _task_paths(self, task_id: UUID, agent_id: str) -> tuple[Path, Path, Path]:
-        workspace = self.config.resolve_path(self.config.runtime.workspace_root) / str(task_id) / agent_id
-        inputs = self.config.resolve_path(self.config.runtime.input_root) / str(task_id)
-        artifacts = self.config.resolve_path(self.config.runtime.artifact_root) / str(task_id)
-        if self.config.agents.agents[agent_id].role in {"scout", "worker"}:
+        workspace = self.config.task_path(task_id, "workspaces", agent_id)
+        inputs = self.config.task_path(task_id, "inputs")
+        artifacts = self.config.task_path(task_id, "artifacts")
+        if agent_id in self.config.agents.agents:
             artifacts = artifacts / agent_id
         inputs.mkdir(parents=True, exist_ok=True)
         self._ensure_worker_directory(workspace)
+        self._ensure_worker_directory(workspace / "art")
         self._ensure_worker_directory(artifacts)
         return workspace, inputs, artifacts
 
@@ -79,22 +80,25 @@ class DockerContainerRuntime:
                            runtime.scout_extract_timeout_seconds if extracting else runtime.scout_timeout_seconds)
         if is_reporter:
             (workspace / "report-input.json").write_text(spec.report_input or "[]", encoding="utf-8")
-            (workspace / "writeup.md").unlink(missing_ok=True)
+            (workspace / "art" / "writeup.md").unlink(missing_ok=True)
         volumes = {
             str(workspace): {"bind": "/workspace", "mode": "rw"},
             str(inputs): {"bind": "/inputs", "mode": "ro"},
-            str(artifacts): {"bind": "/artifacts", "mode": "ro" if is_reporter or extracting else "rw"},
+            str(artifacts): {"bind": "/artifacts", "mode": "ro" if extracting else "rw"},
             str(self.config.skills_root): {"bind": "/skills", "mode": "ro"},
         }
-        if binding.role == "worker":
-            recon = self.config.resolve_path(runtime.artifact_root) / str(spec.task_id) / "scout"
-            self._ensure_worker_directory(recon)
-            volumes[str(recon)] = {"bind": "/recon", "mode": "ro"}
         if extracting:
-            intels = self.config.resolve_path(runtime.intel_root) / str(spec.task_id) / "scout"
+            volumes[str(workspace / "art")] = {"bind": "/workspace/art", "mode": "ro"}
+            intels = self.config.task_path(spec.task_id, "intels", "scout")
             self._ensure_worker_directory(intels)
             volumes[str(intels)] = {"bind": "/intels", "mode": "ro"}
         if is_reporter:
+            volumes[str(self.config.task_path(spec.task_id, "artifacts"))] = {"bind": "/evidence", "mode": "ro"}
+            for agent_id in self.config.agents.agents:
+                if agent_id != binding.agent_id:
+                    files = self.config.task_path(spec.task_id, "workspaces", agent_id) / "art"
+                    self._ensure_worker_directory(files)
+                    volumes[str(files)] = {"bind": f"/evidence-files/{agent_id}", "mode": "ro"}
             volumes[str(workspace / "report-input.json")] = {"bind": "/workspace/report-input.json", "mode": "ro"}
         image = runtime.worker_images[binding.agent_id]
         blackboard_mcp_url = f"{runtime.blackboard_mcp_url.rstrip('/')}/"
@@ -219,7 +223,7 @@ class DockerContainerRuntime:
                 detail = raw.decode(errors="replace")[-12000:]
                 raise RuntimeUnavailableError(detail.replace(key, "[redacted]") if key else detail)
             workspace, _, _ = self._task_paths(spec.task_id, spec.agent.agent_id)
-            path = workspace / "writeup.md"
+            path = workspace / "art" / "writeup.md"
             if path.is_symlink():
                 raise RuntimeUnavailableError("Reporter output must be a regular file")
             result = path.read_text(encoding="utf-8")

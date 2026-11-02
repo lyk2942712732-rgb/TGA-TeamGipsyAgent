@@ -99,7 +99,7 @@ class TokenUsageTracker:
     async def refresh_task(self, task_id: UUID) -> None:
         async with self.locks[task_id]:
             for agent in await self.storage.list_agents(task_id):
-                workspace = self.config.resolve_path(self.config.runtime.workspace_root) / str(task_id) / agent.agent_id
+                workspace = self.config.task_path(task_id, "workspaces", agent.agent_id)
                 updates, positions = await asyncio.to_thread(self.read_updates, workspace)
                 if updates:
                     await self.storage.mutate_agent_metadata(

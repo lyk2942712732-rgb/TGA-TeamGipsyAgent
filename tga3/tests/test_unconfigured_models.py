@@ -17,8 +17,7 @@ def test_removed_providers_leave_unconfigured_solvers_and_readable_history(tmp_p
     config = TGA3Config(tmp_path / "config")
     for provider in config.models.providers:
         provider.api_keys[0].api_key = SecretStr("test-key")
-    for name in ("workspace_root", "input_root", "artifact_root", "writeup_root"):
-        setattr(config.runtime, name, str(tmp_path / name))
+    config.runtime.task_root = str(tmp_path / "tasks")
     app = create_app(config, InMemoryStorage(), FakeContainerRuntime(), host_model=DeterministicHostModel())
     with TestClient(app) as client:
         created = client.post("/api/v3/tasks", data={

@@ -22,10 +22,7 @@ def test_frontend_api_uses_safe_catalog_and_page_owned_config_documents(tmp_path
     config = TGA3Config(config_dir)
     for provider in config.models.providers:
         provider.api_keys[0].api_key = SecretStr("must-not-leak")
-    config.runtime.workspace_root = str(tmp_path / "workspaces")
-    config.runtime.input_root = str(tmp_path / "inputs")
-    config.runtime.artifact_root = str(tmp_path / "artifacts")
-    config.runtime.writeup_root = str(tmp_path / "writeups")
+    config.runtime.task_root = str(tmp_path / "tasks")
     storage = InMemoryStorage()
     containers = FakeContainerRuntime()
     app = create_app(

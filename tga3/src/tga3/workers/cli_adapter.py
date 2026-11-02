@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from .action_journal import ActionJournal
 from .prompts import worker_instructions
 from .runtime import AgentAdapter, Emit
 
@@ -27,6 +28,8 @@ class CliAdapter(AgentAdapter):
 
     def __init__(self) -> None:
         self.workspace = Path(os.environ.get("TGA3_WORKSPACE", "/workspace"))
+        self.output_dir = self.workspace / "art"
+        self.output_dir.mkdir(parents=True, exist_ok=True)
         self.state_dir = self.workspace / ".tga3"
         self.scout_phase = os.environ.get("TGA3_SCOUT_PHASE", "executing")
         if os.environ.get("TGA3_AGENT_ROLE") == "scout":
@@ -50,6 +53,13 @@ class CliAdapter(AgentAdapter):
         self.output_history = deque(maxlen=8)
         self.output_history_since = time.monotonic()
         self.stderr: deque[str] = deque(maxlen=80)
+        self.journal = ActionJournal(
+            Path(os.environ.get("TGA3_ARTIFACTS", "/artifacts")),
+            identity={"task_id": os.environ.get("TGA3_TASK_ID"),
+                      "agent_id": os.environ.get("TGA3_AGENT_ID"), "runtime": self.runtime},
+            secret=self.api_key,
+            enabled=not (os.environ.get("TGA3_AGENT_ROLE") == "scout" and self.scout_phase == "extracting"),
+        )
 
     def hook_config(self) -> dict:
         if os.environ.get("TGA3_AGENT_ROLE") not in {"scout", "worker"}:
@@ -197,7 +207,7 @@ class CliAdapter(AgentAdapter):
         env["TGA3_CLI_GENERATION"] = str(uuid4())
         process = await asyncio.create_subprocess_exec(
             *command,
-            cwd=self.workspace,
+            cwd=self.output_dir,
             env=env,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
@@ -291,9 +301,10 @@ class CodexAdapter(CliAdapter):
         cli_home.mkdir(exist_ok=True)
         instructions = (
             os.environ["TGA3_SYSTEM_PROMPT"]
-            + "\nRead /workspace/report-input.json and read-only evidence in /artifacts. "
+            + "\nRead /workspace/report-input.json and read-only records in /evidence and files in /evidence-files. "
             "Skills are in /skills; read SKILL.md and referenced files directly. "
-            "Evidence is grouped by Worker under /artifacts/<worker-id>/. Do not contact targets or change evidence. "
+            "Records and files are grouped by agent. Save your own output files in "
+            "/workspace/art/. Do not contact targets or change evidence. "
             "Use only recorded commands/code for reproduction steps; if absent, state they were not recorded. "
             "Never invent example commands. Return only Markdown."
             if self.reporter
@@ -348,14 +359,11 @@ class CodexAdapter(CliAdapter):
         elif kind in {"item.started", "item.completed"}:
             item = value.get("item", {})
             item_type = item.get("type")
-            if (kind == "item.completed" and item_type == "command_execution"
-                    and os.environ.get("TGA3_AGENT_ROLE") == "scout" and self.scout_phase == "executing"):
-                evidence = Path(os.environ.get("TGA3_ARTIFACTS", "/artifacts"))
-                evidence.mkdir(parents=True, exist_ok=True)
-                with (evidence / "execution.jsonl").open("a", encoding="utf-8") as output:
-                    output.write(json.dumps({key: item.get(key) for key in
-                                             ("id", "command", "aggregated_output", "exit_code", "status")},
-                                            ensure_ascii=False) + "\n")
+            if item_type in {"command_execution", "mcp_tool_call", "file_change", "web_search"}:
+                self.journal.record(str(item.get("id", "unknown")), item_type,
+                                    inputs={key: item.get(key) for key in ("command", "tool", "arguments")},
+                                    result=item if kind == "item.completed" else None,
+                                    status="completed" if kind == "item.completed" else "started")
             if item_type == "agent_message" and kind == "item.completed":
                 self.final_output = str(item.get("text", ""))
             elif item_type in {"command_execution", "mcp_tool_call", "file_change", "web_search"}:
@@ -440,6 +448,7 @@ class ClaudeAdapter(CliAdapter):
                     continue
                 if block.get("type") == "tool_use":
                     self.pending_tools[block["id"]] = block["name"]
+                    self.journal.record(block["id"], block["name"], inputs=block.get("input", {}))
                     await emit(
                         "agent.action.started",
                         {
@@ -451,6 +460,8 @@ class ClaudeAdapter(CliAdapter):
                     )
                 elif block.get("type") == "tool_result":
                     tool = self.pending_tools.pop(block["tool_use_id"], "Claude tool")
+                    self.journal.record(block["tool_use_id"], tool, result=block,
+                                        status="failed" if block.get("is_error") else "completed")
                     await emit(
                         "agent.action.completed",
                         {

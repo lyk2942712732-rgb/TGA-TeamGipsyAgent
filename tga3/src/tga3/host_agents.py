@@ -123,7 +123,7 @@ class Automation:
             markdown = await self.model.report(snapshot, binding)
             if not markdown.strip():
                 raise ValueError("Reporter returned an empty report")
-            root = self.config.resolve_path(self.config.runtime.writeup_root) / str(task_id)
+            root = self.config.task_path(task_id, "writeups")
             root.mkdir(parents=True, exist_ok=True)
             path = root / "writeup.md"
             path.write_text(markdown, encoding="utf-8")

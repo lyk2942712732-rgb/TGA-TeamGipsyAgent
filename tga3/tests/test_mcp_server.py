@@ -61,13 +61,13 @@ async def test_mcp_publish_tool_exposes_one_discriminated_worker_contract():
 
 async def test_artifact_registration_uses_the_publishing_workers_private_directory(tmp_path):
     config = TGA3Config(Path(__file__).parents[1] / "config")
-    config.runtime.artifact_root = str(tmp_path)
+    config.runtime.task_root = str(tmp_path / "tasks")
     storage = InMemoryStorage()
     task = await storage.create_task("evidence", "pwn")
     mcp = build_mcp(config, Blackboard(storage))
     hashes = []
     for agent_id in ("worker-openai", "worker-claude"):
-        root = tmp_path / str(task.id) / agent_id
+        root = config.task_path(task.id, "workspaces", agent_id) / "art"
         root.mkdir(parents=True)
         (root / "proof.txt").write_text(agent_id)
         arguments = {
