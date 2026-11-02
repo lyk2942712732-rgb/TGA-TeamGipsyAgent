@@ -315,11 +315,11 @@ def create_app(
                       "scout_write_intel → /intels/*.json", "系统自动导入黑板"],
             "worker-openai": [
                 "Shell", "Read", "Edit", "原生黑板同步 Hook", "blackboard.publish",
-                "artifact.register",
+                "发布时自动校验证据路径",
             ],
             "worker-claude": [
                 "Bash", "Read", "Write", "Edit", "Glob", "Grep", "原生黑板同步 Hook",
-                "blackboard.publish", "artifact.register",
+                "blackboard.publish", "发布时自动校验证据路径",
             ],
             "reporter": ["Read snapshot", "Read evidence", "Read skills", "Markdown Writeup"],
         }

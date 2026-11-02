@@ -25,7 +25,7 @@ describe("SolversPage", () => {
       anthropic: { base_url: "https://api.test/anthropic", models: [model("deepseek-v4-pro"), model("anthropic-only")] },
       openai_chat_completions: { base_url: "https://api.test/chat/v1", models: [model("chat-only")] },
     } }] });
-    mocks.agentDefinitions.mockResolvedValue(Object.entries(agentConfig.agents).map(([id, agent]) => ({ ...agent, id, tools: ["blackboard.sync", "blackboard.publish", "artifact.register"], image: agent.role === "worker" ? `tga3-${id}:local` : null, image_health: agent.role === "worker" ? { status: "healthy", available: true, detail: "healthy" } : null })));
+    mocks.agentDefinitions.mockResolvedValue(Object.entries(agentConfig.agents).map(([id, agent]) => ({ ...agent, id, tools: ["blackboard.sync", "blackboard.publish", "发布时自动校验证据路径"], image: agent.role === "worker" ? `tga3-${id}:local` : null, image_health: agent.role === "worker" ? { status: "healthy", available: true, detail: "healthy" } : null })));
     mocks.saveAgents.mockImplementation(async (value) => value);
     mocks.saveScoutSettings.mockImplementation(async (value) => ({ scout_timeout_seconds: value }));
   });
