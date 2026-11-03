@@ -58,7 +58,7 @@ class CliAdapter(AgentAdapter):
             secret=self.api_key,
             # Workers are journaled synchronously by native hooks, before the model sees the output.
             enabled=not (os.environ.get("TGA3_AGENT_ROLE") == "worker" or
-                         os.environ.get("TGA3_AGENT_ROLE") == "scout" and self.scout_phase == "extracting"),
+                         os.environ.get("TGA3_AGENT_ROLE") == "scout" and self.scout_phase != "executing"),
             output_directory=self.output_dir,
         )
 
@@ -266,7 +266,9 @@ class CliAdapter(AgentAdapter):
             await process.wait()
 
         async def watchdog():
-            idle_limit = min(float(os.environ.get("TGA3_CLI_IDLE_TIMEOUT_SECONDS", "300")), self.timeout / 3)
+            idle_limit = float(os.environ.get("TGA3_CLI_IDLE_TIMEOUT_SECONDS", "300"))
+            if self.timeout is not None:
+                idle_limit = min(idle_limit, self.timeout / 3)
             while True:
                 await asyncio.sleep(min(5, idle_limit / 2))
                 if time.monotonic() - last_activity >= idle_limit:
@@ -364,7 +366,7 @@ class CodexAdapter(CliAdapter):
                                                for k, v in self.mcp_headers().items()) + "}",
                 "required = true",
             ]
-        elif not self.reporter and self.scout_phase == "extracting":
+        elif not self.reporter and self.scout_phase in {"extracting", "merging"}:
             config += ["[mcp_servers.intel]",
                        f"url = {json.dumps(os.environ['TGA3_SCOUT_INTEL_MCP_URL'])}", "required = true"]
         if os.environ.get("TGA3_AGENT_ROLE") in {"scout", "worker"}:

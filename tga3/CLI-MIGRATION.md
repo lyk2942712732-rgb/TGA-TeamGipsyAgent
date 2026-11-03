@@ -102,10 +102,15 @@ npm run build
 ## Scout 前置侦察
 
 任务按 Scout → 两个 Worker 并行 → Reporter 串行推进。Scout 复用 Codex Worker 镜像，
-使用独立目录和全新 CLI 单轮执行。仅 Scout 可发布 Intel，Worker 仅发布 Finding 和最终候选。
-`runtime.scout_timeout_seconds` 默认 300，允许 60–600 秒；控制层限制包含容器启动的总时间，
-超时先终止并回收 Scout 再启动 Worker，已有 Intel 与证据保留。正常结束但没有 Intel 时
-提示 Worker 从原始材料开始；执行错误则任务失败，不悄悄绕过错误。
+使用私有目录及一个 CLI 会话，在同一个容器中完成三轮工作内容，不重建会话或容器。
+第一轮执行侦察，`runtime.scout_timeout_seconds` 默认 300，允许 60–600 秒。
+第一轮完成、超时或执行出错后，从保存的 action 和证据继续第二轮提取。
+第二轮无总时间预算，使用 `scout_write_intel` 将全部 action 覆盖到 `/intels/raw` 原始 JSON。
+第三轮无总时间预算，使用 `scout_merge_intel` 基于原始 JSON 统一合并到 `/intels/merged`；
+原始文件完整保留，动作和证据来源由服务端自动求并集。
+第二、三轮的工具调用不写入 action 日志，避免递归提取。全部原始 Intel 各归组一次后，
+系统只将合并版本导入黑板，再回收 Scout 容器并启动两个 Worker。
+取消、提取失败、合并失败或来源覆盖不完整时保留文件，不导入不完整交接、不启动 Worker。
 Scout 的 /logs/scout-actions.json 位于 tasks/<task-id>/logs/scout；各智能体生成文件保存在 tasks/<task-id>/workspaces/<agent-id>。已移除 /recon。
 Reporter 只读查看 Scout 与两个 Worker 的证据。只有 Intel 作为交接，不生成额外侦察简报。
 

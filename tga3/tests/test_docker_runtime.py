@@ -20,7 +20,7 @@ class FakeContainers:
         return SimpleNamespace(id="container-id")
 
 
-def test_scout_mounts_intels_once_for_both_phases(tmp_path):
+def test_scout_mounts_intels_once_for_three_phases(tmp_path):
     config = TGA3Config(Path(__file__).parents[1] / "config")
     for provider in config.models.providers:
         provider.api_keys[0].api_key = SecretStr("test-key")
@@ -32,7 +32,7 @@ def test_scout_mounts_intels_once_for_both_phases(tmp_path):
     mounts = {value["bind"]: value["mode"] for value in containers.kwargs["volumes"].values()}
     assert mounts["/logs"] == "rw" and mounts["/intels"] == "ro"
     environment = containers.kwargs["environment"]
-    assert environment["TGA3_SCOUT_EXTRACT_TIMEOUT_SECONDS"] == str(config.runtime.scout_extract_timeout_seconds)
+    assert "TGA3_SCOUT_EXTRACT_TIMEOUT_SECONDS" not in environment
     assert environment["TGA3_SCOUT_PHASE"] == "executing"
 
 
@@ -109,7 +109,7 @@ def test_reporter_uses_codex_image_and_read_only_evidence(tmp_path):
 
 
 @pytest.mark.parametrize("execution_reason", ["completed", "timeout", "error"])
-async def test_scout_reuses_container_after_execution_and_cleans_up_after_extraction(tmp_path, execution_reason):
+async def test_scout_reuses_container_through_extraction_and_cleans_up_after_merging(tmp_path, execution_reason):
     config = TGA3Config(Path(__file__).parents[1] / "config")
     config.runtime.task_root = str(tmp_path / "tasks")
     for provider in config.models.providers:
@@ -123,7 +123,8 @@ async def test_scout_reuses_container_after_execution_and_cleans_up_after_extrac
         status = "running"
 
         def reload(self):
-            phase = "extracting" if (state / "scout-extract-request").exists() else "executing"
+            phase = ("merging" if (state / "scout-merge-request").exists() else
+                     "extracting" if (state / "scout-extract-request").exists() else "executing")
             reason = execution_reason if phase == "executing" else "completed"
             (state / f"scout-{phase}-result.json").write_text(json.dumps({
                 "finish_reason": reason, "error": "fixture failure" if reason == "error" else None,
@@ -156,6 +157,8 @@ async def test_scout_reuses_container_after_execution_and_cleans_up_after_extrac
             await runtime.scout(first, emit)
     assert not stops
     await runtime.scout(LaunchSpec(task_id=task_id, agent=first.agent, scout_phase="extracting"), emit)
+    assert not stops
+    await runtime.scout(LaunchSpec(task_id=task_id, agent=first.agent, scout_phase="merging"), emit)
     assert len(launches) == 1
     assert stops == [(task_id, "scout")]
     assert [method for method, _ in events] == ["container.started", "agent.session"]

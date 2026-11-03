@@ -20,7 +20,7 @@ class LaunchSpec:
     task_id: UUID
     agent: ResolvedAgent
     report_input: str | None = None
-    scout_phase: Literal["executing", "extracting"] | None = None
+    scout_phase: Literal["executing", "extracting", "merging"] | None = None
     phase_budget_seconds: float | None = None
 
 
@@ -76,9 +76,9 @@ class DockerContainerRuntime:
         binding = spec.agent
         workspace, inputs, logs = self._task_paths(spec.task_id, binding.agent_id)
         is_reporter = binding.role == "reporter"
-        extracting = binding.role == "scout" and spec.scout_phase == "extracting"
+        extracting = binding.role == "scout" and spec.scout_phase in {"extracting", "merging"}
         phase_budget = int(spec.phase_budget_seconds if spec.phase_budget_seconds is not None else
-                           runtime.scout_extract_timeout_seconds if extracting else runtime.scout_timeout_seconds)
+                           runtime.scout_timeout_seconds)
         if is_reporter:
             (workspace / "report-input.json").write_text(spec.report_input or "[]", encoding="utf-8")
             (workspace / "result").mkdir(exist_ok=True)
@@ -92,6 +92,8 @@ class DockerContainerRuntime:
         if binding.role == "scout":
             intels = self.config.task_path(spec.task_id, "intels", "scout")
             self._ensure_worker_directory(intels)
+            for stage in ("raw", "merged"):
+                self._ensure_worker_directory(intels / stage)
             volumes[str(intels)] = {"bind": "/intels", "mode": "ro"}
         if is_reporter:
             volumes[str(self.config.task_path(spec.task_id, "logs"))] = {"bind": "/evidence", "mode": "ro"}
@@ -122,9 +124,6 @@ class DockerContainerRuntime:
                 phase_budget + 30 if binding.role == "scout" else runtime.cli_timeout_seconds
             ),
             "TGA3_SCOUT_TIMEOUT_SECONDS": str(phase_budget if not extracting else runtime.scout_timeout_seconds),
-            "TGA3_SCOUT_EXTRACT_TIMEOUT_SECONDS": str(
-                phase_budget if extracting else runtime.scout_extract_timeout_seconds
-            ),
             "TGA3_SCOUT_PHASE": spec.scout_phase or "executing",
             "TGA3_SCOUT_INTEL_MCP_URL": runtime.blackboard_mcp_url.rstrip("/").removesuffix("/mcp") + "/scout-mcp/",
             "TGA3_SYSTEM_PROMPT": binding.system_prompt,
@@ -162,7 +161,7 @@ class DockerContainerRuntime:
         return container.id
 
     async def scout(self, spec: LaunchSpec, emit) -> None:
-        """Drive two work phases inside one container and one resumed CLI session."""
+        """Drive three work phases inside one container and one resumed CLI session."""
         if not hasattr(self, "_scouts"):
             self._scouts = {}
         phase = spec.scout_phase or "executing"
@@ -172,7 +171,8 @@ class DockerContainerRuntime:
         launch = None
         try:
             if phase == "executing":
-                for name in ("scout-executing-result.json", "scout-extracting-result.json", "scout-extract-request"):
+                for name in ("scout-executing-result.json", "scout-extracting-result.json", "scout-extract-request",
+                             "scout-merging-result.json", "scout-merge-request"):
                     (state_dir / name).unlink(missing_ok=True)
                 launch = asyncio.create_task(self.launch(spec))
                 container_id = await asyncio.shield(launch)
@@ -180,10 +180,10 @@ class DockerContainerRuntime:
                 await emit("container.started", {"container_id": container_id})
             else:
                 if spec.task_id not in self._scouts:
-                    raise RuntimeUnavailableError("Scout extraction requires its original running container")
+                    raise RuntimeUnavailableError("Scout Intel phases require their original running container")
                 container_id = self._scouts[spec.task_id]["id"]
-                # The coordinator has already switched MCP permissions to extraction.
-                (state_dir / "scout-extract-request").touch()
+                # The coordinator has already switched MCP permissions to the next work phase.
+                (state_dir / ("scout-extract-request" if phase == "extracting" else "scout-merge-request")).touch()
             state = self._scouts[spec.task_id]
             container = await asyncio.to_thread(self.client.containers.get, container_id)
             while True:
@@ -221,7 +221,7 @@ class DockerContainerRuntime:
                     container_id = await launch
                     self._scouts.setdefault(spec.task_id, {"id": container_id, "offset": 0, "pending": b""})
             finally:
-                if phase == "extracting":
+                if phase == "merging":
                     self._scouts.pop(spec.task_id, None)
                     await self.stop(spec.task_id, spec.agent.agent_id)
 
@@ -335,10 +335,10 @@ class FakeContainerRuntime:
             await self.stop(spec.task_id, spec.agent.agent_id)
 
     async def scout(self, spec: LaunchSpec, emit) -> None:
-        if spec.scout_phase != "extracting":
+        if spec.scout_phase == "executing":
             container_id = await self.launch(spec)
             await emit("container.started", {"container_id": container_id})
-        else:
+        elif spec.scout_phase == "merging":
             await self.stop(spec.task_id, spec.agent.agent_id)
 
     async def stop(self, task_id: UUID, agent_id: str) -> None:

@@ -13,7 +13,7 @@ from tga3.config import TGA3Config
 from tga3.docker_runtime import FakeContainerRuntime
 from tga3.domain import USER_ACTOR, AgentRun, PublishRequest, RunState
 from tga3.errors import ConflictError, ContractError
-from tga3.scout_intel import ScoutIntelInput, ScoutIntelStore
+from tga3.scout_intel import ScoutIntelInput, ScoutIntelMergeInput, ScoutIntelStore
 from tga3.storage import InMemoryStorage
 from tga3.token_usage import TokenUsageTracker
 
@@ -92,6 +92,9 @@ async def test_json_files_survive_store_restart_and_import_in_order_without_dupl
         receipt = await store.write(ScoutIntelInput(task_id=task.id, key=key, claim=key))
         assert receipt["saved"] and receipt["path"].startswith("/intels/")
     restarted = ScoutIntelStore(config, board)
+    await storage.update_agent(task.id, "scout", metadata={"scout_phase": "merging"})
+    for key in ["z-first", "a-second"]:
+        await restarted.merge(ScoutIntelMergeInput(task_id=task.id, key=key, claim=key, merged_from_keys=[key]))
     await restarted.flush(task.id)
     await restarted.flush(task.id)
     assert [entry.body["claim"] for entry in await storage.list_entries(task.id)] == ["z-first", "a-second"]
@@ -199,6 +202,9 @@ async def test_intel_actions_and_workspace_paths_are_registered_and_linked_by_se
                                          evidence_paths=[action["artifact"]["output_path"]]))
     assert len(storage.artifacts) == 1
     assert not await storage.list_entries(task.id)
+    await storage.update_agent(task.id, "scout", metadata={"scout_phase": "merging"})
+    for key in ("first", "second"):
+        await store.merge(ScoutIntelMergeInput(task_id=task.id, key=key, claim=key, merged_from_keys=[key]))
     await store.flush(task.id)
     entries = await storage.list_entries(task.id)
     assert len(entries) == 2
@@ -232,8 +238,17 @@ async def test_scout_coverage_counts_actions_inside_one_prefixed_manifest(tmp_pa
         await store.write(ScoutIntelInput(task_id=task.id, key=str(index), claim=str(index),
                                          source_action_ids=[action["action_id"]],
                                          evidence_paths=[action["artifact"]["output_path"]]))
-        await store.flush(task.id)
-        metadata = (await storage.get_agent(task.id, "scout")).metadata
-        assert metadata["action_count"] == 2
-        assert metadata["action_covered_count"] == index + 1
-        assert len(metadata["action_uncovered"]) == 1 - index
+        if index == 0:
+            with pytest.raises(ContractError, match="coverage mismatch"):
+                store.validate_extraction(task.id)
+    assert store.validate_extraction(task.id)["action_count"] == 2
+    await storage.update_agent(task.id, "scout", metadata={"scout_phase": "merging"})
+    await store.merge(ScoutIntelMergeInput(task_id=task.id, key="both", claim="both observations",
+                                         merged_from_keys=["0", "1"]))
+    await store.flush(task.id)
+    metadata = (await storage.get_agent(task.id, "scout")).metadata
+    assert metadata["action_count"] == metadata["action_covered_count"] == 2
+    assert metadata["action_uncovered"] == []
+    merged = store.documents(task.id, merged=True)[0]
+    assert set(merged.source_action_ids) == {action["action_id"] for action in actions}
+    assert len(merged.evidence_paths) == len(merged.artifact_refs) == 2

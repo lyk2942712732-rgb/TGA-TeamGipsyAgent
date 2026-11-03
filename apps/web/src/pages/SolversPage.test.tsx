@@ -41,16 +41,17 @@ describe("SolversPage", () => {
   it("edits and saves the first Scout phase budget independently of extraction", async () => {
     const scout = { ...agentConfig.agents["worker-openai"], display_name: "Scout", role: "scout" };
     mocks.agents.mockResolvedValue({ ...agentConfig, agents: { ...agentConfig.agents, scout } });
-    mocks.agentDefinitions.mockResolvedValue([{ ...scout, id: "scout", scout_timeout_seconds: 300, scout_extract_timeout_seconds: 180, tools: [], image: null, image_health: null }]);
+    mocks.agentDefinitions.mockResolvedValue([{ ...scout, id: "scout", scout_timeout_seconds: 300, scout_extract_timeout_seconds: null, tools: [], image: null, image_health: null }]);
     const user = userEvent.setup();
     render(<SolversPage />);
     await user.click(await screen.findByRole("button", { name: "配置 Scout" }));
     const input = screen.getByRole("spinbutton", { name: "第一轮侦察时长（秒）" });
     expect(input).toHaveValue(300);
+    expect(screen.getByText(/第二、三轮不设总时间预算/)).toBeInTheDocument();
     await user.clear(input); await user.type(input, "120");
     await user.click(within(screen.getByLabelText("Scout Solver 配置")).getByRole("button", { name: "保存配置" }));
     await waitFor(() => expect(mocks.saveScoutSettings).toHaveBeenCalledWith(120));
-    expect(screen.getByText(/第二轮独立预算 180 秒/)).toBeInTheDocument();
+    expect(screen.getByText(/第三轮统一合并/)).toBeInTheDocument();
   });
 
   it("keeps prompt edits when switching agents and saves the whole configuration", async () => {

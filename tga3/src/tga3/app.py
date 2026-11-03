@@ -312,7 +312,8 @@ def create_app(
     async def agent_definitions() -> list[dict[str, Any]]:
         tools = {
             "scout": ["第一轮：Shell / Kali 工具 / logs 留存", "第二轮：只读 logs",
-                      "scout_write_intel → /intels/*.json", "系统自动导入黑板"],
+                      "scout_write_intel → /intels/raw/*.json", "第三轮：Intel 合并",
+                      "scout_merge_intel → /intels/merged/*.json", "系统仅导入合并 Intel"],
             "worker-openai": [
                 "Shell", "Read", "Edit", "原生黑板同步 Hook", "finding_publish", "blackboard_publish",
                 "按 action 自动关联复现方法和证据", "发布时自动校验证据路径",
@@ -330,9 +331,7 @@ def create_app(
             result.append({
                 "id": agent_id,
                 "scout_timeout_seconds": config.runtime.scout_timeout_seconds if binding.role == "scout" else None,
-                "scout_extract_timeout_seconds": (
-                    config.runtime.scout_extract_timeout_seconds if binding.role == "scout" else None
-                ),
+                "scout_extract_timeout_seconds": None,
                 **binding.model_dump(mode="json"),
                 "tools": tools.get(agent_id, []),
                 "image": image,

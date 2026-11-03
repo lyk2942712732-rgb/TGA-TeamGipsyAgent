@@ -184,7 +184,8 @@ def publication_contract(role: str | None = None) -> str:
 
     parts: list[str] = []
     if role == "scout":
-        return ("Scout executes reconnaissance first, then uses scout_write_intel to save /intels JSON. "
+        return ("Scout executes reconnaissance, extracts raw Intel with scout_write_intel, then merges it "
+                "with scout_merge_intel in the same CLI session and container. "
                 "No publishing tool.")
     models = (WorkerFindingPublication, WorkerFinalCandidatePublication)
     for model in models:
@@ -220,7 +221,7 @@ class PublishRequest(BaseModel):
     body: dict[str, Any]
     artifact_refs: list[ArtifactRef] = Field(default_factory=list)
     idempotency_key: str = Field(min_length=1, max_length=200)
-    source_action_ids: list[str] = Field(default_factory=list, max_length=100)
+    source_action_ids: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def check_contract(self) -> PublishRequest:

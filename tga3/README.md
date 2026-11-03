@@ -3,7 +3,7 @@
 两个 Worker 在独立 Kali 容器中并行运行 Codex CLI 和 Claude Code CLI。
 出现最终候选后，控制层等待收尾宽限期、停止并回收 Worker，固定黑板快照，
 再用与 Codex Worker 相同的镜像启动一次性 Reporter 容器。
-Scout 分两轮：第一轮实际执行并留存 logs，第二轮在原容器、原 CLI 会话中逐条概括 log JSON 为 Intel，通过参数化工具保存 /intels JSON；控制层统一导入后才启动两个 Worker。
+Scout 分三轮工作内容，复用同一个容器、CLI 会话和上下文：第一轮执行并留存 logs；第二轮覆盖全部 action，保存原始 Intel JSON；第三轮基于全部原始 Intel 统一合并，另存最终 JSON。控制层只导入合并版本，完整覆盖后才启动两个 Worker。
 
 ```text
 Web UI → FastAPI 控制层 → PostgreSQL / 共享黑板 / MCP
@@ -24,15 +24,15 @@ CLI 管理私有会话、工具执行和上下文压缩；不再使用 Agents SD
 - Claude 会话：每个 Worker 工作目录的 `.claude/`。
 - `.tga3/*-session.json` 只保存 CLI 会话指针；PG `agent_runs.metadata.cli_session_id` 保存对应标识。
 - `agent_runs.session_id` 仍是控制通道标识，不用于 CLI resume。
-- Scout 第一轮默认 300 秒，可在 Solver 配置中设置为 60–600 秒；结束或超时后启动第二轮，第二轮使用独立的 180 秒预算（runtime.scout_extract_timeout_seconds）。两轮仅区分工作内容，复用同一容器、CLI 会话和上下文，Token 统计归于 Scout。
+- Scout 第一轮默认 300 秒，可在 Solver 配置中设置为 60–600 秒；结束或超时后在原会话继续第二轮。第二、三轮不设总时间预算，分别以覆盖全部 action、覆盖全部原始 Intel 为结束条件。旧配置 `scout_extract_timeout_seconds` 仅兼容读取，不再生效。CLI 无进展恢复仍复用原会话，Token 统计归于 Scout。
 - CLI 在自己的 `/workspace/` 执行，生成文件和附件留在工作区。每个智能体只维护一份 `/logs/<agent-id>-actions.json`，其中 `actions` 数组按动作记录命令、参数、状态、时间与 `artifact`。`action_id` 带智能体前缀且全局唯一，CLI 可重复的原生编号另存为 `tool_call_id`。开始、结束更新同一条记录；重新建立 CLI 调用后仍汇总到原文件。文件锁与原子替换避免并发写入丢记录或暴露半份 JSON。
 - 每条 action 的 `artifact` 包含 `output_path` 和 `attachments`，路径均相对于该智能体的 `/workspace/`。工具返回正文保存在 `result/<agent-id>-action-<唯一编号>.txt` 或 `.json`；正文为空仍保存空文件，中断但未收到返回时保存明确的状态说明。附件是执行期间新增或修改的工作区文件，无附件时为 `[]`。CLI 自身截断的正文无法恢复；命令重定向生成的文件通过附件路径读取。日志不再重复保存 `result` 正文，也不使用 `result_path` 或 `output_paths`。
-- `result/` 与 CLI 的隐藏会话目录是运行时保留目录，不计入附件。Scout 第二轮暂停记录工具调用，在原会话逐条概括汇总文件中的 action，通过 `source_action_ids` 标注来源；系统按动作 ID 核对覆盖率，遗漏时继续提取。
+- `result/` 与 CLI 的隐藏会话目录是运行时保留目录，不计入附件。Scout 第二、三轮暂停记录工具调用，在原会话逐条概括汇总文件中的 action，通过 `source_action_ids` 标注来源；系统按动作 ID 核对覆盖率，遗漏时继续提取。第二轮调用 `scout_write_intel` 保存 `/intels/raw/*.json`；第三轮调用 `scout_merge_intel` 保存 `/intels/merged/*.json`，原始 JSON 保留不改写。合并请求只填正文、主题和 `merged_from_keys`，服务端自动求动作 ID、证据路径及引用的并集，拒绝未知来源和重复归组。每个原始 key 必须且只能归入一条最终 Intel；无法合并的内容单独保留。合并保留条件、独立事实、失败边界和后续修正，不能新增推论。
 - 任务顶部显示累计 Token，点击向右展开 Scout、两个 Worker 和 Reporter 各自用量。控制层增量读取各任务的 Codex/Claude 原生 JSONL，用量及去重检查点持久化在 Agent metadata；重新打开历史任务会回填现存日志。总数为输入加输出（包含缓存输入，缓存命中不重复相加），没有原生用量记录时显示“未上报”，不估算。
-- 共享黑板支持实时用户提示；Scout 和两个 Worker 的原生钩子在下一个工具调用前注入这些提示，绕过普通同步间隔。运行中的工具会先完成；收尾和终态任务不再接收新提示。 任务顶部、运行图和 Agent 面板显示 Scout 当前处于“第一轮·侦察执行中”或“第二轮·Intel 提取中”。
+- 共享黑板支持实时用户提示；Scout 和两个 Worker 的原生钩子在下一个工具调用前注入这些提示，绕过普通同步间隔。运行中的工具会先完成；收尾和终态任务不再接收新提示。 任务顶部、运行图和 Agent 面板显示 Scout 当前处于“第一轮·侦察执行中”、“第二轮·Intel 提取中”或“第三轮·Intel 合并中”。
 - PostgreSQL 保存任务、共享黑板、只读执行事件和证据/报告索引；Intel 与 Finding 的 `source_action_ids` 持久化在黑板条目。既有数据库连接时自动添加向后兼容的来源字段。
 - `/inputs` 只读；`/workspace` 私有；`/logs/<agent-id>-actions.json` 是各智能体自己的动作汇总。Reporter 通过只读 `/evidence/<agent-id>` 和 `/evidence-files/<agent-id>` 查看记录和产物，自身记录仍写入自己的 `/logs`。已移除 `/recon`。
-- Worker 在单次执行确认可复用事实后立即用 `finding_publish(action_id, claim, scope)` 发布，可选 `preconditions` 补充命令外的前置条件。执行后原生 Hook 在同一次工具返回中提供 action ID，不要求模型审阅 logs。服务端从绑定连接获取身份和任务，自动关联该 action 的方法、状态、结果正文及附件，登记证据并生成重试去重键。Finding 的 detail 包含适用条件和复现方法，其他 Worker 通过黑板直接使用。失败提交保存在私有 `.tga3/finding-outbox/`，相同参数重试返回同一条 Finding。`blackboard_publish` 用于最终候选，旧 Finding 参数保留兼容。相关实际提示词见 [Finding 提示词](FINDING-PROMPTS.md)。Scout 的 `scout_write_intel` 使用 `source_action_ids` 和相对于 `/workspace/` 的正文、附件路径，同样由服务端登记，Intel JSON 统一导入后写入关联。Skills 使用 CLI 原生工具读取。
+- Worker 在单次执行确认可复用事实后立即用 `finding_publish(action_id, claim, scope)` 发布，可选 `preconditions` 补充命令外的前置条件。执行后原生 Hook 在同一次工具返回中提供 action ID，不要求模型审阅 logs。服务端从绑定连接获取身份和任务，自动关联该 action 的方法、状态、结果正文及附件，登记证据并生成重试去重键。Finding 的 detail 包含适用条件和复现方法，其他 Worker 通过黑板直接使用。失败提交保存在私有 `.tga3/finding-outbox/`，相同参数重试返回同一条 Finding。`blackboard_publish` 用于最终候选，旧 Finding 参数保留兼容。相关实际提示词见 [Finding 提示词](FINDING-PROMPTS.md)。Scout 的 `scout_write_intel` 使用 `source_action_ids` 和相对于 `/workspace/` 的正文、附件路径，同样由服务端登记，原始 Intel 的证据登记在合并版本中复用，只导入最终 JSON 并写入黑板关联。取消或提取、合并失败时保留文件，不导入不完整的交接、不启动 Worker。Skills 使用 CLI 原生工具读取。
 - CLI 周期在安全点消费合并后的黑板更新；暂停、停止和超时会回收 CLI 的工具进程组。
 
 任务文件统一按 `runtime.task_root`（默认 `data/tasks`）组织：
@@ -44,7 +44,9 @@ data/tasks/<任务ID>/
 │   └── result/                 每条 action 的正文文件
 ├── logs/<agent-id>/
 │   └── <agent-id>-actions.json  该智能体全部 action 的汇总
-├── intels/scout/               已保存的 Intel JSON
+├── intels/scout/
+│   ├── raw/                    第二轮原始 Intel JSON（保留）
+│   └── merged/                 第三轮合并 Intel JSON（仅这些导入黑板）
 └── writeups/                   最终报告
 ```
 
@@ -97,7 +99,7 @@ Worker 不在 Compose 中常驻；创建任务时由 Docker SDK 动态启动，�
 - `GET|POST|PUT|DELETE /api/v3/skills/{name}`：以 `config/skills/<name>/` 目录包为单位管理其中全部 Markdown；Agent 默认先读 `SKILL.md`，再按需读取包内具体文档。
 - `POST /api/v3/skills/import`：上传 ZIP Skill 包；安全校验后按顶层目录名（或 ZIP 文件名）创建目录并保留其中的 Markdown 布局。
 - `GET /api/v3/tasks`：任务列表。
-- `POST /api/v3/tasks`：multipart 创建任务；字段为 `title`、`scene_id`、`prompt` 和零到多个 `files`，写完初始黑板后启动 Scout 两轮流程。
+- `POST /api/v3/tasks`：multipart 创建任务；字段为 `title`、`scene_id`、`prompt` 和零到多个 `files`，写完初始黑板后启动 Scout 三轮流程。
 - `POST /api/v3/tasks/{id}/files`：追加共享只读输入文件。
 - `GET /api/v3/tasks/{id}/blackboard`：黑板增量。
 - `POST /api/v3/tasks/{id}/blackboard/prompts`：写入实时提示，JSON 为 `{text, idempotency_key}`；仅在侦察/运行阶段接收。
@@ -120,3 +122,10 @@ npm test
 npm run build
 npm run test:e2e
 ```
+
+
+合并后的 Intel JSON 使用 `schema_version: 3`，沿用原始版本的 `body`、`topic`、
+`source_action_ids`、`evidence_paths`、`artifact_refs` 等字段，增加非空 `merged_from_keys`。
+原始版本仍可读取历史 v1/v2 JSON，新任务第二轮原始版本为 v2。合并内容由 Scout 整理，
+来源和证据由服务端从原始文件汇总，不要求模型再次填写。合并工具使用独立的稳定 key 进行重试去重。
+文件覆盖校验不能代替语义审查；提示词要求保留每条原始 Intel 的有效事实与条件。

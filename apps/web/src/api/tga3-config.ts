@@ -31,7 +31,7 @@ export type ScenesConfig = { schema_version: number; scenes: SceneConfig[] };
 export type AgentDefinition = AgentConfig & {
   id: string;
   scout_timeout_seconds?: number;
-  scout_extract_timeout_seconds?: number;
+  scout_extract_timeout_seconds?: number | null;
   tools: string[];
   image: string | null;
   image_health: null | { status: "healthy" | "missing" | "unavailable"; available: boolean; detail: string; image_id?: string; size_bytes?: number; created?: string };

@@ -45,8 +45,8 @@ def worker_instructions() -> str:
             "Action artifact paths are relative to /workspace; output bodies are saved in /workspace/result/. "
             "Skills: /skills, read SKILL.md only when useful."
         )
-        extracting = os.environ.get("TGA3_SCOUT_PHASE") == "extracting"
-        if extracting:
+        phase = os.environ.get("TGA3_SCOUT_PHASE", "executing")
+        if phase == "extracting":
             instructions = (
                 "Current phase: SECOND ROUND, Intel extraction in the SAME CLI session and container. "
                 "Read the actions array in /logs/scout-actions.json and files in /workspace. "
@@ -58,9 +58,30 @@ def worker_instructions() -> str:
                 "request={task_id:<exact task UUID>,key:<stable unique key>,claim:<fact>,detail:<support>,"
                 "topic:<topic>,source_action_ids:[<action_id>],evidence_paths:[<paths relative to /workspace>]}. "
                 "No actor, kind, artifact UUID or JSON formatting is needed. evidence_paths may be empty. "
-                "Check saved=true; the tool writes JSON to /intels and the system imports it after this phase. "
-                "Save all supported Intel, then finish. Do not publish to the blackboard. "
-                f"Independent extraction budget: {os.environ.get('TGA3_SCOUT_EXTRACT_TIMEOUT_SECONDS', '180')} seconds."
+                "Check saved=true; the tool writes original JSON to /intels/raw. These files are retained. "
+                "Do not merge Intel yet. There is no total extraction time budget; finish only after ALL actions "
+                "are covered. Then wait for the THIRD work phase in this same session. "
+                "Tool calls in the second and third phases are not appended to the action log. "
+                "Do not publish to the blackboard."
+            )
+        elif phase == "merging":
+            instructions = (
+                "Current phase: THIRD ROUND, Intel consolidation in the SAME CLI session and container. "
+                "All action records have been extracted. Original Intel JSON in /intels/raw is retained unchanged. "
+                "Use the supplied compact Intel catalog first; read originals/evidence only to resolve differences. "
+                "Consolidate repeated or complementary facts about the same object under the same conditions. "
+                "Preserve distinct facts, exact targets, inputs, conditions, scoped negatives, unfinished checks "
+                "and later corrections. Never erase a successful follow-up or generalize a failed test. "
+                "Keep unrelated facts separate; never invent a new conclusion. "
+                "Call scout_merge_intel with request={task_id:<exact task UUID>,key:<stable unique final key>,"
+                "claim:<fact>,detail:<support and boundaries>,topic:<topic>,merged_from_keys:[<raw Intel keys>]}. "
+                "Each raw key must appear exactly once across final Intel; a singleton stays separate. "
+                "The server automatically unions action IDs and evidence references. Do not copy those fields. "
+                "Check saved=true; final JSON is saved separately in /intels/merged. "
+                "No total time budget: finish only after every raw Intel is represented in final Intel. "
+                "Do not call scout_write_intel, modify originals, probe targets or rerun reconnaissance. "
+                "Second/third-phase tool calls are not journaled. Only merged Intel is imported into the blackboard "
+                "by the system after complete coverage; do not publish yourself."
             )
         else:
             instructions = (
@@ -71,7 +92,7 @@ def worker_instructions() -> str:
                 "Tool calls and their output are automatically saved as records in /logs/scout-actions.json; "
                 "do not modify those reserved records. Save downloads, extracted files and "
                 "scripts under /workspace/. "
-                "Use /workspace for scratch work. Then continue in this same session to extract Intel from logs. "
+                "Use /workspace for scratch work. Later extract and then merge Intel in this same session. "
                 "Track time and limit individual commands; basic reconnaissance is enough, then finish. "
                 f"Execution budget: {os.environ.get('TGA3_SCOUT_TIMEOUT_SECONDS', '300')} seconds."
             )

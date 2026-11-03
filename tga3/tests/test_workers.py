@@ -309,6 +309,12 @@ async def test_scout_resumes_same_session_and_only_extraction_has_the_json_tool(
         "type": "command_execution", "id": "read", "command": "cat /logs/action.json",
     }}, noop)
     assert len(list((cli_env / "logs").glob("*.json"))) == count
+    monkeypatch.setenv("TGA3_SCOUT_PHASE", "merging")
+    third = CodexAdapter()
+    command, _ = third.command()
+    assert third.session_id == "execution-session" and "resume" in command
+    assert not third.journal.enabled
+    assert "scout_merge_intel" in (cli_env / ".codex/config.toml").read_text()
 
 
 async def test_inactivity_watchdog_stops_hung_cli_without_losing_session(cli_env, monkeypatch):
@@ -441,18 +447,20 @@ async def test_stopping_a_paused_worker_does_not_launch_a_queued_cli(monkeypatch
     await asyncio.wait_for(task, 1)
 
 
-async def test_scout_runs_both_phases_on_one_adapter_and_retries_uncovered_json(cli_env, monkeypatch):
-    from tga3.workers.openai_worker import scout, uncovered_actions
+async def test_scout_runs_three_phases_on_one_adapter_and_retries_uncovered_json(cli_env, monkeypatch):
+    from tga3.workers.openai_worker import scout, uncovered_actions, unmerged_intels
 
     monkeypatch.setenv("TGA3_AGENT_ROLE", "scout")
     monkeypatch.setenv("TGA3_SCOUT_TIMEOUT_SECONDS", "2")
-    monkeypatch.setenv("TGA3_SCOUT_EXTRACT_TIMEOUT_SECONDS", "2")
+    monkeypatch.setenv("TGA3_SCOUT_EXTRACT_TIMEOUT_SECONDS", "0.001")
     intels = cli_env / "intels"
-    intels.mkdir()
+    (intels / "raw").mkdir(parents=True)
+    (intels / "merged").mkdir()
     monkeypatch.setenv("TGA3_INTELS", str(intels))
     state = cli_env / ".tga3"
     state.mkdir()
     (state / "scout-extract-request").touch()
+    (state / "scout-merge-request").touch()
     adapters, sessions, phases = [], [], []
 
     async def cycle(adapter, prompt, emit):
@@ -463,24 +471,34 @@ async def test_scout_runs_both_phases_on_one_adapter_and_retries_uncovered_json(
             for index in range(2):
                 adapter.journal.record(str(index), "shell", inputs={"command": "fixture"},
                                        result={"output": str(index)}, status="completed")
-        else:
-            assert not adapter.journal.enabled
+        elif adapter.scout_phase == "extracting":
+            assert not adapter.journal.enabled and adapter.timeout is None
             missing = uncovered_actions(adapter.journal.directory, intels)
             assert missing and missing[0] in prompt
             # Simulate an incomplete model turn: only one of two records is summarized.
-            (intels / f"{len(phases)}.json").write_text(json.dumps({
-                "input": {"source_action_ids": [missing[0]]},
+            (intels / "raw" / f"{len(phases)}.json").write_text(json.dumps({
+                "key": f"intel-{len(phases)}", "topic": "fixture", "body": {"claim": "verified"},
+                "source_action_ids": [missing[0]],
+            }))
+        else:
+            assert not adapter.journal.enabled and adapter.timeout is None
+            pending = unmerged_intels(intels)
+            assert pending and pending[0]["key"] in prompt
+            (intels / "merged" / f"{len(phases)}.json").write_text(json.dumps({
+                "merged_from_keys": [pending[0]["key"]],
             }))
         sessions.append(adapter.session_id)
         return "saved"
 
     monkeypatch.setattr(CodexAdapter, "run_cycle", cycle)
     await asyncio.wait_for(scout(), timeout=3)
-    assert phases == ["executing", "extracting", "extracting"]
+    assert phases == ["executing", "extracting", "extracting", "merging", "merging"]
     assert len({id(adapter) for adapter in adapters}) == 1
-    assert sessions == ["same-scout-session"] * 3
+    assert sessions == ["same-scout-session"] * 5
     assert not uncovered_actions(cli_env / "logs", intels)
-    for phase in ("executing", "extracting"):
+    assert not unmerged_intels(intels)
+    assert len(list((intels / "raw").glob("*.json"))) == 2
+    for phase in ("executing", "extracting", "merging"):
         assert json.loads((state / f"scout-{phase}-result.json").read_text())["finish_reason"] == "completed"
 
 

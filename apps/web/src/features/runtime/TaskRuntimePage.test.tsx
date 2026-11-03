@@ -45,6 +45,9 @@ describe("TaskRuntimePage", () => {
     page.rerender(<MemoryRouter><TaskRuntimePage taskId="task" /></MemoryRouter>);
     expect(screen.getAllByText("第二轮 · Intel 提取中").length).toBeGreaterThan(0);
     expect(screen.queryByText("第一轮 · 侦察执行中")).not.toBeInTheDocument();
+    useTGA3Runtime.mockReturnValue({ snapshot: { ...data, agents: [{ ...scout, metadata: { scout_phase: "merging" } }, ...snapshot.agents] }, connection: "live", refresh: vi.fn() });
+    page.rerender(<MemoryRouter><TaskRuntimePage taskId="task" /></MemoryRouter>);
+    expect(screen.getAllByText("第三轮 · Intel 合并中").length).toBeGreaterThan(0);
   });
   it("expands cumulative reported tokens to the right and distinguishes missing usage", () => {
     useTGA3Runtime.mockReturnValue({ snapshot: { ...snapshot, agents: snapshot.agents.map((agent, index) => index === 0 ? {

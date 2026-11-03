@@ -29,17 +29,17 @@ async def scout() -> None:
 
     adapter = CodexAdapter()
     intels = Path(os.environ.get("TGA3_INTELS", "/intels"))
-    for phase, budget_key in (("executing", "TGA3_SCOUT_TIMEOUT_SECONDS"),
-                              ("extracting", "TGA3_SCOUT_EXTRACT_TIMEOUT_SECONDS")):
-        if phase == "extracting":
-            # Wait until the coordinator has recorded the first result and opened the Intel tool.
-            while not (adapter.state_dir / "scout-extract-request").exists():
+    for phase in ("executing", "extracting", "merging"):
+        if phase != "executing":
+            # The coordinator validates the previous phase before opening the next tool permissions.
+            signal = "scout-extract-request" if phase == "extracting" else "scout-merge-request"
+            while not (adapter.state_dir / signal).exists():
                 await asyncio.sleep(0.1)
         os.environ["TGA3_SCOUT_PHASE"] = phase
         adapter.scout_phase = phase
         adapter.journal.enabled = phase == "executing"
-        budget = float(os.environ.get(budget_key, "300" if phase == "executing" else "180"))
-        adapter.timeout = budget + 5
+        budget = float(os.environ.get("TGA3_SCOUT_TIMEOUT_SECONDS", "300")) if phase == "executing" else None
+        adapter.timeout = budget + 5 if budget is not None else None
         result = {"finish_reason": "completed", "error": None, "budget_seconds": budget}
         try:
             async with asyncio.timeout(budget):
@@ -49,6 +49,8 @@ async def scout() -> None:
                 while True:
                     if phase == "extracting":
                         missing = uncovered_actions(adapter.journal.directory, intels)
+                        if not missing:
+                            break
                         prompt = (worker_instructions()
                                   + "\n继续当前会话的第二轮。逐条概括以下尚未覆盖的 action，"
                                   "每条至少对应一份 Intel，source_action_ids 引用动作 ID。"
@@ -56,10 +58,22 @@ async def scout() -> None:
                                   "包括失败、超时和未完成记录，准确描述实际结果，不能推断为目标不存在漏洞。"
                                   "使用 scout_write_intel 保存；不要重新侦察。\n"
                                   + json.dumps(missing, ensure_ascii=False))
+                    elif phase == "merging":
+                        missing = unmerged_intels(intels)
+                        if not missing:
+                            break
+                        prompt = (worker_instructions()
+                                  + "\n继续原会话的第三轮。以下是尚未合并的原始 Intel，"
+                                  "请一次查看整体，将同一对象、同一条件下重复或互补的内容合并。"
+                                  "每条原始 key 必须且只能归入一条最终 Intel；无关内容单独保留。"
+                                  "保留不同事实、实际条件、失败边界及先失败后成功的变化，不能新增推论。"
+                                  "调用 scout_merge_intel，服务端自动合并来源与证据。"
+                                  "仅当需要核实差异时读取 /intels/raw 或相应证据；不要重新侦察。\n"
+                                  + json.dumps(missing, ensure_ascii=False))
                     output = await adapter.run_cycle(prompt, emit)
                     if output.strip():
                         await emit("agent.output.delta", {"text": output})
-                    if phase == "executing" or not uncovered_actions(adapter.journal.directory, intels):
+                    if phase == "executing":
                         break
         except TimeoutError:
             result["finish_reason"] = "timeout"
@@ -69,15 +83,29 @@ async def scout() -> None:
         temporary = path.with_suffix(".tmp")
         temporary.write_text(json.dumps(result, ensure_ascii=False), encoding="utf-8")
         temporary.replace(path)
+        if phase != "executing" and result["finish_reason"] != "completed":
+            return
 
 
 def uncovered_actions(logs: Path, intels: Path) -> list[str]:
     covered = set()
-    for path in intels.glob("*.json"):
+    for path in [*intels.glob("*.json"), *(intels / "raw").glob("*.json")]:
         document = json.loads(path.read_text(encoding="utf-8"))
         covered.update(document.get("source_action_ids", document.get("input", {}).get("source_action_ids", [])))
     return [action["action_id"] for action in read_action_log(logs)["actions"]
             if action["action_id"] not in covered]
+
+
+def unmerged_intels(intels: Path) -> list[dict]:
+    covered = set()
+    for path in (intels / "merged").glob("*.json"):
+        covered.update(json.loads(path.read_text(encoding="utf-8"))["merged_from_keys"])
+    pending = []
+    for path in sorted([*intels.glob("*.json"), *(intels / "raw").glob("*.json")]):
+        document = json.loads(path.read_text(encoding="utf-8"))
+        if document["key"] not in covered:
+            pending.append({"key": document["key"], "topic": document["topic"], "body": document["body"]})
+    return pending
 
 
 def main() -> None:

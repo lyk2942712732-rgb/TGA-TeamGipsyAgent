@@ -125,7 +125,7 @@ class TaskCoordinator:
         )
         actor = self.actor_for(scout)
         budgets = {"executing": self.config.runtime.scout_timeout_seconds,
-                   "extracting": self.config.runtime.scout_extract_timeout_seconds}
+                   "extracting": None, "merging": None}
 
         async def emit(method: str, params: dict) -> None:
             if method == "container.started":
@@ -144,14 +144,16 @@ class TaskCoordinator:
 
                 await self.storage.mutate_agent_metadata(task_id, "scout", phase_metadata)
                 await self.storage.update_agent(task_id, "scout", actual_state=AgentState.STARTING)
-                label = "第一轮：侦察执行中" if phase == "executing" else "第二轮：Intel 提取中"
+                label = {"executing": "第一轮：侦察执行中", "extracting": "第二轮：Intel 提取中",
+                         "merging": "第三轮：Intel 合并中"}[phase]
+                deadline_text = f"（预算 {budget} 秒）" if budget is not None else "（全部覆盖后结束）"
                 await self.events.emit(task_id, actor=actor, kind=EventKind.SYSTEM,
-                                       text=f"{label}（独立预算 {budget} 秒）", channel_agent_id="scout",
+                                       text=f"{label}{deadline_text}", channel_agent_id="scout",
                                        payload={"scout_phase": phase, "budget_seconds": budget})
                 reason, error = "completed", None
                 try:
                     # The in-container deadline includes CLI process-tree cleanup.
-                    async with asyncio.timeout(budget + 10):
+                    async with asyncio.timeout(budget + 10 if budget is not None else None):
                         await self.containers.scout(
                             LaunchSpec(task_id=task_id, agent=bindings["scout"], scout_phase=phase,
                                        phase_budget_seconds=budget), emit,
@@ -164,9 +166,15 @@ class TaskCoordinator:
                 await self.storage.update_agent(
                     task_id, "scout", metadata={f"scout_{phase}_result": outcomes[phase]},
                 )
+                if phase != "executing":
+                    if reason != "completed":
+                        raise RuntimeError(f"Scout {phase} failed: {error or reason}")
+                    coverage = (self.scout_intel.validate_extraction(task_id) if phase == "extracting"
+                                else self.scout_intel.validate_merge(task_id))
+                    await self.storage.update_agent(task_id, "scout", metadata=coverage)
             await self.storage.update_agent(task_id, "scout", metadata={"scout_phase": "importing"})
             intel_count = await self.scout_intel.flush(task_id)
-            result = outcomes["extracting"]
+            result = outcomes["merging"]
             state = (AgentState.FAILED if result["finish_reason"] == "error" else
                      AgentState.STOPPED if result["finish_reason"] == "timeout" else AgentState.COMPLETED)
             await self.storage.update_agent(
@@ -175,11 +183,11 @@ class TaskCoordinator:
                           "intel_count": intel_count},
             )
             await self.events.announce_status(
-                task_id, actor, state.value, f"系统已从 /intels 导入 {intel_count} 条 Intel"
+                task_id, actor, state.value, f"系统已从 /intels/merged 导入 {intel_count} 条 Intel"
             )
             await self.events.emit(
                 task_id, actor=SYSTEM_ACTOR, kind=EventKind.SYSTEM,
-                text=f"Scout 两轮结束，系统已导入 {intel_count} 条 Intel，开始启动两个 Worker。",
+                text=f"Scout 三轮结束，系统已导入 {intel_count} 条合并 Intel，开始启动两个 Worker。",
                 payload={"intel_count": intel_count, "scout_phases": outcomes},
             )
             await self.storage.update_task(task_id, state=RunState.RUNNING)
@@ -418,9 +426,7 @@ class TaskCoordinator:
     async def stop_task(self, task_id: UUID) -> None:
         await self.cancel_startup(task_id)
         await self.containers.stop(task_id, "scout")
-        if (await self.storage.get_task(task_id)).state == RunState.SCOUTING:
-            await self.storage.update_agent(task_id, "scout", metadata={"scout_phase": "importing"})
-            await self.scout_intel.flush(task_id)
+        # Cancellation retains raw/merged JSON without publishing an incomplete handoff.
         workers = await self._worker_runs(task_id)
         for run in workers:
             await self.storage.update_agent(task_id, run.agent_id, desired_state=AgentState.STOPPING)

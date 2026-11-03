@@ -215,7 +215,8 @@ class RuntimeConfig(BaseModel):
     mcp_instructions: str = Field(min_length=1)
     cli_timeout_seconds: int = Field(default=1800, ge=30, le=86400)
     scout_timeout_seconds: int = Field(default=300, ge=60, le=600)
-    scout_extract_timeout_seconds: int = Field(default=180, ge=30, le=600)
+    # Accepted for existing configurations only; extraction/merging have no total deadline.
+    scout_extract_timeout_seconds: int | None = Field(default=None, exclude=True)
     worker_images: dict[str, str]
     worker_cycle_prompts: WorkerCyclePromptsConfig
     docker: DockerConfig = Field(default_factory=DockerConfig)

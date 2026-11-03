@@ -31,7 +31,9 @@ async def test_scout_mcp_exposes_only_json_writer_and_no_publication_tool():
     config = TGA3Config(Path(__file__).parents[1] / "config")
     board = Blackboard(InMemoryStorage())
     tools = await build_scout_mcp(config, ScoutIntelStore(config, board)).list_tools()
-    assert [tool.name for tool in tools] == ["scout_write_intel"]
+    assert [tool.name for tool in tools] == ["scout_write_intel", "scout_merge_intel"]
+    merge_fields = tools[1].inputSchema["$defs"]["ScoutIntelMergeInput"]["properties"]
+    assert set(merge_fields) == {"task_id", "key", "claim", "detail", "topic", "merged_from_keys"}
     fields = tools[0].inputSchema["$defs"]["ScoutIntelInput"]["properties"]
     assert set(fields) == {"task_id", "key", "claim", "detail", "topic", "evidence_paths", "source_action_ids"}
 

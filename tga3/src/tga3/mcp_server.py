@@ -15,7 +15,7 @@ from .blackboard import Blackboard
 from .config import TGA3Config
 from .domain import Actor, AgentPublishRequest, EntryKind, publication_contract
 from .evidence import register_evidence
-from .scout_intel import ScoutIntelInput, ScoutIntelStore
+from .scout_intel import ScoutIntelInput, ScoutIntelMergeInput, ScoutIntelStore
 
 
 def _new_mcp(config: TGA3Config, name: str, instructions: str) -> FastMCP:
@@ -114,18 +114,34 @@ def build_mcp(config: TGA3Config, blackboard: Blackboard) -> FastMCP:
 
 def build_scout_mcp(config: TGA3Config, store: ScoutIntelStore) -> FastMCP:
     mcp = _new_mcp(config, "tga3-scout-intels", "Extract Intel from /logs; save JSON using scout_write_intel. "
-                   "The system imports all saved files after extraction. No blackboard publication tool is provided.")
+                   "Then consolidate all raw Intel using scout_merge_intel in the same session. "
+                   "The system imports only merged files after full coverage. No blackboard publication tool.")
 
     @mcp.tool()
     async def scout_write_intel(request: ScoutIntelInput) -> dict[str, Any]:
-        """Save one validated Intel JSON in /intels during Scout's second phase.
+        """Save one validated raw Intel JSON in /intels/raw during Scout's second work phase.
 
         Fill request={task_id,key,claim,detail,topic,source_action_ids:[],evidence_paths:[]}.
         key is stable for retries. source_action_ids identify records in /logs/scout-actions.json;
         evidence_paths are relative to /workspace;
-        the system handles artifact registration, JSON formatting and final blackboard import.
+        the system handles artifact registration and JSON formatting. Raw files remain private;
+        the third work phase merges them before final blackboard import.
         """
         return await store.write(request)
+
+    @mcp.tool()
+    async def scout_merge_intel(request: ScoutIntelMergeInput) -> dict[str, Any]:
+        """Save one consolidated Intel JSON in /intels/merged during Scout's third work phase.
+
+        Fill request={task_id,key,claim,detail,topic,merged_from_keys:[raw Intel keys]}.
+        Merge repeated/overlapping facts about the same object under the same conditions.
+        Preserve all distinct facts, tested conditions, failure boundaries and later corrections.
+        An unrelated raw Intel stays separate by referencing its single key.
+        Each raw key must appear exactly once across final Intel. Do not provide action IDs,
+        evidence paths or artifact UUIDs: the server unions them from the originals.
+        Original /intels/raw JSON is retained. Check saved=true. No direct blackboard publication.
+        """
+        return await store.merge(request)
 
     return mcp
 
