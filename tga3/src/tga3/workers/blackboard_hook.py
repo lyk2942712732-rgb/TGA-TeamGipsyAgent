@@ -9,10 +9,19 @@ from pathlib import Path
 
 import httpx
 
+from .action_hook import record_tool, result_context
+
 
 def checkpoint(event: dict) -> dict:
     if os.environ.get("TGA3_AGENT_ROLE") not in {"scout", "worker"}:
         return {}
+    event_name = event.get("hook_event_name", "PreToolUse")
+    if event_name in {"PostToolUse", "PostToolUseFailure"}:
+        record = record_tool(event)
+        # Publishing/syncing is recorded but must not trigger publication feedback loops.
+        if record is None or str(event.get("tool_name", "")).startswith("mcp__blackboard__"):
+            return {}
+        return {"hookSpecificOutput": {"hookEventName": event_name, "additionalContext": result_context(record)}}
     state_dir = Path(os.environ.get("TGA3_WORKSPACE", "/workspace")) / ".tga3"
     state_dir.mkdir(parents=True, exist_ok=True)
     ack_file = state_dir / "blackboard-ack.json"
@@ -51,6 +60,8 @@ def checkpoint(event: dict) -> dict:
     )
     response.raise_for_status()
     delivery = response.json()
+    if event_name == "PreToolUse" and not (final and delivery):
+        record_tool(event)
     if not delivery:
         return {}
     ack_file.write_text(json.dumps({"generation": generation, "delivery_id": delivery["delivery_id"]}))

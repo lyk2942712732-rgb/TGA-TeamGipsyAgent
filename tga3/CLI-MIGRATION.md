@@ -79,7 +79,7 @@ Worker 无法通过挂载访问对方工作目录或证据目录；双方通过�
 Reporter 从 `/evidence/<agent-id>/` 读取执行记录、从 `/evidence-files/<agent-id>/` 读取生成文件；报告写入 `/workspace/result/writeup.md`。
 
 文件读写、搜索、Shell 与 Skills 文档读取直接使用 CLI 原生能力，删除重复的 Skills MCP 工具。
-Worker MCP 只保留 `blackboard_sync` 和 `blackboard_publish`；Finding 在 evidence_paths 中提供相对路径，服务端按发布 Worker
+Worker MCP 提供 `finding_publish`、`blackboard_sync` 和 `blackboard_publish`。Worker 用 action_id、claim、scope 即时发布 Finding，服务端自动关联结果和附件。旧 Finding 请求仍可在 evidence_paths 中提供相对路径，服务端按发布 Worker
 定位私有目录并拒绝目录穿越。Skills 配置中心仍负责管理文档包。
 执行页面仅保留状态、活动和控制，不提供 Worker/Reporter 聊天或问答转发。
 PostgreSQL 使用 task_events 和 task_runs.event_seq 保存只读执行事件，不提供对话写入接口。

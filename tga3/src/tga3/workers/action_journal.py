@@ -52,9 +52,8 @@ class ActionJournal:
         # Lock a separate inode because actions.json itself is atomically replaced.
         self.directory.mkdir(parents=True, exist_ok=True)
         with (self.directory / ".actions.lock").open("a+b") as lock:
-            if lock.tell() == 0:
-                lock.write(b"0")
-                lock.flush()
+            # Windows can lock beyond EOF. Initializing byte zero before taking the
+            # lock races with another process that has already locked that byte.
             lock.seek(0)
             if os.name == "nt":
                 import msvcrt
@@ -103,7 +102,8 @@ class ActionJournal:
                     body if isinstance(body, str) else json.dumps(body, ensure_ascii=False, indent=2) + "\n")
         return relative
 
-    def record(self, tool_call_id: str, tool: str, *, inputs=None, result=None, status="started") -> None:
+    def record(self, tool_call_id: str, tool: str, *, inputs=None, result=None, status="started",
+               cwd: str | None = None) -> dict | None:
         if not self.enabled:
             return
         now = datetime.now(UTC).isoformat()
@@ -118,6 +118,8 @@ class ActionJournal:
             record["action"] = {"tool": tool, "input": inputs}
             if isinstance(inputs, dict) and inputs.get("command") is not None:
                 record["action"]["command"] = inputs["command"]
+        if cwd:
+            record["action"]["cwd"] = cwd
         if status == "started":
             # Stream delivery may lag behind a very fast command's file writes.
             self.output_snapshots.setdefault(tool_call_id, self.output_baseline)
@@ -143,6 +145,7 @@ class ActionJournal:
             self.pending[tool_call_id] = record
         else:
             self.pending.pop(tool_call_id, None)
+        return record
 
     def interrupt_pending(self) -> None:
         for tool_call_id, record in list(self.pending.items()):

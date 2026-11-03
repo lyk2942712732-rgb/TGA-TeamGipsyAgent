@@ -6,7 +6,7 @@
   "listen_host": "0.0.0.0",
   "listen_port": 8083,
   "skills_root": "./config/skills",
-  "mcp_instructions": "Worker 消费系统从 Scout /intels JSON 导入的 Intel，只发布 Finding 和 final_candidate。Finding 使用 evidence_paths 提供各自 /workspace 中的证据相对路径，由服务端自动校验和登记。Scout 第一轮仅执行与留存 logs，无 MCP 写入工具；第二轮通过独立 scout_write_intel 工具保存 JSON，由系统导入黑板。原生钩子注入黑板和实时用户提示。Reporter 只读消费证据。Shell、文件搜索和 Skills 读取使用 CLI 原生能力。",
+  "mcp_instructions": "Worker 用 finding_publish(action_id, claim, scope) 即时发布单次执行确认的可复用事实，可选 preconditions 补充命令外的前置条件。服务端绑定身份与任务、关联命令、正文及附件、登记证据并生成去重键。blackboard_publish 用于引用 Finding 的 final_candidate，旧 Finding 请求仅保留兼容。Scout 第一轮仅执行与留存 logs；第二轮使用 scout_write_intel 保存 Intel JSON，由系统统一导入黑板。原生钩子提供黑板、实时用户提示和执行结果的 action_id。",
   "worker_images": {
     "worker-openai": "tga3-worker-openai:local",
     "worker-claude": "tga3-worker-claude:local",
@@ -14,8 +14,8 @@
     "scout": "tga3-worker-openai:local"
   },
   "worker_cycle_prompts": {
-    "startup": "开始任务：先消费原生 Hook 提供的完整共享黑板，包括 Scout Intel、题目和文件，再自主推进；后续由 Hook 按配置间隔提供有更新时的未读增量。",
-    "periodic": "继续原 CLI 会话推进任务，复用已有成果。原生 Hook 会在需要时提供黑板未读增量；不要等待更新，不要主动重复读取黑板。",
+    "startup": "开始任务：先消费原生 Hook 提供的完整共享黑板，包括 Scout Intel、题目和文件，再自主推进；后续由 Hook 按配置间隔提供有更新时的未读增量。 每次执行得到可复用事实就用 finding_publish 即时共享，直接使用上下文中的结果与钩子给出的 action_id。",
+    "periodic": "继续原 CLI 会话推进任务，复用已有成果。原生 Hook 会在需要时提供黑板未读增量；不要等待更新，不要主动重复读取黑板。 单次结果已确认的可复用事实立即发布 Finding，无需定期审阅 logs。",
     "blackboard_changed": "共享黑板已更新且同一工作阶段的通知已合并。请在本周期开始时读取你记住的上次序号之后的全部条目，处理到 latest_seq={latest_seq} 后再继续；不要重新读取完整黑板。"
   },
   "docker": {

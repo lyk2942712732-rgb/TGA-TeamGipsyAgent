@@ -145,7 +145,10 @@ def test_worker_prompt_injects_exact_blackboard_identity(monkeypatch):
     assert "intel: body={claim, detail?}; artifact_refs=optional" not in prompt
     assert "body={claim, detail?}; evidence_paths=required non-empty" in prompt
     assert "body={conclusion, rationale, answer_type?, finding_ids}; evidence_paths=forbidden" in prompt
-    assert "blackboard_publish tool accepts one request object" in prompt
+    assert "Use finding_publish" in prompt
+    assert "One execution is enough" in prompt
+    assert "Do not schedule log reviews" in prompt
+    assert '"finding_ids": ["<entry.id returned by finding_publish>"]' in prompt
 
 
 @pytest.mark.asyncio

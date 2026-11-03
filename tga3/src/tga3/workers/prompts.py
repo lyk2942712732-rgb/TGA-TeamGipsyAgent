@@ -19,7 +19,8 @@ def worker_instructions() -> str:
         "TGA3 runtime identity (authoritative):\n"
         f"- task_id: {os.environ['TGA3_TASK_ID']}\n"
         f"- actor: {json.dumps(actor, ensure_ascii=False, separators=(',', ':'))}\n"
-        "For every blackboard tool call, use the exact task_id and actor above. "
+        "For blackboard_publish final_candidate calls, use the exact task_id and actor above. "
+        "finding_publish receives your identity from the runtime connection; do not fill task_id or actor. "
         "Never invent a placeholder task ID or actor."
         " Your CLI working directory is /workspace. Your private output directory is /workspace; "
         "The runtime stores structured execution records in /logs. "
@@ -33,7 +34,8 @@ def worker_instructions() -> str:
     publication_contract = (
         "Blackboard publication contract (authoritative and generated from the runtime models):\n"
         f"{build_publication_contract(role)}\n"
-        "The blackboard_publish tool accepts one request object. Follow the schema branch selected by request.kind."
+        "Use finding_publish for immediate observations. blackboard_publish accepts one request object "
+        "for final_candidate; the legacy finding branch exists only for compatibility."
     )
     if role == "scout":
         runtime_context = (
@@ -83,17 +85,9 @@ def worker_instructions() -> str:
         "Before final_candidate, the hook bypasses the interval; review newly supplied entries and retry if blocked. "
         "Continue working without waiting for updates. Tool hooks handle cursors and elapsed time."
     )
-    finding_example = {
-        "request": {
-            "kind": "finding",
-            "task_id": os.environ["TGA3_TASK_ID"],
-            "actor": actor,
-            "topic": "<specific result topic>",
-            "body": {"claim": "<verified fact>", "detail": "<verified supporting details>"},
-            "evidence_paths": ["<evidence file relative to /workspace>"],
-            "idempotency_key": "<unique key for this entry>",
-        },
-    }
+    finding_example = {"action_id": f"{actor['agent_id']}-action-<ID supplied with the tool result>",
+                       "claim": "<verified reusable observation>",
+                       "scope": "<tested target, inputs, conditions and limits>"}
     final_candidate_example = {
         "request": {
             "kind": "final_candidate",
@@ -104,29 +98,33 @@ def worker_instructions() -> str:
                 "conclusion": "<verified final answer>",
                 "rationale": "<why the referenced Findings support this answer>",
                 "answer_type": "flag",
-                "finding_ids": ["<Finding entry UUID returned by blackboard_publish>"],
+                "finding_ids": ["<entry.id returned by finding_publish>"],
             },
             "idempotency_key": "<unique key for this final candidate>",
         },
     }
     publication_contract += (
-        "\nFinding tool argument example (replace angle-bracket values with actual evidence):\n"
+        "\nUse finding_publish with these arguments (no request wrapper):\n"
         + json.dumps(finding_example, ensure_ascii=False)
-        + "\nFinal candidate tool argument example:\n"
+        + "\nAfter EACH execution, use the result already in this conversation. If it establishes a reusable fact, "
+        "publish it immediately before the next investigation step. One execution is enough; "
+        "do not wait for a validation batch, decisive exploit or final answer. "
+        "Share both what exists/works and what failed under the tested conditions. "
+        "Do not schedule log reviews or reread logs to extract Findings. Ordinary navigation, duplicate facts, "
+        "plans and guesses need no publication. Tool errors/timeouts do not rule out a target capability. "
+        "The post-tool hook supplies the exact action_id; never substitute a native tool-call ID. "
+        "The server resolves task/actor, command/input, execution status, saved output and attachments, "
+        "registers evidence and generates an idempotent retry key. "
+        "Use optional preconditions only for prerequisites not present in the recorded command. "
+        "Check saved=true and entry.id. If publication fails, retain the fact, correct the reported issue "
+        "and retry with the same action_id, claim and scope before further investigation. "
+        "A transport retry with identical arguments cannot create another entry. "
+        "If the result adds no reusable fact, continue normally without an explanation or status entry. "
+        "\nFinal candidate uses blackboard_publish with this request object:\n"
         + json.dumps(final_candidate_example, ensure_ascii=False)
-        + "\nKeep kind, task_id, actor, body, evidence_paths and idempotency_key directly inside request. "
-        "For finding, body contains only claim and detail: put all supporting explanation in detail. "
-        "Do not add detail_extra, title, summary, flag, or a finding/intel wrapper. "
-        "A validation error path such as request.finding.body.detail_extra identifies the selected schema branch; "
-        "it does not mean you should add a nested finding object. "
-        "Every publication requires a non-empty idempotency_key in request, not in body. "
-        "Use a different key for each new logical entry and keep the same key when retrying that entry. "
-        "Save evidence under /workspace, then publish finding with evidence_paths relative to that directory. "
-        "The server validates paths and registers evidence automatically. Provide paths, never evidence UUIDs. "
-        "For final_candidate, use the body shown above, reference published Finding entry UUIDs in finding_ids "
-        "and omit evidence_paths. "
-        "Check the tool result: publication is complete only after blackboard_publish returns the saved entry. "
-        "If publication fails, fix the reported fields and retry before advancing to the next investigation step. "
+        + "\nFor final_candidate, reference published Finding entry UUIDs in finding_ids, omit evidence_paths, "
+        "and provide a nonempty idempotency_key; reuse it on retries. "
+        "Publication is complete only after blackboard_publish returns the saved entry. "
         "The system imports Scout Intel after its extraction phase; "
         "consume it through the existing blackboard delivery. "
     )

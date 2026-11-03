@@ -45,7 +45,7 @@ async def test_mcp_publish_tool_exposes_one_discriminated_worker_contract():
 
     tools = await mcp.list_tools()
     assert {tool.name for tool in tools} == {
-        "blackboard_sync", "blackboard_publish",
+        "blackboard_sync", "blackboard_publish", "finding_publish",
     }
     publish = next(tool for tool in tools if tool.name == "blackboard_publish")
     request = publish.inputSchema["properties"]["request"]
@@ -60,6 +60,9 @@ async def test_mcp_publish_tool_exposes_one_discriminated_worker_contract():
     assert "evidence_paths" in finding_schema["required"]
     assert "artifact_refs" not in finding_schema["properties"]
     assert "artifact_refs" not in final_schema["properties"]
+    simple = next(tool for tool in tools if tool.name == "finding_publish")
+    assert set(simple.inputSchema["required"]) == {"action_id", "claim", "scope"}
+    assert set(simple.inputSchema["properties"]) == {"action_id", "claim", "scope", "preconditions"}
 
 
 def result_payload(result):

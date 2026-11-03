@@ -56,7 +56,9 @@ class CliAdapter(AgentAdapter):
             identity={"task_id": os.environ.get("TGA3_TASK_ID"),
                       "agent_id": os.environ.get("TGA3_AGENT_ID"), "runtime": self.runtime},
             secret=self.api_key,
-            enabled=not (os.environ.get("TGA3_AGENT_ROLE") == "scout" and self.scout_phase == "extracting"),
+            # Workers are journaled synchronously by native hooks, before the model sees the output.
+            enabled=not (os.environ.get("TGA3_AGENT_ROLE") == "worker" or
+                         os.environ.get("TGA3_AGENT_ROLE") == "scout" and self.scout_phase == "extracting"),
             output_directory=self.output_dir,
         )
 
@@ -64,8 +66,27 @@ class CliAdapter(AgentAdapter):
         if os.environ.get("TGA3_AGENT_ROLE") not in {"scout", "worker"}:
             return {}
         command = "python -m tga3.workers.blackboard_hook"
+        events = ["UserPromptSubmit", "PreToolUse"]
+        if os.environ.get("TGA3_AGENT_ROLE") == "worker":
+            events.append("PostToolUse")
+            if self.runtime == "claude_cli":
+                events.append("PostToolUseFailure")
         return {"hooks": {event: [{"hooks": [{"type": "command", "command": command, "timeout": 15}]}]
-                          for event in ("UserPromptSubmit", "PreToolUse")}}
+                          for event in events}}
+
+    def mcp_headers(self) -> dict[str, str]:
+        return {"X-TGA3-Task-ID": os.environ["TGA3_TASK_ID"], "X-TGA3-Agent-ID": os.environ["TGA3_AGENT_ID"]}
+
+    def record_stream_action(self, native_id: str, tool: str, **kwargs) -> None:
+        # Built-in web search has no native tool hook. Preserve its result via the
+        # stream; local tools and MCP calls are already saved synchronously by hooks.
+        original = self.journal.enabled
+        if os.environ.get("TGA3_AGENT_ROLE") == "worker" and tool == "web_search":
+            self.journal.enabled = True
+        try:
+            self.journal.record(native_id, tool, **kwargs)
+        finally:
+            self.journal.enabled = original
 
     def remember_session(self, session_id: str) -> None:
         self.session_id = session_id
@@ -267,7 +288,15 @@ class CliAdapter(AgentAdapter):
             try:
                 await self._terminate(process)
             finally:
-                self.journal.interrupt_pending()
+                if os.environ.get("TGA3_AGENT_ROLE") == "worker":
+                    from .action_hook import interrupt_hook_actions
+                    interrupt_hook_actions(env["TGA3_CLI_GENERATION"])
+                    self.journal.enabled = True
+                try:
+                    self.journal.interrupt_pending()
+                finally:
+                    if os.environ.get("TGA3_AGENT_ROLE") == "worker":
+                        self.journal.enabled = False
         if process.returncode or self.failure or not self.completed:
             detail = "\n".join(self.stderr)
             detail = detail.replace(self.api_key, "[redacted]") if self.api_key else detail
@@ -331,6 +360,8 @@ class CodexAdapter(CliAdapter):
             config += [
                 "[mcp_servers.blackboard]",
                 f"url = {json.dumps(os.environ['TGA3_BLACKBOARD_MCP_URL'])}",
+                "http_headers = {" + ", ".join(f"{json.dumps(k)} = {json.dumps(v)}"
+                                               for k, v in self.mcp_headers().items()) + "}",
                 "required = true",
             ]
         elif not self.reporter and self.scout_phase == "extracting":
@@ -361,10 +392,10 @@ class CodexAdapter(CliAdapter):
             item = value.get("item", {})
             item_type = item.get("type")
             if item_type in {"command_execution", "mcp_tool_call", "file_change", "web_search"}:
-                self.journal.record(str(item.get("id", "unknown")), item_type,
-                                    inputs={key: item.get(key) for key in ("command", "tool", "arguments")},
-                                    result=item if kind == "item.completed" else None,
-                                    status="completed" if kind == "item.completed" else "started")
+                self.record_stream_action(str(item.get("id", "unknown")), item_type,
+                                          inputs={key: item.get(key) for key in ("command", "tool", "arguments")},
+                                          result=item if kind == "item.completed" else None,
+                                          status="completed" if kind == "item.completed" else "started")
             if item_type == "agent_message" and kind == "item.completed":
                 self.final_output = str(item.get("text", ""))
             elif item_type in {"command_execution", "mcp_tool_call", "file_change", "web_search"}:
@@ -399,7 +430,8 @@ class ClaudeAdapter(CliAdapter):
             json.dumps(
                 {
                     "mcpServers": {
-                        "blackboard": {"type": "http", "url": os.environ["TGA3_BLACKBOARD_MCP_URL"]},
+                        "blackboard": {"type": "http", "url": os.environ["TGA3_BLACKBOARD_MCP_URL"],
+                                       "headers": self.mcp_headers()},
                     }
                 }
             ),

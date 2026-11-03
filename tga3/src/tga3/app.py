@@ -314,12 +314,12 @@ def create_app(
             "scout": ["第一轮：Shell / Kali 工具 / logs 留存", "第二轮：只读 logs",
                       "scout_write_intel → /intels/*.json", "系统自动导入黑板"],
             "worker-openai": [
-                "Shell", "Read", "Edit", "原生黑板同步 Hook", "blackboard.publish",
-                "发布时自动校验证据路径",
+                "Shell", "Read", "Edit", "原生黑板同步 Hook", "finding_publish", "blackboard_publish",
+                "按 action 自动关联复现方法和证据", "发布时自动校验证据路径",
             ],
             "worker-claude": [
                 "Bash", "Read", "Write", "Edit", "Glob", "Grep", "原生黑板同步 Hook",
-                "blackboard.publish", "发布时自动校验证据路径",
+                "finding_publish", "blackboard_publish", "按 action 自动关联复现方法和证据", "发布时自动校验证据路径",
             ],
             "reporter": ["Read snapshot", "Read evidence", "Read skills", "Markdown Writeup"],
         }

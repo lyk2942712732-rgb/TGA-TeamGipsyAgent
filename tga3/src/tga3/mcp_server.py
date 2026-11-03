@@ -6,9 +6,10 @@ from typing import Any
 from urllib.parse import urlsplit
 from uuid import UUID
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp import Context, FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 
+from .action_findings import ActionFindingInput, ActionFindingPublisher
 from .action_logs import resolve_action_sources
 from .blackboard import Blackboard
 from .config import TGA3Config
@@ -47,6 +48,31 @@ def _new_mcp(config: TGA3Config, name: str, instructions: str) -> FastMCP:
 
 def build_mcp(config: TGA3Config, blackboard: Blackboard) -> FastMCP:
     mcp = _new_mcp(config, "tga3-blackboard", config.runtime.mcp_instructions)
+    findings = ActionFindingPublisher(config, blackboard)
+
+    @mcp.tool()
+    async def finding_publish(action_id: str, claim: str, scope: str, ctx: Context,
+                              preconditions: str = "") -> dict[str, Any]:
+        """Immediately share one reusable fact from a tool result, without rereading logs.
+
+        action_id: exact TGA action ID supplied after execution (never a native tool-call ID).
+        claim: verified observation useful to another Worker, even before a final answer exists.
+        scope: tested target, inputs and conditions; limit negative results to what was tested.
+        preconditions: optional prerequisites not already shown in the command (e.g. a prior login).
+        Task/actor, method, exit status, result body, attachments and retry key are supplied by the server.
+        Check saved=true and entry.id. On failure correct the reported issue and retry the same fact;
+        identical arguments return the same Finding. Never submit a publication action as evidence.
+        """
+        http_request = ctx.request_context.request
+        if http_request is None:
+            raise ValueError("finding_publish requires the Worker-bound HTTP MCP connection")
+        task_id = http_request.headers.get("x-tga3-task-id")
+        agent_id = http_request.headers.get("x-tga3-agent-id")
+        if not task_id or not agent_id:
+            raise ValueError("Worker identity headers are missing; reconnect using the runtime MCP configuration")
+        return await findings.publish(UUID(task_id), agent_id, ActionFindingInput(
+            action_id=action_id, claim=claim, scope=scope, preconditions=preconditions,
+        ))
 
     @mcp.tool()
     async def blackboard_sync(task_id: str, after_seq: int = 0, limit: int = 200) -> dict[str, Any]:
@@ -54,7 +80,9 @@ def build_mcp(config: TGA3Config, blackboard: Blackboard) -> FastMCP:
         result = await blackboard.sync(UUID(task_id), after_seq=after_seq, limit=limit)
         return result.model_dump(mode="json")
 
-    @mcp.tool(description=publication_contract("worker"))
+    @mcp.tool(description="Submit final_candidate with existing Finding IDs. For observations use the simpler "
+              "finding_publish(action_id, claim, scope) instead. Legacy request schema: "
+              + publication_contract("worker"))
     async def blackboard_publish(
         request: AgentPublishRequest,
     ) -> dict[str, Any]:
