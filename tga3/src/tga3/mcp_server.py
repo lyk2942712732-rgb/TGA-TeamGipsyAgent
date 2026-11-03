@@ -10,11 +10,9 @@ from mcp.server.fastmcp import Context, FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 
 from .action_findings import ActionFindingInput, ActionFindingPublisher
-from .action_logs import resolve_action_sources
 from .blackboard import Blackboard
 from .config import TGA3Config
-from .domain import Actor, AgentPublishRequest, EntryKind, publication_contract
-from .evidence import register_evidence
+from .domain import Actor, AgentPublishRequest, publication_contract
 from .scout_intel import ScoutIntelInput, ScoutIntelMergeInput, ScoutIntelStore
 
 
@@ -74,14 +72,8 @@ def build_mcp(config: TGA3Config, blackboard: Blackboard) -> FastMCP:
             action_id=action_id, claim=claim, scope=scope, preconditions=preconditions,
         ))
 
-    @mcp.tool()
-    async def blackboard_sync(task_id: str, after_seq: int = 0, limit: int = 200) -> dict[str, Any]:
-        """Read compact blackboard entries after a sequence number."""
-        result = await blackboard.sync(UUID(task_id), after_seq=after_seq, limit=limit)
-        return result.model_dump(mode="json")
-
     @mcp.tool(description="Submit final_candidate with existing Finding IDs. For observations use the simpler "
-              "finding_publish(action_id, claim, scope) instead. Legacy request schema: "
+              "finding_publish(action_id, claim, scope) instead. Final candidate schema: "
               + publication_contract("worker"))
     async def blackboard_publish(
         request: AgentPublishRequest,
@@ -91,22 +83,13 @@ def build_mcp(config: TGA3Config, blackboard: Blackboard) -> FastMCP:
         configured = config.agents.agents.get(identity.agent_id)
         if configured is None or configured.role != identity.role:
             raise ValueError("actor must match a configured Scout or Worker")
-        if request.kind.value == "final_candidate":
-            run = await blackboard.storage.get_agent(request.task_id, identity.agent_id)
-            task = await blackboard.storage.get_task(request.task_id)
-            if run.metadata.get("blackboard_cursor", -1) < task.blackboard_seq:
-                raise ValueError("Unread blackboard updates: run the native checkpoint before resubmitting")
+        run = await blackboard.storage.get_agent(request.task_id, identity.agent_id)
+        task = await blackboard.storage.get_task(request.task_id)
+        if run.metadata.get("blackboard_cursor", -1) < task.blackboard_seq:
+            raise ValueError("Unread blackboard updates: run the native checkpoint before resubmitting")
         actor = Actor.model_validate(request.actor)
         await blackboard.check_write(request.task_id, actor, request.kind)
-        references = None
-        if request.kind == EntryKind.FINDING:
-            root = config.task_path(request.task_id, "workspaces", actor.agent_id)
-            request.source_action_ids = resolve_action_sources(
-                config.task_path(request.task_id, "logs", actor.agent_id), request.task_id, actor.agent_id,
-                request.source_action_ids, request.evidence_paths,
-            )
-            references = await register_evidence(blackboard, request.task_id, actor, root, request.evidence_paths)
-        entry = await blackboard.publish(request.task_id, actor, request.publish_request(artifact_refs=references))
+        entry = await blackboard.publish(request.task_id, actor, request.publish_request())
         return entry.model_dump(mode="json")
 
     return mcp
@@ -121,10 +104,11 @@ def build_scout_mcp(config: TGA3Config, store: ScoutIntelStore) -> FastMCP:
     async def scout_write_intel(request: ScoutIntelInput) -> dict[str, Any]:
         """Save one validated raw Intel JSON in /intels/raw during Scout's second work phase.
 
-        Fill request={task_id,key,claim,detail,topic,source_action_ids:[],evidence_paths:[]}.
-        key is stable for retries. source_action_ids identify records in /logs/scout-actions.json;
+        Fill request={task_id,claim,detail,topic,source_action_ids:[],evidence_paths:[]}.
+        The server generates a stable scout-raw-intel- ID and deduplicates identical retries.
+        source_action_ids identify records in /logs/scout-actions.json;
         evidence_paths are relative to /workspace;
-        the system handles artifact registration and JSON formatting. Raw files remain private;
+        No evidence is registered for raw Intel. Entries accumulate atomically in /intels/raw/scout-intels.json;
         the third work phase merges them before final blackboard import.
         """
         return await store.write(request)
@@ -133,12 +117,14 @@ def build_scout_mcp(config: TGA3Config, store: ScoutIntelStore) -> FastMCP:
     async def scout_merge_intel(request: ScoutIntelMergeInput) -> dict[str, Any]:
         """Save one consolidated Intel JSON in /intels/merged during Scout's third work phase.
 
-        Fill request={task_id,key,claim,detail,topic,merged_from_keys:[raw Intel keys]}.
+        Fill request={task_id,claim,detail,topic,merged_from_ids:[raw Intel IDs]}.
         Merge repeated/overlapping facts about the same object under the same conditions.
         Preserve all distinct facts, tested conditions, failure boundaries and later corrections.
-        An unrelated raw Intel stays separate by referencing its single key.
-        Each raw key must appear exactly once across final Intel. Do not provide action IDs,
-        evidence paths or artifact UUIDs: the server unions them from the originals.
+        An unrelated raw Intel stays separate by referencing its single ID.
+        Each raw ID must appear exactly once across final Intel. Do not provide action IDs,
+        evidence paths or artifact UUIDs: the server unions them from the originals
+        and assigns a stable scout-merged-intel- ID.
+        Entries accumulate in /intels/merged/scout-intels.json. Only final import registers evidence.
         Original /intels/raw JSON is retained. Check saved=true. No direct blackboard publication.
         """
         return await store.merge(request)

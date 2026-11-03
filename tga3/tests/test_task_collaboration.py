@@ -12,7 +12,7 @@ from tga3.blackboard_delivery import BlackboardDelivery
 from tga3.config import TGA3Config
 from tga3.docker_runtime import FakeContainerRuntime
 from tga3.domain import USER_ACTOR, AgentRun, PublishRequest, RunState
-from tga3.errors import ConflictError, ContractError
+from tga3.errors import ContractError
 from tga3.scout_intel import ScoutIntelInput, ScoutIntelMergeInput, ScoutIntelStore
 from tga3.storage import InMemoryStorage
 from tga3.token_usage import TokenUsageTracker
@@ -69,7 +69,7 @@ async def test_realtime_user_prompt_bypasses_delivery_interval_for_scout_and_wor
 async def test_json_tool_is_phase_gated_and_deduplicates_concurrent_retries(tmp_path):
     config, storage, task = await setup(tmp_path)
     store = ScoutIntelStore(config, Blackboard(storage))
-    request = ScoutIntelInput(task_id=task.id, key="entry", claim="confirmed entry")
+    request = ScoutIntelInput(task_id=task.id, claim="confirmed entry")
     with pytest.raises(ContractError, match="extraction"):
         await store.write(request)
     await storage.update_agent(task.id, "scout", metadata={"scout_phase": "extracting"})
@@ -77,10 +77,11 @@ async def test_json_tool_is_phase_gated_and_deduplicates_concurrent_retries(tmp_
     assert len(list(store.directory(task.id).glob("*.json"))) == 1
     assert not await storage.list_entries(task.id)
     assert "intel_drafts" not in (await storage.get_agent(task.id, "scout")).metadata
-    with pytest.raises(ConflictError):
-        await store.write(request.model_copy(update={"claim": "changed"}))
+    changed = await store.write(request.model_copy(update={"claim": "changed"}))
+    assert changed["id"] != (await store.write(request))["id"]
+    assert len(store.documents(task.id)) == 2
     with pytest.raises(ContractError, match="Evidence"):
-        await store.write(ScoutIntelInput(task_id=task.id, key="bad", claim="bad", evidence_paths=["../missing"]))
+        await store.write(ScoutIntelInput(task_id=task.id, claim="bad", evidence_paths=["../missing"]))
 
 
 async def test_json_files_survive_store_restart_and_import_in_order_without_duplicates(tmp_path):
@@ -89,15 +90,30 @@ async def test_json_files_survive_store_restart_and_import_in_order_without_dupl
     store = ScoutIntelStore(config, board)
     await storage.update_agent(task.id, "scout", metadata={"scout_phase": "extracting"})
     for key in ["z-first", "a-second"]:
-        receipt = await store.write(ScoutIntelInput(task_id=task.id, key=key, claim=key))
+        receipt = await store.write(ScoutIntelInput(task_id=task.id, claim=key))
         assert receipt["saved"] and receipt["path"].startswith("/intels/")
     restarted = ScoutIntelStore(config, board)
     await storage.update_agent(task.id, "scout", metadata={"scout_phase": "merging"})
-    for key in ["z-first", "a-second"]:
-        await restarted.merge(ScoutIntelMergeInput(task_id=task.id, key=key, claim=key, merged_from_keys=[key]))
+    for item in restarted.documents(task.id):
+        await restarted.merge(ScoutIntelMergeInput(task_id=task.id, claim=item.body.claim, merged_from_ids=[item.id]))
     await restarted.flush(task.id)
     await restarted.flush(task.id)
     assert [entry.body["claim"] for entry in await storage.list_entries(task.id)] == ["z-first", "a-second"]
+
+
+async def test_distinct_concurrent_intels_share_one_atomic_collection_without_registration(tmp_path):
+    config, storage, task = await setup(tmp_path)
+    store = ScoutIntelStore(config, Blackboard(storage))
+    await storage.update_agent(task.id, "scout", metadata={"scout_phase": "extracting"})
+    receipts = await asyncio.gather(*(store.write(ScoutIntelInput(
+        task_id=task.id, claim=f"fact-{index}")) for index in range(12)))
+    assert len({receipt["id"] for receipt in receipts}) == 12
+    files = list(store.directory(task.id).glob("*.json"))
+    assert len(files) == 1 and files[0].name == "scout-intels.json"
+    payload = json.loads(files[0].read_text(encoding="utf-8"))
+    assert len(payload["intels"]) == 12
+    assert "artifact_refs" not in json.dumps(payload)
+    assert not storage.artifacts
 
 
 def append(path, record):
@@ -197,21 +213,23 @@ async def test_intel_actions_and_workspace_paths_are_registered_and_linked_by_se
     action = read_action_log(logs)["actions"][0]
     await storage.update_agent(task.id, "scout", metadata={"scout_phase": "extracting"})
     for key in ("first", "second"):
-        await store.write(ScoutIntelInput(task_id=task.id, key=key, claim=key,
+        await store.write(ScoutIntelInput(task_id=task.id, claim=key,
                                          source_action_ids=[action["action_id"]],
                                          evidence_paths=[action["artifact"]["output_path"]]))
-    assert len(storage.artifacts) == 1
+    assert not storage.artifacts
     assert not await storage.list_entries(task.id)
     await storage.update_agent(task.id, "scout", metadata={"scout_phase": "merging"})
-    for key in ("first", "second"):
-        await store.merge(ScoutIntelMergeInput(task_id=task.id, key=key, claim=key, merged_from_keys=[key]))
+    for item in store.documents(task.id):
+        await store.merge(ScoutIntelMergeInput(task_id=task.id, claim=item.body.claim, merged_from_ids=[item.id]))
     await store.flush(task.id)
     entries = await storage.list_entries(task.id)
     assert len(entries) == 2
     assert entries[0].source_action_ids == entries[1].source_action_ids == [action["action_id"]]
     saved = json.loads(next(store.directory(task.id).glob("*.json")).read_text(encoding="utf-8"))
-    assert saved["source_action_ids"] == [action["action_id"]]
-    assert saved["body"]["claim"] in {"first", "second"}
+    assert saved["intels"][0]["source_action_ids"] == [action["action_id"]]
+    assert saved["intels"][0]["body"]["claim"] in {"first", "second"}
+    assert "artifact_refs" not in json.dumps(saved)
+    assert len(saved["intels"]) == 2
     assert "input" not in saved and "publication" not in saved
     assert storage.links[entries[0].id] == storage.links[entries[1].id]
     assert Path(next(iter(storage.artifacts.values())).storage_path) == root / action["artifact"]["output_path"]
@@ -235,7 +253,7 @@ async def test_scout_coverage_counts_actions_inside_one_prefixed_manifest(tmp_pa
     assert all(action["action_id"].startswith("scout-action-") for action in actions)
     await storage.update_agent(task.id, "scout", metadata={"scout_phase": "extracting"})
     for index, action in enumerate(actions):
-        await store.write(ScoutIntelInput(task_id=task.id, key=str(index), claim=str(index),
+        await store.write(ScoutIntelInput(task_id=task.id, claim=str(index),
                                          source_action_ids=[action["action_id"]],
                                          evidence_paths=[action["artifact"]["output_path"]]))
         if index == 0:
@@ -243,12 +261,12 @@ async def test_scout_coverage_counts_actions_inside_one_prefixed_manifest(tmp_pa
                 store.validate_extraction(task.id)
     assert store.validate_extraction(task.id)["action_count"] == 2
     await storage.update_agent(task.id, "scout", metadata={"scout_phase": "merging"})
-    await store.merge(ScoutIntelMergeInput(task_id=task.id, key="both", claim="both observations",
-                                         merged_from_keys=["0", "1"]))
+    await store.merge(ScoutIntelMergeInput(task_id=task.id, claim="both observations",
+                                         merged_from_ids=[item.id for item in store.documents(task.id)]))
     await store.flush(task.id)
     metadata = (await storage.get_agent(task.id, "scout")).metadata
     assert metadata["action_count"] == metadata["action_covered_count"] == 2
     assert metadata["action_uncovered"] == []
     merged = store.documents(task.id, merged=True)[0]
     assert set(merged.source_action_ids) == {action["action_id"] for action in actions}
-    assert len(merged.evidence_paths) == len(merged.artifact_refs) == 2
+    assert len(merged.evidence_paths) == len(storage.artifacts) == 2

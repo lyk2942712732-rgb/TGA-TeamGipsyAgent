@@ -39,8 +39,11 @@ export function formatTime(value?: string | null): string {
   const date = new Date(value);
   return Number.isNaN(date.valueOf()) ? value : date.toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }
+export function entryTopic(entry: TGA3BoardEntry): string {
+  return entry.kind === "finding" ? Array.from(String(entry.body.claim ?? "")).slice(0, 200).join("") : entry.topic ?? "";
+}
 export function bodyText(entry: TGA3BoardEntry): string {
   const body = entry.body;
-  return String(body.claim ?? body.conclusion ?? body.text ?? body.name ?? `${entry.kind}: ${entry.topic}`);
+  return String(body.claim ?? body.conclusion ?? body.text ?? body.name ?? `${entry.kind}: ${entryTopic(entry)}`);
 }
 export function listStrings(value: unknown): string[] { return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : []; }

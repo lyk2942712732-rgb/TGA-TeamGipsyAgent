@@ -4,8 +4,10 @@ import asyncio
 import json
 import os
 from pathlib import Path
+from uuid import UUID
 
 from ..action_logs import read_action_log
+from ..scout_intel import read_intels
 from .cli_adapter import CodexAdapter
 from .prompts import worker_instructions
 from .runtime import WorkerSession
@@ -65,7 +67,7 @@ async def scout() -> None:
                         prompt = (worker_instructions()
                                   + "\n继续原会话的第三轮。以下是尚未合并的原始 Intel，"
                                   "请一次查看整体，将同一对象、同一条件下重复或互补的内容合并。"
-                                  "每条原始 key 必须且只能归入一条最终 Intel；无关内容单独保留。"
+                                  "每条原始 ID 必须且只能归入一条最终 Intel；无关内容单独保留。"
                                   "保留不同事实、实际条件、失败边界及先失败后成功的变化，不能新增推论。"
                                   "调用 scout_merge_intel，服务端自动合并来源与证据。"
                                   "仅当需要核实差异时读取 /intels/raw 或相应证据；不要重新侦察。\n"
@@ -87,25 +89,22 @@ async def scout() -> None:
             return
 
 
+def phase_intels(intels: Path, *, merged: bool = False) -> list:
+    collection = read_intels(intels / ("merged" if merged else "raw"), UUID(os.environ["TGA3_TASK_ID"]),
+                             merged=merged)
+    return collection.intels if collection else []
+
+
 def uncovered_actions(logs: Path, intels: Path) -> list[str]:
-    covered = set()
-    for path in [*intels.glob("*.json"), *(intels / "raw").glob("*.json")]:
-        document = json.loads(path.read_text(encoding="utf-8"))
-        covered.update(document.get("source_action_ids", document.get("input", {}).get("source_action_ids", [])))
+    covered = {source for item in phase_intels(intels) for source in item.source_action_ids}
     return [action["action_id"] for action in read_action_log(logs)["actions"]
             if action["action_id"] not in covered]
 
 
 def unmerged_intels(intels: Path) -> list[dict]:
-    covered = set()
-    for path in (intels / "merged").glob("*.json"):
-        covered.update(json.loads(path.read_text(encoding="utf-8"))["merged_from_keys"])
-    pending = []
-    for path in sorted([*intels.glob("*.json"), *(intels / "raw").glob("*.json")]):
-        document = json.loads(path.read_text(encoding="utf-8"))
-        if document["key"] not in covered:
-            pending.append({"key": document["key"], "topic": document["topic"], "body": document["body"]})
-    return pending
+    covered = {source for item in phase_intels(intels, merged=True) for source in item.merged_from_ids}
+    return [{"id": item.id, "topic": item.topic, "body": item.body.model_dump()}
+            for item in phase_intels(intels) if item.id not in covered]
 
 
 def main() -> None:

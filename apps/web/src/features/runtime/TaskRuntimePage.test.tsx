@@ -17,7 +17,7 @@ const snapshot: TGA3RuntimeSnapshot = {
   ],
   blackboard: [
     { id: "prompt", seq: 1, actor: { agent_id: "user", display_name: "用户", role: "user" }, kind: "user_prompt", topic: "initial", body: { text: "拿到 flag" }, created_at: "2026-01-01T00:00:00Z" },
-    { id: "finding", seq: 2, actor: { agent_id: "worker-openai", display_name: "OpenAI Worker", role: "worker" }, kind: "finding", topic: "flag", body: { claim: "已发现入口" }, created_at: "2026-01-01T00:01:00Z" },
+    { id: "finding", seq: 2, actor: { agent_id: "worker-openai", display_name: "OpenAI Worker", role: "worker" }, kind: "finding", body: { claim: "已发现入口" }, created_at: "2026-01-01T00:01:00Z" },
     { id: "intel", seq: 3, actor: { agent_id: "worker-openai", display_name: "OpenAI Worker", role: "worker" }, kind: "intel", topic: "stack", body: { claim: "确认目标使用 Flask", detail: "响应头与错误页已经交叉验证" }, created_at: "2026-01-01T00:01:10Z" },
   ],
   events: [
@@ -33,7 +33,7 @@ describe("TaskRuntimePage", () => {
     expect(screen.getByRole("heading", { name: "Native TGA3 task" })).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "实时运行图" })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: /共享黑板/ })).toBeInTheDocument();
-    expect(screen.getByText("已发现入口")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "已发现入口" })).toBeInTheDocument();
   });
   it("shows the Scout execution and extraction phases in the task UI", () => {
     const scout = { ...snapshot.agents[0], agent_id: "scout", display_name: "Scout", role: "scout", actual_state: "running", metadata: { scout_phase: "executing" } };
@@ -99,7 +99,7 @@ describe("TaskRuntimePage", () => {
     fireEvent.click(screen.getByRole("button", { name: "关闭黑板详情" }));
     expect(screen.queryByRole("dialog", { name: "黑板 #2 详情" })).not.toBeInTheDocument();
     fireEvent.click(within(switcher).getByRole("button", { name: "详情" }));
-    expect(screen.getByText("已发现入口")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "已发现入口" })).toBeInTheDocument();
   });
   it("renders and filters Intel as a first-class blackboard kind", () => {
     render(<MemoryRouter initialEntries={["/tasks/task/runtime?tab=blackboard"]}><TaskRuntimePage taskId="task" /></MemoryRouter>);
@@ -126,7 +126,7 @@ describe("TaskRuntimePage", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: "关闭 Finding 详情" }));
     expect(screen.queryByRole("dialog", { name: "Finding #2 详情" })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "详情" }));
-    expect(screen.getByText("已发现入口")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "已发现入口" })).toBeInTheDocument();
   });
   it("does not show stale errors for a stopped worker", () => {
     useTGA3Runtime.mockReturnValue({

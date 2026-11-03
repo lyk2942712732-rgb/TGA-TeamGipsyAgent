@@ -19,12 +19,12 @@ TGA action_id: <本次执行的真实 action_id>
 If this result establishes a new reusable fact, immediately call finding_publish(action_id, claim, scope). Method/evidence are automatic. Otherwise continue; no log review.
 ```
 
-发布和同步黑板的工具调用也记入 logs，但不会再触发此提示。无新增可复用事实时继续执行，不要求解释、回顾日志或发布记录。
+发布黑板的工具调用也记入 logs，但不会再触发此提示。无新增可复用事实时继续执行，不要求解释、回顾日志或发布记录。
 
 ## MCP 全局指令
 
 ```text
-Worker 用 finding_publish(action_id, claim, scope) 即时发布单次执行确认的可复用事实，可选 preconditions 补充命令外的前置条件。服务端绑定身份与任务、关联命令、正文及附件、登记证据并生成去重键。blackboard_publish 用于引用 Finding 的 final_candidate，旧 Finding 请求仅保留兼容。Scout 第一轮仅执行与留存 logs；第二轮使用 scout_write_intel 保存 Intel JSON，由系统统一导入黑板。原生钩子提供黑板、实时用户提示和执行结果的 action_id。
+Worker 用 finding_publish(action_id, claim, scope) 即时发布单次执行确认的可复用事实，可选 preconditions 补充命令外的前置条件。服务端绑定身份与任务、关联命令、正文及附件、登记证据并生成去重键。blackboard_publish 用于引用 Finding 的 final_candidate，不再提供旧 Finding 发布分支或 blackboard_sync 工具。Scout 第一轮仅执行与留存 logs；第二轮使用 scout_write_intel 汇总保存 raw/scout-intels.json，不登记原始证据，ID 由服务端生成；第三轮在原容器和原 CLI 会话使用 scout_merge_intel 合并，保留原始和合并两个汇总 JSON，以 merged_from_ids 引用原始 ID，系统只导入合并版本并登记证据。Finding 不保存 topic，展示时取 claim 前 200 字。第二、三轮无总时间预算，以完整覆盖为完成条件。原生钩子提供黑板、实时用户提示和执行结果的 action_id。
 ```
 
 ## 调用格式

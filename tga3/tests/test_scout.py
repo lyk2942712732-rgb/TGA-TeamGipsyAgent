@@ -52,17 +52,18 @@ class ThreePhaseScout(FakeContainerRuntime):
                 if self.execution_error:
                     raise RuntimeError("simulated execution failure")
             elif spec.scout_phase == "extracting":
-                await self.coordinator.scout_intel.write(ScoutIntelInput(
-                    task_id=spec.task_id, key="first", claim="verified result",
+                receipt = await self.coordinator.scout_intel.write(ScoutIntelInput(
+                    task_id=spec.task_id, claim="verified result",
                     evidence_paths=[self.action["artifact"]["output_path"]],
                     source_action_ids=[self.action["action_id"]],
                 ))
+                self.raw_id = receipt["id"]
                 self.extracting.set()
                 await self.finish_extraction.wait()
             else:
                 await self.coordinator.scout_intel.merge(ScoutIntelMergeInput(
-                    task_id=spec.task_id, key="merged-first", claim="verified result",
-                    merged_from_keys=["first"],
+                    task_id=spec.task_id, claim="verified result",
+                    merged_from_ids=[self.raw_id],
                 ))
                 self.merging.set()
                 await self.finish_merging.wait()
@@ -96,6 +97,7 @@ async def test_three_phases_preserve_raw_and_keep_json_private_until_merging_fin
     assert (await storage.get_agent(task.id, "scout")).metadata["blackboard_cursor"] == 5
     assert len(list(coordinator.scout_intel.directory(task.id).glob("*.json"))) == 1
     assert not any(entry.kind == "intel" for entry in await storage.list_entries(task.id))
+    assert not storage.artifacts
     assert [spec.agent.agent_id for spec in runtime.launched] == ["scout"]
     raw_path = next(coordinator.scout_intel.directory(task.id).glob("*.json"))
     original = raw_path.read_bytes()
@@ -184,26 +186,28 @@ async def test_merge_unions_provenance_preserves_raw_and_deduplicates_retries(tm
     await runtime.extracting.wait()
     store = coordinator.scout_intel
     # A second original observation can share evidence with the first.
-    await store.write(ScoutIntelInput(task_id=task.id, key="second", claim="additional detail",
+    second = await store.write(ScoutIntelInput(task_id=task.id, claim="additional detail",
                                     source_action_ids=[runtime.action["action_id"]],
                                     evidence_paths=[runtime.action["artifact"]["output_path"]]))
     raw = {p.name: p.read_bytes() for p in store.directory(task.id).glob("*.json")}
     await storage.update_agent(task.id, "scout", metadata={"scout_phase": "merging"})
-    request = ScoutIntelMergeInput(task_id=task.id, key="combined", claim="combined verified detail",
-                                  merged_from_keys=["second", "first"])
+    request = ScoutIntelMergeInput(task_id=task.id, claim="combined verified detail",
+                                  merged_from_ids=[second["id"], runtime.raw_id])
     first, retry = await asyncio.gather(store.merge(request), store.merge(request))
     assert first == retry and first["path"].startswith("/intels/merged/")
     assert {p.name: p.read_bytes() for p in store.directory(task.id).glob("*.json")} == raw
     merged = store.documents(task.id, merged=True)[0]
-    assert merged.schema_version == 3 and merged.merged_from_keys == ["first", "second"]
+    assert merged.id.startswith("scout-merged-intel-")
+    assert merged.merged_from_ids == sorted([runtime.raw_id, second["id"]])
     assert merged.source_action_ids == [runtime.action["action_id"]]
-    assert len(merged.artifact_refs) == len(merged.evidence_paths) == 1
+    assert len(merged.evidence_paths) == 1
+    assert not storage.artifacts
     with pytest.raises(ContractError, match="extraction"):
-        await store.write(ScoutIntelInput(task_id=task.id, key="late", claim="late"))
+        await store.write(ScoutIntelInput(task_id=task.id, claim="late"))
     with pytest.raises(Exception, match="already merged"):
-        await store.merge(request.model_copy(update={"key": "duplicate"}))
+        await store.merge(request.model_copy(update={"claim": "changed combined fact"}))
     with pytest.raises(ContractError, match="Unknown"):
-        await store.merge(request.model_copy(update={"key": "unknown", "merged_from_keys": ["missing"]}))
+        await store.merge(request.model_copy(update={"merged_from_ids": ["scout-raw-intel-" + "0" * 32]}))
     assert await store.flush(task.id) == 1
     assert await store.flush(task.id) == 1
     entries = [entry for entry in await storage.list_entries(task.id) if entry.kind == "intel"]
@@ -219,11 +223,11 @@ async def test_incomplete_merge_cannot_publish_even_saved_final_files(tmp_path):
     task = await coordinator.create_and_start("partial merge", "inspect", "pwn")
     await runtime.extracting.wait()
     store = coordinator.scout_intel
-    await store.write(ScoutIntelInput(task_id=task.id, key="unrepresented", claim="separate fact",
+    await store.write(ScoutIntelInput(task_id=task.id, claim="separate fact",
                                     source_action_ids=[runtime.action["action_id"]]))
     await storage.update_agent(task.id, "scout", metadata={"scout_phase": "merging"})
-    await store.merge(ScoutIntelMergeInput(task_id=task.id, key="partial", claim="verified result",
-                                         merged_from_keys=["first"]))
+    await store.merge(ScoutIntelMergeInput(task_id=task.id, claim="verified result",
+                                         merged_from_ids=[runtime.raw_id]))
     with pytest.raises(ContractError, match="exactly once"):
         await store.flush(task.id)
     assert not any(entry.kind == "intel" for entry in await storage.list_entries(task.id))
@@ -237,7 +241,7 @@ async def test_coordinator_rejects_false_extraction_completion(tmp_path):
     await runtime.extracting.wait()
     path = next(coordinator.scout_intel.directory(task.id).glob("*.json"))
     document = json.loads(path.read_text())
-    document["source_action_ids"] = []
+    document["intels"][0]["source_action_ids"] = []
     path.write_text(json.dumps(document))
     runtime.finish_extraction.set()
     await coordinator._startup_jobs[task.id]

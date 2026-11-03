@@ -7,7 +7,7 @@ from zipfile import ZipFile
 import pytest
 from pydantic import TypeAdapter, ValidationError
 
-from tga3.domain import AgentPublishRequest, ArtifactRef, EntryKind, PublishRequest, publication_contract
+from tga3.domain import AgentPublishRequest, BlackboardEntry, EntryKind, PublishRequest, publication_contract
 from tga3.errors import NotFoundError
 from tga3.protocol import RpcMessage
 from tga3.skills import SkillCatalog
@@ -32,57 +32,29 @@ def test_finding_requires_artifact_but_does_not_put_it_in_body():
         )
 
 
-def test_worker_publication_contract_is_discriminated_strict_and_generated_from_models():
+def test_worker_publication_contract_only_accepts_final_candidates():
     adapter = TypeAdapter(AgentPublishRequest)
-    task_id = uuid4()
-    finding = adapter.validate_python({
-        "kind": "finding",
-        "task_id": task_id,
-        "actor": {"agent_id": "worker-openai", "display_name": "OpenAI Worker", "role": "worker"},
-        "body": {"claim": "verified", "detail": "reproduced"},
-        "evidence_paths": ["proof.txt"],
-        "idempotency_key": "finding-1",
-    })
-    internal = finding.publish_request(artifact_refs=[ArtifactRef(artifact_id=uuid4(), locator="proof.txt")])
-    assert internal.body == {"claim": "verified", "detail": "reproduced"}
+    request = {"kind": "final_candidate", "task_id": uuid4(),
+               "actor": {"agent_id": "worker-openai", "display_name": "Worker", "role": "worker"},
+               "body": {"conclusion": "result", "rationale": "verified", "finding_ids": [uuid4()]},
+               "idempotency_key": "final-1"}
+    assert adapter.validate_python(request).publish_request().kind == EntryKind.FINAL_CANDIDATE
+    for kind in ("finding", "intel"):
+        with pytest.raises(ValidationError):
+            adapter.validate_python({**request, "kind": kind})
+    with pytest.raises(ValidationError):
+        adapter.validate_python({**request, "evidence_paths": ["proof.txt"]})
+    assert "body={conclusion, rationale, answer_type?, finding_ids}" in publication_contract()
 
-    with pytest.raises(ValidationError):
-        adapter.validate_python({
-        "kind": "intel",
-        "task_id": task_id,
-        "actor": {"agent_id": "scout", "display_name": "Scout", "role": "scout"},
-        "body": {"claim": "Flask is in use", "detail": "confirmed from response headers"},
-        "idempotency_key": "intel-1",
-    })
-    with pytest.raises(ValidationError):
-        adapter.validate_python({
-            "kind": "finding",
-            "task_id": task_id,
-            "actor": {"agent_id": "worker-openai", "display_name": "OpenAI Worker", "role": "worker"},
-            "body": {"title": "wrong", "summary": "wrong"},
-            "evidence_paths": ["proof.txt"],
-            "idempotency_key": "finding-wrong",
-        })
-    with pytest.raises(ValidationError):
-        adapter.validate_python({
-            "kind": "final_candidate",
-            "task_id": task_id,
-            "actor": {"agent_id": "worker-openai", "display_name": "OpenAI Worker", "role": "worker"},
-            "body": {
-                "conclusion": "flag{ok}",
-                "rationale": "verified",
-                "finding_ids": [uuid4()],
-            },
-            "evidence_paths": ["proof.txt"],
-            "idempotency_key": "final-wrong",
-        })
 
-    schema = adapter.json_schema()
-    assert schema["discriminator"]["propertyName"] == "kind"
-    assert set(schema["discriminator"]["mapping"]) == {"finding", "final_candidate"}
-    summary = publication_contract()
-    assert "finding: body={claim, detail?}; evidence_paths=required non-empty" in summary
-    assert "body={conclusion, rationale, answer_type?, finding_ids}" in summary
+def test_findings_omit_topic_even_when_reading_historical_entries():
+    entry = BlackboardEntry(task_id=uuid4(), seq=1, kind="finding", topic="old duplicated claim",
+        actor={"agent_id": "worker-openai", "display_name": "Worker", "role": "worker"},
+        body={"claim": "verified fact"}, idempotency_key="fixture")
+    assert "topic" not in entry.model_dump()
+    assert "topic" not in json.loads(entry.model_dump_json())
+    prompt = entry.model_copy(update={"kind": EntryKind.USER_PROMPT, "topic": "realtime"})
+    assert prompt.model_dump()["topic"] == "realtime"
 
 
 def test_json_rpc_shapes():

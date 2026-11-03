@@ -369,8 +369,6 @@ class CodexAdapter(CliAdapter):
         elif not self.reporter and self.scout_phase in {"extracting", "merging"}:
             config += ["[mcp_servers.intel]",
                        f"url = {json.dumps(os.environ['TGA3_SCOUT_INTEL_MCP_URL'])}", "required = true"]
-        if os.environ.get("TGA3_AGENT_ROLE") in {"scout", "worker"}:
-            config += ['disabled_tools = ["blackboard_sync"]']
         if self.hook_config():
             (cli_home / "hooks.json").write_text(json.dumps(self.hook_config()), encoding="utf-8")
         (cli_home / "config.toml").write_text("\n".join(config) + "\n", encoding="utf-8")
@@ -460,7 +458,7 @@ class ClaudeAdapter(CliAdapter):
             "--allowedTools",
             "Bash,Read,Write,Edit,Glob,Grep,mcp__blackboard__*",
             "--disallowedTools",
-            "AskUserQuestion,mcp__blackboard__blackboard_sync",
+            "AskUserQuestion",
             "--strict-mcp-config",
             "--mcp-config",
             str(mcp_file),

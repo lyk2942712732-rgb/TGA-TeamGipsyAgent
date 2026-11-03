@@ -10,9 +10,8 @@ from .domain import Actor, Artifact, ArtifactRef
 from .errors import ContractError
 
 
-async def register_evidence(
-    board: Blackboard, task_id: UUID, actor: Actor, root: Path, paths: list[str],
-) -> list[ArtifactRef]:
+def evidence_files(root: Path, paths: list[str]) -> dict[str, Path]:
+    """Validate/canonicalize paths without registering metadata or reading file contents."""
     if root.resolve() != root.absolute():
         raise ContractError("Evidence directory cannot be a symlink to another directory")
     root = root.resolve()
@@ -29,18 +28,23 @@ async def register_evidence(
         if not path.is_relative_to(root) or not path.is_file():
             raise ContractError(f"Evidence is not a file inside the agent directory: {relative}")
         canonical = path.relative_to(root).as_posix()
-        if canonical in files:
-            continue
+        files[canonical] = path
+    return files
+
+
+async def register_evidence(
+    board: Blackboard, task_id: UUID, actor: Actor, root: Path, paths: list[str],
+) -> list[ArtifactRef]:
+    references = []
+    for canonical, path in evidence_files(root, paths).items():
         content = path.read_bytes()
         digest = hashlib.sha256(content).hexdigest()
-        files[canonical] = Artifact(
+        evidence = Artifact(
             id=uuid5(task_id, f"{actor.agent_id}:{canonical}:{digest}"),
             task_id=task_id, created_by=actor, name=canonical, storage_path=str(path),
             media_type=mimetypes.guess_type(path.name)[0] or "application/octet-stream",
             sha256=digest, size_bytes=len(content),
         )
-    references = []
-    for relative, evidence in files.items():
         registered = await board.register_artifact(evidence)
-        references.append(ArtifactRef(artifact_id=registered.id, locator=relative))
+        references.append(ArtifactRef(artifact_id=registered.id, locator=canonical))
     return references

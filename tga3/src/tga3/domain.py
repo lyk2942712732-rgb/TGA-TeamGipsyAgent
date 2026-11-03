@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Annotated, Any, Literal, TypeAlias, get_args
+from typing import Any, Literal, TypeAlias, get_args
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_serializer, model_validator
 
 
 def utc_now() -> datetime:
@@ -141,31 +141,8 @@ class WorkerPublicationBase(BaseModel):
         )
 
 
-class WorkerFindingPublication(WorkerPublicationBase):
-    kind: Literal[EntryKind.FINDING]
-    body: FindingBody
-    evidence_paths: list[Annotated[str, Field(min_length=1, max_length=1000)]] = Field(
-        min_length=1, max_length=30,
-        description="Evidence file paths relative to your own /workspace. "
-                    "The server validates and registers them automatically; no evidence UUIDs are needed.",
-    )
-    source_action_ids: list[str] = Field(default_factory=list, max_length=100,
-                                        description="Prefixed action IDs in your own agent action manifest.")
-
-
 class ScoutActor(Actor):
     role: Literal["scout"] = "scout"
-
-
-class ScoutIntelPublication(WorkerPublicationBase):
-    actor: ScoutActor
-    kind: Literal[EntryKind.INTEL]
-    body: FindingBody
-    source_action_ids: list[str] = Field(default_factory=list)
-    artifact_refs: list[ArtifactRef] = Field(
-        default_factory=list,
-        description="Optional registered evidence references supporting this verified intermediate intelligence.",
-    )
 
 
 class WorkerFinalCandidatePublication(WorkerPublicationBase):
@@ -173,10 +150,7 @@ class WorkerFinalCandidatePublication(WorkerPublicationBase):
     body: FinalCandidateBody
 
 
-AgentPublishRequest: TypeAlias = Annotated[
-    WorkerFindingPublication | WorkerFinalCandidatePublication,
-    Field(discriminator="kind"),
-]
+AgentPublishRequest: TypeAlias = WorkerFinalCandidatePublication
 
 
 def publication_contract(role: str | None = None) -> str:
@@ -187,7 +161,7 @@ def publication_contract(role: str | None = None) -> str:
         return ("Scout executes reconnaissance, extracts raw Intel with scout_write_intel, then merges it "
                 "with scout_merge_intel in the same CLI session and container. "
                 "No publishing tool.")
-    models = (WorkerFindingPublication, WorkerFinalCandidatePublication)
+    models = (WorkerFinalCandidatePublication,)
     for model in models:
         literal_kind = get_args(model.model_fields["kind"].annotation)[0]
         kind = literal_kind.value
@@ -199,7 +173,8 @@ def publication_contract(role: str | None = None) -> str:
                          if "evidence_paths" in model.model_fields else "evidence_paths=forbidden")
         parts.append(f"{kind}: body={{{body_fields}}}; {evidence_rule}")
     return (
-        "Scout has no blackboard publishing tool; Workers publish finding/final_candidate only. "
+        "Scout has no blackboard publishing tool; Workers use finding_publish for observations "
+        "and blackboard_publish for final_candidate only. "
         "Publication contract generated from Pydantic. Select the request branch by kind; "
         "extra fields are forbidden. " + " | ".join(parts)
     )
@@ -217,7 +192,7 @@ BODY_BY_KIND: dict[EntryKind, type[BaseModel]] = {
 class PublishRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     kind: EntryKind
-    topic: str = Field(default="general", min_length=1, max_length=200)
+    topic: str | None = Field(default="general", min_length=1, max_length=200)
     body: dict[str, Any]
     artifact_refs: list[ArtifactRef] = Field(default_factory=list)
     idempotency_key: str = Field(min_length=1, max_length=200)
@@ -226,6 +201,8 @@ class PublishRequest(BaseModel):
     @model_validator(mode="after")
     def check_contract(self) -> PublishRequest:
         BODY_BY_KIND[self.kind].model_validate(self.body)
+        if self.kind == EntryKind.FINDING:
+            self.topic = None
         if self.kind == EntryKind.FINDING and not self.artifact_refs:
             raise ValueError("finding requires at least one artifact reference")
         if self.kind not in {EntryKind.INTEL, EntryKind.FINDING} and self.artifact_refs:
@@ -243,11 +220,18 @@ class BlackboardEntry(BaseModel):
     seq: int = Field(ge=1)
     actor: Actor
     kind: EntryKind
-    topic: str
+    topic: str | None = None
     body: dict[str, Any]
     idempotency_key: str
     source_action_ids: list[str] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=utc_now)
+
+    @model_serializer(mode="wrap")
+    def serialize_entry(self, handler):
+        value = handler(self)
+        if self.kind == EntryKind.FINDING:
+            value.pop("topic", None)
+        return value
 
 
 class BlackboardSyncResult(BaseModel):
@@ -376,8 +360,6 @@ __all__ = [
     "UserPromptBody",
     "WorkerActor",
     "WorkerFinalCandidatePublication",
-    "WorkerFindingPublication",
-    "ScoutIntelPublication",
     "AgentPublishRequest",
     "Writeup",
     "utc_now",

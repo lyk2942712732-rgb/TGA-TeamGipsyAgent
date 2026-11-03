@@ -353,6 +353,10 @@ class PostgresStorage:
                 await connection.execute("ALTER TABLE IF EXISTS blackboard_entries "
                                          "ADD COLUMN IF NOT EXISTS source_action_ids JSONB "
                                          "NOT NULL DEFAULT '[]'::jsonb")
+                await connection.execute("ALTER TABLE IF EXISTS blackboard_entries "
+                                         "ALTER COLUMN topic DROP NOT NULL")
+                await connection.execute("UPDATE blackboard_entries SET topic=NULL "
+                                         "WHERE kind='finding' AND topic IS NOT NULL")
         except Exception:
             await pool.close()
             raise

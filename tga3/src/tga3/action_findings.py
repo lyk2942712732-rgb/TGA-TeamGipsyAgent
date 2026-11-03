@@ -105,7 +105,7 @@ class ActionFindingPublisher:
                                          f"共 {len(artifact['attachments'])} 个，"
                                          "完整清单见该 action 的 artifact.attachments")
                 entry = await self.board.publish(task_id, actor, PublishRequest(
-                    kind="finding", topic=request.claim[:200], body={"claim": request.claim, "detail": detail},
+                    kind="finding", body={"claim": request.claim, "detail": detail},
                     artifact_refs=references, source_action_ids=[request.action_id], idempotency_key=key,
                 ))
             except Exception as exc:

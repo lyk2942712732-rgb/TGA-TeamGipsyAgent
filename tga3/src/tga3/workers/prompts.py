@@ -35,7 +35,7 @@ def worker_instructions() -> str:
         "Blackboard publication contract (authoritative and generated from the runtime models):\n"
         f"{build_publication_contract(role)}\n"
         "Use finding_publish for immediate observations. blackboard_publish accepts one request object "
-        "for final_candidate; the legacy finding branch exists only for compatibility."
+        "for final_candidate only."
     )
     if role == "scout":
         runtime_context = (
@@ -55,10 +55,12 @@ def worker_instructions() -> str:
                 "Summarize EVERY action record, including failed and unfinished actions, into Intel. "
                 "Include its unique action_id in source_action_ids so per-action coverage can be verified. "
                 "Save each coherent Intel with scout_write_intel using "
-                "request={task_id:<exact task UUID>,key:<stable unique key>,claim:<fact>,detail:<support>,"
+                "request={task_id:<exact task UUID>,claim:<fact>,detail:<support>,"
                 "topic:<topic>,source_action_ids:[<action_id>],evidence_paths:[<paths relative to /workspace>]}. "
                 "No actor, kind, artifact UUID or JSON formatting is needed. evidence_paths may be empty. "
-                "Check saved=true; the tool writes original JSON to /intels/raw. These files are retained. "
+                "Check saved=true; the tool appends to /intels/raw/scout-intels.json without registering evidence. "
+                "The receipt contains its stable scout-raw-intel- ID; identical retries return the same ID. "
+                "Do not choose a name, key or ID. This original collection is retained. "
                 "Do not merge Intel yet. There is no total extraction time budget; finish only after ALL actions "
                 "are covered. Then wait for the THIRD work phase in this same session. "
                 "Tool calls in the second and third phases are not appended to the action log. "
@@ -67,17 +69,21 @@ def worker_instructions() -> str:
         elif phase == "merging":
             instructions = (
                 "Current phase: THIRD ROUND, Intel consolidation in the SAME CLI session and container. "
-                "All action records have been extracted. Original Intel JSON in /intels/raw is retained unchanged. "
+                "All action records have been extracted. "
+                "Original Intel in /intels/raw/scout-intels.json is retained unchanged. "
                 "Use the supplied compact Intel catalog first; read originals/evidence only to resolve differences. "
                 "Consolidate repeated or complementary facts about the same object under the same conditions. "
                 "Preserve distinct facts, exact targets, inputs, conditions, scoped negatives, unfinished checks "
                 "and later corrections. Never erase a successful follow-up or generalize a failed test. "
                 "Keep unrelated facts separate; never invent a new conclusion. "
-                "Call scout_merge_intel with request={task_id:<exact task UUID>,key:<stable unique final key>,"
-                "claim:<fact>,detail:<support and boundaries>,topic:<topic>,merged_from_keys:[<raw Intel keys>]}. "
-                "Each raw key must appear exactly once across final Intel; a singleton stays separate. "
-                "The server automatically unions action IDs and evidence references. Do not copy those fields. "
-                "Check saved=true; final JSON is saved separately in /intels/merged. "
+                "Call scout_merge_intel with request={task_id:<exact task UUID>,"
+                "claim:<fact>,detail:<support and boundaries>,topic:<topic>,merged_from_ids:[<raw Intel IDs>]}. "
+                "Each raw ID must appear exactly once across final Intel; a singleton stays separate. "
+                "IDs are assigned by the server; never invent names or IDs. "
+                "The server automatically unions action IDs and evidence paths. Do not copy those fields. "
+                "Check saved=true; final entries accumulate in /intels/merged/scout-intels.json, "
+                "with server-generated scout-merged-intel- IDs distinct from original IDs. "
+                "Evidence is registered only when final Intel is imported. "
                 "No total time budget: finish only after every raw Intel is represented in final Intel. "
                 "Do not call scout_write_intel, modify originals, probe targets or rerun reconnaissance. "
                 "Second/third-phase tool calls are not journaled. Only merged Intel is imported into the blackboard "
@@ -98,10 +104,11 @@ def worker_instructions() -> str:
             )
         return (f"{os.environ['TGA3_SYSTEM_PROMPT'].rstrip()}\n\n{runtime_context}\n\n{instructions}\n"
                 "Native hooks provide the task, blackboard and realtime user prompts at tool boundaries. "
-                "User prompts from actor.role=user are direct user instructions. Do not call blackboard_sync.")
+                "User prompts from actor.role=user are direct user instructions. "
+                "Blackboard reading is supplied by native hooks.")
     publication_contract += (
         "\nThe native CLI hooks deliver the initial complete blackboard and subsequent unseen entries automatically. "
-        "Do not call blackboard_sync or reread the full blackboard yourself. At the next tool opportunity, "
+        "Do not reread the full blackboard yourself. At the next tool opportunity, "
         "updates are supplied only when the configured interval elapsed and new entries exist. "
         "Before final_candidate, the hook bypasses the interval; review newly supplied entries and retry if blocked. "
         "Continue working without waiting for updates. Tool hooks handle cursors and elapsed time."
@@ -146,7 +153,7 @@ def worker_instructions() -> str:
         + "\nFor final_candidate, reference published Finding entry UUIDs in finding_ids, omit evidence_paths, "
         "and provide a nonempty idempotency_key; reuse it on retries. "
         "Publication is complete only after blackboard_publish returns the saved entry. "
-        "The system imports Scout Intel after its extraction phase; "
+        "The system imports Scout Intel after extraction and merging; "
         "consume it through the existing blackboard delivery. "
     )
     return f"{os.environ['TGA3_SYSTEM_PROMPT'].rstrip()}\n\n{runtime_context}\n\n{publication_contract}"

@@ -5,6 +5,7 @@ import sys
 import tomllib
 from pathlib import Path
 from types import SimpleNamespace
+from uuid import uuid4
 
 import pytest
 
@@ -23,7 +24,7 @@ def cli_env(monkeypatch, tmp_path):
         "TGA3_MAX_TURNS_PER_CYCLE": "3",
         "TGA3_BLACKBOARD_MCP_URL": "http://blackboard/mcp/",
         "TGA3_SYSTEM_PROMPT": "Work independently.",
-        "TGA3_TASK_ID": "task-id",
+        "TGA3_TASK_ID": str(uuid4()),
         "TGA3_AGENT_ID": "worker-openai",
         "TGA3_AGENT_DISPLAY_NAME": "Worker",
         "TGA3_AGENT_RUNTIME": "codex_cli",
@@ -143,7 +144,8 @@ def test_worker_prompt_injects_exact_blackboard_identity(monkeypatch):
     assert '"agent_id":"worker-openai"' in prompt
     assert "Never invent a placeholder task ID or actor." in prompt
     assert "intel: body={claim, detail?}; artifact_refs=optional" not in prompt
-    assert "body={claim, detail?}; evidence_paths=required non-empty" in prompt
+    assert "finding_publish" in prompt
+    assert "legacy finding" not in prompt
     assert "body={conclusion, rationale, answer_type?, finding_ids}; evidence_paths=forbidden" in prompt
     assert "Use finding_publish" in prompt
     assert "One execution is enough" in prompt
@@ -154,7 +156,7 @@ def test_worker_prompt_injects_exact_blackboard_identity(monkeypatch):
 @pytest.mark.asyncio
 async def test_worker_reports_idle_between_work_cycles(monkeypatch):
     for name, value in {
-        "TGA3_TASK_ID": "task-id",
+        "TGA3_TASK_ID": str(uuid4()),
         "TGA3_AGENT_ID": "worker-openai",
         "TGA3_CONTROL_WS_URL": "ws://control",
         "TGA3_SYNC_SECONDS": "90",
@@ -195,7 +197,7 @@ async def test_worker_reports_idle_between_work_cycles(monkeypatch):
 @pytest.mark.asyncio
 async def test_worker_coalesces_blackboard_notifications_to_the_latest_sequence(monkeypatch):
     for name, value in {
-        "TGA3_TASK_ID": "task-id",
+        "TGA3_TASK_ID": str(uuid4()),
         "TGA3_AGENT_ID": "worker-openai",
         "TGA3_CONTROL_WS_URL": "ws://control",
         "TGA3_SYNC_SECONDS": "90",
@@ -225,7 +227,7 @@ async def test_worker_coalesces_blackboard_notifications_to_the_latest_sequence(
 
 async def test_worker_continues_immediately_instead_of_waiting_90_seconds(monkeypatch):
     for name, value in {
-        "TGA3_TASK_ID": "task-id", "TGA3_AGENT_ID": "worker-openai",
+        "TGA3_TASK_ID": str(uuid4()), "TGA3_AGENT_ID": "worker-openai",
         "TGA3_CONTROL_WS_URL": "ws://control", "TGA3_STARTUP_PROMPT": "start",
         "TGA3_PERIODIC_PROMPT": "continue", "TGA3_BLACKBOARD_CHANGED_PROMPT": "sync {latest_seq}",
     }.items():
@@ -448,20 +450,24 @@ async def test_stopping_a_paused_worker_does_not_launch_a_queued_cli(monkeypatch
 
 
 async def test_scout_runs_three_phases_on_one_adapter_and_retries_uncovered_json(cli_env, monkeypatch):
+    from uuid import UUID
+
+    from tga3.domain import ScoutActor
+    from tga3.scout_intel import ScoutIntelCollection, ScoutIntelDocument, read_intels, save_intels
     from tga3.workers.openai_worker import scout, uncovered_actions, unmerged_intels
 
     monkeypatch.setenv("TGA3_AGENT_ROLE", "scout")
     monkeypatch.setenv("TGA3_SCOUT_TIMEOUT_SECONDS", "2")
     monkeypatch.setenv("TGA3_SCOUT_EXTRACT_TIMEOUT_SECONDS", "0.001")
     intels = cli_env / "intels"
-    (intels / "raw").mkdir(parents=True)
-    (intels / "merged").mkdir()
+    intels.mkdir()
     monkeypatch.setenv("TGA3_INTELS", str(intels))
     state = cli_env / ".tga3"
     state.mkdir()
     (state / "scout-extract-request").touch()
     (state / "scout-merge-request").touch()
     adapters, sessions, phases = [], [], []
+    task_id = UUID(os.environ["TGA3_TASK_ID"])
 
     async def cycle(adapter, prompt, emit):
         adapters.append(adapter)
@@ -471,22 +477,26 @@ async def test_scout_runs_three_phases_on_one_adapter_and_retries_uncovered_json
             for index in range(2):
                 adapter.journal.record(str(index), "shell", inputs={"command": "fixture"},
                                        result={"output": str(index)}, status="completed")
-        elif adapter.scout_phase == "extracting":
-            assert not adapter.journal.enabled and adapter.timeout is None
-            missing = uncovered_actions(adapter.journal.directory, intels)
-            assert missing and missing[0] in prompt
-            # Simulate an incomplete model turn: only one of two records is summarized.
-            (intels / "raw" / f"{len(phases)}.json").write_text(json.dumps({
-                "key": f"intel-{len(phases)}", "topic": "fixture", "body": {"claim": "verified"},
-                "source_action_ids": [missing[0]],
-            }))
         else:
             assert not adapter.journal.enabled and adapter.timeout is None
-            pending = unmerged_intels(intels)
-            assert pending and pending[0]["key"] in prompt
-            (intels / "merged" / f"{len(phases)}.json").write_text(json.dumps({
-                "merged_from_keys": [pending[0]["key"]],
-            }))
+            merged = adapter.scout_phase == "merging"
+            directory = intels / ("merged" if merged else "raw")
+            collection = read_intels(directory, task_id, merged=merged) or ScoutIntelCollection(
+                task_id=task_id, stage="merged" if merged else "raw",
+                actor=ScoutActor(agent_id="scout", display_name="Scout"),
+            )
+            if merged:
+                pending = unmerged_intels(intels)
+                assert pending and pending[0]["id"] in prompt
+                document = ScoutIntelDocument(id="scout-merged-intel-" + f"{len(phases):032x}", topic="fixture",
+                                               body={"claim": "merged"}, merged_from_ids=[pending[0]["id"]])
+            else:
+                missing = uncovered_actions(adapter.journal.directory, intels)
+                assert missing and missing[0] in prompt
+                document = ScoutIntelDocument(id="scout-raw-intel-" + f"{len(phases):032x}", topic="fixture",
+                                               body={"claim": "verified"}, source_action_ids=[missing[0]])
+            collection.intels.append(document)
+            save_intels(directory, collection)
         sessions.append(adapter.session_id)
         return "saved"
 
@@ -497,7 +507,8 @@ async def test_scout_runs_three_phases_on_one_adapter_and_retries_uncovered_json
     assert sessions == ["same-scout-session"] * 5
     assert not uncovered_actions(cli_env / "logs", intels)
     assert not unmerged_intels(intels)
-    assert len(list((intels / "raw").glob("*.json"))) == 2
+    assert len(list((intels / "raw").glob("*.json"))) == 1
+    assert len(read_intels(intels / "raw", task_id).intels) == 2
     for phase in ("executing", "extracting", "merging"):
         assert json.loads((state / f"scout-{phase}-result.json").read_text())["finish_reason"] == "completed"
 

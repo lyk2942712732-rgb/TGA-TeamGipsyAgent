@@ -49,7 +49,9 @@ async def test_one_result_publishes_scope_method_body_and_attachments_and_retrie
     results = await asyncio.gather(*(publisher.publish(task.id, "worker-openai", request) for _ in range(5)))
     assert {result["saved"] for result in results} == {True}
     assert len({result["entry"]["id"] for result in results}) == 1
+    assert all("topic" not in result["entry"] for result in results)
     entry = (await storage.list_entries(task.id))[0]
+    assert entry.topic is None
     assert entry.source_action_ids == [action["action_id"]]
     assert entry.actor.model == "task-selected-model"
     detail = entry.body["detail"]
@@ -123,4 +125,16 @@ async def test_http_mcp_binds_identity_without_model_arguments(tmp_path):
             missing = (await client.post("/mcp/", json=body, headers={"accept": headers["accept"]})).json()
             assert missing["result"]["isError"] is True
             assert "identity headers are missing" in missing["result"]["content"][0]["text"]
-    assert len(await storage.list_entries(task.id)) == 1
+            await storage.update_agent(task.id, "worker-openai", metadata={"blackboard_cursor": 1})
+            final_body = {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {
+                "name": "blackboard_publish", "arguments": {"request": {
+                    "kind": "final_candidate", "task_id": str(task.id), "actor": saved["entry"]["actor"],
+                    "body": {"conclusion": "fixture result", "rationale": "verified",
+                             "finding_ids": [saved["entry"]["id"]]}, "idempotency_key": "fixture-final",
+                }},
+            }}
+            final = (await client.post("/mcp/", json=final_body, headers=headers)).json()["result"]
+            assert not final.get("isError")
+            assert json.loads(final["content"][0]["text"])["kind"] == "final_candidate"
+            await app.state.automation.cancel(task.id)
+    assert len(await storage.list_entries(task.id)) == 2

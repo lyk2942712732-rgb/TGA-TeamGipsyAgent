@@ -18,7 +18,7 @@ export type TGA3Actor = { agent_id: string; display_name: string; role: string; 
 export type TGA3BoardEntry = {
   id: string; seq: number; actor: TGA3Actor;
   kind: "user_prompt" | "user_file" | "intel" | "finding" | "final_candidate";
-  topic: string; body: Record<string, unknown>; idempotency_key?: string; created_at: string;
+  topic?: string | null; body: Record<string, unknown>; idempotency_key?: string; created_at: string;
 };
 export type TGA3TaskEvent = {
   id: string; seq: number; channel_agent_id: string; actor: TGA3Actor;

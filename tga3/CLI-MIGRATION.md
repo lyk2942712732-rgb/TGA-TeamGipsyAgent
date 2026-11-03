@@ -79,8 +79,7 @@ Worker 无法通过挂载访问对方工作目录或证据目录；双方通过�
 Reporter 从 `/evidence/<agent-id>/` 读取执行记录、从 `/evidence-files/<agent-id>/` 读取生成文件；报告写入 `/workspace/result/writeup.md`。
 
 文件读写、搜索、Shell 与 Skills 文档读取直接使用 CLI 原生能力，删除重复的 Skills MCP 工具。
-Worker MCP 提供 `finding_publish`、`blackboard_sync` 和 `blackboard_publish`。Worker 用 action_id、claim、scope 即时发布 Finding，服务端自动关联结果和附件。旧 Finding 请求仍可在 evidence_paths 中提供相对路径，服务端按发布 Worker
-定位私有目录并拒绝目录穿越。Skills 配置中心仍负责管理文档包。
+Worker MCP 仅提供 `finding_publish` 和提交最终候选的 `blackboard_publish`。Worker 用 action_id、claim、scope 即时发布 Finding，服务端自动关联结果和附件、校验路径。删除未使用的 `blackboard_sync` 和旧 Finding 发布分支；原生 Hook 提供黑板同步。Finding 不保存或返回 topic，界面按 claim 前 200 字派生。Skills 配置中心仍负责管理文档包。
 执行页面仅保留状态、活动和控制，不提供 Worker/Reporter 聊天或问答转发。
 PostgreSQL 使用 task_events 和 task_runs.event_seq 保存只读执行事件，不提供对话写入接口。
 
@@ -105,9 +104,9 @@ npm run build
 使用私有目录及一个 CLI 会话，在同一个容器中完成三轮工作内容，不重建会话或容器。
 第一轮执行侦察，`runtime.scout_timeout_seconds` 默认 300，允许 60–600 秒。
 第一轮完成、超时或执行出错后，从保存的 action 和证据继续第二轮提取。
-第二轮无总时间预算，使用 `scout_write_intel` 将全部 action 覆盖到 `/intels/raw` 原始 JSON。
-第三轮无总时间预算，使用 `scout_merge_intel` 基于原始 JSON 统一合并到 `/intels/merged`；
-原始文件完整保留，动作和证据来源由服务端自动求并集。
+第二轮无总时间预算，使用 `scout_write_intel` 将全部 action 覆盖到 `/intels/raw/scout-intels.json`，不登记原始证据。
+第三轮无总时间预算，使用 `scout_merge_intel` 基于原始 JSON 统一合并到 `/intels/merged/scout-intels.json`；
+原始文件完整保留，动作和证据路径由服务端自动求并集。两种 Intel ID 由服务端生成并带不同前缀，merged_from_ids 仅引用原始 ID。文件无 artifact_refs，最终导入时才登记证据。
 第二、三轮的工具调用不写入 action 日志，避免递归提取。全部原始 Intel 各归组一次后，
 系统只将合并版本导入黑板，再回收 Scout 容器并启动两个 Worker。
 取消、提取失败、合并失败或来源覆盖不完整时保留文件，不导入不完整交接、不启动 Worker。

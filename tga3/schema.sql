@@ -62,7 +62,7 @@ CREATE TABLE blackboard_entries (
     actor JSONB NOT NULL,
     actor_id TEXT NOT NULL,
     kind TEXT NOT NULL,
-    topic TEXT NOT NULL,
+    topic TEXT,
     body JSONB NOT NULL,
     idempotency_key TEXT NOT NULL,
     source_action_ids JSONB NOT NULL DEFAULT '[]'::jsonb,

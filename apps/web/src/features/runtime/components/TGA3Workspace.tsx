@@ -2,7 +2,7 @@ import { File, FileText, Flag, Grid2X2, Lightbulb, List, Maximize2, MessageSquar
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import type { TGA3BoardEntry, TGA3TaskEvent, TGA3RuntimeSnapshot } from "../../../runtime/tga3-runtime";
-import { BOARD_KIND_LABELS, EVENT_KIND_LABELS, bodyText, formatTime, listStrings } from "../tga3-view";
+import { BOARD_KIND_LABELS, entryTopic, EVENT_KIND_LABELS, bodyText, formatTime, listStrings } from "../tga3-view";
 import { TGA3ReportReader } from "./TGA3ReportReader";
 import { tga3RuntimeApi } from "../../../api/tga3-runtime-control";
 
@@ -31,7 +31,7 @@ function BlackboardPanel({ entries, taskId, acceptingPrompts, onChanged }: { ent
   const [kind, setKind] = useState(""); const [query, setQuery] = useState("");
   const [view, setView] = useState<"tiles" | "details">("details");
   const [focused, setFocused] = useState<TGA3BoardEntry | null>(null);
-  const visible = useMemo(() => [...entries].reverse().filter((entry) => (!kind || entry.kind === kind) && (!query.trim() || `${entry.topic} ${bodyText(entry)} ${entry.actor.display_name}`.toLowerCase().includes(query.trim().toLowerCase()))), [entries, kind, query]);
+  const visible = useMemo(() => [...entries].reverse().filter((entry) => (!kind || entry.kind === kind) && (!query.trim() || `${entryTopic(entry)} ${bodyText(entry)} ${entry.actor.display_name}`.toLowerCase().includes(query.trim().toLowerCase()))), [entries, kind, query]);
   return <div className="tga3-board-panel">
     <RealtimePrompt taskId={taskId} accepting={acceptingPrompts} onChanged={onChanged} />
     <div className="tga3-panel-toolbar tga3-board-toolbar">
@@ -82,7 +82,7 @@ function BoardTile({ entry, onOpen, focused = false }: { entry: TGA3BoardEntry; 
     <header><span>#{entry.seq} · {BOARD_KIND_LABELS[entry.kind]}</span><Maximize2 size={14} /></header>
     <strong>{boardTileTitle(entry)}</strong>
     <p>{bodyText(entry) || "点击查看完整内容"}</p>
-    <footer><span>{entry.actor.display_name}</span><em>{entry.topic}</em></footer>
+    <footer><span>{entry.actor.display_name}</span><em>{entryTopic(entry)}</em></footer>
   </button>;
 }
 
@@ -103,10 +103,10 @@ function BoardFocus({ entry, onClose }: { entry: TGA3BoardEntry; onClose: () => 
   </div>, document.body);
 }
 
-function BoardCard({ entry }: { entry: TGA3BoardEntry }) { return <article className={`tga3-board-card kind-${entry.kind}`}><header><span>#{entry.seq} · {BOARD_KIND_LABELS[entry.kind]}</span><small>{formatTime(entry.created_at)}</small></header><div className="tga3-entry-author"><b>{entry.actor.display_name}</b><span>{entry.actor.agent_id}</span><em>{entry.topic}</em></div><BoardBody entry={entry} /></article>; }
+function BoardCard({ entry }: { entry: TGA3BoardEntry }) { return <article className={`tga3-board-card kind-${entry.kind}`}><header><span>#{entry.seq} · {BOARD_KIND_LABELS[entry.kind]}</span><small>{formatTime(entry.created_at)}</small></header><div className="tga3-entry-author"><b>{entry.actor.display_name}</b><span>{entry.actor.agent_id}</span><em>{entryTopic(entry)}</em></div><BoardBody entry={entry} /></article>; }
 function BoardBody({ entry }: { entry: TGA3BoardEntry }) {
   const body = entry.body;
-  if (entry.kind === "intel" || entry.kind === "finding") return <><h3>{String(body.claim ?? entry.topic)}</h3>{body.detail ? <p>{String(body.detail)}</p> : null}</>;
+  if (entry.kind === "intel" || entry.kind === "finding") return <><h3>{String(body.claim ?? entryTopic(entry))}</h3>{body.detail ? <p>{String(body.detail)}</p> : null}</>;
   if (entry.kind === "final_candidate") return <><h3><Flag size={16} />{String(body.conclusion ?? "最终候选")}</h3><p>{String(body.rationale ?? "")}</p><Meta label="引用 Finding" values={listStrings(body.finding_ids)} /></>;
   if (entry.kind === "user_file") return <><h3><File size={16} />{String(body.name ?? "用户文件")}</h3><p>{String(body.media_type ?? "")}</p><code>{String(body.sha256 ?? "")}</code></>;
   return <><p>{String(body.text ?? bodyText(entry))}</p><Meta label="发送给" values={listStrings(body.addressed_to)} /></>;
@@ -144,13 +144,13 @@ function FindingsPanel({ entries }: { entries: TGA3BoardEntry[] }) {
 }
 
 function FindingTile({ entry, onOpen, focused = false }: { entry: TGA3BoardEntry; onOpen?: () => void; focused?: boolean }) {
-  const claim = String(entry.body.claim ?? entry.topic);
+  const claim = String(entry.body.claim ?? entryTopic(entry));
   const detail = String(entry.body.detail ?? "");
   return <button type="button" className="tga3-finding-tile" data-focused={focused} aria-label={`查看 Finding #${entry.seq}：${claim}`} onClick={onOpen}>
     <header><span>#{entry.seq}</span><Maximize2 size={14} /></header>
     <strong>{claim}</strong>
     <p>{detail || "点击查看完整 Finding"}</p>
-    <footer><span>{entry.actor.display_name}</span><em>{entry.topic}</em></footer>
+    <footer><span>{entry.actor.display_name}</span><em>{entryTopic(entry)}</em></footer>
   </button>;
 }
 
@@ -160,7 +160,7 @@ function FindingFocus({ entry, onClose }: { entry: TGA3BoardEntry; onClose: () =
     window.addEventListener("keydown", closeOnEscape);
     return () => window.removeEventListener("keydown", closeOnEscape);
   }, [onClose]);
-  const claim = String(entry.body.claim ?? entry.topic);
+  const claim = String(entry.body.claim ?? entryTopic(entry));
   const detail = String(entry.body.detail ?? "");
   return createPortal(<div className="tga3-finding-focus-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
     <div className="tga3-finding-focus-composition" role="dialog" aria-modal="true" aria-label={`Finding #${entry.seq} 详情`}>
@@ -170,7 +170,7 @@ function FindingFocus({ entry, onClose }: { entry: TGA3BoardEntry; onClose: () =
         <header><div><b>{entry.actor.display_name}</b><span>{entry.actor.agent_id}</span></div><time>{formatTime(entry.created_at)}</time></header>
         <h3>{claim}</h3>
         {detail ? <p>{detail}</p> : <p className="tga3-finding-no-detail">该 Finding 没有补充详情。</p>}
-        <footer><span>Finding #{entry.seq}</span><em>{entry.topic}</em><code>{entry.id}</code></footer>
+        <footer><span>Finding #{entry.seq}</span><em>{entryTopic(entry)}</em><code>{entry.id}</code></footer>
       </article>
     </div>
   </div>, document.body);
@@ -187,9 +187,9 @@ function ReportPanel({ snapshot }: { snapshot: TGA3RuntimeSnapshot }) {
 function Meta({ label, values }: { label: string; values: string[] }) { return values.length ? <footer className="tga3-entry-meta"><span>{label}</span>{values.map((value, index) => <em key={`${value}-${index}`}>{value}</em>)}</footer> : null; }
 function Empty({ icon, title, detail }: { icon: ReactNode; title: string; detail: string }) { return <div className="tga3-empty">{icon}<h3>{title}</h3><p>{detail}</p></div>; }
 function boardTileTitle(entry: TGA3BoardEntry): string {
-  if (entry.kind === "intel" || entry.kind === "finding") return String(entry.body.claim ?? entry.topic);
+  if (entry.kind === "intel" || entry.kind === "finding") return String(entry.body.claim ?? entryTopic(entry));
   if (entry.kind === "final_candidate") return String(entry.body.conclusion ?? "最终候选");
   if (entry.kind === "user_file") return String(entry.body.name ?? "用户文件");
-  return entry.topic || "用户提示";
+  return entryTopic(entry) || "用户提示";
 }
 function tabCount(tab: TGA3WorkspaceTab, snapshot: TGA3RuntimeSnapshot) { if (tab === "blackboard") return snapshot.blackboard.length; if (tab === "events") return snapshot.events.length; if (tab === "findings") return snapshot.blackboard.filter((entry) => ["finding", "final_candidate"].includes(entry.kind)).length; if (tab === "inputs") return snapshot.blackboard.filter((entry) => ["user_prompt", "user_file"].includes(entry.kind)).length; if (tab === "report") return snapshot.task.state === "completed" ? 1 : 0; return 0; }
