@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Any, Literal, TypeAlias, get_args
+from typing import Any, Literal, TypeAlias
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, model_serializer, model_validator
@@ -156,28 +156,15 @@ AgentPublishRequest: TypeAlias = WorkerFinalCandidatePublication
 def publication_contract(role: str | None = None) -> str:
     """Generate the compact prompt/tool description from the authoritative Pydantic models."""
 
-    parts: list[str] = []
     if role == "scout":
-        return ("Scout executes reconnaissance, extracts raw Intel with scout_write_intel, then merges it "
-                "with scout_merge_intel in the same CLI session and container. "
-                "No publishing tool.")
-    models = (WorkerFinalCandidatePublication,)
-    for model in models:
-        literal_kind = get_args(model.model_fields["kind"].annotation)[0]
-        kind = literal_kind.value
-        body_model = model.model_fields["body"].annotation
-        body_fields = ", ".join(
-            f"{name}{'' if field.is_required() else '?'}" for name, field in body_model.model_fields.items()
-        )
-        evidence_rule = ("evidence_paths=required non-empty (relative to /workspace); source_action_ids=optional"
-                         if "evidence_paths" in model.model_fields else "evidence_paths=forbidden")
-        parts.append(f"{kind}: body={{{body_fields}}}; {evidence_rule}")
-    return (
-        "Scout has no blackboard publishing tool; Workers use finding_publish for observations "
-        "and blackboard_publish for final_candidate only. "
-        "Publication contract generated from Pydantic. Select the request branch by kind; "
-        "extra fields are forbidden. " + " | ".join(parts)
-    )
+        return ("scout_write_intel(action_id, claim, detail?, topic?, evidence_paths?). "
+                "scout_merge_intel(merged_from_ids, claim?, detail?, topic?). "
+                "Runtime binds identity; a singleton is copied verbatim by the server.")
+    fields = ", ".join(f"{name}{'' if field.is_required() else '?'}"
+                       for name, field in FinalCandidateBody.model_fields.items())
+    return ("finding_publish: action_id, claim, scope, preconditions?. "
+            f"blackboard_publish: {fields}, topic?. "
+            "Task, actor, kind and retry key are supplied by the runtime; no request wrapper.")
 
 
 BODY_BY_KIND: dict[EntryKind, type[BaseModel]] = {

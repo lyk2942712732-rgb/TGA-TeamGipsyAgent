@@ -7,6 +7,7 @@ from pathlib import Path
 from uuid import UUID
 
 from ..action_logs import read_action_log
+from ..action_materials import action_materials
 from ..scout_intel import read_intels
 from .cli_adapter import CodexAdapter
 from .prompts import worker_instructions
@@ -55,11 +56,12 @@ async def scout() -> None:
                             break
                         prompt = (worker_instructions()
                                   + "\n继续当前会话的第二轮。逐条概括以下尚未覆盖的 action，"
-                                  "每条至少对应一份 Intel，source_action_ids 引用动作 ID。"
-                                  "evidence_paths 提供 artifact 中相对于 /workspace 的正文或附件路径。"
+                                  "使用材料中的 action_id 引用动作，任务、来源和默认证据由服务端补齐。"
+                                  "以下内容为原文片段，不是摘要；遇到截断、缺失或二进制标记时按需读取完整文件。"
                                   "包括失败、超时和未完成记录，准确描述实际结果，不能推断为目标不存在漏洞。"
                                   "使用 scout_write_intel 保存；不要重新侦察。\n"
-                                  + json.dumps(missing, ensure_ascii=False))
+                                  + json.dumps(action_materials(adapter.journal.directory, adapter.workspace,
+                                      UUID(os.environ["TGA3_TASK_ID"]), missing), ensure_ascii=False))
                     elif phase == "merging":
                         missing = unmerged_intels(intels)
                         if not missing:

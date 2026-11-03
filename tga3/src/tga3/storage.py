@@ -31,6 +31,7 @@ from .errors import ConflictError, FindingRejectedError, NotFoundError
 
 
 class Storage(Protocol):
+    async def publication_by_key(self, task_id: UUID, agent_id: str, key: str) -> BlackboardEntry | None: ...
     async def create_task(self, title: str, scene_id: str, task_id: UUID | None = None) -> TaskRun: ...
     async def get_task(self, task_id: UUID) -> TaskRun: ...
     async def list_tasks(self, *, limit: int = 200) -> list[TaskRun]: ...
@@ -97,6 +98,10 @@ def _validate_publish(
 class InMemoryStorage:
     """Fast behavioural reference used by tests and local protocol development."""
 
+    async def publication_by_key(self, task_id: UUID, agent_id: str, key: str) -> BlackboardEntry | None:
+        await self.get_task(task_id)
+        return next((entry for entry in self.entries[task_id]
+                     if entry.actor.agent_id == agent_id and entry.idempotency_key == key), None)
     def __init__(self) -> None:
         self.tasks: dict[UUID, TaskRun] = {}
         self.agents: dict[tuple[UUID, str], AgentRun] = {}
@@ -342,6 +347,13 @@ class PostgresStorage:
 
     def __init__(self, pool: Any) -> None:
         self.pool = pool
+
+    async def publication_by_key(self, task_id: UUID, agent_id: str, key: str) -> BlackboardEntry | None:
+        row = await self.pool.fetchrow(
+            "SELECT * FROM blackboard_entries WHERE task_id=$1 AND actor_id=$2 AND idempotency_key=$3",
+            task_id, agent_id, key,
+        )
+        return _entry(row) if row else None
 
     @classmethod
     async def connect(cls, dsn: str, *, min_size: int = 1, max_size: int = 10) -> PostgresStorage:

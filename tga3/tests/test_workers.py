@@ -146,7 +146,7 @@ def test_worker_prompt_injects_exact_blackboard_identity(monkeypatch):
     assert "intel: body={claim, detail?}; artifact_refs=optional" not in prompt
     assert "finding_publish" in prompt
     assert "legacy finding" not in prompt
-    assert "body={conclusion, rationale, answer_type?, finding_ids}; evidence_paths=forbidden" in prompt
+    assert "conclusion, rationale, answer_type?, finding_ids" in prompt
     assert "Use finding_publish" in prompt
     assert "One execution is enough" in prompt
     assert "Do not schedule log reviews" in prompt
@@ -461,6 +461,7 @@ async def test_scout_runs_three_phases_on_one_adapter_and_retries_uncovered_json
     from tga3.workers.openai_worker import scout, uncovered_actions, unmerged_intels
 
     monkeypatch.setenv("TGA3_AGENT_ROLE", "scout")
+    monkeypatch.setenv("TGA3_AGENT_ID", "scout")
     monkeypatch.setenv("TGA3_SCOUT_TIMEOUT_SECONDS", "2")
     monkeypatch.setenv("TGA3_SCOUT_EXTRACT_TIMEOUT_SECONDS", "0.001")
     intels = cli_env / "intels"

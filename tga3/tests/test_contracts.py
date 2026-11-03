@@ -44,7 +44,7 @@ def test_worker_publication_contract_only_accepts_final_candidates():
             adapter.validate_python({**request, "kind": kind})
     with pytest.raises(ValidationError):
         adapter.validate_python({**request, "evidence_paths": ["proof.txt"]})
-    assert "body={conclusion, rationale, answer_type?, finding_ids}" in publication_contract()
+    assert "conclusion, rationale, answer_type?, finding_ids" in publication_contract()
 
 
 def test_findings_omit_topic_even_when_reading_historical_entries():

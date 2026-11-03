@@ -368,7 +368,10 @@ class CodexAdapter(CliAdapter):
             ]
         elif not self.reporter and self.scout_phase in {"extracting", "merging"}:
             config += ["[mcp_servers.intel]",
-                       f"url = {json.dumps(os.environ['TGA3_SCOUT_INTEL_MCP_URL'])}", "required = true"]
+                       f"url = {json.dumps(os.environ['TGA3_SCOUT_INTEL_MCP_URL'])}",
+                       "http_headers = {" + ", ".join(f"{json.dumps(k)} = {json.dumps(v)}"
+                                                      for k, v in self.mcp_headers().items()) + "}",
+                       "required = true"]
         if self.hook_config():
             (cli_home / "hooks.json").write_text(json.dumps(self.hook_config()), encoding="utf-8")
         (cli_home / "config.toml").write_text("\n".join(config) + "\n", encoding="utf-8")

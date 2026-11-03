@@ -46,7 +46,8 @@ def checkpoint(event: dict) -> dict:
             candidate(value.get(key)) for key in ("request", "arguments", "input")
         )
 
-    final = candidate(arguments)
+    final = (str(event.get("tool_name", "")).split("__")[-1] == "blackboard_publish"
+             or candidate(arguments))
     base = os.environ["TGA3_BLACKBOARD_MCP_URL"].rstrip("/").removesuffix("/mcp")
     response = httpx.post(
         f"{base}/internal/blackboard/{os.environ['TGA3_TASK_ID']}/{os.environ['TGA3_AGENT_ID']}/checkpoint",

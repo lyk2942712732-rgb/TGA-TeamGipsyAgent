@@ -29,16 +29,16 @@ class ScoutIntelInput(BaseModel):
     claim: str = Field(min_length=1, max_length=2000)
     detail: str = Field(default="", max_length=8000)
     topic: str = Field(default="general", min_length=1, max_length=200)
-    evidence_paths: list[str] = Field(default_factory=list, max_length=30)
+    evidence_paths: list[str] = Field(default_factory=list)
     source_action_ids: list[str] = Field(default_factory=list, max_length=100)
 
 
 class ScoutIntelMergeInput(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
     task_id: UUID
-    claim: str = Field(min_length=1, max_length=2000)
-    detail: str = Field(default="", max_length=8000)
-    topic: str = Field(default="general", min_length=1, max_length=200)
+    claim: str | None = Field(default=None, min_length=1, max_length=2000)
+    detail: str | None = Field(default=None, max_length=8000)
+    topic: str | None = Field(default=None, min_length=1, max_length=200)
     merged_from_ids: list[RawIntelID] = Field(min_length=1)
 
 
@@ -191,6 +191,20 @@ class ScoutIntelStore:
                 })
             return self.receipt(document, merged=False)
 
+    async def write_action(self, task_id: UUID, action_id: str, claim: str, detail: str, topic: str,
+                           selected_paths: list[str] | None = None) -> dict:
+        actions = read_action_log(self.config.task_path(task_id, "logs", "scout"),
+                                  task_id=task_id, agent_id="scout")["actions"]
+        action = next((item for item in actions if item["action_id"] == action_id), None)
+        if action is None or action["status"] not in {"completed", "failed", "interrupted"}:
+            raise ContractError("Use a returned action ID from this Scout's runtime materials")
+        artifact = action.get("artifact", {})
+        defaults = [path for path in [artifact.get("output_path"), *artifact.get("attachments", [])] if path]
+        if selected_paths is not None and (not selected_paths or set(selected_paths) - set(defaults)):
+            raise ContractError("Explicit evidence must be a nonempty subset of this action's recorded files")
+        return await self.write(ScoutIntelInput(task_id=task_id, claim=claim, detail=detail, topic=topic,
+            source_action_ids=[action_id], evidence_paths=defaults if selected_paths is None else selected_paths))
+
     def validate_extraction(self, task_id: UUID) -> dict:
         actions = read_action_log(self.config.task_path(task_id, "logs", "scout"),
                                   task_id=task_id, agent_id="scout")["actions"]
@@ -214,7 +228,20 @@ class ScoutIntelStore:
                 raise ContractError(f"Unknown raw Intel IDs: {sorted(set(ids) - raw.keys())}")
             collection = await self._collection(request.task_id, merged=True)
             originals = [raw[intel_id] for intel_id in ids]
-            payload = {"topic": request.topic, "body": {"claim": request.claim, "detail": request.detail},
+            if len(originals) == 1:
+                original = originals[0]
+                if any(value is not None and value != expected for value, expected in (
+                    (request.claim, original.body.claim), (request.detail, original.body.detail),
+                    (request.topic, original.topic),
+                )):
+                    raise ContractError("Singleton Intel is copied verbatim; submit only its original ID")
+                body, topic = original.body.model_dump(), original.topic
+            else:
+                if request.claim is None:
+                    raise ContractError("Multiple Intel require an AI-written claim; add detail when needed")
+                body = {"claim": request.claim, "detail": request.detail or ""}
+                topic = request.topic or "general"
+            payload = {"topic": topic, "body": body,
                        "merged_from_ids": ids,
                        "source_action_ids": sorted({s for item in originals for s in item.source_action_ids}),
                        "evidence_paths": sorted({p for item in originals for p in item.evidence_paths})}

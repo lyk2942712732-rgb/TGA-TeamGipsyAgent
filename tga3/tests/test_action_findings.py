@@ -127,14 +127,15 @@ async def test_http_mcp_binds_identity_without_model_arguments(tmp_path):
             assert "identity headers are missing" in missing["result"]["content"][0]["text"]
             await storage.update_agent(task.id, "worker-openai", metadata={"blackboard_cursor": 1})
             final_body = {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {
-                "name": "blackboard_publish", "arguments": {"request": {
-                    "kind": "final_candidate", "task_id": str(task.id), "actor": saved["entry"]["actor"],
-                    "body": {"conclusion": "fixture result", "rationale": "verified",
-                             "finding_ids": [saved["entry"]["id"]]}, "idempotency_key": "fixture-final",
-                }},
+                "name": "blackboard_publish", "arguments": {
+                    "conclusion": "fixture result", "rationale": "verified",
+                    "finding_ids": [saved["entry"]["id"]],
+                },
             }}
             final = (await client.post("/mcp/", json=final_body, headers=headers)).json()["result"]
             assert not final.get("isError")
             assert json.loads(final["content"][0]["text"])["kind"] == "final_candidate"
+            retry = (await client.post("/mcp/", json=final_body, headers=headers)).json()["result"]
+            assert json.loads(retry["content"][0]["text"])["id"] == json.loads(final["content"][0]["text"])["id"]
             await app.state.automation.cancel(task.id)
     assert len(await storage.list_entries(task.id)) == 2

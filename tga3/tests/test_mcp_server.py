@@ -28,19 +28,19 @@ async def test_scout_mcp_uses_generated_ids_and_no_model_assigned_keys():
     config = configured()
     tools = await build_scout_mcp(config, ScoutIntelStore(config, Blackboard(InMemoryStorage()))).list_tools()
     assert [tool.name for tool in tools] == ["scout_write_intel", "scout_merge_intel"]
-    fields = tools[0].inputSchema["$defs"]["ScoutIntelInput"]["properties"]
-    assert set(fields) == {"task_id", "claim", "detail", "topic", "evidence_paths", "source_action_ids"}
-    fields = tools[1].inputSchema["$defs"]["ScoutIntelMergeInput"]["properties"]
-    assert set(fields) == {"task_id", "claim", "detail", "topic", "merged_from_ids"}
+    fields = tools[0].inputSchema["properties"]
+    assert set(fields) == {"action_id", "claim", "detail", "topic", "evidence_paths"}
+    fields = tools[1].inputSchema["properties"]
+    assert set(fields) == {"claim", "detail", "topic", "merged_from_ids"}
 
 
 async def test_worker_tools_remove_unused_sync_and_legacy_finding_branch():
     mcp = build_mcp(configured(), Blackboard(InMemoryStorage()))
     tools = {tool.name: tool for tool in await mcp.list_tools()}
     assert set(tools) == {"blackboard_publish", "finding_publish"}
-    final = tools["blackboard_publish"].inputSchema["$defs"]["WorkerFinalCandidatePublication"]
-    assert final["properties"]["kind"]["const"] == "final_candidate"
-    assert "WorkerFindingPublication" not in tools["blackboard_publish"].inputSchema["$defs"]
+    final = tools["blackboard_publish"].inputSchema
+    assert set(final["required"]) == {"conclusion", "rationale", "finding_ids"}
+    assert not {"task_id", "actor", "kind", "idempotency_key", "ctx"}.intersection(final["properties"])
     simple = tools["finding_publish"]
     assert set(simple.inputSchema["required"]) == {"action_id", "claim", "scope"}
     assert set(simple.inputSchema["properties"]) == {"action_id", "claim", "scope", "preconditions"}
