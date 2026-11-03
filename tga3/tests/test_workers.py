@@ -400,8 +400,12 @@ time.sleep(120)
     with pytest.raises(asyncio.CancelledError):
         await asyncio.wait_for(task, 8)
     status = Path(f"/proc/{child}/stat")
-    if status.exists():
-        assert status.read_text().rsplit(") ", 1)[1].split()[0] == "Z"
+    try:
+        child_state = status.read_text().rsplit(") ", 1)[1].split()[0]
+    except FileNotFoundError:
+        pass  # The terminated child may be reaped before /proc can be read.
+    else:
+        assert child_state == "Z"
 
 
 @pytest.mark.asyncio
