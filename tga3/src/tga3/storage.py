@@ -355,8 +355,11 @@ class PostgresStorage:
                                          "NOT NULL DEFAULT '[]'::jsonb")
                 await connection.execute("ALTER TABLE IF EXISTS blackboard_entries "
                                          "ALTER COLUMN topic DROP NOT NULL")
-                await connection.execute("UPDATE blackboard_entries SET topic=NULL "
-                                         "WHERE kind='finding' AND topic IS NOT NULL")
+                await connection.execute("""DO $$ BEGIN
+                    IF to_regclass('blackboard_entries') IS NOT NULL THEN
+                        UPDATE blackboard_entries SET topic=NULL WHERE kind='finding' AND topic IS NOT NULL;
+                    END IF;
+                END $$""")
         except Exception:
             await pool.close()
             raise
