@@ -125,17 +125,25 @@ async def test_http_mcp_binds_identity_without_model_arguments(tmp_path):
             missing = (await client.post("/mcp/", json=body, headers={"accept": headers["accept"]})).json()
             assert missing["result"]["isError"] is True
             assert "identity headers are missing" in missing["result"]["content"][0]["text"]
-            await storage.update_agent(task.id, "worker-openai", metadata={"blackboard_cursor": 1})
+            second_body = {**body, "id": 4, "params": {**body["params"], "arguments": {
+                **request.model_dump(), "claim": "A second observed fact"}}}
+            second = (await client.post("/mcp/", json=second_body, headers=headers)).json()["result"]
+            second_id = json.loads(second["content"][0]["text"])["entry"]["id"]
+            selected_ids = sorted([second_id, saved["entry"]["id"]], reverse=True)
+            await storage.update_agent(task.id, "worker-openai", metadata={"blackboard_cursor": 2})
             final_body = {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {
                 "name": "blackboard_publish", "arguments": {
                     "conclusion": "fixture result", "rationale": "verified",
-                    "finding_ids": [saved["entry"]["id"]],
+                    "finding_ids": selected_ids,
                 },
             }}
             final = (await client.post("/mcp/", json=final_body, headers=headers)).json()["result"]
             assert not final.get("isError")
-            assert json.loads(final["content"][0]["text"])["kind"] == "final_candidate"
+            final_entry = json.loads(final["content"][0]["text"])
+            assert final_entry["kind"] == "final_candidate"
+            assert final_entry["body"]["finding_ids"] == selected_ids
+            assert final_entry["actor"] == saved["entry"]["actor"]
             retry = (await client.post("/mcp/", json=final_body, headers=headers)).json()["result"]
             assert json.loads(retry["content"][0]["text"])["id"] == json.loads(final["content"][0]["text"])["id"]
             await app.state.automation.cancel(task.id)
-    assert len(await storage.list_entries(task.id)) == 2
+    assert len(await storage.list_entries(task.id)) == 3

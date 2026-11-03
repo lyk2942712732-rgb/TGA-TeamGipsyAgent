@@ -24,7 +24,6 @@ class FinalCandidatePublisher:
         run = await self.board.storage.get_agent(task_id, agent_id)
         actor = Actor(agent_id=agent_id, display_name=configured.display_name, role="worker",
                       sdk=run.sdk, model=run.model_id)
-        body = body.model_copy(update={"finding_ids": sorted(set(body.finding_ids), key=str)})
         payload = {"body": body.model_dump(mode="json"), "topic": topic}
         key = "final-candidate:" + hashlib.sha256(json.dumps(payload, ensure_ascii=False,
                                                              sort_keys=True).encode()).hexdigest()
