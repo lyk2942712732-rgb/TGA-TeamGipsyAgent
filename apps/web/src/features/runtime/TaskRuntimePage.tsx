@@ -17,7 +17,14 @@ export function TaskRuntimePage({ taskId }: { taskId: string }) {
   const location = useLocation(); const navigate = useNavigate();
   const params = useMemo(() => new URLSearchParams(location.search), [location.search]);
   const requestedTab = params.get("tab") as TGA3WorkspaceTab | null;
-  const [tab, setTab] = useState<TGA3WorkspaceTab>(requestedTab && VALID_TABS.includes(requestedTab) ? requestedTab : "blackboard");
+  const [ordinaryTab, setOrdinaryTab] = useState<TGA3WorkspaceTab>(requestedTab && VALID_TABS.includes(requestedTab) ? requestedTab : "blackboard");
+  const tab = snapshot?.aoe ? (requestedTab && VALID_TABS.includes(requestedTab) ? requestedTab : "blackboard") : ordinaryTab;
+  function setTab(value: TGA3WorkspaceTab) {
+    if (!snapshot?.aoe) { setOrdinaryTab(value); return; }
+    const next = new URLSearchParams(location.search);
+    next.set("tab", value);
+    navigate({ pathname: location.pathname, search: next.toString() }, { replace: true });
+  }
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(params.get("agent"));
   const [inspectorOpen, setInspectorOpen] = useState(true);
   const [busy, setBusy] = useState(false); const [notice, setNotice] = useState<string | null>(null);
@@ -32,11 +39,12 @@ export function TaskRuntimePage({ taskId }: { taskId: string }) {
   }, [snapshot, selectedAgentId]);
 
   useEffect(() => {
+    if (snapshot?.aoe) return;
     const next = new URLSearchParams(location.search);
     if (selectedAgentId) next.set("agent", selectedAgentId); else next.delete("agent");
     next.set("tab", tab);
     if (next.toString() !== params.toString()) navigate({ pathname: location.pathname, search: next.toString() }, { replace: true });
-  }, [selectedAgentId, tab, location.pathname, location.search, navigate, params]);
+  }, [selectedAgentId, tab, location.pathname, location.search, navigate, params, snapshot?.aoe]);
 
   if (!snapshot) return <section className="task-runtime-loading" aria-live="polite"><h1>正在加载 TGA3 任务</h1><p>{error ?? "正在读取任务、Agent、共享黑板和执行事件。"}</p>{error ? <button onClick={refresh}>重试</button> : null}</section>;
 
@@ -45,7 +53,7 @@ export function TaskRuntimePage({ taskId }: { taskId: string }) {
   async function stop() { if (busy) return; setBusy(true); setNotice(null); try { await tga3RuntimeApi.stopTask(taskId); setNotice("停止请求已提交。"); refresh(); } catch (reason) { setNotice(reason instanceof Error ? reason.message : "停止任务失败"); } finally { setBusy(false); } }
   async function confirmDelete() { if (busy) return; setBusy(true); setNotice(null); try { await deleteTask(taskId); navigate("/tasks", { replace: true }); } catch (reason) { setNotice(reason instanceof Error ? reason.message : "删除任务失败"); setBusy(false); setRemove(false); } }
 
-  return <section className="task-runtime-page tga3-runtime-page">
+  return <section className={`task-runtime-page tga3-runtime-page${snapshot.aoe ? " aoe-runtime-page" : ""}`}>
     <TGA3TaskHeader snapshot={snapshot} connection={connection} busy={busy} onRefresh={refresh} onStop={() => void stop()} onDelete={() => setRemove(true)} />
     {error ? <div className="runtime-sync-error" role="alert">实时同步暂时中断：{error}<button onClick={refresh}>重试</button></div> : null}
     {notice ? <div className="runtime-sync-notice" role="status">{notice}<button onClick={() => setNotice(null)}>关闭</button></div> : null}

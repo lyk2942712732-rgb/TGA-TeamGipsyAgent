@@ -1,7 +1,7 @@
 .aoe-workspace { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
 .aoe-scope-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 12px 14px; background: var(--c-surface); border: 1px solid var(--c-border); border-radius: var(--r-md); }
-.aoe-scope-toolbar label { display: flex; gap: 12px; align-items: center; font-size: 13px; }
-.aoe-scope-toolbar select { min-width: 210px; max-width: 100%; font: inherit; padding: 6px 10px; }
+.aoe-scope-toolbar label { display: flex; gap: 12px; align-items: center; font-size: 13px; white-space: nowrap; }
+.aoe-scope-toolbar select { width: auto; min-width: 210px; max-width: 100%; font: inherit; padding: 6px 10px; }
 .aoe-scope-toolbar > span { font-size: 12px; color: var(--c-text-muted); }
 .aoe-overview > header { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 15px; }
 .aoe-overview h3 { margin: 0; font-size: 16px; }
@@ -46,3 +46,13 @@
 .aoe-budget-field > span { color: var(--c-text-muted); font-size: 12px; line-height: 1.7; font-weight: 400; }
 .collab-agent-question { display: block; font-size: 12px; line-height: 1.6; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
 @media (max-width: 640px) { .aoe-question-ownership { grid-template-columns: 1fr; gap: 10px; } .aoe-scope-toolbar label { width: 100%; } .aoe-scope-toolbar select { min-width: 0; flex: 1; } .aoe-report-list > article { align-items: flex-start; flex-direction: column; } }
+@media (max-width: 760px) {
+  .aoe-runtime-page .collab-grid { grid-template-columns: minmax(0,1fr); gap: 16px; }
+  .aoe-runtime-page .collab-grid > * { grid-column: 1; grid-row: auto; }
+  .aoe-runtime-page .collab-wires, .aoe-runtime-page .collab-labels { display: none; }
+  .aoe-runtime-page .collab-detail { grid-template-columns: minmax(0,1fr) 20px; gap: 10px; }
+  .aoe-runtime-page .collab-detail > p { grid-column: 1; grid-row: 2; }
+  .aoe-runtime-page .collab-detail > button { grid-column: 2; grid-row: 1; }
+  .aoe-runtime-page .tga3-agent-inspector { display: block; overflow-wrap: anywhere; }
+  .aoe-runtime-page .tga3-inspector-tabs { flex-wrap: wrap; }
+}

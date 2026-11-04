@@ -10,8 +10,9 @@ from tga3.aoe_models import AOEQuestionInput, active_attempts
 from tga3.config import TGA3Config
 from tga3.coordinator import TaskCoordinator
 from tga3.docker_runtime import FakeContainerRuntime
-from tga3.domain import SYSTEM_ACTOR, AgentRun, Artifact, ArtifactRef, PublishRequest, RunState
+from tga3.domain import SYSTEM_ACTOR, AgentRun, Artifact, ArtifactRef, FinalCandidateBody, PublishRequest, RunState
 from tga3.errors import ConflictError, ContractError
+from tga3.final_candidates import FinalCandidatePublisher
 from tga3.scout_intel import ScoutIntelMergeInput
 from tga3.storage import InMemoryStorage
 from tga3.workers.action_journal import ActionJournal
@@ -261,3 +262,35 @@ async def test_partial_registration_retry_restores_missing_agents_and_early_real
     assert {a.agent_id for a in await storage.list_agents(question.id)} == set(coordinator.config.agents.agents)
     entries = await storage.list_entries(question.id)
     assert [e.body["text"] for e in entries if e.topic == "realtime"] == ["Preserve this shared constraint"]
+
+
+async def test_recovery_keeps_attempt_deadline_and_expired_candidates_cannot_solve(tmp_path):
+    cfg, storage, _, coordinator, parent, clock, questions = await prepare(tmp_path)
+    await coordinator.aoe.tick(parent.id)
+    restored_runtime = FakeContainerRuntime()
+    restored = TaskCoordinator(cfg, storage, restored_runtime)
+    restored.aoe.clock = lambda: clock[0]
+    clock[0] = 500
+    await restored.aoe.restore_paths()
+    await restored.aoe._recover_attempts(parent.id)
+    assert len(restored_runtime.launched) == 2
+    assert all(spec.attempt_deadline == 1300 and not spec.fresh_session for spec in restored_runtime.launched)
+    easy = await storage.get_task(questions["Easy"].id)
+    assert len(easy.metadata["attempts"]) == 1
+    finding_id = (await final(storage, easy.id)).body["finding_ids"][0]
+    # The fixture clock's 1300 timestamp is in the past for the publisher's
+    # wall-clock guard. A different late candidate must be rejected before write.
+    publisher = FinalCandidatePublisher(cfg, coordinator.blackboard)
+    before = (await storage.get_task(easy.id)).blackboard_seq
+    with pytest.raises(ContractError, match="late candidate"):
+        await publisher.publish(
+            easy.id,
+            "worker-openai",
+            FinalCandidateBody(
+                conclusion="late flag",
+                rationale="late",
+                finding_ids=[finding_id],
+            ),
+            "final",
+        )
+    assert (await storage.get_task(easy.id)).blackboard_seq == before

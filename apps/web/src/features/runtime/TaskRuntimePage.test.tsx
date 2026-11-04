@@ -36,6 +36,24 @@ describe("TaskRuntimePage", () => {
     expect(screen.getByRole("tab", { name: /共享黑板/ })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "已发现入口" })).toBeInTheDocument();
   });
+  it("returns from an AOE question's Findings to the overview without restoring the stale question URL", async () => {
+    const parent: TGA3RuntimeSnapshot = { ...snapshot, task: { ...snapshot.task, scene_id: "aoe" }, aoe: {
+      task_id: "task", phase: "solo", attempt_seconds: 1200, questions: [{
+        question_id: "question", parent_task_id: "task", title: "AOE question", description: "Original question",
+        source_key: "source", difficulty: null, connection_info: "", submission_instructions: "", status: "running",
+        attempted_by: [], current_agents: [], attempts: [], flag: null, report_state: "pending", blackboard_seq: 3, attachments: [],
+      }],
+    } };
+    const child = { ...snapshot, task: { ...snapshot.task, id: "question", parent_task_id: "task", scene_id: "aoe" } };
+    useTGA3Runtime.mockImplementation((id: string) => ({ snapshot: id === "question" ? child : parent, connection: "live", refresh: vi.fn() }));
+    render(<MemoryRouter initialEntries={["/tasks/task/runtime"]}><TaskRuntimePage taskId="task" /></MemoryRouter>);
+    fireEvent.click(screen.getByRole("button", { name: /进入黑板详情/ }));
+    await waitFor(() => expect(screen.getByLabelText("题目筛选")).toHaveValue("question"));
+    fireEvent.click(screen.getByRole("tab", { name: /Findings/ }));
+    fireEvent.click(screen.getByRole("button", { name: "返回总览" }));
+    await waitFor(() => expect(screen.getByRole("region", { name: "题目总览" })).toBeInTheDocument());
+    expect(screen.getByLabelText("题目筛选")).toHaveValue("");
+  });
   it("shows the Scout execution and extraction phases in the task UI", () => {
     const scout = { ...snapshot.agents[0], agent_id: "scout", display_name: "Scout", role: "scout", actual_state: "running", metadata: { scout_phase: "executing" } };
     const data = { ...snapshot, task: { ...snapshot.task, state: "scouting" }, agents: [scout, ...snapshot.agents] };
