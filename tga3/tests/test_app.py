@@ -120,7 +120,11 @@ def test_frontend_api_uses_safe_catalog_and_page_owned_config_documents(tmp_path
         renamed_scene = deepcopy(scenes)
         renamed_scene["scenes"][0]["name"] = "可变场景"
         assert client.put("/api/v3/config/scenes", json=renamed_scene).status_code == 422
-        assert len(client.get("/api/v3/scenes").json()) == 8
+        available_scenes = client.get("/api/v3/scenes").json()
+        assert [(scene["id"], scene["name"]) for scene in available_scenes] == [
+            ("penetration_test", "Web渗透测试"), ("pwn", "Pwn"), ("reverse_engineering", "Re逆向"),
+            ("security_misc", "Misc安全杂项"), ("cryptography", "Crypto密码学问题"), ("ai_security", "AI安全"),
+        ]
         assert client.get("/api/v3/attention").json() == []
         assert client.get("/api/v3/skills").status_code == 200
         skill = client.post("/api/v3/skills/web", json={"files": {

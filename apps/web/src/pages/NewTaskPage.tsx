@@ -8,8 +8,8 @@ import type { ProviderProtocol, SceneConfig } from "../api/tga3-config";
 import { TASK_MODES, type TaskMode } from "../modes";
 
 const SCENE_ICONS: Record<TaskMode, string> = {
-  penetration_test: "WEB", incident_response: "IR", vulnerability_research: "VR", reverse_engineering: "RE",
-  pwn: "PWN", security_misc: "MISC", cryptography: "CRYPTO", forensics: "FORENSICS",
+  penetration_test: "WEB", reverse_engineering: "RE",
+  pwn: "PWN", security_misc: "MISC", cryptography: "CRYPTO", ai_security: "AI",
 };
 
 export function NewTaskPage({ onCreated, onCancel = () => history.back() }: { onCreated: (id: string) => void; onCancel?: () => void }) {

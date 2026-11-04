@@ -265,13 +265,11 @@ class TGA3Config:
     REQUIRED_AGENTS = {"scout", "worker-openai", "worker-claude", "reporter"}
     REQUIRED_SCENES = {
         "penetration_test",
-        "incident_response",
-        "vulnerability_research",
         "reverse_engineering",
         "pwn",
         "security_misc",
         "cryptography",
-        "forensics",
+        "ai_security",
     }
 
     def __init__(self, config_dir: str | Path) -> None:
@@ -535,6 +533,9 @@ class TGA3Config:
         missing_scenes = sorted(cls.REQUIRED_SCENES.difference(scene_ids))
         if missing_scenes:
             raise ValueError(f"scenes.json is missing: {', '.join(missing_scenes)}")
+        extra_scenes = sorted(scene_ids.difference(cls.REQUIRED_SCENES))
+        if extra_scenes:
+            raise ValueError(f"scenes.json has unsupported scene ids: {', '.join(extra_scenes)}")
         expected_runtimes = {
             "scout": "codex_cli",
             "worker-openai": "codex_cli",

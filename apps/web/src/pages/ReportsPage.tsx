@@ -8,7 +8,7 @@ import { EmptyState } from "../components/ui/EmptyState";
 import { ErrorState } from "../components/ui/ErrorState";
 import { LoadingSkeleton } from "../components/ui/LoadingSkeleton";
 import { TGA3ReportReader } from "../features/runtime/components/TGA3ReportReader";
-import { MODE_PROFILES } from "../modes";
+import { sceneLabel } from "../modes";
 
 type ReportRow = { id: string; taskId: string; title: string; taskName: string; scene: string; updatedAt: string };
 
@@ -31,7 +31,7 @@ export function ReportsPage() {
   const columns: Array<Column<ReportRow>> = [
     { id: "title", header: "报告名称", render: (row) => <button className="text-button" onClick={() => setSelected(row)}><strong>{row.title}</strong></button> },
     { id: "task", header: "任务", render: (row) => <button className="text-button" onClick={(event) => { event.stopPropagation(); navigate(`/tasks/${encodeURIComponent(row.taskId)}`); }}>{row.taskName}</button> },
-    { id: "scene", header: "场景", render: (row) => <span className="cell-muted">{MODE_PROFILES[row.scene as keyof typeof MODE_PROFILES]?.label ?? row.scene}</span> },
+    { id: "scene", header: "场景", render: (row) => <span className="cell-muted">{sceneLabel(row.scene)}</span> },
     { id: "status", header: "状态", render: () => <span className="ref-chip tone-ok">已生成</span> },
     { id: "updated", header: "生成时间", render: (row) => <span className="cell-muted">{new Date(row.updatedAt).toLocaleString("zh-CN")}</span> },
     { id: "actions", header: "操作", render: (row) => <a className="ref-secondary-button" onClick={event => event.stopPropagation()} href={`${apiBase}/api/v3/tasks/${encodeURIComponent(row.taskId)}/writeup/download`}><Download size={14} />下载 Markdown</a> },

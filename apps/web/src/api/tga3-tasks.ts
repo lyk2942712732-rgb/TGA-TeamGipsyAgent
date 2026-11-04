@@ -6,7 +6,7 @@ import type { AgentsConfig, ModelsConfig, ProviderProtocol, ScenesConfig } from 
 export type TGA3TaskListItem = {
   id: string;
   title: string;
-  scene_id: TaskMode;
+  scene_id: string;
   state: string;
   blackboard_seq?: number;
   event_seq?: number;

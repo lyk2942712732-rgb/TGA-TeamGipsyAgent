@@ -8,7 +8,7 @@ import { ConfirmDialog } from "../components/ui/ConfirmDialog";
 import { EmptyState } from "../components/ui/EmptyState";
 import { ErrorState } from "../components/ui/ErrorState";
 import { LoadingSkeleton } from "../components/ui/LoadingSkeleton";
-import { MODE_PROFILES, TASK_MODES } from "../modes";
+import { sceneLabel, TASK_MODES } from "../modes";
 import { statusLabel } from "../shared/status";
 
 const STATES = ["created", "scouting", "starting", "running", "finalizing", "reporting", "completed", "failed", "cancelled"];
@@ -65,5 +65,4 @@ export function TaskListPage() {
   </div>;
 }
 
-function sceneLabel(scene: string) { return MODE_PROFILES[scene as keyof typeof MODE_PROFILES]?.label ?? scene; }
 function formatDate(value: string) { const date = new Date(value); return Number.isNaN(date.getTime()) ? value : date.toLocaleString("zh-CN"); }

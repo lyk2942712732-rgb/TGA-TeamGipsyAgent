@@ -67,7 +67,7 @@ python -m tga3.task_storage --config-dir /path/to/tga3/config --journal /backup/
 
 - `config/models.json`：Provider、各协议端点的独立地址与模型启用选择，以及供应商共享的密钥。
 - `config/agents.json`：四个 Agent 的身份、CLI 后端、模型与实际调用协议绑定、轮次和完整系统提示词。
-- `config/scenes.json`：八种任务场景及进入黑板的场景提示词。
+- `config/scenes.json`：Web渗透测试、Pwn、Re逆向、Misc安全杂项、Crypto密码学问题、AI安全六种任务场景及进入黑板的场景提示词。历史任务保留原场景记录。
 - `config/runtime.json`：Docker 资源、镜像、目录、通信地址、运行节奏、MCP 指令和 Worker 周期提示。
 - `config/skills/<name>/`：不分角色与场景的通用 Skill 包；Agent 先列包名，选中后只读 `SKILL.md`，再依据其中的指引按需读取包内其他 Markdown。
 

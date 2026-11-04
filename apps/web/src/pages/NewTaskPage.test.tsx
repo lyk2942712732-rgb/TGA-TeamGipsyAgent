@@ -1,6 +1,7 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import sceneConfig from "../../../../tga3/config/scenes.json";
 
 const mocks = vi.hoisted(() => ({
   createTask: vi.fn(async () => ({ id: "task-created" })),
@@ -15,12 +16,16 @@ vi.stubGlobal("URL", { createObjectURL: vi.fn(() => "blob:image"), revokeObjectU
 import { NewTaskPage } from "./NewTaskPage";
 
 describe("NewTaskPage", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => { vi.clearAllMocks(); mocks.listScenes.mockResolvedValue(sceneConfig); });
 
   it("loads TGA3 scenes and task-level agent models", async () => {
     render(<NewTaskPage onCreated={vi.fn()} />);
     expect(await screen.findByRole("region", { name: "创建任务" })).toBeInTheDocument();
-    expect(await screen.findByText("渗透测试")).toBeInTheDocument();
+    await screen.findByText("Web渗透测试");
+    expect(within(screen.getByRole("group", { name: "题目类型：场景" })).getAllByRole("button")
+      .map((button) => button.querySelector("strong")?.textContent)).toEqual([
+        "Web渗透测试", "Pwn", "Re逆向", "Misc安全杂项", "Crypto密码学问题", "AI安全",
+      ]);
     expect(await screen.findByLabelText("OpenAI Worker 模型")).toHaveValue("openai::gpt-test::openai_responses");
   });
 
@@ -28,13 +33,14 @@ describe("NewTaskPage", () => {
     const user = userEvent.setup();
     const onCreated = vi.fn();
     render(<NewTaskPage onCreated={onCreated} />);
-    await screen.findByText("渗透测试");
+    await user.click(await screen.findByRole("button", { name: /AI安全/ }));
+    await waitFor(() => expect(mocks.fetchAgentModelOptions).toHaveBeenLastCalledWith("ai_security"));
     await user.type(screen.getByLabelText("任务名称"), "Web challenge");
     await user.type(screen.getByLabelText(/描述/), "Find the flag");
     await user.upload(document.querySelector<HTMLInputElement>('input[type="file"]')!, new File(["png"], "challenge.png", { type: "image/png" }));
     await user.click(await screen.findByRole("button", { name: "创建并启动" }));
     await waitFor(() => expect(mocks.createTask).toHaveBeenCalledWith({
-      title: "Web challenge", sceneId: "penetration_test", prompt: "Find the flag",
+      title: "Web challenge", sceneId: "ai_security", prompt: "Find the flag",
       fileIds: ["asset-challenge.png"],
       agentModels: { "worker-openai": { provider_id: "openai", model_id: "gpt-test", protocol: "openai_responses" } },
     }));
