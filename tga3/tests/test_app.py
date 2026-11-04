@@ -124,6 +124,7 @@ def test_frontend_api_uses_safe_catalog_and_page_owned_config_documents(tmp_path
         assert [(scene["id"], scene["name"]) for scene in available_scenes] == [
             ("penetration_test", "Web渗透测试"), ("pwn", "Pwn"), ("reverse_engineering", "Re逆向"),
             ("security_misc", "Misc安全杂项"), ("cryptography", "Crypto密码学问题"), ("ai_security", "AI安全"),
+            ("aoe", "AOE多题"),
         ]
         assert client.get("/api/v3/attention").json() == []
         assert client.get("/api/v3/skills").status_code == 200

@@ -82,10 +82,18 @@ class Automation:
 
     async def changed(self, task_id: UUID, latest_seq: int) -> None:
         task = await self.storage.get_task(task_id)
+        # AOE settles the question lease before requesting its report. Starting
+        # here would race its deadline/worker cleanup and the attempt history.
+        if task.scene_id == "aoe":
+            return
         if task.state in {RunState.COMPLETED, RunState.FAILED, RunState.CANCELLED}:
             return
         entries = await self.storage.list_entries(task_id, after_seq=max(0, latest_seq - 1), limit=1)
         if entries and entries[-1].kind == EntryKind.FINAL_CANDIDATE and task_id not in self._reporter_jobs:
+            self.start_report(task_id)
+
+    def start_report(self, task_id: UUID) -> None:
+        if task_id not in self._reporter_jobs:
             self._reporter_jobs[task_id] = asyncio.create_task(self._report(task_id))
 
     async def cancel(self, task_id: UUID) -> None:
@@ -108,6 +116,11 @@ class Automation:
             binding = self.config.resolve_agent(
                 "reporter", run.provider_id, run.model_id, run.protocol, require_api_key=False
             )
+            question = await self.storage.get_task(task_id)
+            if question.parent_task_id and question.metadata.get("status") == "abandoned":
+                binding = binding.model_copy(update={"system_prompt": binding.system_prompt +
+                    "\n本题已达到 AOE 共同攻坚预算并放弃，尚未解出。根据实际记录生成本题独立报告，"
+                    "说明已验证的方法、结果和失败边界，不得编造答案或声称已成功。"})
             await self.storage.update_task(task_id, state=RunState.FINALIZING)
             await asyncio.sleep(self.config.runtime.cadence.finalization_grace_seconds)
             # Both writers exit before the report snapshot is fixed.

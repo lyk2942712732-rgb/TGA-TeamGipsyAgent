@@ -50,6 +50,14 @@ data/tasks/<任务ID>/
 └── writeups/                   最终报告
 ```
 
+AOE 在 `data/tasks/<批次ID>/<题目ID>/` 下为每题创建上述五个目录。批次自己的目录用于 Scout 前置收集；题目的 `inputs/question.json` 保存原题、连接信息、附件、尝试历史和状态，批次 `inputs/questions.json` 保存完整题目清单。题目结构化记录含 `question_id`；每题独立黑板、证据、Intel 和报告，不将不同题目的相似 Intel 合并。控制状态和证据关联仍由 PostgreSQL 维护，原始执行正文保存在文件中。
+
+AOE Scout 依次完成前置收集、逐题侦察、逐题提取、逐题合并；这是同一容器和原生 CLI 会话中的工作划分。第二、三轮无总预算，直到各题 action 和原始 Intel 全覆盖才交接。原始与合并后的 Intel JSON 均保留。
+
+AOE 固定两个 Worker 槽位。独立阶段每人领取不同题目，优先双方都没做过的题，再尝试对方做过的题；有明确难度时先易后难，无可领题则等待。每次独立换题新开原生会话，保留旧题会话供共同攻坚恢复。仅当剩余题目双方都独立尝试完毕后，两个 Worker 才按题共同攻坚，恢复各自该题会话并立即获取黑板新信息。创建任务时可设置每次尝试预算，默认 20 分钟；共同攻坚的一题共享一份预算，超时放弃。单题完成只停止该题参与者并生成该题报告，其他题继续。
+
+AOE 工作台总览展示题目、状态、flag、尝试者和当前 Worker，可进入各题黑板；事件先按题目再按 Agent 筛选。运行图标注当前题目。服务重启从持久化尝试和原截止时间恢复，不追加预算。
+
 旧的五个 `*_root` 配置仅供离线迁移读取，新运行统一使用 `task_root`。
 先停止服务并确认没有进行中的任务，再运行：
 
@@ -67,7 +75,7 @@ python -m tga3.task_storage --config-dir /path/to/tga3/config --journal /backup/
 
 - `config/models.json`：Provider、各协议端点的独立地址与模型启用选择，以及供应商共享的密钥。
 - `config/agents.json`：四个 Agent 的身份、CLI 后端、模型与实际调用协议绑定、轮次和完整系统提示词。
-- `config/scenes.json`：Web渗透测试、Pwn、Re逆向、Misc安全杂项、Crypto密码学问题、AI安全六种任务场景及进入黑板的场景提示词。历史任务保留原场景记录。
+- `config/scenes.json`：Web渗透测试、Pwn、Re逆向、Misc安全杂项、Crypto密码学问题、AI安全六种单题场景，以及使用独立综合提示词的 AOE 多题场景。历史任务保留原场景记录。
 - `config/runtime.json`：Docker 资源、镜像、目录、通信地址、运行节奏、MCP 指令和 Worker 周期提示。
 - `config/skills/<name>/`：不分角色与场景的通用 Skill 包；Agent 先列包名，选中后只读 `SKILL.md`，再依据其中的指引按需读取包内其他 Markdown。
 

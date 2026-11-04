@@ -24,7 +24,7 @@ from .model_discovery import discover_provider_models
 from .provider_profiles import PROVIDER_PROFILES, ProviderProtocol
 from .skills import MAX_ARCHIVE_BYTES, SkillCatalog
 from .storage import Storage
-from .token_usage import TokenUsageTracker
+from .token_usage import COUNTERS, TokenUsageTracker
 
 
 class ModelRequest(BaseModel):
@@ -75,14 +75,17 @@ def create_app(
         coordinator.finish_task_workers,
     )
     coordinator.change_handlers.append(automation.changed)
+    coordinator.aoe.automation = automation
     mcp = build_mcp(config, coordinator.blackboard)
     scout_mcp = build_scout_mcp(config, coordinator.scout_intel)
+    aoe_scout_mcp = build_scout_mcp(config, coordinator.scout_intel, aoe=coordinator.aoe)
     delivery = BlackboardDelivery(config, storage, coordinator.blackboard)
     usage = TokenUsageTracker(config, storage)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
-        async with mcp.session_manager.run(), scout_mcp.session_manager.run():
+        async with mcp.session_manager.run(), scout_mcp.session_manager.run(), aoe_scout_mcp.session_manager.run():
+            await coordinator.restore_aoe()
             try:
                 yield
             finally:
@@ -149,6 +152,7 @@ def create_app(
         prompt: Annotated[str, Form(min_length=1)],
         scene_id: Annotated[str, Form(min_length=1, max_length=100)],
         agent_models: Annotated[str, Form()] = "{}",
+        aoe_attempt_minutes: Annotated[int, Form(ge=1, le=1440)] = 20,
         files: Annotated[list[UploadFile] | None, File()] = None,
     ) -> dict[str, Any]:
         raw_overrides = json.loads(agent_models)
@@ -175,6 +179,7 @@ def create_app(
                 agent_id: (value.provider_id, value.model_id, value.protocol)
                 for agent_id, value in overrides.items()
             },
+            aoe_attempt_minutes=aoe_attempt_minutes,
         )
         return task.model_dump(mode="json")
 
@@ -182,6 +187,25 @@ def create_app(
     async def get_task(task_id: UUID) -> dict[str, Any]:
         task = await storage.get_task(task_id)
         await usage.refresh_task(task_id)
+        if task.scene_id == "aoe" and task.parent_task_id is None:
+            totals = {}
+            for question in await storage.list_questions(task_id):
+                await usage.refresh_task(question.id)
+                for agent in await storage.list_agents(question.id):
+                    if agent.agent_id == "scout":
+                        continue  # Scout has one shared native session under the parent workspace.
+                    current = agent.metadata.get("token_usage")
+                    if current and current.get("reported"):
+                        value = totals.setdefault(agent.agent_id, {key: 0 for key in COUNTERS})
+                        for key in COUNTERS:
+                            value[key] += current.get(key, 0)
+            for agent_id, total in totals.items():
+                current = await storage.get_agent(task_id, agent_id)
+                if any(current.metadata.get("token_usage", {}).get(key) != total[key] for key in COUNTERS):
+                    await storage.update_agent(task_id, agent_id,
+                        metadata={"token_usage": {
+                            **total, "reported": True, "updated_at": task.updated_at.isoformat(),
+                        }})
         agents = await storage.list_agents(task_id)
 
         def historical_model_name(agent) -> str:
@@ -224,6 +248,55 @@ def create_app(
     async def blackboard(task_id: UUID, after_seq: int = 0, limit: int = 500) -> dict[str, Any]:
         return (await coordinator.blackboard.sync(task_id, after_seq=after_seq, limit=limit)).model_dump(mode="json")
 
+    @api.get("/tasks/{task_id}/questions")
+    async def question_overview(task_id: UUID) -> dict:
+        return await coordinator.aoe.snapshot(task_id)
+
+    async def owned_question(task_id: UUID, question_id: UUID):
+        question = await storage.get_task(question_id)
+        if question.parent_task_id != task_id:
+            raise ValueError("题目不属于当前 AOE 任务")
+        return question
+
+    @api.get("/tasks/{task_id}/questions/{question_id}/files/{file_id}")
+    async def question_file(task_id: UUID, question_id: UUID, file_id: UUID):
+        await owned_question(task_id, question_id)
+        item = next((file for file in await storage.list_input_files(question_id) if file.id == file_id), None)
+        if item is None:
+            raise KeyError("题目附件不存在")
+        from pathlib import Path
+
+        path = Path(item.storage_path)
+        if path.is_symlink() or not path.resolve().is_relative_to(config.task_path(question_id, "inputs").resolve()):
+            raise ValueError("题目附件路径不可用")
+        return FileResponse(path, filename=item.name, media_type=item.media_type)
+
+    @api.get("/tasks/{task_id}/aoe/events")
+    async def question_events(task_id: UUID, question_id: UUID | None = None,
+                              agent_id: str | None = None, limit: int = 500) -> dict:
+        parent = await storage.get_task(task_id)
+        if parent.scene_id != "aoe" or parent.parent_task_id is not None:
+            raise ValueError("当前任务不是 AOE 批次")
+        limit = min(max(limit, 1), 10000)
+        questions = ([await owned_question(task_id, question_id)] if question_id
+                     else await storage.list_questions(task_id))
+        result = []
+        has_more = False
+        for target in [parent, *questions]:
+            has_more |= target.event_seq > limit
+            messages = await storage.list_events(target.id, after_seq=max(0, target.event_seq - limit), limit=limit)
+            for message in messages:
+                identity = message.question_id or message.payload.get("question_id")
+                if question_id and str(identity) != str(question_id):
+                    continue
+                if agent_id and not (message.channel_agent_id == agent_id or message.actor.agent_id == agent_id
+                                     or message.payload.get("agent_id") == agent_id):
+                    continue
+                result.append(message)
+        result.sort(key=lambda item: (item.created_at, str(item.id)))
+        has_more |= len(result) > limit
+        return {"events": [item.model_dump(mode="json") for item in result[-limit:]], "has_more": has_more}
+
     @api.post("/tasks/{task_id}/blackboard/prompts")
     async def realtime_prompt(task_id: UUID, body: RealtimePromptRequest) -> dict[str, Any]:
         task = await storage.get_task(task_id)
@@ -234,6 +307,12 @@ def create_app(
             PublishRequest(kind="user_prompt", topic="realtime", body={"text": body.text},
                            idempotency_key=f"realtime:{body.idempotency_key}"),
         )
+        if task.scene_id == "aoe" and task.parent_task_id is None:
+            for question in await storage.list_questions(task_id):
+                if question.state in {RunState.SCOUTING, RunState.RUNNING}:
+                    await coordinator.blackboard.publish(question.id, USER_ACTOR, PublishRequest(
+                        kind="user_prompt", topic="realtime", body={"text": body.text},
+                        idempotency_key=f"aoe-realtime:{body.idempotency_key}"))
         return entry.model_dump(mode="json")
 
     @api.get("/tasks/{task_id}/events")
@@ -544,6 +623,7 @@ def create_app(
     app.include_router(api)
     app.mount("/mcp", mcp.streamable_http_app())
     app.mount("/scout-mcp", scout_mcp.streamable_http_app())
+    app.mount("/aoe-scout-mcp", aoe_scout_mcp.streamable_http_app())
     return app
 
 

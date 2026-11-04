@@ -15,6 +15,7 @@ def hook_journal() -> ActionJournal:
     return ActionJournal(
         Path(os.environ.get("TGA3_LOGS", "/logs")),
         identity={"task_id": os.environ["TGA3_TASK_ID"], "agent_id": os.environ["TGA3_AGENT_ID"],
+                  **({"question_id": os.environ["TGA3_QUESTION_ID"]} if os.environ.get("TGA3_QUESTION_ID") else {}),
                   "runtime": os.environ["TGA3_AGENT_RUNTIME"]},
         secret=os.environ.get("TGA3_API_KEY", ""),
         output_directory=Path(os.environ.get("TGA3_WORKSPACE", "/workspace")),

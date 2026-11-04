@@ -9,13 +9,14 @@ import { TASK_MODES, type TaskMode } from "../modes";
 
 const SCENE_ICONS: Record<TaskMode, string> = {
   penetration_test: "WEB", reverse_engineering: "RE",
-  pwn: "PWN", security_misc: "MISC", cryptography: "CRYPTO", ai_security: "AI",
+  pwn: "PWN", security_misc: "MISC", cryptography: "CRYPTO", ai_security: "AI", aoe: "AOE",
 };
 
 export function NewTaskPage({ onCreated, onCancel = () => history.back() }: { onCreated: (id: string) => void; onCancel?: () => void }) {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [sceneId, setSceneId] = useState<TaskMode>("penetration_test");
+  const [aoeMinutes, setAoeMinutes] = useState("20");
   const [scenes, setScenes] = useState<SceneConfig[]>([]);
   const [assets, setAssets] = useState<StagedAsset[]>([]);
   const [agentOptions, setAgentOptions] = useState<AgentModelOptions | null>(null);
@@ -36,7 +37,8 @@ export function NewTaskPage({ onCreated, onCancel = () => history.back() }: { on
   useEffect(() => () => assetsRef.current.forEach((asset) => { if (asset.previewUrl) URL.revokeObjectURL(asset.previewUrl); }), []);
 
   const selected = useMemo(() => scenes.find((scene) => scene.id === sceneId), [scenes, sceneId]);
-  const ready = Boolean(name.trim() && description.trim() && scenes.length && agentOptions && agentOptions.agents.every((agent) => {
+  const validAoeBudget = sceneId !== "aoe" || (Number.isInteger(Number(aoeMinutes)) && Number(aoeMinutes) >= 1 && Number(aoeMinutes) <= 1440);
+  const ready = Boolean(name.trim() && description.trim() && validAoeBudget && scenes.length && agentOptions && agentOptions.agents.every((agent) => {
     const selectedModel = agentModels[agent.id];
     return selectedModel && agentOptions.models.some((model) => model.provider_id === selectedModel.provider_id && model.model_id === selectedModel.model_id && model.protocol === selectedModel.protocol && model.ready && modelCompatible(agent.runtime, model.protocol));
   }) && !busy && assets.every((asset) => asset.status === "uploaded"));
@@ -67,6 +69,7 @@ export function NewTaskPage({ onCreated, onCancel = () => history.back() }: { on
       const task = await createTask({
         title: name.trim(), sceneId, prompt: description.trim(),
         fileIds: assets.map((asset) => asset.id), agentModels,
+        ...(sceneId === "aoe" ? { aoeAttemptMinutes: Number(aoeMinutes) } : {}),
       });
       onCreated(task.id);
     }
@@ -88,6 +91,10 @@ export function NewTaskPage({ onCreated, onCancel = () => history.back() }: { on
         <fieldset className="scene-picker"><legend>题目类型：场景</legend><div className="scene-card-grid">
           {scenes.filter((scene): scene is SceneConfig & { id: TaskMode } => TASK_MODES.includes(scene.id as TaskMode)).map((scene) => <button type="button" key={scene.id} className={sceneId === scene.id ? "selected" : ""} onClick={() => setSceneId(scene.id)}><span className="scene-code">{SCENE_ICONS[scene.id]}</span><strong>{scene.name}</strong><small>{scene.description}</small>{sceneId === scene.id ? <Check size={17} /> : null}</button>)}
         </div></fieldset>
+        {sceneId === "aoe" ? <label className="wide aoe-budget-field">每次尝试时长（分钟）
+          <input type="number" min={1} max={1440} step={1} value={aoeMinutes} onChange={event => setAoeMinutes(event.target.value)} />
+          <span>默认 20 分钟。独立解题和最后的双人共同攻坚使用同一时长；超时后保留已有记录。</span>
+        </label> : null}
         <label className="wide task-description-field">描述<span>用户初始提示词</span><textarea rows={7} value={description} onChange={(event) => setDescription(event.target.value)} onPaste={onPaste} placeholder="粘贴题目描述、授权目标、已知信息和期望结果；也可以直接粘贴图片。" /></label>
         <div className="task-attachment-zone" onDragOver={(event) => event.preventDefault()} onDrop={onDrop}><input ref={inputRef} type="file" multiple hidden onChange={onFiles} /><button type="button" className="ref-secondary-button" onClick={() => inputRef.current?.click()}><Paperclip size={16} />添加文件或图片</button><span>支持拖放、文件选择以及在描述框粘贴图片</span></div>
         {assets.length ? <div className="task-attachment-list">{assets.map((asset) => <article key={asset.id}>{asset.previewUrl ? <img src={asset.previewUrl} alt="" /> : asset.mediaKind === "image" ? <Image size={22} /> : <FileText size={22} />}<span><strong>{asset.originalName}</strong><small>{formatBytes(asset.size)}</small></span><button aria-label={`移除 ${asset.originalName}`} onClick={() => void remove(asset)}><X size={15} /></button></article>)}</div> : null}
@@ -99,7 +106,7 @@ export function NewTaskPage({ onCreated, onCancel = () => history.back() }: { on
             {compatible.map((model) => <option key={`${model.provider_id}::${model.model_id}::${model.protocol}`} value={`${model.provider_id}::${model.model_id}::${model.protocol}`} disabled={!model.ready}>{model.provider_name} / {model.model_name}{model.ready ? "" : "（密钥不可用）"}</option>)}
           </select></label>;
         })}</div></fieldset> : null}
-        <aside className="new-task-config-note"><strong>Scout → Workers → Reporter</strong><p>{selected?.name ?? "场景"}提示词、题目描述和附件索引将自动进入黑板。</p></aside>
+        <aside className="new-task-config-note"><strong>{sceneId === "aoe" ? "收集题目 → 分题解题 → 逐题报告" : "Scout → Workers → Reporter"}</strong><p>{sceneId === "aoe" ? "两个 Worker 优先领取未尝试的简单题，题目各自保留黑板、文件和报告。" : `${selected?.name ?? "场景"}提示词、题目描述和附件索引将自动进入黑板。`}</p></aside>
         {error ? <p className="inline-error" role="alert">{error}</p> : null}
       </div>
       <footer className="new-task-modal-actions"><button type="button" className="ref-secondary-button" disabled={busy} onClick={onCancel}>取消</button><button type="button" className="ref-primary-button" disabled={!ready} onClick={() => void submit()}><Play size={16} />{busy ? "创建中…" : "创建并启动"}</button></footer>

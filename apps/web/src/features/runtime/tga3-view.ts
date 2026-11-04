@@ -23,8 +23,9 @@ export const roleLabel = (agent: Pick<TGA3Agent, "role">) => ROLE_LABELS[agent.r
 export const stateLabel = (value: string) => AGENT_STATE_LABELS[value] ?? TASK_STATE_LABELS[value] ?? value;
 export function agentStateLabel(agent: TGA3Agent): string {
   if (agent.role === "scout" && ["starting", "running"].includes(agent.actual_state)) {
-    return ({ executing: "第一轮 · 侦察执行中", extracting: "第二轮 · Intel 提取中", merging: "第三轮 · Intel 合并中", importing: "Intel 导入黑板中" } as Record<string, string>)[agent.metadata?.scout_phase ?? ""] ?? stateLabel(agent.actual_state);
+    return ({ collecting: "前置轮 · 题目收集中", executing: "第一轮 · 侦察执行中", extracting: "第二轮 · Intel 提取中", merging: "第三轮 · Intel 合并中", importing: "Intel 导入黑板中" } as Record<string, string>)[agent.metadata?.scout_phase ?? ""] ?? stateLabel(agent.actual_state);
   }
+  if (agent.role === "worker" && agent.actual_state === "idle" && agent.metadata?.aoe_waiting) return "等待可认领题目";
   return stateLabel(agent.actual_state);
 }
 export function stateTone(value: string): "active" | "waiting" | "success" | "danger" | "muted" {

@@ -9,15 +9,23 @@ import { ErrorState } from "../components/ui/ErrorState";
 import { LoadingSkeleton } from "../components/ui/LoadingSkeleton";
 import { TGA3ReportReader } from "../features/runtime/components/TGA3ReportReader";
 import { sceneLabel } from "../modes";
+import type { AOEOverview } from "../runtime/tga3-runtime";
 
-type ReportRow = { id: string; taskId: string; title: string; taskName: string; scene: string; updatedAt: string };
+type ReportRow = { id: string; taskId: string; title: string; taskName: string; scene: string; updatedAt: string; parentTaskId?: string };
 
 async function fetchReports(): Promise<ReportRow[]> {
   const tasks = await requestJson<Array<{ id: string; title: string; scene_id: string; updated_at: string }>>("/api/v3/tasks");
-  const rows = await Promise.all(tasks.map(async (task) => {
+  const expanded = (await Promise.all(tasks.map(async task => {
+    if (task.scene_id !== "aoe") return [{ ...task, reportTitle: `${task.title} Writeup`, parentTaskId: undefined as string | undefined }];
+    const overview = await requestJson<AOEOverview>(`/api/v3/tasks/${encodeURIComponent(task.id)}/questions`);
+    return overview.questions.filter(question => question.report_state === "completed").map(question => ({
+      ...task, id: question.question_id, title: task.title, reportTitle: `${question.title} Writeup`, parentTaskId: task.id,
+    }));
+  }))).flat();
+  const rows = await Promise.all(expanded.map(async (task): Promise<ReportRow | null> => {
     try {
       const writeup = await requestJson<{ id: string; created_at: string }>(`/api/v3/tasks/${encodeURIComponent(task.id)}/writeup`);
-      return { id: writeup.id, taskId: task.id, title: `${task.title} Writeup`, taskName: task.title, scene: task.scene_id, updatedAt: writeup.created_at };
+      return { id: writeup.id, taskId: task.id, title: task.reportTitle, taskName: task.title, scene: task.scene_id, updatedAt: writeup.created_at, parentTaskId: task.parentTaskId };
     } catch { return null; }
   }));
   return rows.filter((row): row is ReportRow => row !== null);
@@ -30,7 +38,7 @@ export function ReportsPage() {
   const [search, setSearch] = useState("");
   const columns: Array<Column<ReportRow>> = [
     { id: "title", header: "报告名称", render: (row) => <button className="text-button" onClick={() => setSelected(row)}><strong>{row.title}</strong></button> },
-    { id: "task", header: "任务", render: (row) => <button className="text-button" onClick={(event) => { event.stopPropagation(); navigate(`/tasks/${encodeURIComponent(row.taskId)}`); }}>{row.taskName}</button> },
+    { id: "task", header: "任务", render: (row) => <button className="text-button" onClick={(event) => { event.stopPropagation(); navigate(row.parentTaskId ? `/tasks/${encodeURIComponent(row.parentTaskId)}/runtime?question=${encodeURIComponent(row.taskId)}&tab=report` : `/tasks/${encodeURIComponent(row.taskId)}`); }}>{row.taskName}</button> },
     { id: "scene", header: "场景", render: (row) => <span className="cell-muted">{sceneLabel(row.scene)}</span> },
     { id: "status", header: "状态", render: () => <span className="ref-chip tone-ok">已生成</span> },
     { id: "updated", header: "生成时间", render: (row) => <span className="cell-muted">{new Date(row.updatedAt).toLocaleString("zh-CN")}</span> },

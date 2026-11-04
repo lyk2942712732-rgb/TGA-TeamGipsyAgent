@@ -90,12 +90,14 @@ export async function createTask(input: {
   prompt: string;
   fileIds: string[];
   agentModels: Record<string, { provider_id: string; model_id: string; protocol: ProviderProtocol }>;
+  aoeAttemptMinutes?: number;
 }): Promise<TGA3TaskListItem> {
   const form = new FormData();
   form.set("title", input.title);
   form.set("scene_id", input.sceneId);
   form.set("prompt", input.prompt);
   form.set("agent_models", JSON.stringify(input.agentModels));
+  if (input.sceneId === "aoe") form.set("aoe_attempt_minutes", String(input.aoeAttemptMinutes ?? 20));
   for (const id of input.fileIds) {
     const file = pendingFiles.get(id);
     if (file) form.append("files", file, file.name);

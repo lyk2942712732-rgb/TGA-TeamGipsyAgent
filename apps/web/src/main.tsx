@@ -8,6 +8,7 @@ import "./styles/reference.css";
 import "./styles/tga3-runtime.css";
 import "./styles/workbench.css";
 import "./styles/collaboration.css";
+import "./styles/aoe.css";
 
 createRoot(document.getElementById("root")!).render(
   <React.StrictMode>

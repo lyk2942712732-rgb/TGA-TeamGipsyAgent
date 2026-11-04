@@ -270,6 +270,7 @@ class TGA3Config:
         "security_misc",
         "cryptography",
         "ai_security",
+        "aoe",
     }
 
     def __init__(self, config_dir: str | Path) -> None:
@@ -342,7 +343,9 @@ class TGA3Config:
     def task_path(self, task_id: UUID | str, kind: str | None = None, agent_id: str | None = None) -> Path:
         """Resolve task storage centrally, without exposing other tasks to a container."""
         root = self.resolve_path(self.runtime.task_root)
-        path = root / str(UUID(str(task_id)))
+        normalized = UUID(str(task_id))
+        parent = getattr(self, "_question_parents", {}).get(normalized)
+        path = root / str(parent) / str(normalized) if parent is not None else root / str(normalized)
         if kind is not None:
             if kind not in {"inputs", "workspaces", "logs", "intels", "writeups"}:
                 raise ValueError(f"unknown task directory: {kind}")
@@ -354,6 +357,20 @@ class TGA3Config:
         if not path.resolve().is_relative_to(root):
             raise ValueError("task directory escapes task root")
         return path
+
+    def register_question_path(self, parent_id: UUID, question_id: UUID) -> None:
+        if parent_id == question_id:
+            raise ValueError("Question cannot be its own parent")
+        if not hasattr(self, "_question_parents"):
+            self._question_parents = {}
+        existing = self._question_parents.get(question_id)
+        if existing is not None and existing != parent_id:
+            raise ValueError("Question is already assigned to another batch")
+        self._question_parents[question_id] = parent_id
+
+    def question_scope(self, task_id: UUID | str) -> dict:
+        normalized = UUID(str(task_id))
+        return {"question_id": str(normalized)} if normalized in getattr(self, "_question_parents", {}) else {}
 
     def ensure_task_directories(self, task_id: UUID | str) -> None:
         for kind in ("inputs", "workspaces", "logs", "intels", "writeups"):

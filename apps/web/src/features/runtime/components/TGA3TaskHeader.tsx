@@ -21,7 +21,7 @@ export function TGA3TaskHeader({ snapshot, connection, busy, onRefresh, onStop, 
       <div><h1>{task.title}</h1><p>{MODE_PROFILES[task.scene_id as keyof typeof MODE_PROFILES]?.label ?? task.scene_id} · 创建于 {formatTime(task.created_at)}</p></div>
       <div className="tga3-task-actions">
         <button type="button" className="ref-secondary-button" onClick={onRefresh}><RefreshCw size={15} />刷新</button>
-        {task.state === "completed" ? <a className="ref-secondary-button" href={tga3RuntimeApi.reportUrl(task.id)} target="_blank" rel="noreferrer"><Download size={15} />下载报告</a> : null}
+        {snapshot.aoe ? <a className="ref-secondary-button" href={`/tasks/${encodeURIComponent(task.id)}/runtime?tab=report`}>查看逐题报告</a> : task.state === "completed" ? <a className="ref-secondary-button" href={tga3RuntimeApi.reportUrl(task.id)} target="_blank" rel="noreferrer"><Download size={15} />下载报告</a> : null}
         {!terminal ? <button type="button" className="tga3-danger-button" disabled={busy} onClick={onStop}><Square size={14} />停止任务</button> : null}
         <button type="button" className="ref-secondary-button tga3-delete-task-button" disabled={busy} onClick={onDelete}><Trash2 size={14} />删除任务</button>
       </div>
@@ -29,7 +29,7 @@ export function TGA3TaskHeader({ snapshot, connection, busy, onRefresh, onStop, 
     <div className="tga3-task-facts">
       <span className={`tga3-state-pill tone-${stateTone(task.state)}`}><i />{stateLabel(task.state)}</span>
       <Fact label="Agent" value={`${active} 活动 / ${agents.length} 总数`} />
-      <Fact label="Intel" value={`${intel}`} /><Fact label="Finding" value={`${findings}`} /><Fact label="最终候选" value={`${finals}`} />
+      {snapshot.aoe ? <><Fact label="题目" value={String(snapshot.aoe.questions.length)} /><Fact label="已解出" value={String(snapshot.aoe.questions.filter(q => q.status === "solved").length)} /><Fact label="已放弃" value={String(snapshot.aoe.questions.filter(q => q.status === "abandoned").length)} /></> : <><Fact label="Intel" value={`${intel}`} /><Fact label="Finding" value={`${findings}`} /><Fact label="最终候选" value={`${finals}`} /></>}
       <Fact label="同步" value={connectionLabel(connection)} />
       {task.state === "scouting" && agents.find(agent => agent.role === "scout") ? <Fact label="Scout 阶段" value={agentStateLabel(agents.find(agent => agent.role === "scout")!)} /> : null}
       <div className="tga3-token-usage">

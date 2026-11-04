@@ -6,9 +6,13 @@ CREATE TABLE task_runs (
     blackboard_seq BIGINT NOT NULL DEFAULT 0,
     event_seq BIGINT NOT NULL DEFAULT 0,
     final_snapshot_seq BIGINT,
+    parent_task_id UUID REFERENCES task_runs(id) ON DELETE CASCADE,
+    metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+CREATE INDEX task_runs_parent_idx ON task_runs(parent_task_id);
 
 CREATE TABLE agent_runs (
     task_id UUID NOT NULL REFERENCES task_runs(id) ON DELETE CASCADE,

@@ -32,13 +32,17 @@ from .errors import ConflictError, FindingRejectedError, NotFoundError
 
 class Storage(Protocol):
     async def publication_by_key(self, task_id: UUID, agent_id: str, key: str) -> BlackboardEntry | None: ...
-    async def create_task(self, title: str, scene_id: str, task_id: UUID | None = None) -> TaskRun: ...
+    async def create_task(self, title: str, scene_id: str, task_id: UUID | None = None, *,
+                          parent_task_id: UUID | None = None, metadata: dict | None = None) -> TaskRun: ...
     async def get_task(self, task_id: UUID) -> TaskRun: ...
     async def list_tasks(self, *, limit: int = 200) -> list[TaskRun]: ...
+    async def list_questions(self, parent_task_id: UUID | None = None) -> list[TaskRun]: ...
     async def delete_task(self, task_id: UUID) -> None: ...
     async def update_task(
-        self, task_id: UUID, *, state: RunState | None = None, final_snapshot_seq: int | None = None
+        self, task_id: UUID, *, state: RunState | None = None, final_snapshot_seq: int | None = None,
+        metadata: dict | None = None,
     ) -> TaskRun: ...
+    async def mutate_task_metadata(self, task_id: UUID, transform: Callable[[dict], dict]) -> TaskRun: ...
     async def upsert_agent(self, run: AgentRun) -> AgentRun: ...
     async def get_agent(self, task_id: UUID, agent_id: str) -> AgentRun: ...
     async def list_agents(self, task_id: UUID) -> list[AgentRun]: ...
@@ -48,6 +52,7 @@ class Storage(Protocol):
     ) -> AgentRun: ...
     async def register_artifact(self, artifact: Artifact) -> Artifact: ...
     async def register_input_file(self, item: InputFile) -> InputFile: ...
+    async def list_input_files(self, task_id: UUID) -> list[InputFile]: ...
     async def publish(self, task_id: UUID, actor: Actor, request: PublishRequest) -> BlackboardEntry: ...
     async def list_entries(
         self, task_id: UUID, *, after_seq: int = 0, up_to_seq: int | None = None, limit: int = 500
@@ -95,7 +100,21 @@ def _validate_publish(
             raise FindingRejectedError(f"final candidate references unknown findings: {', '.join(missing)}")
 
 
-class InMemoryStorage:
+class QuestionScopes:
+    """Derived serialization provenance; no duplicate scope columns in evidence tables."""
+
+    def _remember_task(self, task: TaskRun) -> TaskRun:
+        if task.parent_task_id is not None:
+            self._question_ids.add(task.id)
+        return task
+
+    def _scoped(self, record):
+        if record.task_id in self._question_ids:
+            return record.model_copy(update={"question_id": record.task_id})
+        return record
+
+
+class InMemoryStorage(QuestionScopes):
     """Fast behavioural reference used by tests and local protocol development."""
 
     async def publication_by_key(self, task_id: UUID, agent_id: str, key: str) -> BlackboardEntry | None:
@@ -104,6 +123,7 @@ class InMemoryStorage:
                      if entry.actor.agent_id == agent_id and entry.idempotency_key == key), None)
     def __init__(self) -> None:
         self.tasks: dict[UUID, TaskRun] = {}
+        self._question_ids: set[UUID] = set()
         self.agents: dict[tuple[UUID, str], AgentRun] = {}
         self.artifacts: dict[UUID, Artifact] = {}
         self.input_files: dict[UUID, InputFile] = {}
@@ -113,12 +133,19 @@ class InMemoryStorage:
         self.writeups: dict[UUID, Writeup] = {}
         self._locks: defaultdict[UUID, asyncio.Lock] = defaultdict(asyncio.Lock)
 
-    async def create_task(self, title: str, scene_id: str, task_id: UUID | None = None) -> TaskRun:
-        run = TaskRun(id=task_id or uuid4(), title=title, scene_id=scene_id)
+    async def create_task(self, title: str, scene_id: str, task_id: UUID | None = None, *,
+                          parent_task_id: UUID | None = None, metadata: dict | None = None) -> TaskRun:
+        if parent_task_id is not None:
+            parent = await self.get_task(parent_task_id)
+            if parent.parent_task_id is not None or parent.scene_id != "aoe":
+                raise ValueError("Questions require a top-level AOE task")
+        ident = task_id or uuid4()
+        run = TaskRun(id=ident, title=title, scene_id=scene_id, parent_task_id=parent_task_id,
+                      question_id=ident if parent_task_id else None, metadata=metadata or {})
         if run.id in self.tasks:
             raise ConflictError(f"task already exists: {run.id}")
         self.tasks[run.id] = run
-        return run
+        return self._remember_task(run)
 
     async def get_task(self, task_id: UUID) -> TaskRun:
         try:
@@ -127,10 +154,18 @@ class InMemoryStorage:
             raise NotFoundError(f"task not found: {task_id}") from exc
 
     async def list_tasks(self, *, limit: int = 200) -> list[TaskRun]:
-        return sorted(self.tasks.values(), key=lambda item: item.created_at, reverse=True)[:limit]
+        return sorted((item for item in self.tasks.values() if item.parent_task_id is None),
+                      key=lambda item: item.created_at, reverse=True)[:limit]
+
+    async def list_questions(self, parent_task_id: UUID | None = None) -> list[TaskRun]:
+        return sorted((item for item in self.tasks.values() if item.parent_task_id is not None
+                       and (parent_task_id is None or item.parent_task_id == parent_task_id)),
+                      key=lambda item: (item.metadata.get("ordinal", 0), item.created_at))
 
     async def delete_task(self, task_id: UUID) -> None:
         await self.get_task(task_id)
+        for question in await self.list_questions(task_id):
+            await self.delete_task(question.id)
         agent_keys = [key for key in self.agents if key[0] == task_id]
         artifact_ids = [item.id for item in self.artifacts.values() if item.task_id == task_id]
         input_ids = [item.id for item in self.input_files.values() if item.task_id == task_id]
@@ -150,9 +185,11 @@ class InMemoryStorage:
         self.events.pop(task_id, None)
         self._locks.pop(task_id, None)
         self.tasks.pop(task_id, None)
+        self._question_ids.discard(task_id)
 
     async def update_task(
-        self, task_id: UUID, *, state: RunState | None = None, final_snapshot_seq: int | None = None
+        self, task_id: UUID, *, state: RunState | None = None, final_snapshot_seq: int | None = None,
+        metadata: dict | None = None,
     ) -> TaskRun:
         async with self._locks[task_id]:
             run = await self.get_task(task_id)
@@ -161,11 +198,23 @@ class InMemoryStorage:
                 changes["state"] = state
             if final_snapshot_seq is not None:
                 changes["final_snapshot_seq"] = final_snapshot_seq
+            if metadata is not None:
+                changes["metadata"] = {**run.metadata, **metadata}
             run = run.model_copy(update=changes)
             self.tasks[task_id] = run
             return run
 
+    async def mutate_task_metadata(self, task_id, transform) -> TaskRun:
+        async with self._locks[task_id]:
+            current = await self.get_task(task_id)
+            updated = current.model_copy(update={
+                "metadata": transform(dict(current.metadata)), "updated_at": utc_now(),
+            })
+            self.tasks[task_id] = updated
+            return updated
+
     async def upsert_agent(self, run: AgentRun) -> AgentRun:
+        run = self._scoped(run)
         self.agents[(run.task_id, run.agent_id)] = run
         return run
 
@@ -202,6 +251,7 @@ class InMemoryStorage:
 
     async def register_artifact(self, artifact: Artifact) -> Artifact:
         await self.get_task(artifact.task_id)
+        artifact = self._scoped(artifact)
         if artifact.id in self.artifacts:
             return self.artifacts[artifact.id]
         self.artifacts[artifact.id] = artifact
@@ -209,10 +259,15 @@ class InMemoryStorage:
 
     async def register_input_file(self, item: InputFile) -> InputFile:
         await self.get_task(item.task_id)
+        item = self._scoped(item)
         if item.id in self.input_files:
             raise ConflictError(f"input file already exists: {item.id}")
         self.input_files[item.id] = item
         return item
+
+    async def list_input_files(self, task_id: UUID) -> list[InputFile]:
+        await self.get_task(task_id)
+        return [item for item in self.input_files.values() if item.task_id == task_id]
 
     async def publish(self, task_id: UUID, actor: Actor, request: PublishRequest) -> BlackboardEntry:
         async with self._locks[task_id]:
@@ -228,6 +283,7 @@ class InMemoryStorage:
             )
             entry = BlackboardEntry(
                 task_id=task_id,
+                question_id=task_id if task.parent_task_id else None,
                 seq=task.blackboard_seq + 1,
                 actor=actor,
                 kind=request.kind,
@@ -269,6 +325,7 @@ class InMemoryStorage:
             task = await self.get_task(task_id)
             message = TaskEvent(
                 task_id=task_id,
+                question_id=task_id if task.parent_task_id else None,
                 seq=task.event_seq + 1,
                 actor=actor,
                 kind=kind,
@@ -295,7 +352,7 @@ class InMemoryStorage:
             storage_path=path,
             sha256=sha256,
         )
-        self.writeups[writeup.id] = writeup
+        self.writeups[writeup.id] = self._scoped(writeup)
         return writeup.id
 
     async def latest_writeup(self, task_id: UUID) -> Writeup:
@@ -315,13 +372,17 @@ def _object(value: Any) -> Any:
 
 
 def _task(row: Any) -> TaskRun:
-    return TaskRun.model_validate(dict(row))
+    data = dict(row)
+    data["metadata"] = _object(data.get("metadata", {}))
+    if data.get("parent_task_id"):
+        data["question_id"] = data["id"]
+    return TaskRun.model_validate(data)
 
 
 def _agent(row: Any) -> AgentRun:
     data = dict(row)
     data["metadata"] = _object(data.get("metadata", {}))
-    return AgentRun.model_validate({key: data[key] for key in AgentRun.model_fields})
+    return AgentRun.model_validate({key: data[key] for key in AgentRun.model_fields if key in data})
 
 
 def _entry(row: Any) -> BlackboardEntry:
@@ -332,7 +393,7 @@ def _entry(row: Any) -> BlackboardEntry:
     # ``actor_id`` is a denormalized PostgreSQL-only column used by the
     # idempotency index.  It is intentionally not part of the public blackboard
     # contract, whose canonical actor identity lives in ``actor``.
-    return BlackboardEntry.model_validate({key: data[key] for key in BlackboardEntry.model_fields})
+    return BlackboardEntry.model_validate({key: data[key] for key in BlackboardEntry.model_fields if key in data})
 
 
 def _event(row: Any) -> TaskEvent:
@@ -342,18 +403,20 @@ def _event(row: Any) -> TaskEvent:
     return TaskEvent.model_validate(data)
 
 
-class PostgresStorage:
+class PostgresStorage(QuestionScopes):
     """PostgreSQL store. Per-task advisory locks serialize sequence allocation."""
 
     def __init__(self, pool: Any) -> None:
         self.pool = pool
+        self._question_ids: set[UUID] = set()
 
     async def publication_by_key(self, task_id: UUID, agent_id: str, key: str) -> BlackboardEntry | None:
         row = await self.pool.fetchrow(
             "SELECT * FROM blackboard_entries WHERE task_id=$1 AND actor_id=$2 AND idempotency_key=$3",
             task_id, agent_id, key,
         )
-        return _entry(row) if row else None
+        await self.get_task(task_id)
+        return self._scoped(_entry(row)) if row else None
 
     @classmethod
     async def connect(cls, dsn: str, *, min_size: int = 1, max_size: int = 10) -> PostgresStorage:
@@ -362,6 +425,16 @@ class PostgresStorage:
         pool = await asyncpg.create_pool(dsn, min_size=min_size, max_size=max_size)
         try:
             async with pool.acquire() as connection:
+                await connection.execute("ALTER TABLE IF EXISTS task_runs "
+                                         "ADD COLUMN IF NOT EXISTS parent_task_id UUID REFERENCES task_runs(id) "
+                                         "ON DELETE CASCADE")
+                await connection.execute("ALTER TABLE IF EXISTS task_runs "
+                                         "ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{}'::jsonb")
+                await connection.execute("""DO $$ BEGIN
+                    IF to_regclass('task_runs') IS NOT NULL THEN
+                        CREATE INDEX IF NOT EXISTS task_runs_parent_idx ON task_runs(parent_task_id);
+                    END IF;
+                END $$""")
                 await connection.execute("ALTER TABLE IF EXISTS blackboard_entries "
                                          "ADD COLUMN IF NOT EXISTS source_action_ids JSONB "
                                          "NOT NULL DEFAULT '[]'::jsonb")
@@ -388,29 +461,44 @@ class PostgresStorage:
     async def _lock(conn: Any, task_id: UUID) -> None:
         await conn.execute("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", str(task_id))
 
-    async def create_task(self, title: str, scene_id: str, task_id: UUID | None = None) -> TaskRun:
+    async def create_task(self, title: str, scene_id: str, task_id: UUID | None = None, *,
+                          parent_task_id: UUID | None = None, metadata: dict | None = None) -> TaskRun:
+        if parent_task_id is not None:
+            parent = await self.get_task(parent_task_id)
+            if parent.parent_task_id is not None or parent.scene_id != "aoe":
+                raise ValueError("Questions require a top-level AOE task")
         task_id = task_id or uuid4()
         row = await self.pool.fetchrow(
-            "INSERT INTO task_runs(id,title,scene_id,state) VALUES($1,$2,$3,$4) RETURNING *",
+            "INSERT INTO task_runs(id,title,scene_id,state,parent_task_id,metadata) "
+            "VALUES($1,$2,$3,$4,$5,$6::jsonb) RETURNING *",
             task_id,
             title,
             scene_id,
             RunState.CREATED.value,
+            parent_task_id,
+            _json(metadata or {}),
         )
-        return _task(row)
+        return self._remember_task(_task(row))
 
     async def get_task(self, task_id: UUID) -> TaskRun:
         row = await self.pool.fetchrow("SELECT * FROM task_runs WHERE id=$1", task_id)
         if row is None:
             raise NotFoundError(f"task not found: {task_id}")
-        return _task(row)
+        return self._remember_task(_task(row))
 
     async def list_tasks(self, *, limit: int = 200) -> list[TaskRun]:
         rows = await self.pool.fetch(
-            "SELECT * FROM task_runs ORDER BY created_at DESC LIMIT $1",
+            "SELECT * FROM task_runs WHERE parent_task_id IS NULL ORDER BY created_at DESC LIMIT $1",
             limit,
         )
         return [_task(row) for row in rows]
+
+    async def list_questions(self, parent_task_id: UUID | None = None) -> list[TaskRun]:
+        rows = await self.pool.fetch(
+            "SELECT * FROM task_runs WHERE parent_task_id IS NOT NULL "
+            "AND ($1::uuid IS NULL OR parent_task_id=$1) ORDER BY created_at,id", parent_task_id,
+        )
+        return [self._remember_task(_task(row)) for row in rows]
 
     async def delete_task(self, task_id: UUID) -> None:
         async with self.pool.acquire() as conn:
@@ -422,30 +510,45 @@ class PostgresStorage:
                 await conn.execute(
                     """DELETE FROM blackboard_artifact_links
                        WHERE entry_id IN (
-                           SELECT id FROM blackboard_entries WHERE task_id=$1
+                           SELECT id FROM blackboard_entries WHERE task_id IN (
+                               SELECT id FROM task_runs WHERE id=$1 OR parent_task_id=$1)
                        ) OR artifact_id IN (
-                           SELECT id FROM artifacts WHERE task_id=$1
+                           SELECT id FROM artifacts WHERE task_id IN (
+                               SELECT id FROM task_runs WHERE id=$1 OR parent_task_id=$1)
                        )""",
                     task_id,
                 )
                 result = await conn.execute("DELETE FROM task_runs WHERE id=$1", task_id)
         if result == "DELETE 0":
             raise NotFoundError(f"task not found: {task_id}")
+        self._question_ids.discard(task_id)
 
     async def update_task(
-        self, task_id: UUID, *, state: RunState | None = None, final_snapshot_seq: int | None = None
+        self, task_id: UUID, *, state: RunState | None = None, final_snapshot_seq: int | None = None,
+        metadata: dict | None = None,
     ) -> TaskRun:
         row = await self.pool.fetchrow(
             """UPDATE task_runs SET state=COALESCE($2,state),
-               final_snapshot_seq=COALESCE($3,final_snapshot_seq), updated_at=now()
+               final_snapshot_seq=COALESCE($3,final_snapshot_seq), metadata=metadata || $4::jsonb, updated_at=now()
                WHERE id=$1 RETURNING *""",
             task_id,
             state.value if state else None,
             final_snapshot_seq,
+            _json(metadata or {}),
         )
         if row is None:
             raise NotFoundError(f"task not found: {task_id}")
-        return _task(row)
+        return self._remember_task(_task(row))
+
+    async def mutate_task_metadata(self, task_id, transform) -> TaskRun:
+        async with self.pool.acquire() as conn, conn.transaction():
+            row = await conn.fetchrow("SELECT * FROM task_runs WHERE id=$1 FOR UPDATE", task_id)
+            if row is None:
+                raise NotFoundError(f"task not found: {task_id}")
+            metadata = transform(dict(_task(row).metadata))
+            row = await conn.fetchrow("UPDATE task_runs SET metadata=$2::jsonb,updated_at=now() "
+                                      "WHERE id=$1 RETURNING *", task_id, _json(metadata))
+            return self._remember_task(_task(row))
 
     async def upsert_agent(self, run: AgentRun) -> AgentRun:
         row = await self.pool.fetchrow(
@@ -471,17 +574,19 @@ class PostgresStorage:
             run.updated_at,
             _json(run.metadata),
         )
-        return _agent(row)
+        return self._scoped(_agent(row))
 
     async def get_agent(self, task_id: UUID, agent_id: str) -> AgentRun:
+        await self.get_task(task_id)
         row = await self.pool.fetchrow("SELECT * FROM agent_runs WHERE task_id=$1 AND agent_id=$2", task_id, agent_id)
         if row is None:
             raise NotFoundError(f"agent not found: {task_id}/{agent_id}")
-        return _agent(row)
+        return self._scoped(_agent(row))
 
     async def list_agents(self, task_id: UUID) -> list[AgentRun]:
+        await self.get_task(task_id)
         return [
-            _agent(row)
+            self._scoped(_agent(row))
             for row in await self.pool.fetch("SELECT * FROM agent_runs WHERE task_id=$1 ORDER BY agent_id", task_id)
         ]
 
@@ -507,7 +612,7 @@ class PostgresStorage:
         )
         if row is None:
             raise NotFoundError(f"agent not found: {task_id}/{agent_id}")
-        return _agent(row)
+        return self._scoped(_agent(row))
 
     async def mutate_agent_metadata(self, task_id, agent_id, transform) -> AgentRun:
         async with self.pool.acquire() as conn, conn.transaction():
@@ -521,9 +626,10 @@ class PostgresStorage:
                 "UPDATE agent_runs SET metadata=$3::jsonb,updated_at=now() "
                 "WHERE task_id=$1 AND agent_id=$2 RETURNING *", task_id, agent_id, _json(metadata),
             )
-            return _agent(row)
+            return self._scoped(_agent(row))
 
     async def register_artifact(self, artifact: Artifact) -> Artifact:
+        await self.get_task(artifact.task_id)
         row = await self.pool.fetchrow(
             """INSERT INTO artifacts(
                    id,task_id,created_by,name,storage_path,media_type,sha256,size_bytes,available,created_at
@@ -543,9 +649,10 @@ class PostgresStorage:
         )
         data = dict(row)
         data["created_by"] = _object(data["created_by"])
-        return Artifact.model_validate(data)
+        return self._scoped(Artifact.model_validate(data))
 
     async def register_input_file(self, item: InputFile) -> InputFile:
+        await self.get_task(item.task_id)
         row = await self.pool.fetchrow(
             """INSERT INTO input_files(id,task_id,name,storage_path,media_type,sha256,size_bytes,created_at)
                VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *""",
@@ -558,9 +665,15 @@ class PostgresStorage:
             item.size_bytes,
             item.created_at,
         )
-        return InputFile.model_validate(dict(row))
+        return self._scoped(InputFile.model_validate(dict(row)))
+
+    async def list_input_files(self, task_id: UUID) -> list[InputFile]:
+        await self.get_task(task_id)
+        rows = await self.pool.fetch("SELECT * FROM input_files WHERE task_id=$1 ORDER BY created_at,id", task_id)
+        return [self._scoped(InputFile.model_validate(dict(row))) for row in rows]
 
     async def publish(self, task_id: UUID, actor: Actor, request: PublishRequest) -> BlackboardEntry:
+        await self.get_task(task_id)
         async with self.pool.acquire() as conn, conn.transaction():
             await self._lock(conn, task_id)
             existing = await conn.fetchrow(
@@ -570,7 +683,7 @@ class PostgresStorage:
                 request.idempotency_key,
             )
             if existing:
-                return _entry(existing)
+                return self._scoped(_entry(existing))
             if request.artifact_refs:
                 ids = [ref.artifact_id for ref in request.artifact_refs]
                 rows = await conn.fetch(
@@ -621,11 +734,12 @@ class PostgresStorage:
                     ref.description,
                 )
             await conn.execute("SELECT pg_notify('tga3_blackboard',$1)", _json({"task_id": task_id, "latest_seq": seq}))
-            return _entry(row)
+            return self._scoped(_entry(row))
 
     async def list_entries(
         self, task_id: UUID, *, after_seq: int = 0, up_to_seq: int | None = None, limit: int = 500
     ) -> list[BlackboardEntry]:
+        await self.get_task(task_id)
         rows = await self.pool.fetch(
             """SELECT * FROM blackboard_entries WHERE task_id=$1 AND seq>$2 AND ($3::bigint IS NULL OR seq<=$3)
                ORDER BY seq LIMIT $4""",
@@ -634,7 +748,7 @@ class PostgresStorage:
             up_to_seq,
             limit,
         )
-        return [_entry(row) for row in rows]
+        return [self._scoped(_entry(row)) for row in rows]
 
     async def finding_links(self, task_id: UUID, finding_id: UUID) -> list[ArtifactRef]:
         rows = await self.pool.fetch(
@@ -658,6 +772,7 @@ class PostgresStorage:
         channel_agent_id: str = "system",
         payload: dict[str, Any] | None = None,
     ) -> TaskEvent:
+        await self.get_task(task_id)
         async with self.pool.acquire() as conn, conn.transaction():
             await self._lock(conn, task_id)
             seq = await conn.fetchval(
@@ -679,16 +794,17 @@ class PostgresStorage:
                 _json(payload or {}),
             )
             await conn.execute("SELECT pg_notify('tga3_events',$1)", _json({"task_id": task_id, "latest_seq": seq}))
-            return _event(row)
+            return self._scoped(_event(row))
 
     async def list_events(self, task_id: UUID, *, after_seq: int = 0, limit: int = 500) -> list[TaskEvent]:
+        await self.get_task(task_id)
         rows = await self.pool.fetch(
             "SELECT * FROM task_events WHERE task_id=$1 AND seq>$2 ORDER BY seq LIMIT $3",
             task_id,
             after_seq,
             limit,
         )
-        return [_event(row) for row in rows]
+        return [self._scoped(_event(row)) for row in rows]
 
 
 
@@ -706,13 +822,14 @@ class PostgresStorage:
         return writeup_id
 
     async def latest_writeup(self, task_id: UUID) -> Writeup:
+        await self.get_task(task_id)
         row = await self.pool.fetchrow(
             "SELECT * FROM writeups WHERE task_id=$1 ORDER BY created_at DESC LIMIT 1",
             task_id,
         )
         if row is None:
             raise NotFoundError(f"writeup not found for task: {task_id}")
-        return Writeup.model_validate(dict(row))
+        return self._scoped(Writeup.model_validate(dict(row)))
 
 
 __all__ = ["InMemoryStorage", "PostgresStorage", "Storage"]

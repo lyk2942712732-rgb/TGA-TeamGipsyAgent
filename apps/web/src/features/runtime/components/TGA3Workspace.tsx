@@ -6,23 +6,24 @@ import { BOARD_KIND_LABELS, entryTopic, EVENT_KIND_LABELS, bodyText, formatTime,
 import { TGA3ReportReader } from "./TGA3ReportReader";
 import { tga3RuntimeApi } from "../../../api/tga3-runtime-control";
 
-export type TGA3WorkspaceTab = "blackboard" | "events" | "findings" | "inputs" | "report" | "runtime";
-const TABS: Array<[TGA3WorkspaceTab, string]> = [["blackboard", "共享黑板"], ["events", "执行事件"], ["findings", "Findings"], ["inputs", "输入与文件"], ["report", "报告"], ["runtime", "运行图"]];
+export type TGA3WorkspaceTab = "blackboard" | "events" | "findings" | "inputs" | "report";
+const TABS: Array<[TGA3WorkspaceTab, string]> = [["blackboard", "共享黑板"], ["events", "执行事件"], ["findings", "Findings"], ["inputs", "输入与文件"], ["report", "报告"]];
 
-export function TGA3Workspace({ snapshot, tab, selectedAgentId, onTab, onChanged }: { snapshot: TGA3RuntimeSnapshot; tab: TGA3WorkspaceTab; selectedAgentId: string | null; onTab: (tab: TGA3WorkspaceTab) => void; onChanged?: () => void }) {
+export function TGA3Workspace({ snapshot, tab, selectedAgentId, onTab, onChanged, labels = {}, panels = {}, counts = {} }: { snapshot: TGA3RuntimeSnapshot; tab: TGA3WorkspaceTab; selectedAgentId: string | null; onTab: (tab: TGA3WorkspaceTab) => void; onChanged?: () => void; labels?: Partial<Record<TGA3WorkspaceTab, string>>; panels?: Partial<Record<TGA3WorkspaceTab, ReactNode>>; counts?: Partial<Record<TGA3WorkspaceTab, number>> }) {
   const effectiveTab = TABS.some(([value]) => value === tab) ? tab : "blackboard";
   return <section className="tga3-workspace" aria-label="TGA3 任务工作区">
     <header><div><span>SHARED TASK STATE</span><h2>任务工作区</h2></div><p>黑板是 Agent 之间唯一的协作通道</p></header>
     <div className="tga3-workspace-tabs" role="tablist" aria-label="任务数据">
-      {TABS.map(([value, label]) => <button key={value} role="tab" aria-selected={effectiveTab === value} onClick={() => onTab(value)}>{label}{tabCount(value, snapshot) ? <small>{tabCount(value, snapshot)}</small> : null}</button>)}
+      {TABS.map(([value, label]) => <button key={value} role="tab" aria-selected={effectiveTab === value} onClick={() => onTab(value)}>{labels[value] ?? label}{(counts[value] ?? tabCount(value, snapshot)) ? <small>{counts[value] ?? tabCount(value, snapshot)}</small> : null}</button>)}
     </div>
     <div className="tga3-workspace-panel" role="tabpanel">
+      {panels[effectiveTab] !== undefined ? panels[effectiveTab] : <>
       {effectiveTab === "blackboard" ? <BlackboardPanel entries={snapshot.blackboard} taskId={snapshot.task.id} acceptingPrompts={["scouting", "running"].includes(snapshot.task.state)} onChanged={onChanged} /> : null}
       {effectiveTab === "events" ? <EventsPanel messages={snapshot.events} selectedAgentId={selectedAgentId} /> : null}
       {effectiveTab === "findings" ? <FindingsPanel entries={snapshot.blackboard} /> : null}
       {effectiveTab === "inputs" ? <InputsPanel entries={snapshot.blackboard} /> : null}
       {effectiveTab === "report" ? <ReportPanel snapshot={snapshot} /> : null}
-      {effectiveTab === "runtime" ? <div className="tga3-empty"><h3>实时运行图位于任务顶部</h3><p>点击图中的 Agent、黑板或 Skills，查看对应动作与交互。</p><div className="workbench-definition"><span>黑板位置<strong>#{snapshot.task.blackboard_seq}</strong></span><span>事件位置<strong>#{snapshot.task.event_seq}</strong></span></div></div> : null}
+      </>}
     </div>
   </section>;
 }
@@ -52,7 +53,7 @@ function BlackboardPanel({ entries, taskId, acceptingPrompts, onChanged }: { ent
   </div>;
 }
 
-function RealtimePrompt({ taskId, accepting, onChanged }: { taskId: string; accepting: boolean; onChanged?: () => void }) {
+export function RealtimePrompt({ taskId, accepting, onChanged }: { taskId: string; accepting: boolean; onChanged?: () => void }) {
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");

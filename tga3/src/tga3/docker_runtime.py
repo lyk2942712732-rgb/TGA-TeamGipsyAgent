@@ -20,8 +20,12 @@ class LaunchSpec:
     task_id: UUID
     agent: ResolvedAgent
     report_input: str | None = None
-    scout_phase: Literal["executing", "extracting", "merging"] | None = None
+    scout_phase: Literal["collecting", "executing", "extracting", "merging"] | None = None
     phase_budget_seconds: float | None = None
+    aoe_parent_id: UUID | None = None
+    fresh_session: bool = False
+    attempt_id: str | None = None
+    attempt_deadline: float | None = None
 
 
 class ContainerRuntime(Protocol):
@@ -95,6 +99,8 @@ class DockerContainerRuntime:
             for stage in ("raw", "merged"):
                 self._ensure_worker_directory(intels / stage)
             volumes[str(intels)] = {"bind": "/intels", "mode": "ro"}
+            if spec.aoe_parent_id is not None:
+                volumes[str(self.config.task_path(spec.aoe_parent_id))] = {"bind": "/aoe", "mode": "rw"}
         if is_reporter:
             volumes[str(self.config.task_path(spec.task_id, "logs"))] = {"bind": "/evidence", "mode": "ro"}
             for agent_id in self.config.agents.agents:
@@ -139,6 +145,21 @@ class DockerContainerRuntime:
             "TGA3_PERIODIC_PROMPT": runtime.worker_cycle_prompts.periodic,
             "TGA3_BLACKBOARD_CHANGED_PROMPT": runtime.worker_cycle_prompts.blackboard_changed,
         }
+        if spec.aoe_parent_id is not None:
+            from uuid import uuid4
+
+            environment.update(TGA3_AOE_PARENT_ID=str(spec.aoe_parent_id),
+                               TGA3_SCOUT_START_PHASE=spec.scout_phase or "collecting")
+            if binding.role == "scout":
+                environment["TGA3_SCOUT_INTEL_MCP_URL"] = (
+                    runtime.blackboard_mcp_url.rstrip("/").removesuffix("/mcp") + "/aoe-scout-mcp/"
+                )
+            if spec.task_id != spec.aoe_parent_id:
+                environment["TGA3_QUESTION_ID"] = str(spec.task_id)
+            if binding.role == "worker":
+                environment.update(TGA3_FORCE_NEW_SESSION="1" if spec.fresh_session else "0",
+                    TGA3_ATTEMPT_ID=spec.attempt_id or "", TGA3_ATTEMPT_DEADLINE=str(spec.attempt_deadline or ""),
+                    TGA3_BOARD_START_TOKEN=uuid4().hex)
         container = self.client.containers.run(
             image=image,
             name=f"tga3-{str(spec.task_id)[:8]}-{binding.agent_id}",
@@ -170,9 +191,11 @@ class DockerContainerRuntime:
         result_path = state_dir / f"scout-{phase}-result.json"
         launch = None
         try:
-            if phase == "executing":
+            first_phase = "collecting" if spec.aoe_parent_id else "executing"
+            if phase == first_phase or spec.aoe_parent_id and spec.task_id not in self._scouts:
                 for name in ("scout-executing-result.json", "scout-extracting-result.json", "scout-extract-request",
-                             "scout-merging-result.json", "scout-merge-request"):
+                             "scout-merging-result.json", "scout-merge-request", "scout-collecting-result.json",
+                             "scout-execute-request"):
                     (state_dir / name).unlink(missing_ok=True)
                 launch = asyncio.create_task(self.launch(spec))
                 container_id = await asyncio.shield(launch)
@@ -183,7 +206,9 @@ class DockerContainerRuntime:
                     raise RuntimeUnavailableError("Scout Intel phases require their original running container")
                 container_id = self._scouts[spec.task_id]["id"]
                 # The coordinator has already switched MCP permissions to the next work phase.
-                (state_dir / ("scout-extract-request" if phase == "extracting" else "scout-merge-request")).touch()
+                signal = {"executing": "scout-execute-request", "extracting": "scout-extract-request",
+                          "merging": "scout-merge-request"}[phase]
+                (state_dir / signal).touch()
             state = self._scouts[spec.task_id]
             container = await asyncio.to_thread(self.client.containers.get, container_id)
             while True:
@@ -335,7 +360,7 @@ class FakeContainerRuntime:
             await self.stop(spec.task_id, spec.agent.agent_id)
 
     async def scout(self, spec: LaunchSpec, emit) -> None:
-        if spec.scout_phase == "executing":
+        if spec.scout_phase == ("collecting" if spec.aoe_parent_id else "executing"):
             container_id = await self.launch(spec)
             await emit("container.started", {"container_id": container_id})
         elif spec.scout_phase == "merging":

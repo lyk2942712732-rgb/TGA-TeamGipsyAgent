@@ -27,6 +27,12 @@ async def report() -> None:
 
 
 async def scout() -> None:
+    if os.environ.get("TGA3_AOE_PARENT_ID"):
+        from .aoe_scout import scout as aoe_scout
+
+        await aoe_scout()
+        return
+
     async def emit(method, params):
         print(json.dumps({"method": method, "params": params}, ensure_ascii=False), flush=True)
 

@@ -200,7 +200,20 @@ class PublishRequest(BaseModel):
         return BODY_BY_KIND[self.kind].model_validate(self.body)
 
 
-class BlackboardEntry(BaseModel):
+class QuestionScoped(BaseModel):
+    """Question provenance is derived by the runtime, absent on ordinary tasks."""
+
+    question_id: UUID | None = None
+
+    @model_serializer(mode="wrap")
+    def serialize_scope(self, handler):
+        value = handler(self)
+        if self.question_id is None:
+            value.pop("question_id", None)
+        return value
+
+
+class BlackboardEntry(QuestionScoped):
     model_config = ConfigDict(extra="forbid", frozen=True)
     id: UUID = Field(default_factory=uuid4)
     task_id: UUID
@@ -218,6 +231,8 @@ class BlackboardEntry(BaseModel):
         value = handler(self)
         if self.kind == EntryKind.FINDING:
             value.pop("topic", None)
+        if self.question_id is None:
+            value.pop("question_id", None)
         return value
 
 
@@ -228,7 +243,7 @@ class BlackboardSyncResult(BaseModel):
     entries: tuple[BlackboardEntry, ...] = ()
 
 
-class Artifact(BaseModel):
+class Artifact(QuestionScoped):
     """Registered evidence file index; an action's artifact bundles its output and attachments."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -244,7 +259,7 @@ class Artifact(BaseModel):
     created_at: datetime = Field(default_factory=utc_now)
 
 
-class InputFile(BaseModel):
+class InputFile(QuestionScoped):
     model_config = ConfigDict(extra="forbid", frozen=True)
     id: UUID = Field(default_factory=uuid4)
     task_id: UUID
@@ -256,7 +271,7 @@ class InputFile(BaseModel):
     created_at: datetime = Field(default_factory=utc_now)
 
 
-class Writeup(BaseModel):
+class Writeup(QuestionScoped):
     model_config = ConfigDict(extra="forbid", frozen=True)
     id: UUID = Field(default_factory=uuid4)
     task_id: UUID
@@ -279,7 +294,7 @@ class EventKind(StrEnum):
     SYSTEM = "system"
 
 
-class TaskEvent(BaseModel):
+class TaskEvent(QuestionScoped):
     model_config = ConfigDict(extra="forbid", frozen=True)
     id: UUID = Field(default_factory=uuid4)
     task_id: UUID
@@ -294,7 +309,7 @@ class TaskEvent(BaseModel):
 
 
 
-class TaskRun(BaseModel):
+class TaskRun(QuestionScoped):
     model_config = ConfigDict(extra="forbid", frozen=True)
     id: UUID = Field(default_factory=uuid4)
     title: str = Field(min_length=1, max_length=500)
@@ -303,11 +318,23 @@ class TaskRun(BaseModel):
     blackboard_seq: int = 0
     event_seq: int = 0
     final_snapshot_seq: int | None = None
+    parent_task_id: UUID | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
 
+    @model_serializer(mode="wrap")
+    def serialize_task(self, handler):
+        value = handler(self)
+        if self.parent_task_id is None:
+            value.pop("parent_task_id", None)
+            value.pop("question_id", None)
+        if not self.metadata:
+            value.pop("metadata", None)
+        return value
 
-class AgentRun(BaseModel):
+
+class AgentRun(QuestionScoped):
     model_config = ConfigDict(extra="forbid", frozen=True)
     task_id: UUID
     agent_id: str

@@ -35,7 +35,7 @@ class CliAdapter(AgentAdapter):
         self.state_dir.mkdir(parents=True, exist_ok=True)
         self.pointer = self.state_dir / f"{self.runtime}-session.json"
         self.session_id: str | None = None
-        if self.pointer.is_file():
+        if self.pointer.is_file() and os.environ.get("TGA3_FORCE_NEW_SESSION") != "1":
             self.session_id = json.loads(self.pointer.read_text())["session_id"]
         self.model_name = os.environ["TGA3_MODEL_NAME"]
         self.api_key = os.environ["TGA3_API_KEY"]
@@ -54,7 +54,9 @@ class CliAdapter(AgentAdapter):
         self.journal = ActionJournal(
             Path(os.environ.get("TGA3_LOGS", "/logs")),
             identity={"task_id": os.environ.get("TGA3_TASK_ID"),
-                      "agent_id": os.environ.get("TGA3_AGENT_ID"), "runtime": self.runtime},
+                      "agent_id": os.environ.get("TGA3_AGENT_ID"), "runtime": self.runtime,
+                      **({"question_id": os.environ["TGA3_QUESTION_ID"]}
+                         if os.environ.get("TGA3_QUESTION_ID") else {})},
             secret=self.api_key,
             # Workers are journaled synchronously by native hooks, before the model sees the output.
             enabled=not (os.environ.get("TGA3_AGENT_ROLE") == "worker" or
@@ -91,7 +93,9 @@ class CliAdapter(AgentAdapter):
     def remember_session(self, session_id: str) -> None:
         self.session_id = session_id
         temporary = self.pointer.with_suffix(".tmp")
-        temporary.write_text(json.dumps({"session_id": session_id}), encoding="utf-8")
+        temporary.write_text(json.dumps({"session_id": session_id,
+            **({"question_id": os.environ["TGA3_QUESTION_ID"]} if os.environ.get("TGA3_QUESTION_ID")
+               and os.environ.get("TGA3_AGENT_ROLE") == "worker" else {})}), encoding="utf-8")
         temporary.replace(self.pointer)
 
     async def set_model(self, params: dict[str, Any]) -> None:
@@ -329,7 +333,7 @@ class CodexAdapter(CliAdapter):
     def command(self) -> tuple[list[str], dict[str, str]]:
         if self.protocol != "openai_responses":
             raise ValueError("Codex CLI requires the Responses protocol")
-        cli_home = self.workspace / ".codex"
+        cli_home = Path(os.environ.get("TGA3_CLI_HOME", str(self.workspace / ".codex")))
         cli_home.mkdir(exist_ok=True)
         instructions = (
             os.environ["TGA3_SYSTEM_PROMPT"]
@@ -366,7 +370,7 @@ class CodexAdapter(CliAdapter):
                                                for k, v in self.mcp_headers().items()) + "}",
                 "required = true",
             ]
-        elif not self.reporter and self.scout_phase in {"extracting", "merging"}:
+        elif not self.reporter and self.scout_phase in {"collecting", "extracting", "merging"}:
             config += ["[mcp_servers.intel]",
                        f"url = {json.dumps(os.environ['TGA3_SCOUT_INTEL_MCP_URL'])}",
                        "http_headers = {" + ", ".join(f"{json.dumps(k)} = {json.dumps(v)}"
@@ -376,7 +380,12 @@ class CodexAdapter(CliAdapter):
             (cli_home / "hooks.json").write_text(json.dumps(self.hook_config()), encoding="utf-8")
         (cli_home / "config.toml").write_text("\n".join(config) + "\n", encoding="utf-8")
         env = dict(os.environ, CODEX_HOME=str(cli_home), CODEX_API_KEY=self.api_key)
-        args = [self.binary, "--dangerously-bypass-hook-trust", "exec"] if self.hook_config() else [self.binary, "exec"]
+        args = [self.binary]
+        if self.hook_config():
+            args += ["--dangerously-bypass-hook-trust"]
+        if os.environ.get("TGA3_AOE_PARENT_ID") and os.environ.get("TGA3_AGENT_ROLE") == "scout":
+            args += ["-C", str(self.output_dir)]
+        args += ["exec"]
         if self.session_id:
             args += ["resume", self.session_id]
         args += ["--json", "--skip-git-repo-check", "--model", self.model_name, "-"]

@@ -24,7 +24,7 @@ describe("NewTaskPage", () => {
     await screen.findByText("Web渗透测试");
     expect(within(screen.getByRole("group", { name: "题目类型：场景" })).getAllByRole("button")
       .map((button) => button.querySelector("strong")?.textContent)).toEqual([
-        "Web渗透测试", "Pwn", "Re逆向", "Misc安全杂项", "Crypto密码学问题", "AI安全",
+        "Web渗透测试", "Pwn", "Re逆向", "Misc安全杂项", "Crypto密码学问题", "AI安全", "AOE多题",
       ]);
     expect(await screen.findByLabelText("OpenAI Worker 模型")).toHaveValue("openai::gpt-test::openai_responses");
   });
@@ -45,5 +45,19 @@ describe("NewTaskPage", () => {
       agentModels: { "worker-openai": { provider_id: "openai", model_id: "gpt-test", protocol: "openai_responses" } },
     }));
     expect(onCreated).toHaveBeenCalledWith("task-created");
+  });
+  it("only exposes the AOE attempt budget for AOE and submits its chosen minutes", async () => {
+    const user = userEvent.setup();
+    render(<NewTaskPage onCreated={vi.fn()} />);
+    await screen.findByText("Web渗透测试");
+    expect(screen.queryByRole("spinbutton", { name: /每次尝试时长/ })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /AOE多题/ }));
+    const budget = screen.getByRole("spinbutton", { name: /每次尝试时长/ });
+    expect(budget).toHaveValue(20);
+    await user.clear(budget); await user.type(budget, "5");
+    await user.type(screen.getByLabelText("任务名称"), "Batch");
+    await user.type(screen.getByLabelText(/描述/), "Enumerate and solve the supplied questions");
+    await user.click(screen.getByRole("button", { name: "创建并启动" }));
+    await waitFor(() => expect(mocks.createTask).toHaveBeenCalledWith(expect.objectContaining({ sceneId: "aoe", aoeAttemptMinutes: 5 })));
   });
 });

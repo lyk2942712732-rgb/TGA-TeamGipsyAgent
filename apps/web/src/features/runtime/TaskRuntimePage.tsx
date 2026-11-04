@@ -8,8 +8,9 @@ import { TGA3RuntimeGraph } from "./components/TGA3RuntimeGraph";
 import { TGA3TaskHeader } from "./components/TGA3TaskHeader";
 import { TGA3Workspace, type TGA3WorkspaceTab } from "./components/TGA3Workspace";
 import { useTGA3Runtime } from "./use-tga3-runtime";
+import { AOEWorkspace } from "./components/AOEWorkspace";
 
-const VALID_TABS: TGA3WorkspaceTab[] = ["blackboard", "events", "findings", "inputs", "report", "runtime"];
+const VALID_TABS: TGA3WorkspaceTab[] = ["blackboard", "events", "findings", "inputs", "report"];
 
 export function TaskRuntimePage({ taskId }: { taskId: string }) {
   const { snapshot, connection, error, refresh } = useTGA3Runtime(taskId);
@@ -51,7 +52,7 @@ export function TaskRuntimePage({ taskId }: { taskId: string }) {
     <TGA3RuntimeGraph snapshot={snapshot} selectedAgentId={selectedAgentId} onSelectAgent={(id) => { setSelectedAgentId(id); setInspectorOpen(true); }} />
     <div className="workbench-runtime-toggle"><button className="ref-secondary-button" aria-expanded={inspectorOpen} onClick={() => setInspectorOpen(value => !value)}>{inspectorOpen ? "收起 Agent 面板" : "展开 Agent 面板"}</button></div>
     <div className={`workbench-runtime-grid ${inspectorOpen ? "" : "is-wide"}`}>
-      <main><TGA3Workspace snapshot={snapshot} tab={tab} selectedAgentId={selectedAgentId} onTab={setTab} onChanged={refresh} /></main>
+      <main>{snapshot.aoe ? <AOEWorkspace snapshot={snapshot} tab={tab} selectedAgentId={selectedAgentId} onTab={setTab} onChanged={refresh} /> : <TGA3Workspace snapshot={snapshot} tab={tab} selectedAgentId={selectedAgentId} onTab={setTab} onChanged={refresh} />}</main>
       {inspectorOpen ? <div className="workbench-inspector"><TGA3AgentInspector snapshot={snapshot} agent={selectedAgent} onChanged={refresh} /></div> : null}
     </div>
 

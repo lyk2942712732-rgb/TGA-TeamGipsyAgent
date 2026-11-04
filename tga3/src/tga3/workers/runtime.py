@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import time
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
 from typing import Any
@@ -98,6 +99,9 @@ class WorkerSession:
     async def _work(self) -> None:
         await self.queue.put(os.environ["TGA3_STARTUP_PROMPT"])
         while not self.stop.is_set():
+            if os.environ.get("TGA3_ATTEMPT_DEADLINE") and time.time() >= float(os.environ["TGA3_ATTEMPT_DEADLINE"]):
+                self.stop.set()
+                return
             try:
                 prompt = self.queue.get_nowait()
             except asyncio.QueueEmpty:
@@ -144,7 +148,13 @@ class WorkerSession:
             )
             receiver = asyncio.create_task(self._receive())
             worker = asyncio.create_task(self._work())
-            done, pending = await asyncio.wait({receiver, worker}, return_when=asyncio.FIRST_COMPLETED)
+            tasks = {receiver, worker}
+            if os.environ.get("TGA3_ATTEMPT_DEADLINE"):
+                async def deadline():
+                    await asyncio.sleep(max(0, float(os.environ["TGA3_ATTEMPT_DEADLINE"]) - time.time()))
+                    self.stop.set()
+                tasks.add(asyncio.create_task(deadline()))
+            done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
             for task in pending:
                 task.cancel()
             await asyncio.gather(*pending, return_exceptions=True)

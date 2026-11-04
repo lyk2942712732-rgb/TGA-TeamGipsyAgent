@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
 
+from .aoe import AOERuntime
 from .blackboard import Blackboard
 from .config import ResolvedAgent, TGA3Config
 from .docker_runtime import ContainerRuntime, LaunchSpec
@@ -44,6 +45,7 @@ class TaskCoordinator:
         self.blackboard = Blackboard(storage, self.blackboard_changed)
         self.scout_intel = ScoutIntelStore(config, self.blackboard)
         self.change_handlers: list[Callable[[UUID, int], Awaitable[None]]] = []
+        self.aoe = AOERuntime(self)
 
     def actor_for(self, run: AgentRun) -> Actor:
         configured = self.config.agents.agents[run.agent_id]
@@ -63,6 +65,7 @@ class TaskCoordinator:
         initial_files: list[tuple[str, str, bytes]] | None = None,
         task_id: UUID | None = None,
         model_overrides: dict[str, tuple[str, str, ProviderProtocol]] | None = None,
+        aoe_attempt_minutes: int = 20,
     ):
         scene = self.config.scene(scene_id)
         model_overrides = model_overrides or {}
@@ -75,7 +78,11 @@ class TaskCoordinator:
             )
             for agent_id, configured in self.config.agents.agents.items()
         }
-        task = await self.storage.create_task(title, scene.id, task_id)
+        if scene_id == "aoe" and not 1 <= aoe_attempt_minutes <= 1440:
+            raise ValueError("AOE attempt budget must be between 1 and 1440 minutes")
+        task = await self.storage.create_task(title, scene.id, task_id, metadata={
+            "aoe_attempt_seconds": aoe_attempt_minutes * 60, "aoe_phase": "collecting",
+        } if scene_id == "aoe" else None)
         self.config.ensure_task_directories(task.id)
         await self.storage.update_task(task.id, state=RunState.STARTING)
         for agent_id, configured in self.config.agents.agents.items():
@@ -116,8 +123,20 @@ class TaskCoordinator:
         for name, media_type, content in initial_files or []:
             await self.add_input_file(task.id, name, media_type, content)
         task = await self.storage.update_task(task.id, state=RunState.SCOUTING)
-        self._startup_jobs[task.id] = asyncio.create_task(self._scout_then_workers(task.id, resolved_agents))
+        self._startup_jobs[task.id] = asyncio.create_task(
+            self.aoe.run(task.id, resolved_agents) if scene_id == "aoe"
+            else self._scout_then_workers(task.id, resolved_agents))
         return task
+
+    async def restore_aoe(self) -> None:
+        await self.aoe.restore_paths()
+        for parent in await self.storage.list_tasks(limit=10000):
+            if parent.scene_id != "aoe" or parent.state in {RunState.COMPLETED, RunState.FAILED, RunState.CANCELLED}:
+                continue
+            bindings = {run.agent_id: self.config.resolve_agent(
+                            run.agent_id, run.provider_id, run.model_id, run.protocol)
+                        for run in await self.storage.list_agents(parent.id)}
+            self._startup_jobs[parent.id] = asyncio.create_task(self.aoe.run(parent.id, bindings))
 
     async def _scout_then_workers(self, task_id: UUID, bindings: dict[str, ResolvedAgent]) -> None:
         scout = await self.storage.update_agent(
@@ -231,6 +250,17 @@ class TaskCoordinator:
                 *(self.containers.stop(task_id, agent_id) for agent_id in self.config.agents.agents),
                 return_exceptions=True,
             )
+            task = await self.storage.get_task(task_id)
+            if task.scene_id == "aoe" and task.parent_task_id is None:
+                # Shutdown preserves current attempt deadlines/history for same-question recovery.
+                for question in await self.storage.list_questions(task_id):
+                    from .aoe_models import active_attempts
+
+                    await asyncio.gather(*(self.aoe._stop_worker(question.id, a["agent_id"])
+                                           for a in active_attempts(question)))
+                    if self.aoe.automation is not None:
+                        await self.aoe.automation.cancel(question.id)
+                    await self.containers.stop(question.id, "reporter")
 
     async def close(self) -> None:
         for task_id in list(self._startup_jobs):
@@ -255,7 +285,7 @@ class TaskCoordinator:
             sha256=hashlib.sha256(content).hexdigest(),
             size_bytes=len(content),
         )
-        await self.storage.register_input_file(item)
+        item = await self.storage.register_input_file(item)
         body = UserFileBody(
             input_file_id=item.id,
             name=item.name,
@@ -348,12 +378,28 @@ class TaskCoordinator:
 
 
     async def pause_agent(self, task_id: UUID, agent_id: str) -> AgentRun:
+        task = await self.storage.get_task(task_id)
+        if task.scene_id == "aoe" and task.parent_task_id is None:
+            slot = await self._worker_run(task_id, agent_id)
+            await self.storage.update_agent(task_id, agent_id, metadata={"aoe_paused": True})
+            if slot.metadata.get("current_question_id"):
+                await self.pause_agent(UUID(slot.metadata["current_question_id"]), agent_id)
+            return await self.storage.update_agent(task_id, agent_id, desired_state=AgentState.PAUSED,
+                                                     actual_state=AgentState.PAUSED)
         await self._worker_run(task_id, agent_id)
         await self.storage.update_agent(task_id, agent_id, desired_state=AgentState.PAUSE_REQUESTED)
         await self.gateway.request(task_id, agent_id, "session.pause")
         return await self.storage.update_agent(task_id, agent_id, desired_state=AgentState.PAUSED)
 
     async def resume_agent(self, task_id: UUID, agent_id: str) -> AgentRun:
+        task = await self.storage.get_task(task_id)
+        if task.scene_id == "aoe" and task.parent_task_id is None:
+            slot = await self._worker_run(task_id, agent_id)
+            await self.storage.update_agent(task_id, agent_id, metadata={"aoe_paused": False})
+            if slot.metadata.get("current_question_id"):
+                await self.resume_agent(UUID(slot.metadata["current_question_id"]), agent_id)
+            return await self.storage.update_agent(task_id, agent_id, desired_state=AgentState.RUNNING,
+                                                     actual_state=AgentState.IDLE)
         await self._worker_run(task_id, agent_id)
         await self.gateway.request(task_id, agent_id, "session.resume")
         return await self.storage.update_agent(task_id, agent_id, desired_state=AgentState.RUNNING)
@@ -361,6 +407,15 @@ class TaskCoordinator:
     async def set_agent_model(
         self, task_id: UUID, agent_id: str, provider_id: str, model_id: str, protocol: ProviderProtocol
     ) -> AgentRun:
+        task = await self.storage.get_task(task_id)
+        if task.scene_id == "aoe" and task.parent_task_id is None:
+            slot = await self._worker_run(task_id, agent_id)
+            self.config.resolve_agent(agent_id, provider_id, model_id, protocol)
+            if slot.metadata.get("current_question_id"):
+                await self.set_agent_model(UUID(slot.metadata["current_question_id"]), agent_id,
+                                           provider_id, model_id, protocol)
+            return await self.storage.update_agent(task_id, agent_id, provider_id=provider_id,
+                                                     model_id=model_id, protocol=protocol)
         current = await self._worker_run(task_id, agent_id)
         provider = self.config.models.provider(provider_id)
         self.config.validate_runtime_protocol(current.sdk, protocol)
@@ -424,7 +479,11 @@ class TaskCoordinator:
             )
 
     async def stop_task(self, task_id: UUID) -> None:
+        task = await self.storage.get_task(task_id)
         await self.cancel_startup(task_id)
+        if task.scene_id == "aoe" and task.parent_task_id is None:
+            await self.aoe.stop_children(task_id, cancelled=True)
+            await self.storage.update_task(task_id, metadata={"aoe_phase": "cancelled"})
         await self.containers.stop(task_id, "scout")
         # Cancellation retains raw/merged JSON without publishing an incomplete handoff.
         workers = await self._worker_runs(task_id)

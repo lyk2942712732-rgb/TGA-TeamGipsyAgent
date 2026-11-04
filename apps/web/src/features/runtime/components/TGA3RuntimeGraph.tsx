@@ -14,6 +14,7 @@ export function TGA3RuntimeGraph({ snapshot, selectedAgentId, onSelectAgent }: {
   const activities = useRuntimeActivities(snapshot), events = useMemo(() => runtimeActivityEvents(snapshot), [snapshot]);
   const active = new Set(activities.flatMap(item => [item.from, ...(item.to ? [item.to] : [])]));
   const terminal = ["completed", "failed", "stopped", "cancelled"].includes(snapshot.task.state);
+  const questions = snapshot.aoe?.questions;
   const counts = { intel: snapshot.blackboard.filter(e => e.kind === "intel").length, finding: snapshot.blackboard.filter(e => e.kind === "finding").length, final: snapshot.blackboard.filter(e => e.kind === "final_candidate").length };
   const agents = [...snapshot.agents].sort((a, b) => ORDER.indexOf(a.agent_id) - ORDER.indexOf(b.agent_id));
   const detail = selected ? [...events].reverse().find(event => event.activity && [event.activity.from, event.activity.to].includes(selected))?.activity : null;
@@ -34,10 +35,13 @@ export function TGA3RuntimeGraph({ snapshot, selectedAgentId, onSelectAgent }: {
   function agent(id: string) {
     const value = agents.find(item => item.agent_id === id);
     if (!value) return <div className="collab-node collab-placeholder"><strong>{id === "scout" ? "Scout" : id === "reporter" ? "Reporter" : id}</strong><small>尚未建立会话</small></div>;
-    const node = agentNode(id), action = currentAgentAction(snapshot, value), entry = latestAgentEntry(snapshot.blackboard, id);
+    const currentQuestion = value.metadata?.current_question_id;
+    const scoped = questions && currentQuestion ? { ...snapshot, events: snapshot.events.filter(event => (event.question_id ?? event.payload.question_id) === currentQuestion) } : snapshot;
+    const node = agentNode(id), action = currentAgentAction(scoped, value), entry = latestAgentEntry(snapshot.blackboard, id);
     return <button type="button" className="collab-node collab-agent" data-graph-node={node} data-active={active.has(node)} aria-label={`查看 ${value.display_name}`} aria-pressed={selectedAgentId === id} onClick={() => selectNode(node)}>
       <span className="collab-node-title"><strong>{value.display_name}</strong><Terminal size={14} /></span>
       <span className="collab-agent-state">{value.actual_state === "completed" ? <Check size={11} /> : ["running", "starting"].includes(value.actual_state) ? <Play size={11} /> : <Minus size={11} />}{agentStateLabel(value)}</span>
+      {value.metadata?.current_question_title ? <span className="collab-agent-question" title={value.metadata.current_question_title}>题目：{value.metadata.current_question_title}</span> : null}
       <span className="collab-agent-action" title={action?.detail}>{action ? <><Terminal size={12} /><span>{action.pending ? "" : "最近："}{action.text}</span></> : <><Clock3 size={12} /><span>{idleAction(value, entry?.seq)}</span></>}</span>
       {models ? <span className="collab-model" data-graph-node={modelNode(id)}><BrainCircuit size={12} /><span>{value.model_name ?? value.model_id}<small>{sdkLabel(value.sdk)}</small></span></span> : null}
     </button>;
@@ -52,12 +56,12 @@ export function TGA3RuntimeGraph({ snapshot, selectedAgentId, onSelectAgent }: {
         {activities.map(activity => { const route = activityRoute(activity, boxes); return route ? <path key={activity.id} className="collab-route" markerEnd={`url(#${marker})`} d={route.d} /> : null; })}
       </svg>
       <div className="collab-grid">
-        {resource("input", "任务输入", <Files size={15} />, `题目描述与 ${snapshot.blackboard.filter(item => item.kind === "user_file").length} 个附件`)}
+        {resource("input", "任务输入", <Files size={15} />, questions ? `${questions.length} 道题目，各自题面与附件` : `题目描述与 ${snapshot.blackboard.filter(item => item.kind === "user_file").length} 个附件`)}
         {resource("skills", "Skills", <Library size={15} />, "按需读取能力包与补充材料")}
-        {resource("output", "报告", <FileText size={15} />, snapshot.task.state === "completed" ? "Markdown Writeup 已生成" : snapshot.task.state === "reporting" ? "正在整理步骤与证据" : "等待 Reporter 生成")}
+        {resource("output", "报告", <FileText size={15} />, questions ? `${questions.filter(q => q.report_state === "completed").length} / ${questions.length} 份逐题报告` : snapshot.task.state === "completed" ? "Markdown Writeup 已生成" : snapshot.task.state === "reporting" ? "正在整理步骤与证据" : "等待 Reporter 生成")}
         <div className="collab-scout"><span className="collab-phase">侦察</span>{agent("scout")}</div><div className="collab-workers"><span className="collab-phase">并行执行</span>{agent("worker-openai")}{agent("worker-claude")}</div><div className="collab-reporter"><span className="collab-phase">报告</span>{agent("reporter")}</div>
         <small className="collab-input-note">原始材料共享只读</small>
-        <button type="button" className="collab-node collab-blackboard" data-graph-node="blackboard" data-active={active.has("blackboard")} aria-pressed={selected === "blackboard"} onClick={() => selectNode("blackboard")}><span className="collab-node-title"><Database size={15} /><strong>黑板</strong><em>#{snapshot.task.blackboard_seq}</em></span><span className="collab-board-counts">{counts.intel} Intel <i>/</i> {counts.finding} Findings <i>/</i> {counts.final} 最终候选</span><small>各 Worker 独立记录已读位置</small></button><small className="collab-output-note">Markdown Writeup</small>
+        <button type="button" className="collab-node collab-blackboard" data-graph-node="blackboard" data-active={active.has("blackboard")} aria-pressed={selected === "blackboard"} onClick={() => selectNode("blackboard")}><span className="collab-node-title"><Database size={15} /><strong>{questions ? "逐题黑板" : "黑板"}</strong>{!questions ? <em>#{snapshot.task.blackboard_seq}</em> : null}</span><span className="collab-board-counts">{questions ? `${questions.length} 道题 / ${questions.reduce((sum, q) => sum + q.blackboard_seq, 0)} 条记录` : <>{counts.intel} Intel <i>/</i> {counts.finding} Findings <i>/</i> {counts.final} 最终候选</>}</span><small>{questions ? "按题隔离，各 Worker 独立记录已读位置" : "各 Worker 独立记录已读位置"}</small></button><small className="collab-output-note">Markdown Writeup</small>
       </div>
       <div className="collab-labels" aria-hidden="true">{labels.map(({ key, activity, point }) => <span key={key} style={{ left: point.x, top: point.y }}>{activity.shortLabel}</span>)}</div>
     </div><div className="collab-now" aria-live="polite">{activities.length ? activities.map(activity => <div key={activity.id} className={activity.to ? "interaction" : "action"}><Terminal size={13} /><span>{activity.label}<small>{activity.to ? `${nodeName(activity.from, agents)} → ${nodeName(activity.to, agents)}` : compact(activity.detail, 90)}</small></span></div>) : <span className="collab-idle">{terminal ? "本次运行交互已完成" : "等待新的动作与交互；节点保留最近执行状态"}</span>}</div>

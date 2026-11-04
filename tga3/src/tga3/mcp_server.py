@@ -10,6 +10,7 @@ from mcp.server.fastmcp import Context, FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 
 from .action_findings import ActionFindingInput, ActionFindingPublisher
+from .aoe_models import AOEQuestionInput
 from .blackboard import Blackboard
 from .config import TGA3Config
 from .domain import FinalCandidateBody
@@ -104,10 +105,33 @@ def build_mcp(config: TGA3Config, blackboard: Blackboard) -> FastMCP:
     return mcp
 
 
-def build_scout_mcp(config: TGA3Config, store: ScoutIntelStore) -> FastMCP:
+def build_scout_mcp(config: TGA3Config, store: ScoutIntelStore, *, aoe=None) -> FastMCP:
     mcp = _new_mcp(config, "tga3-scout-intels", "Extract Intel from /logs; save JSON using scout_write_intel. "
                    "Then consolidate all raw Intel using scout_merge_intel in the same session. "
                    "The system imports only merged files after full coverage. No blackboard publication tool.")
+
+    if aoe is not None:
+        @mcp.tool()
+        async def scout_register_questions(questions: list[AOEQuestionInput], ctx: Context) -> dict[str, Any]:
+            """AOE pre-phase only: register original question metadata and downloaded attachments.
+
+            source_key is the original gateway ID or a stable label from user text. Preserve description,
+            shared user constraints and submission requirements. Difficulty is supplied information only.
+            attachments are existing local /inputs/... or /workspace/... files, not remote URLs.
+            Multiple batches allowed; identical retries are deduplicated. Do not omit failed downloads.
+            """
+            task_id, _ = bound_identity(ctx, scout=True)
+            return await aoe.register_questions(task_id, questions)
+
+        @mcp.tool()
+        async def scout_finish_collection(expected_count: int, ctx: Context) -> dict[str, Any]:
+            """Close AOE collection only after the complete source list and all required files are registered.
+
+            expected_count must equal the complete list count (including all gateway pages).
+            The following three phases continue in this same native session/container.
+            """
+            task_id, _ = bound_identity(ctx, scout=True)
+            return await aoe.finish_collection(task_id, expected_count)
 
     @mcp.tool()
     async def scout_write_intel(action_id: str, claim: str, ctx: Context, detail: str = "",

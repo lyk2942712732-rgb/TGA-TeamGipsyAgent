@@ -3,6 +3,7 @@
 import asyncio
 import hashlib
 import json
+import time
 from collections import defaultdict
 from uuid import UUID
 
@@ -33,6 +34,13 @@ class FinalCandidatePublisher:
                 return entry.model_dump(mode="json")
             await self.board.check_write(task_id, actor, EntryKind.FINAL_CANDIDATE)
             task = await self.board.storage.get_task(task_id)
+            if task.scene_id == "aoe" and task.parent_task_id is None:
+                raise ContractError("AOE candidates belong to an assigned question, not the batch overview")
+            if task.parent_task_id is not None:
+                active = next((attempt for attempt in task.metadata.get("attempts", [])
+                               if attempt["agent_id"] == agent_id and attempt.get("outcome") is None), None)
+                if active is None or active["deadline"] <= time.time():
+                    raise ContractError("AOE attempt has ended; a late candidate cannot mark this question solved")
             run = await self.board.storage.get_agent(task_id, agent_id)
             if run.metadata.get("blackboard_cursor", -1) < task.blackboard_seq:
                 raise ContractError("Unread blackboard updates: consume the native checkpoint before resubmitting")

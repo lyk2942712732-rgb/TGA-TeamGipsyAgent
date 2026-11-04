@@ -32,6 +32,7 @@ describe("TaskRuntimePage", () => {
     render(<MemoryRouter initialEntries={["/tasks/task/runtime"]}><TaskRuntimePage taskId="task" /></MemoryRouter>);
     expect(screen.getByRole("heading", { name: "Native TGA3 task" })).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "实时运行图" })).toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: "运行图" })).not.toBeInTheDocument();
     expect(screen.getByRole("tab", { name: /共享黑板/ })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "已发现入口" })).toBeInTheDocument();
   });

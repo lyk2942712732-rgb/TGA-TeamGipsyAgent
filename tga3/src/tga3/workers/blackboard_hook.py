@@ -48,20 +48,26 @@ def checkpoint(event: dict) -> dict:
 
     final = (str(event.get("tool_name", "")).split("__")[-1] == "blackboard_publish"
              or candidate(arguments))
+    start_token = os.environ.get("TGA3_BOARD_START_TOKEN", "")
+    start_file = state_dir / "aoe-start-token"
+    force_start = bool(start_token and event_name in {"UserPromptSubmit", "PreToolUse"} and
+                       (not start_file.is_file() or start_file.read_text() != start_token))
     base = os.environ["TGA3_BLACKBOARD_MCP_URL"].rstrip("/").removesuffix("/mcp")
     response = httpx.post(
         f"{base}/internal/blackboard/{os.environ['TGA3_TASK_ID']}/{os.environ['TGA3_AGENT_ID']}/checkpoint",
         json={
             "ack": previous.get("delivery_id", "") if previous.get("generation") == generation else "",
-            "final": final,
+            "final": final or force_start,
             "ack_only": bool(event.get("ack_only")),
-            "initial_only": event.get("hook_event_name") == "UserPromptSubmit",
+            "initial_only": event.get("hook_event_name") == "UserPromptSubmit" and not force_start,
         },
         timeout=10,
     )
     response.raise_for_status()
     delivery = response.json()
-    if event_name == "PreToolUse" and not (final and delivery):
+    if force_start:
+        start_file.write_text(start_token)
+    if event_name == "PreToolUse" and not ((final or force_start) and delivery):
         record_tool(event)
     if not delivery:
         return {}
@@ -72,10 +78,13 @@ def checkpoint(event: dict) -> dict:
             "additionalContext": delivery["context"],
         }
     }
-    if final:
+    if final or force_start and event_name == "PreToolUse":
         result["hookSpecificOutput"].update(
             permissionDecision="deny",
-            permissionDecisionReason="New blackboard updates were delivered. Review them, then resubmit the candidate.",
+            permissionDecisionReason=(
+                "New blackboard updates were delivered. Review them, then resubmit the candidate."
+                if final else "Question blackboard updates were delivered. Review them, then retry."
+            ),
         )
     return result
 

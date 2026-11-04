@@ -38,6 +38,10 @@ def worker_instructions() -> str:
         "for final candidates without a request wrapper or identity fields."
     )
     if role == "scout":
+        if os.environ.get("TGA3_AOE_PARENT_ID"):
+            from .aoe_scout import instructions
+
+            return instructions()
         runtime_context = (
             f"Authoritative task_id: {os.environ['TGA3_TASK_ID']}. "
             "Working directory: /workspace. Inputs: /inputs (read-only). Output files: "

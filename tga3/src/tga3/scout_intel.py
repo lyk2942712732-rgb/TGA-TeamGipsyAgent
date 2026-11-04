@@ -15,7 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from .action_logs import read_action_log, resolve_action_sources
 from .blackboard import Blackboard
 from .config import TGA3Config
-from .domain import Actor, FindingBody, PublishRequest, RunState, ScoutActor
+from .domain import Actor, FindingBody, PublishRequest, QuestionScoped, RunState, ScoutActor
 from .errors import ConflictError, ContractError
 from .evidence import evidence_files, register_evidence
 
@@ -52,7 +52,7 @@ class ScoutIntelDocument(BaseModel):
     merged_from_ids: list[RawIntelID] = Field(default_factory=list)
 
 
-class ScoutIntelCollection(BaseModel):
+class ScoutIntelCollection(QuestionScoped):
     model_config = ConfigDict(extra="forbid")
     schema_version: Literal[4] = 4
     task_id: UUID
@@ -153,8 +153,10 @@ class ScoutIntelStore:
         if collection is not None:
             return collection
         run = await self.storage.get_agent(task_id, "scout")
+        task = await self.storage.get_task(task_id)
         configured = self.config.agents.agents["scout"]
-        return ScoutIntelCollection(task_id=task_id, stage="merged" if merged else "raw", actor=ScoutActor(
+        return ScoutIntelCollection(task_id=task_id, question_id=task_id if task.parent_task_id else None,
+                                    stage="merged" if merged else "raw", actor=ScoutActor(
             agent_id="scout", display_name=configured.display_name, sdk=run.sdk, model=run.model_id,
         ))
 
