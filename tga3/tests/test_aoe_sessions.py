@@ -78,7 +78,7 @@ def test_takeover_hook_forces_board_before_first_execution_and_does_not_log_deni
 
 async def test_worker_deadline_cancels_active_cycle_without_host_control(monkeypatch, tmp_path):
     environment(monkeypatch, tmp_path)
-    monkeypatch.setenv("TGA3_ATTEMPT_DEADLINE", str(time.time() + 0.08))
+    monkeypatch.setenv("TGA3_ATTEMPT_DEADLINE", str(time.time() + 30))
 
     class Adapter:
         cancelled = False
@@ -102,6 +102,9 @@ async def test_worker_deadline_cancels_active_cycle_without_host_control(monkeyp
 
     @asynccontextmanager
     async def connect(*_args, **_kwargs):
+        # Begin the short budget after lazy imports/connection setup, so this
+        # verifies cancellation of active work rather than pre-expired startup.
+        monkeypatch.setenv("TGA3_ATTEMPT_DEADLINE", str(time.time() + 0.2))
         yield Socket()
 
     monkeypatch.setattr("websockets.asyncio.client.connect", connect)
