@@ -145,6 +145,10 @@ class DockerContainerRuntime:
             "TGA3_PERIODIC_PROMPT": runtime.worker_cycle_prompts.periodic,
             "TGA3_BLACKBOARD_CHANGED_PROMPT": runtime.worker_cycle_prompts.blackboard_changed,
         }
+        if question_scope := self.config.question_scope(spec.task_id):
+            # Reporter also launches through the ordinary report path. Its
+            # journal must retain question provenance even without attempt args.
+            environment["TGA3_QUESTION_ID"] = question_scope["question_id"]
         if spec.aoe_parent_id is not None:
             from uuid import uuid4
 

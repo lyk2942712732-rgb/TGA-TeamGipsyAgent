@@ -108,6 +108,33 @@ def test_reporter_uses_codex_image_and_read_only_evidence(tmp_path):
     assert args["cap_add"] == []
 
 
+def test_question_reporter_environment_retains_provenance_in_action_manifest(tmp_path, monkeypatch):
+    from tga3.action_logs import read_action_log
+    from tga3.workers.cli_adapter import CodexAdapter
+
+    config = TGA3Config(Path(__file__).parents[1] / "config")
+    config.runtime.task_root = str(tmp_path / "tasks")
+    config.models.provider("openai").api_keys[0].api_key = SecretStr("fixture-key")
+    parent_id, question_id = uuid4(), uuid4()
+    config.register_question_path(parent_id, question_id)
+    containers = FakeContainers()
+    runtime = DockerContainerRuntime.__new__(DockerContainerRuntime)
+    runtime.config, runtime.client = config, SimpleNamespace(containers=containers)
+    runtime._launch_sync(LaunchSpec(task_id=question_id, agent=config.resolve_agent("reporter")))
+    for key, value in containers.kwargs["environment"].items():
+        monkeypatch.setenv(key, value)
+    workspace = config.task_path(question_id, "workspaces", "reporter")
+    logs = config.task_path(question_id, "logs", "reporter")
+    monkeypatch.setenv("TGA3_WORKSPACE", str(workspace))
+    monkeypatch.setenv("TGA3_LOGS", str(logs))
+    adapter = CodexAdapter()
+    adapter.journal.record("report-read", "shell", result="literal question evidence", status="completed")
+    manifest = read_action_log(logs)
+    assert manifest["question_id"] == str(question_id)
+    assert manifest["task_id"] == str(question_id)
+    assert (workspace / manifest["actions"][0]["artifact"]["output_path"]).read_text() == "literal question evidence"
+
+
 @pytest.mark.parametrize("execution_reason", ["completed", "timeout", "error"])
 async def test_scout_reuses_container_through_extraction_and_cleans_up_after_merging(tmp_path, execution_reason):
     config = TGA3Config(Path(__file__).parents[1] / "config")
