@@ -20,6 +20,90 @@ class FakeContainers:
         return SimpleNamespace(id="container-id")
 
 
+async def test_aoe_question_requests_reuse_container_and_ignore_stale_results_after_timeout(tmp_path):
+    config = TGA3Config(Path(__file__).parents[1] / "config")
+    config.runtime.task_root = str(tmp_path / "tasks")
+    config.models.provider("openai").api_keys[0].api_key = SecretStr("fixture-key")
+    parent, first, second = uuid4(), uuid4(), uuid4()
+    directory = config.task_path(parent, "workspaces", "scout") / ".tga3"
+    emitted, launched, seen = [], [], []
+
+    class Container:
+        id, status = "scout-container", "running"
+        output = b""
+
+        def reload(self):
+            request = json.loads((directory / "aoe-scout-request.json").read_text())
+            if request["id"] in seen:
+                return
+            seen.append(request["id"])
+            response = {
+                **request,
+                "finish_reason": "timeout"
+                if request["question_id"] == str(first) and request["phase"] == "executing"
+                else "completed",
+            }
+            results = directory / "aoe-scout-results"
+            results.mkdir(exist_ok=True)
+            (results / (request["id"] + ".json")).write_text(json.dumps(response))
+            self.output += (
+                json.dumps(
+                    {
+                        "method": "agent.session",
+                        "params": {"cli_session_id": "same-native-session", "question_id": request["question_id"]},
+                    }
+                )
+                + "\n"
+            ).encode()
+
+        def logs(self):
+            return self.output
+
+    container = Container()
+
+    class Containers(FakeContainers):
+        def list(self, **kwargs):
+            return []
+
+        def run(self, **kwargs):
+            launched.append(kwargs)
+            return container
+
+        def get(self, ident):
+            return container
+
+    runtime = DockerContainerRuntime.__new__(DockerContainerRuntime)
+    runtime.config, runtime.client = config, SimpleNamespace(containers=Containers())
+
+    async def emit(method, params):
+        emitted.append(params)
+
+    for ident, phase in [
+        (None, "collecting"),
+        (first, "executing"),
+        (first, "extracting"),
+        (first, "merging"),
+        (second, "executing"),
+    ]:
+        spec = LaunchSpec(
+            task_id=parent,
+            agent=config.resolve_agent("scout"),
+            aoe_parent_id=parent,
+            scout_question_id=ident,
+            scout_phase=phase,
+            phase_budget_seconds=300 if phase == "executing" else None,
+        )
+        if ident == first and phase == "executing":
+            with pytest.raises(TimeoutError):
+                await runtime.scout(spec, emit)
+        else:
+            await runtime.scout(spec, emit)
+    assert len(launched) == 1 and len(set(seen)) == 5
+    assert parent in runtime._scouts  # A question's merge does not stop the batch Scout.
+    assert {e["cli_session_id"] for e in emitted if "cli_session_id" in e} == {"same-native-session"}
+    assert {e["question_id"] for e in emitted if "cli_session_id" in e} == {None, str(first), str(second)}
+
+
 def test_scout_mounts_intels_once_for_three_phases(tmp_path):
     config = TGA3Config(Path(__file__).parents[1] / "config")
     for provider in config.models.providers:
@@ -150,12 +234,22 @@ async def test_scout_reuses_container_through_extraction_and_cleans_up_after_mer
         status = "running"
 
         def reload(self):
-            phase = ("merging" if (state / "scout-merge-request").exists() else
-                     "extracting" if (state / "scout-extract-request").exists() else "executing")
+            phase = (
+                "merging"
+                if (state / "scout-merge-request").exists()
+                else "extracting"
+                if (state / "scout-extract-request").exists()
+                else "executing"
+            )
             reason = execution_reason if phase == "executing" else "completed"
-            (state / f"scout-{phase}-result.json").write_text(json.dumps({
-                "finish_reason": reason, "error": "fixture failure" if reason == "error" else None,
-            }))
+            (state / f"scout-{phase}-result.json").write_text(
+                json.dumps(
+                    {
+                        "finish_reason": reason,
+                        "error": "fixture failure" if reason == "error" else None,
+                    }
+                )
+            )
 
         def logs(self):
             return b'{"method":"agent.session","params":{"cli_session_id":"same-session"}}\n'
@@ -202,8 +296,11 @@ def test_reporter_mounts_only_result_bodies_and_manifest_attachments(tmp_path):
     task_id = uuid4()
     root = config.task_path(task_id, "workspaces", "worker-openai")
     root.mkdir(parents=True)
-    journal = ActionJournal(config.task_path(task_id, "logs", "worker-openai"),
-                            identity={"task_id": str(task_id), "agent_id": "worker-openai"}, output_directory=root)
+    journal = ActionJournal(
+        config.task_path(task_id, "logs", "worker-openai"),
+        identity={"task_id": str(task_id), "agent_id": "worker-openai"},
+        output_directory=root,
+    )
     journal.record("download", "shell")
     (root / "download.bin").write_bytes(b"fixture")
     (root / ".codex").mkdir()

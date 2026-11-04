@@ -8,7 +8,7 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, Protocol
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from .action_logs import read_action_log
 from .config import ResolvedAgent, TGA3Config
@@ -26,6 +26,7 @@ class LaunchSpec:
     fresh_session: bool = False
     attempt_id: str | None = None
     attempt_deadline: float | None = None
+    scout_question_id: UUID | None = None
 
 
 class ContainerRuntime(Protocol):
@@ -150,8 +151,6 @@ class DockerContainerRuntime:
             # journal must retain question provenance even without attempt args.
             environment["TGA3_QUESTION_ID"] = question_scope["question_id"]
         if spec.aoe_parent_id is not None:
-            from uuid import uuid4
-
             environment.update(TGA3_AOE_PARENT_ID=str(spec.aoe_parent_id),
                                TGA3_SCOUT_START_PHASE=spec.scout_phase or "collecting")
             if binding.role == "scout":
@@ -187,6 +186,9 @@ class DockerContainerRuntime:
 
     async def scout(self, spec: LaunchSpec, emit) -> None:
         """Drive three work phases inside one container and one resumed CLI session."""
+        if spec.aoe_parent_id is not None:
+            await self._aoe_scout(spec, emit)
+            return
         if not hasattr(self, "_scouts"):
             self._scouts = {}
         phase = spec.scout_phase or "executing"
@@ -253,6 +255,69 @@ class DockerContainerRuntime:
                 if phase == "merging":
                     self._scouts.pop(spec.task_id, None)
                     await self.stop(spec.task_id, spec.agent.agent_id)
+
+    async def _aoe_scout(self, spec: LaunchSpec, emit) -> None:
+        """Request one question phase; keep the batch container alive between handoffs."""
+        if not hasattr(self, "_scouts"):
+            self._scouts = {}
+        state_dir = self.config.task_path(spec.task_id, "workspaces", "scout") / ".tga3"
+        request_id = uuid4().hex
+        result_path = state_dir / "aoe-scout-results" / f"{request_id}.json"
+        launch = None
+        try:
+            if spec.task_id not in self._scouts:
+                # Reclaim a container left by an interrupted controller before
+                # publishing a request that only the resumed runner may consume.
+                await self.stop(spec.task_id, "scout")
+            self._ensure_worker_directory(state_dir)
+            request = {"id": request_id, "phase": spec.scout_phase,
+                       "question_id": str(spec.scout_question_id) if spec.scout_question_id else None,
+                       "budget_seconds": spec.phase_budget_seconds}
+            temporary = state_dir / f"aoe-scout-request.{request_id}.tmp"
+            temporary.write_text(json.dumps(request), encoding="utf-8")
+            temporary.replace(state_dir / "aoe-scout-request.json")
+            if spec.task_id not in self._scouts:
+                launch = asyncio.create_task(self.launch(spec))
+                container_id = await asyncio.shield(launch)
+                self._scouts[spec.task_id] = {"id": container_id, "offset": 0, "pending": b""}
+                await emit("container.started", {"container_id": container_id})
+            state = self._scouts[spec.task_id]
+            container = await asyncio.to_thread(self.client.containers.get, state["id"])
+            while True:
+                await asyncio.to_thread(container.reload)
+                raw = await asyncio.to_thread(container.logs)
+                state["pending"] += raw[state["offset"]:]
+                state["offset"] = len(raw)
+                lines = state["pending"].split(b"\n")
+                state["pending"] = lines.pop()
+                for line in lines:
+                    try:
+                        event = json.loads(line)
+                    except ValueError:
+                        continue
+                    if isinstance(event, dict) and event.get("method") in {
+                        "agent.session", "agent.action.started", "agent.action.completed",
+                        "agent.output.delta", "agent.recovery",
+                    }:
+                        await emit(event["method"], event.get("params", {}))
+                if result_path.is_file():
+                    result = json.loads(result_path.read_text(encoding="utf-8"))
+                    if result.get("question_id") != request["question_id"] or result.get("phase") != spec.scout_phase:
+                        raise RuntimeUnavailableError("Scout response does not match the assigned question phase")
+                    if result["finish_reason"] == "timeout":
+                        raise TimeoutError
+                    if result["finish_reason"] == "error":
+                        raise RuntimeUnavailableError(result["error"])
+                    return
+                if container.status in {"exited", "dead"}:
+                    key = spec.agent.api_key.get_secret_value()
+                    detail = raw.decode(errors="replace")[-12000:]
+                    raise RuntimeUnavailableError(detail.replace(key, "[redacted]") if key else detail)
+                await asyncio.sleep(0.25)
+        finally:
+            if launch is not None:
+                container_id = await launch
+                self._scouts.setdefault(spec.task_id, {"id": container_id, "offset": 0, "pending": b""})
 
     async def report(self, spec: LaunchSpec, emit) -> str:
         launch = asyncio.create_task(self.launch(spec))
@@ -367,7 +432,7 @@ class FakeContainerRuntime:
         if spec.scout_phase == ("collecting" if spec.aoe_parent_id else "executing"):
             container_id = await self.launch(spec)
             await emit("container.started", {"container_id": container_id})
-        elif spec.scout_phase == "merging":
+        elif spec.scout_phase == "merging" and spec.aoe_parent_id is None:
             await self.stop(spec.task_id, spec.agent.agent_id)
 
     async def stop(self, task_id: UUID, agent_id: str) -> None:

@@ -15,6 +15,20 @@ from .action_journal import ActionJournal
 from .cli_adapter import CodexAdapter
 
 
+def recover_unfinished(journal: ActionJournal) -> None:
+    """After a stopped process, preserve unfinished commands as interrupted facts."""
+    enabled = journal.enabled
+    journal.enabled = True
+    try:
+        for action in read_action_log(journal.directory)["actions"]:
+            if action["status"] == "started":
+                native_id = action["tool_call_id"]
+                journal.pending[native_id] = action
+                journal.record(native_id, action["action"]["tool"], status="interrupted")
+    finally:
+        journal.enabled = enabled
+
+
 def instructions() -> str:
     phase = os.environ.get("TGA3_SCOUT_PHASE", "collecting")
     workspace = os.environ.get("TGA3_WORKSPACE", "/workspace")
@@ -24,6 +38,8 @@ def instructions() -> str:
     common = (
         os.environ["TGA3_SYSTEM_PROMPT"] + "\nAOE Scout: the pre-phase and three rounds are work divisions "
         "inside ONE native CLI session/container. Never launch a separate agent/session for a phase or question. "
+        "Finish all three rounds for the current question before the runtime hands it to Workers and moves "
+        "you to the next question. Other questions may already be solved concurrently by Workers. "
         f"Current phase: {phase}. Task binding: {os.environ['TGA3_TASK_ID']}. "
         f"Working directory: {workspace}. Inputs: {inputs}. Logs: {logs}. Intel: {intels}. "
         "Recorded artifact paths are relative to this question's working directory. Use these exact paths; "
@@ -48,7 +64,9 @@ def instructions() -> str:
             "FIRST ROUND: only inspect this assigned question's attachments/targets and preserve raw results. "
             "Use the current question working directory for all downloads/scripts/outputs. "
             "Do not call Intel tools or write reports. The runtime journals all executions for this question. "
-            "Basic recon is enough; remaining questions also need coverage. Finish this turn when done."
+            "Each question has its OWN first-round budget, independent of other questions. "
+            "Basic recon is enough; finish this turn early when done. "
+            f"Remaining first-round budget for this question: {os.environ.get('TGA3_PHASE_BUDGET', '300')} seconds."
         )
     if phase == "extracting":
         return common + (
@@ -79,10 +97,8 @@ async def scout() -> None:
     os.environ["TGA3_CLI_HOME"] = str(root_workspace / ".codex")
     adapter = CodexAdapter()
     adapter.journal.identity["scope"] = "batch_collection"
-    phases = ["collecting", "executing", "extracting", "merging"]
-    start_phase = os.environ.get("TGA3_SCOUT_START_PHASE", "collecting")
-    phases = phases[phases.index(start_phase) :]
-    manifest_path = Path("/aoe/inputs/questions.json")
+    batch_root = Path(os.environ.get("TGA3_AOE_ROOT", "/aoe"))
+    manifest_path = batch_root / "inputs/questions.json"
 
     async def emit(method, params):
         question_id = os.environ.get("TGA3_QUESTION_ID")
@@ -103,7 +119,7 @@ async def scout() -> None:
 
     def switch(question: dict, phase: str):
         ident = question["question_id"]
-        root = Path("/aoe") / ident
+        root = batch_root / ident
         workspace, logs = root / "workspaces/scout", root / "logs/scout"
         workspace.mkdir(parents=True, exist_ok=True)
         logs.mkdir(parents=True, exist_ok=True)
@@ -123,21 +139,27 @@ async def scout() -> None:
             enabled=phase == "executing",
             output_directory=workspace,
         )
+        recover_unfinished(adapter.journal)
 
-    for index, phase in enumerate(phases):
-        if index:
-            signal = {
-                "executing": "scout-execute-request",
-                "extracting": "scout-extract-request",
-                "merging": "scout-merge-request",
-            }[phase]
-            while not (state / signal).exists():
-                await asyncio.sleep(0.1)
+    previous_request = None
+    while True:
+        request_path = state / "aoe-scout-request.json"
+        if not request_path.is_file():
+            await asyncio.sleep(0.1)
+            continue
+        request = json.loads(request_path.read_text(encoding="utf-8"))
+        if request["id"] == previous_request:
+            await asyncio.sleep(0.1)
+            continue
+        previous_request = request["id"]
+        phase = request["phase"]
         os.environ["TGA3_SCOUT_PHASE"] = adapter.scout_phase = phase
-        budget = float(os.environ.get("TGA3_SCOUT_TIMEOUT_SECONDS", "300")) if phase == "executing" else None
+        budget = float(request["budget_seconds"]) if phase == "executing" else None
         adapter.timeout = budget + 5 if budget is not None else None
+        os.environ["TGA3_PHASE_BUDGET"] = str(budget) if budget is not None else "unbounded"
         result = {
             "task_id": batch_id,
+            "question_id": request.get("question_id"),
             "phase": phase,
             "finish_reason": "completed",
             "error": None,
@@ -160,64 +182,53 @@ async def scout() -> None:
                                 "the complete source list has not been collected"
                             )
                 else:
-                    questions = manifest()["questions"]
-                    stop_at = asyncio.get_running_loop().time() + budget if budget else None
-                    for offset, question in enumerate(questions):
-                        switch(question, phase)
-                        if phase == "executing":
-                            # Divide only the existing first-round budget; extraction/merge remain unbounded.
-                            remaining = max(0.1, stop_at - asyncio.get_running_loop().time())
-                            try:
-                                async with asyncio.timeout(remaining / (len(questions) - offset)):
-                                    await adapter.run_cycle(
-                                        instructions() + "\nQuestion:\n" + json.dumps(question, ensure_ascii=False),
-                                        emit,
-                                    )
-                            except TimeoutError:
-                                continue
-                        else:
-                            while True:
-                                intel_dir = Path(os.environ["TGA3_INTELS"])
-                                ident = UUID(question["question_id"])
-                                raw = read_intels(intel_dir / "raw", ident)
-                                if phase == "extracting":
-                                    covered = {
-                                        a for item in (raw.intels if raw else []) for a in item.source_action_ids
-                                    }
-                                    missing = [
-                                        a["action_id"]
-                                        for a in read_action_log(adapter.journal.directory)["actions"]
-                                        if a["action_id"] not in covered
-                                    ]
-                                    if not missing:
-                                        break
-                                    materials = action_materials(
-                                        adapter.journal.directory, adapter.workspace, ident, missing
-                                    )
-                                else:
-                                    merged = read_intels(intel_dir / "merged", ident, merged=True)
-                                    covered = {
-                                        a for item in (merged.intels if merged else []) for a in item.merged_from_ids
-                                    }
-                                    materials = [
-                                        {"id": item.id, "topic": item.topic, "body": item.body.model_dump()}
-                                        for item in (raw.intels if raw else [])
-                                        if item.id not in covered
-                                    ]
-                                    if not materials:
-                                        break
-                                await adapter.run_cycle(
-                                    instructions()
-                                    + "\nQuestion materials:\n"
-                                    + json.dumps(materials, ensure_ascii=False),
-                                    emit,
+                    question = next(q for q in manifest()["questions"] if q["question_id"] == request["question_id"])
+                    switch(question, phase)
+                    if phase == "executing":
+                        await adapter.run_cycle(
+                            instructions() + "\nQuestion:\n" + json.dumps(question, ensure_ascii=False),
+                            emit,
+                        )
+                    else:
+                        while True:
+                            intel_dir = Path(os.environ["TGA3_INTELS"])
+                            ident = UUID(question["question_id"])
+                            raw = read_intels(intel_dir / "raw", ident)
+                            if phase == "extracting":
+                                covered = {a for item in (raw.intels if raw else []) for a in item.source_action_ids}
+                                missing = [
+                                    a["action_id"]
+                                    for a in read_action_log(adapter.journal.directory)["actions"]
+                                    if a["action_id"] not in covered
+                                ]
+                                if not missing:
+                                    break
+                                materials = action_materials(
+                                    adapter.journal.directory, adapter.workspace, ident, missing
                                 )
+                            else:
+                                merged = read_intels(intel_dir / "merged", ident, merged=True)
+                                covered = {
+                                    a for item in (merged.intels if merged else []) for a in item.merged_from_ids
+                                }
+                                materials = [
+                                    {"id": item.id, "topic": item.topic, "body": item.body.model_dump()}
+                                    for item in (raw.intels if raw else [])
+                                    if item.id not in covered
+                                ]
+                                if not materials:
+                                    break
+                            await adapter.run_cycle(
+                                instructions() + "\nQuestion materials:\n" + json.dumps(materials, ensure_ascii=False),
+                                emit,
+                            )
         except TimeoutError:
             result["finish_reason"] = "timeout"
         except Exception as exc:
             result.update(finish_reason="error", error=str(exc).replace(adapter.api_key, "[redacted]"))
-        temporary = state / f"scout-{phase}-result.tmp"
+        results = state / "aoe-scout-results"
+        results.mkdir(exist_ok=True)
+        result_id = UUID(request["id"]).hex
+        temporary = results / f"{result_id}.tmp"
         temporary.write_text(json.dumps(result, ensure_ascii=False), encoding="utf-8")
-        temporary.replace(state / f"scout-{phase}-result.json")
-        if phase != "executing" and result["finish_reason"] != "completed":
-            return
+        temporary.replace(results / f"{result_id}.json")

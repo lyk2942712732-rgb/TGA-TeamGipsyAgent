@@ -55,7 +55,7 @@ export function AOEWorkspace({ snapshot, tab, selectedAgentId, onTab, onChanged 
         <option value="">全部题目 / 总览</option>
         {overview.questions.map(item => <option key={item.question_id} value={item.question_id}>{item.title}</option>)}
       </select></label>
-      <span>{PHASE[overview.phase] ?? overview.phase} · 每次尝试 {overview.attempt_seconds / 60} 分钟</span>
+      <span>{PHASE[overview.phase] ?? overview.phase} · 每次尝试 {overview.attempt_seconds / 60} 分钟{overview.scout_question_seconds !== undefined ? ` · 每题侦察 ${overview.scout_question_seconds} 秒` : ""}</span>
     </div>
     {requested && !question ? <p role="alert">该题目不属于当前任务，或尚未完成登记。</p> : null}
     {question ? <section className="aoe-question-context">
@@ -79,8 +79,9 @@ function AOEOverviewPanel({ snapshot, onOpen, name }: { snapshot: TGA3RuntimeSna
   if (!overview.questions.length) return <div className="tga3-empty"><BookOpen /><h3>Scout 正在收集题目</h3><p>完整登记题面、附件与已知难度后，系统会继续按题侦察和分配。</p></div>;
   const solved = overview.questions.filter(item => item.status === "solved").length;
   const abandoned = overview.questions.filter(item => item.status === "abandoned").length;
+  const preparing = overview.questions.filter(item => item.scout_ready === false).length;
   return <section className="aoe-overview" aria-label="题目总览">
-    <header><h3>{overview.questions.length} 道题目</h3><span>{solved} 已解出 · {abandoned} 已放弃</span></header>
+    <header><h3>{overview.questions.length} 道题目</h3><span>{solved} 已解出 · {abandoned} 已放弃{preparing ? ` · ${preparing} 待交接` : ""}</span></header>
     <div className="aoe-question-roster">{overview.questions.map(question => {
       const active = question.attempts.filter(attempt => attempt.outcome === null);
       const deadline = active[0]?.deadline;
@@ -108,6 +109,10 @@ function AOEOverviewPanel({ snapshot, onOpen, name }: { snapshot: TGA3RuntimeSna
 }
 
 function QuestionStatus({ question }: { question: AOEQuestion }) {
+  if (question.scout_ready === false && ["preparing", "queued"].includes(question.status)) {
+    const phases: Record<string, string> = { queued: "待侦察", executing: "第一轮侦察", extracting: "第二轮提取", merging: "第三轮合并" };
+    return <span className="aoe-question-status status-preparing">{phases[question.scout_phase ?? "queued"] ?? "准备中"}</span>;
+  }
   return <span className={`aoe-question-status status-${question.status}`}>{question.current_agents.length && question.attempts.some(a => a.phase === "joint" && a.outcome === null) ? "共同攻坚" : STATUS[question.status] ?? question.status}</span>;
 }
 

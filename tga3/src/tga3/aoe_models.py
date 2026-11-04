@@ -7,7 +7,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from .domain import TaskRun
+from .domain import RunState, TaskRun
 
 
 class AOEQuestionInput(BaseModel):
@@ -75,15 +75,26 @@ def unfinished(questions: list[TaskRun]) -> list[TaskRun]:
     return [q for q in questions if q.metadata.get("status", "queued") not in {"solved", "abandoned"}]
 
 
+def scout_ready(question: TaskRun) -> bool:
+    # Old AOE runs had no explicit flag and left SCOUTING only after handoff.
+    return question.metadata.get("scout_ready", question.state != RunState.SCOUTING)
+
+
 def next_solo_question(questions: list[TaskRun], agent_id: str) -> TaskRun | None:
-    eligible = [q for q in unfinished(questions) if not active_attempts(q) and agent_id not in attempted_by(q)]
+    eligible = [
+        q
+        for q in unfinished(questions)
+        if scout_ready(q) and not active_attempts(q) and agent_id not in attempted_by(q)
+    ]
     # Untouched by either Worker always precedes a peer's previous question, regardless of difficulty.
     return min(eligible, key=lambda q: (bool(attempted_by(q)), *question_order(q))) if eligible else None
 
 
 def joint_ready(questions: list[TaskRun], worker_ids: tuple[str, ...]) -> bool:
     remaining = unfinished(questions)
-    return bool(remaining) and all(not active_attempts(q) and set(worker_ids) <= attempted_by(q) for q in remaining)
+    return bool(remaining) and all(
+        scout_ready(q) and not active_attempts(q) and set(worker_ids) <= attempted_by(q) for q in remaining
+    )
 
 
 def next_joint_question(questions: list[TaskRun]) -> TaskRun | None:

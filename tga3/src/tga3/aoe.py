@@ -19,6 +19,8 @@ from .aoe_models import (
     joint_ready,
     next_joint_question,
     next_solo_question,
+    question_order,
+    scout_ready,
     unfinished,
 )
 from .docker_runtime import LaunchSpec
@@ -70,6 +72,8 @@ class AOERuntime:
             "connection_info": question.metadata.get("connection_info", ""),
             "submission_instructions": question.metadata.get("submission_instructions", ""),
             "status": question.metadata.get("status", "queued"),
+            "scout_ready": scout_ready(question),
+            "scout_phase": question.metadata.get("scout_phase", "completed" if scout_ready(question) else "queued"),
             "attempted_by": sorted(attempted_by(question)),
             "current_agents": [attempt["agent_id"] for attempt in active_attempts(question)],
             "attempts": attempts,
@@ -100,6 +104,9 @@ class AOERuntime:
             "task_id": str(parent_id),
             "phase": parent.metadata.get("aoe_phase", "collecting"),
             "attempt_seconds": parent.metadata.get("aoe_attempt_seconds", 1200),
+            "scout_question_seconds": parent.metadata.get(
+                "aoe_scout_seconds", self.config.runtime.scout_timeout_seconds
+            ),
             "questions": views,
         }
 
@@ -242,7 +249,9 @@ class AOERuntime:
                         **{key: value for key, value in payload.items() if key not in {"title", "attachments"}},
                         "registration_digest": fingerprint,
                         "ordinal": len(existing),
-                        "status": "queued",
+                        "status": "preparing",
+                        "scout_ready": False,
+                        "scout_phase": "queued",
                         "attempts": [],
                     },
                 )
@@ -328,13 +337,19 @@ class AOERuntime:
             return {"saved": True, **await self._collection_manifest(parent_id)}
 
     async def run(self, parent_id: UUID, bindings: dict) -> None:
+        scout_job = None
         try:
             parent = await self.storage.get_task(parent_id)
-            if parent.metadata.get("aoe_phase") not in {"solo", "joint", "reporting"}:
-                await self._scout(parent_id, bindings)
-            await self.storage.update_task(parent_id, state=RunState.RUNNING)
             await self._recover_attempts(parent_id)
+            questions = await self.storage.list_questions(parent_id)
+            pending = not parent.metadata.get(
+                "scout_complete", bool(questions) and all(scout_ready(q) for q in questions)
+            )
+            if pending:
+                scout_job = asyncio.create_task(self._scout(parent_id, bindings))
             while (await self.storage.get_task(parent_id)).state not in TERMINAL:
+                if scout_job is not None and scout_job.done():
+                    await scout_job  # Surface Scout failure while Workers are running.
                 if await self.tick(parent_id):
                     break
                 await asyncio.sleep(0.5)
@@ -344,15 +359,18 @@ class AOERuntime:
             await self.storage.update_task(parent_id, state=RunState.FAILED, metadata={"aoe_phase": "failed"})
             await self.events.emit(parent_id, actor=SYSTEM_ACTOR, kind=EventKind.ERROR, text=f"AOE 任务运行失败：{exc}")
             await self.stop_children(parent_id)
+        finally:
+            if scout_job is not None:
+                if not scout_job.done():
+                    scout_job.cancel()
+                await asyncio.gather(scout_job, return_exceptions=True)
 
     async def _scout(self, parent_id: UUID, bindings: dict) -> None:
-        completed = set((await self.storage.get_task(parent_id)).metadata.get("scout_completed_phases", []))
-        phases = {
-            "collecting": None,
-            "executing": self.config.runtime.scout_timeout_seconds,
-            "extracting": None,
-            "merging": None,
-        }
+        parent = await self.storage.get_task(parent_id)
+        per_question_budget = parent.metadata.get("aoe_scout_seconds", self.config.runtime.scout_timeout_seconds)
+        await self.storage.update_task(
+            parent_id, metadata={"aoe_scout_seconds": per_question_budget, "scout_complete": False}
+        )
         labels = {
             "collecting": "前置轮：收集全部题目信息",
             "executing": "第一轮：按题侦察",
@@ -374,24 +392,31 @@ class AOERuntime:
                 await self.storage.update_agent(parent_id, "scout", metadata=params)
 
         try:
-            for phase, budget in phases.items():
-                if phase in completed:
-                    continue
-                await self.storage.update_task(parent_id, metadata={"aoe_phase": phase})
+
+            async def phase_request(phase, question=None, budget=None):
                 await self.storage.update_agent(
-                    parent_id, "scout", actual_state=AgentState.RUNNING, metadata={"scout_phase": phase}
+                    parent_id,
+                    "scout",
+                    actual_state=AgentState.RUNNING,
+                    metadata={
+                        "scout_phase": phase,
+                        "current_question_id": str(question.id) if question else None,
+                        "current_question_title": question.title if question else None,
+                    },
                 )
-                for question in await self.storage.list_questions(parent_id):
+                if question:
                     await self.storage.update_agent(
                         question.id, "scout", actual_state=AgentState.RUNNING, metadata={"scout_phase": phase}
                     )
+                    await self.storage.update_task(question.id, metadata={"scout_phase": phase})
+                    await self._save_question(await self.storage.get_task(question.id))
                 await self.events.emit(
                     parent_id,
                     actor=SYSTEM_ACTOR,
                     kind=EventKind.SYSTEM,
-                    text=labels[phase],
+                    text=labels[phase] + (f"：{question.title}" if question else ""),
                     channel_agent_id="scout",
-                    payload={"scout_phase": phase},
+                    payload={"scout_phase": phase, **({"question_id": str(question.id)} if question else {})},
                 )
                 try:
                     async with asyncio.timeout(budget + 10 if budget is not None else None):
@@ -402,47 +427,98 @@ class AOERuntime:
                                 scout_phase=phase,
                                 phase_budget_seconds=budget,
                                 aoe_parent_id=parent_id,
+                                scout_question_id=question.id if question else None,
                             ),
                             emit,
                         )
                 except TimeoutError:
                     if phase != "executing":
                         raise
-                questions = await self.storage.list_questions(parent_id)
-                if phase == "collecting" and (
-                    not questions or not (await self.storage.get_task(parent_id)).metadata.get("collection_complete")
-                ):
-                    raise ContractError("Scout must finish collection of the complete question list")
-                if phase in {"extracting", "merging"}:
-                    for question in questions:
+
+            if not parent.metadata.get("collection_complete"):
+                await phase_request("collecting")
+            parent = await self.storage.get_task(parent_id)
+            questions = await self.storage.list_questions(parent_id)
+            if not questions or not parent.metadata.get("collection_complete"):
+                raise ContractError("Scout must finish collection of the complete question list")
+            await self.storage.update_task(
+                parent_id,
+                state=RunState.RUNNING,
+                metadata={
+                    "aoe_phase": parent.metadata.get("aoe_phase")
+                    if parent.metadata.get("aoe_phase") in {"solo", "joint"}
+                    else "solo"
+                },
+            )
+            for question in sorted(questions, key=question_order):
+                if scout_ready(question):
+                    continue
+                completed = set(
+                    question.metadata.get("scout_completed_phases", parent.metadata.get("scout_completed_phases", []))
+                )
+                for phase in ("executing", "extracting", "merging"):
+                    if phase in completed:
+                        continue
+                    budget = None
+                    if phase == "executing":
+                        deadline = question.metadata.get("scout_execution_deadline")
+                        if deadline is None:
+                            deadline = self.clock() + per_question_budget
+                            await self.storage.update_task(question.id, metadata={"scout_execution_deadline": deadline})
+                        budget = max(0, deadline - self.clock())
+                    if phase != "executing" or budget > 0:
+                        await phase_request(phase, question, budget)
+                    if phase in {"extracting", "merging"}:
                         validate = (
                             self.coordinator.scout_intel.validate_extraction
                             if phase == "extracting"
                             else self.coordinator.scout_intel.validate_merge
                         )
                         await self.storage.update_agent(question.id, "scout", metadata=validate(question.id))
-                completed.add(phase)
-                await self.storage.update_task(parent_id, metadata={"scout_completed_phases": list(completed)})
-            for question in await self.storage.list_questions(parent_id):
-                count = await self.coordinator.scout_intel.flush(question.id)
-                await self.storage.update_agent(
-                    question.id,
-                    "scout",
-                    desired_state=AgentState.COMPLETED,
-                    actual_state=AgentState.COMPLETED,
-                    metadata={"scout_phase": "completed", "intel_count": count},
-                )
-                await self.storage.update_task(question.id, state=RunState.RUNNING)
+                    completed.add(phase)
+                    await self.storage.update_task(question.id, metadata={"scout_completed_phases": sorted(completed)})
+                await self._handoff_question(parent_id, question.id)
             await self.storage.update_agent(
                 parent_id,
                 "scout",
                 desired_state=AgentState.COMPLETED,
                 actual_state=AgentState.COMPLETED,
-                metadata={"scout_phase": "completed"},
+                metadata={"scout_phase": "completed", "current_question_id": None, "current_question_title": None},
             )
-            await self.storage.update_task(parent_id, metadata={"aoe_phase": "solo"})
+            await self.storage.update_task(parent_id, metadata={"scout_complete": True})
         finally:
             await self.containers.stop(parent_id, "scout")
+
+    async def _handoff_question(self, parent_id: UUID, question_id: UUID) -> None:
+        # The scheduler uses this same lock. No Worker can see a half-imported
+        # board or claim this question between the state and readiness updates.
+        async with self.locks[parent_id]:
+            question = await self.storage.get_task(question_id)
+            if scout_ready(question):
+                return
+            self.coordinator.scout_intel.validate_extraction(question_id)
+            self.coordinator.scout_intel.validate_merge(question_id)
+            count = await self.coordinator.scout_intel.flush(question_id)
+            await self.storage.update_agent(
+                question_id,
+                "scout",
+                desired_state=AgentState.COMPLETED,
+                actual_state=AgentState.COMPLETED,
+                metadata={"scout_phase": "completed", "intel_count": count},
+            )
+            question = await self.storage.update_task(
+                question_id,
+                state=RunState.RUNNING,
+                metadata={"scout_ready": True, "scout_phase": "completed", "status": "queued"},
+            )
+            await self._save_question(question)
+            await self.events.emit(
+                parent_id,
+                actor=SYSTEM_ACTOR,
+                kind=EventKind.SYSTEM,
+                text=f"题目情报已写入黑板，可认领：{question.title}",
+                payload={"question_id": str(question_id), "scout_ready": True},
+            )
 
     async def _new_attempts(self, parent_id: UUID, question: TaskRun, agents: tuple[str, ...], phase: str) -> TaskRun:
         parent = await self.storage.get_task(parent_id)
@@ -461,6 +537,8 @@ class AOERuntime:
         ]
 
         def assign(metadata):
+            if not metadata.get("scout_ready", True):
+                raise ConflictError("Question has not completed Scout handoff")
             if any(a.get("outcome") is None for a in metadata.get("attempts", [])) or metadata.get("status") in {
                 "solved",
                 "abandoned",
@@ -621,6 +699,8 @@ class AOERuntime:
             parent = await self.storage.get_task(parent_id)
             if parent.state in TERMINAL:
                 return True
+            if parent.state == RunState.SCOUTING or not parent.metadata.get("collection_complete"):
+                return False
             workers = self.config.worker_agent_ids
             questions = await self.storage.list_questions(parent_id)
             for question in unfinished(questions):
@@ -672,7 +752,12 @@ class AOERuntime:
             await self._sync_slots(parent_id, questions)
             if questions and not unfinished(questions) and any(q.state not in TERMINAL for q in questions):
                 await self.storage.update_task(parent_id, state=RunState.REPORTING, metadata={"aoe_phase": "reporting"})
-            if questions and not unfinished(questions) and all(q.state in TERMINAL for q in questions):
+            if (
+                questions
+                and not unfinished(questions)
+                and all(q.state in TERMINAL for q in questions)
+                and parent.metadata.get("scout_complete", all(scout_ready(q) for q in questions))
+            ):
                 await self.storage.update_task(parent_id, state=RunState.COMPLETED, metadata={"aoe_phase": "completed"})
                 for agent_id in [*workers, "reporter"]:
                     await self.storage.update_agent(

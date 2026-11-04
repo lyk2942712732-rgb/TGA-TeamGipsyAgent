@@ -75,4 +75,14 @@ describe("AOE question workspace", () => {
     render(<TGA3RuntimeGraph snapshot={parent} />);
     expect(screen.getByRole("button", { name: "查看 Codex Worker" })).toHaveTextContent("题目：Question One");
   });
+  it("distinguishes Scout preparation from available questions and shows the per-question budget", () => {
+    const preparing = { ...parent, aoe: { ...parent.aoe!, scout_question_seconds: 300,
+      questions: [{ ...question("q1", "Question One"), scout_ready: false, scout_phase: "extracting", status: "preparing", current_agents: [], attempted_by: [] },
+        { ...question("q2", "Question Two"), scout_ready: true, status: "queued", current_agents: [] }] } };
+    render(<MemoryRouter><AOEWorkspace snapshot={preparing} tab="blackboard" onTab={vi.fn()} selectedAgentId="worker-openai" onChanged={vi.fn()} /></MemoryRouter>);
+    expect(screen.getByText("第二轮提取")).toBeInTheDocument();
+    expect(screen.getByText("待解题")).toBeInTheDocument();
+    expect(screen.getByText(/1 待交接/)).toBeInTheDocument();
+    expect(screen.getByText(/每题侦察 300 秒/)).toBeInTheDocument();
+  });
 });

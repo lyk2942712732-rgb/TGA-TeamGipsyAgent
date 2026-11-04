@@ -82,6 +82,7 @@ class TaskCoordinator:
             raise ValueError("AOE attempt budget must be between 1 and 1440 minutes")
         task = await self.storage.create_task(title, scene.id, task_id, metadata={
             "aoe_attempt_seconds": aoe_attempt_minutes * 60, "aoe_phase": "collecting",
+            "aoe_scout_seconds": self.config.runtime.scout_timeout_seconds, "scout_complete": False,
         } if scene_id == "aoe" else None)
         self.config.ensure_task_directories(task.id)
         await self.storage.update_task(task.id, state=RunState.STARTING)

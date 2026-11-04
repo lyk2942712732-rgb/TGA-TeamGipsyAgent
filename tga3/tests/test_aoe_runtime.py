@@ -70,7 +70,7 @@ async def prepare(tmp_path):
     await storage.update_task(parent.id, state=RunState.RUNNING, metadata={"aoe_phase": "solo"})
     questions = {q.title: q for q in await storage.list_questions(parent.id)}
     for q in questions.values():
-        await storage.update_task(q.id, state=RunState.RUNNING)
+        await storage.update_task(q.id, state=RunState.RUNNING, metadata={"scout_ready": True})
     return cfg, storage, containers, coordinator, parent, clock, questions
 
 
