@@ -59,6 +59,7 @@ describe("live collaboration graph", () => {
     expect(toolActivity(event("3", "worker-openai", { payload: { tool: "command_execution", command: "id" } }))?.detail).toBe("id");
     expect(toolActivity(event("4", "worker-claude", { payload: { tool: "Read", input: { file_path: "/skills/pkg/requests.md" } } }))).toMatchObject({ from: "skills", to: "agent:worker-claude" });
     expect(toolActivity(event("5", "worker-claude", { payload: { tool: "mcp__des-ctf-knowledge__find_technique", input: { signal: "PNG CRC" } } }))).toMatchObject({ from: "knowledge", to: "agent:worker-claude", shortLabel: "检索知识库" });
+    expect(toolActivity(event("6", "worker-openai", { text: "find_technique", payload: { tool: "mcp_tool_call", server: "des-ctf-knowledge" } }))).toMatchObject({ from: "knowledge", to: "agent:worker-openai" });
   });
   it("opens knowledge details and highlights only actual retrieval events", () => {
     const base = snapshot(), view = render(<TGA3RuntimeGraph snapshot={base} />);

@@ -422,6 +422,7 @@ class CodexAdapter(CliAdapter):
                     "agent.action.started" if kind == "item.started" else "agent.action.completed",
                     {
                         "tool": item_type,
+                        "server": item.get("server") if item_type == "mcp_tool_call" else None,
                         "tool_use_id": item.get("id"),
                         "summary": str(item.get("command") or item.get("tool") or item_type)[:500],
                         "exit_code": item.get("exit_code"),

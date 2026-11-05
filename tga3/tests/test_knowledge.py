@@ -56,3 +56,21 @@ def test_library_mount_is_readonly_for_workers_and_absent_for_scout_reporter(tmp
             assert containers.kwargs["environment"]["TGA3_CTF_KNOWLEDGE_ROOT"] == "/knowledge/des-ctf-knowledge"
         else:
             assert "/knowledge/des-ctf-knowledge" not in mounts
+
+
+@pytest.mark.asyncio
+async def test_codex_knowledge_events_preserve_server_identity(monkeypatch, tmp_path):
+    environment(monkeypatch, tmp_path)
+    adapter = CodexAdapter()
+    events = []
+
+    async def emit(method, params):
+        events.append((method, params))
+
+    await adapter.event({"type": "item.started", "item": {
+        "id": "knowledge-call", "type": "mcp_tool_call",
+        "server": "des-ctf-knowledge", "tool": "find_technique", "arguments": {"signal": "PNG"},
+    }}, emit)
+    assert events[0][0] == "agent.action.started"
+    assert events[0][1]["server"] == "des-ctf-knowledge"
+    assert events[0][1]["summary"] == "find_technique"
