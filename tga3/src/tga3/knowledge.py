@@ -16,7 +16,7 @@ def worker_knowledge_server() -> dict | None:
     root = os.environ.get("TGA3_CTF_KNOWLEDGE_ROOT")
     if os.environ.get("TGA3_AGENT_ROLE") != "worker" or not root:
         return None
-    return {"command": "python3", "args": [(Path(root) / "mcp/server.py").as_posix()],
+    return {"command": "python3", "args": ["-m", "tga3.workers.knowledge_server", root],
             "env": {"PYTHONDONTWRITEBYTECODE": "1"}}
 
 

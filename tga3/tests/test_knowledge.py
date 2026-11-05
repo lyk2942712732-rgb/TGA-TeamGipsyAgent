@@ -31,7 +31,7 @@ def test_knowledge_is_connected_to_both_native_cli_configs(monkeypatch, tmp_path
         assert "mcp__des-ctf-knowledge__*" in args[args.index("--allowedTools") + 1]
         assert env["MCP_TIMEOUT"] == "180000"
     assert server["command"] == "python3"
-    assert server["args"] == ["/knowledge/des-ctf-knowledge/mcp/server.py"]
+    assert server["args"] == ["-m", "tga3.workers.knowledge_server", "/knowledge/des-ctf-knowledge"]
     assert server["env"]["PYTHONDONTWRITEBYTECODE"] == "1"
     prompt = worker_instructions()
     assert "find_technique" in prompt and "SKILL.md once" in prompt and "no per-question" in prompt
