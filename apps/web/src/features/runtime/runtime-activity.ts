@@ -31,6 +31,7 @@ export function toolActivity(event: TGA3TaskEvent): RuntimeActivity | null {
   if (event.kind === "system" && event.payload.attempt) return { ...base, from: owner, shortLabel: "恢复会话", label: `${name} 恢复原 CLI 会话`, detail: event.text };
   if (!["action_started", "action_completed"].includes(event.kind)) return null;
   const tool = String(event.payload.tool ?? event.text), content = `${tool} ${event.text} ${JSON.stringify(event.payload)}`;
+  if (/des[-_]ctf[-_]knowledge|\/knowledge\//i.test(content)) return { ...base, from: "knowledge", to: owner, shortLabel: "检索知识库", label: `${name} 检索 CTF 知识库` };
   if (/\/skills(?:\/|\b)/i.test(content)) return { ...base, from: "skills", to: owner, shortLabel: "读取 Skill", label: `${name} 读取 Skill` };
   if (/blackboard.*(sync|read)|(?:sync|read).*blackboard/i.test(tool)) return { ...base, from: "blackboard", to: owner, shortLabel: "读取黑板", label: `${name} 读取黑板` };
   if (/blackboard.*publish|publish.*blackboard/i.test(tool)) return { ...base, from: owner, to: "blackboard", shortLabel: "写入黑板", label: `${name} 写入黑板` };

@@ -1,4 +1,4 @@
-import { BrainCircuit, Check, ChevronDown, ChevronUp, Clock3, Database, FileText, Files, Library, Minus, Play, Terminal, X } from "lucide-react";
+import { BookOpen, BrainCircuit, Check, ChevronDown, ChevronUp, Clock3, Database, FileText, Files, Library, Minus, Play, Terminal, X } from "lucide-react";
 import { useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { TGA3Agent, TGA3RuntimeSnapshot } from "../../../runtime/tga3-runtime";
 import { agentNode, compact, currentAgentAction, latestAgentEntry, modelNode, runtimeActivityEvents, type RuntimeActivity } from "../runtime-activity";
@@ -53,11 +53,18 @@ export function TGA3RuntimeGraph({ snapshot, selectedAgentId, onSelectAgent }: {
     {!collapsed ? <><div className="collab-stage" ref={stage}>
       <svg className="collab-wires" viewBox={`0 0 ${size.width} ${size.height}`} aria-hidden="true"><defs><marker id={marker} viewBox="0 0 8 8" markerWidth="6" markerHeight="6" refX="7" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8" fill="none" stroke="currentColor" /></marker></defs>
         {size.width >= 530 ? [["scout", "worker-openai"], ["scout", "worker-claude"], ["worker-openai", "reporter"], ["worker-claude", "reporter"]].map(([a, b]) => boxes[agentNode(a)] && boxes[agentNode(b)] ? <path key={`${a}-${b}`} className="collab-passive" d={phaseRoute(boxes[agentNode(a)], boxes[agentNode(b)])} /> : null) : null}
+        {size.width >= 530 ? ["worker-openai", "worker-claude"].map(id => {
+          const route = activityRoute({ id, owner: agentNode(id), from: "knowledge", to: agentNode(id), label: "", shortLabel: "", detail: "", at: 0 }, boxes);
+          return route ? <path key={`knowledge-${id}`} data-knowledge-link={id} className="collab-passive" markerEnd={`url(#${marker})`} d={route.d} /> : null;
+        }) : null}
         {activities.map(activity => { const route = activityRoute(activity, boxes); return route ? <path key={activity.id} className="collab-route" markerEnd={`url(#${marker})`} d={route.d} /> : null; })}
       </svg>
       <div className="collab-grid">
         {resource("input", "任务输入", <Files size={15} />, questions ? `${questions.length} 道题目，各自题面与附件` : `题目描述与 ${snapshot.blackboard.filter(item => item.kind === "user_file").length} 个附件`)}
-        {resource("skills", "Skills", <Library size={15} />, "按需读取能力包与补充材料")}
+        <div className="collab-capabilities">
+          {resource("skills", "Skills", <Library size={15} />, "按需读取能力包与补充材料")}
+          {resource("knowledge", "CTF 知识库", <BookOpen size={15} />, "Des-CTF · 技法 / 案例 / 章节检索")}
+        </div>
         {resource("output", "报告", <FileText size={15} />, questions ? `${questions.filter(q => q.report_state === "completed").length} / ${questions.length} 份逐题报告` : snapshot.task.state === "completed" ? "Markdown Writeup 已生成" : snapshot.task.state === "reporting" ? "正在整理步骤与证据" : "等待 Reporter 生成")}
         <div className="collab-scout"><span className="collab-phase">侦察</span>{agent("scout")}</div><div className="collab-workers"><span className="collab-phase">并行执行</span>{agent("worker-openai")}{agent("worker-claude")}</div><div className="collab-reporter"><span className="collab-phase">报告</span>{agent("reporter")}</div>
         <small className="collab-input-note">原始材料共享只读</small>
@@ -70,5 +77,5 @@ export function TGA3RuntimeGraph({ snapshot, selectedAgentId, onSelectAgent }: {
   </section>;
 }
 function idleAction(agent: TGA3Agent, seq?: number) { if (agent.actual_state === "failed") return "执行失败，查看最近错误"; if (["paused", "pause_requested"].includes(agent.actual_state)) return "保留原 CLI 会话"; if (seq) return `最近写入黑板 #${seq}`; if (["completed", "stopped"].includes(agent.actual_state)) return "本阶段执行结束"; return agent.role === "reporter" ? "等待最终候选" : "等待新的执行事件"; }
-function nodeName(id: string, agents: TGA3Agent[]) { if (id.startsWith("agent:") || id.startsWith("model:")) { const a = agents.find(item => item.agent_id === id.slice(6)); return id.startsWith("model:") ? a?.model_name ?? a?.model_id ?? "模型" : a?.display_name ?? id.slice(6); } return ({ input: "任务输入", blackboard: "黑板", skills: "Skills", output: "报告" } as Record<string, string>)[id] ?? id; }
-function resourceDetail(id: string, snapshot: TGA3RuntimeSnapshot) { return id === "blackboard" ? `共享事实已写入至 #${snapshot.task.blackboard_seq}。系统导入 Scout 的 Intel JSON，Workers 发布 Findings 与最终候选，Reporter 读取最终快照。` : id === "skills" ? "Agent 根据需要读取 /skills 下的能力包。未发生读取时不显示交互。" : id === "input" ? "题目描述和附件索引进入黑板，原始文件只读提供给各 Agent。" : "Reporter 根据最终黑板与只读证据生成 Markdown Writeup。"; }
+function nodeName(id: string, agents: TGA3Agent[]) { if (id.startsWith("agent:") || id.startsWith("model:")) { const a = agents.find(item => item.agent_id === id.slice(6)); return id.startsWith("model:") ? a?.model_name ?? a?.model_id ?? "模型" : a?.display_name ?? id.slice(6); } return ({ input: "任务输入", blackboard: "黑板", skills: "Skills", knowledge: "CTF 知识库", output: "报告" } as Record<string, string>)[id] ?? id; }
+function resourceDetail(id: string, snapshot: TGA3RuntimeSnapshot) { return id === "knowledge" ? <>两个 Worker 按当前题目的实测信号检索 Des-CTF-Knowledge 的技法、历史 WP 和专题章节；只读参考，按需加载。<a href="https://github.com/Dest1ny-Sec/Des-CTF-Knowledge" target="_blank" rel="noreferrer">查看知识库与接入说明</a></> : id === "blackboard" ? `共享事实已写入至 #${snapshot.task.blackboard_seq}。系统导入 Scout 的 Intel JSON，Workers 发布 Findings 与最终候选，Reporter 读取最终快照。` : id === "skills" ? "Agent 根据需要读取 /skills 下的能力包。未发生读取时不显示交互。" : id === "input" ? "题目描述和附件索引进入黑板，原始文件只读提供给各 Agent。" : "Reporter 根据最终黑板与只读证据生成 Markdown Writeup。"; }

@@ -15,7 +15,7 @@ describe("live collaboration graph", () => {
   it("keeps the workflow resources visible and makes agent selection and collapse usable", () => {
     const select = vi.fn(); render(<TGA3RuntimeGraph snapshot={snapshot()} onSelectAgent={select} />);
     const graph = screen.getByRole("region", { name: "实时运行图" });
-    for (const name of ["任务输入", "黑板", "Skills", "报告"]) expect(within(graph).getAllByText(name).length).toBeGreaterThan(0);
+    for (const name of ["任务输入", "黑板", "Skills", "CTF 知识库", "报告"]) expect(within(graph).getAllByText(name).length).toBeGreaterThan(0);
     fireEvent.click(screen.getByRole("button", { name: "查看 Claude Worker" })); expect(select).toHaveBeenCalledWith("worker-claude");
     fireEvent.click(screen.getByRole("checkbox", { name: "模型信息" })); expect(screen.getAllByText("model-test")).toHaveLength(4);
     fireEvent.click(screen.getByRole("button", { name: "收起运行图" })); expect(screen.queryByRole("button", { name: "查看 Claude Worker" })).not.toBeInTheDocument();
@@ -58,5 +58,19 @@ describe("live collaboration graph", () => {
     const write = toolActivity(event("2", "worker-openai", { payload: { tool: "mcp__blackboard__blackboard_publish" } })); expect(write).toMatchObject({ from: "agent:worker-openai", to: "blackboard" });
     expect(toolActivity(event("3", "worker-openai", { payload: { tool: "command_execution", command: "id" } }))?.detail).toBe("id");
     expect(toolActivity(event("4", "worker-claude", { payload: { tool: "Read", input: { file_path: "/skills/pkg/requests.md" } } }))).toMatchObject({ from: "skills", to: "agent:worker-claude" });
+    expect(toolActivity(event("5", "worker-claude", { payload: { tool: "mcp__des-ctf-knowledge__find_technique", input: { signal: "PNG CRC" } } }))).toMatchObject({ from: "knowledge", to: "agent:worker-claude", shortLabel: "检索知识库" });
+  });
+  it("opens knowledge details and highlights only actual retrieval events", () => {
+    const base = snapshot(), view = render(<TGA3RuntimeGraph snapshot={base} />);
+    const node = screen.getByRole("button", { name: /CTF 知识库/ });
+    expect(node).toHaveAttribute("data-active", "false");
+    fireEvent.click(node);
+    expect(screen.getByRole("link", { name: "查看知识库与接入说明" })).toHaveAttribute("href", "https://github.com/Dest1ny-Sec/Des-CTF-Knowledge");
+    const read = event("knowledge-1", "worker-openai", { payload: { tool: "mcp__des-ctf-knowledge__search", input: { query: "PNG IHDR CRC" } } });
+    view.rerender(<TGA3RuntimeGraph snapshot={{ ...base, events: [read] }} />);
+    expect(node).toHaveAttribute("data-active", "true");
+    expect(screen.getAllByText("Codex Worker 检索 CTF 知识库").length).toBeGreaterThan(0);
+    act(() => vi.advanceTimersByTime(2600));
+    expect(node).toHaveAttribute("data-active", "false");
   });
 });
