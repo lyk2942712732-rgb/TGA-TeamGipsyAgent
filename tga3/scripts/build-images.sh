@@ -6,7 +6,7 @@ build_network="${DOCKER_BUILD_NETWORK:-host}"
 image_tag="${TGA3_IMAGE_TAG:-local}"
 
 docker build --network="${build_network}" \
-  --build-arg "PYTHON_IMAGE=${PYTHON_IMAGE:-docker.m.daocloud.io/library/python:3.12-slim-bookworm}" \
+  --build-arg "PYTHON_IMAGE=${PYTHON_IMAGE:-docker.m.daocloud.io/library/python:3.12-slim-bookworm@sha256:e697c81897302a4c4333bade000d98038fbb21eb064f8ee1fd42d02ebcd9d337}" \
   --build-arg "DEBIAN_MIRROR=${DEBIAN_MIRROR-mirrors.aliyun.com}" \
   -f "${project_dir}/docker/Dockerfile.base" -t "tga3-ctf-base:${image_tag}" "${project_dir}"
 bash "${project_dir}/scripts/verify-worker-image.sh" "tga3-ctf-base:${image_tag}"

@@ -1,6 +1,6 @@
 # Tool baseline: StrikeAgent TSecBench Dockerfile at
 # https://github.com/Yean-Sec/StrikeAgent_AtkBrain-Flash/blob/7526baa7ea88de04b1900f04a06b13b77ab5682e/Dockerfile
-ARG PYTHON_IMAGE=docker.m.daocloud.io/library/python:3.12-slim-bookworm
+ARG PYTHON_IMAGE=docker.m.daocloud.io/library/python:3.12-slim-bookworm@sha256:e697c81897302a4c4333bade000d98038fbb21eb064f8ee1fd42d02ebcd9d337
 FROM ${PYTHON_IMAGE}
 
 ARG DEBIAN_MIRROR=mirrors.aliyun.com

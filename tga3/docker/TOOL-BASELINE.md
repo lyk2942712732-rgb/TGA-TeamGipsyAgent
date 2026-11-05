@@ -52,7 +52,8 @@ TGA3_IMAGE_TAG=bookworm-candidate bash scripts/build-images.sh
 镜像中不写 API 密钥；模型、MCP、知识库与任务挂载仍由项目运行时提供。
 
 可配置 `PYTHON_IMAGE`（仍须为 Python 3.12 slim-bookworm）、`DEBIAN_MIRROR`（主机名）、`NODE_DOWNLOAD_BASE`、`DOCKER_BUILD_NETWORK`。
-`DEBIAN_MIRROR=` 保留基础镜像中的官方 Debian 源。默认基础镜像和 Debian 镜像站与上游相同。
+`DEBIAN_MIRROR=` 保留基础镜像中的官方 Debian 源。默认基础镜像家族和 Debian 镜像站与上游相同。
+基础镜像固定为本轮实测的镜像摘要，避免同名 tag 更新导致工具层漂移；升级基础系统时显式覆盖 `PYTHON_IMAGE` 并重新验收。
 Node 和两个 CLI 使用项目已验证的固定版本，传输保持 TLS 验证。
 
 基础层的实际变化需要从新 FROM 重新构建；在旧 Kali 镜像上删除文件不能移除旧层。
