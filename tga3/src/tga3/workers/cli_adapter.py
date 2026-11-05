@@ -381,7 +381,8 @@ class CodexAdapter(CliAdapter):
             config += ["[mcp_servers.des-ctf-knowledge]",
                        f"command = {json.dumps(knowledge['command'])}",
                        f"args = {json.dumps(knowledge['args'])}",
-                       'env = { PYTHONDONTWRITEBYTECODE = "1" }', "required = true"]
+                       'env = { PYTHONDONTWRITEBYTECODE = "1" }',
+                       "startup_timeout_sec = 180", "tool_timeout_sec = 120", "required = true"]
         if self.hook_config():
             (cli_home / "hooks.json").write_text(json.dumps(self.hook_config()), encoding="utf-8")
         (cli_home / "config.toml").write_text("\n".join(config) + "\n", encoding="utf-8")
@@ -453,6 +454,8 @@ class ClaudeAdapter(CliAdapter):
             encoding="utf-8",
         )
         env = dict(os.environ, CLAUDE_CONFIG_DIR=str(cli_home), ANTHROPIC_API_KEY=self.api_key, DISABLE_AUTOUPDATER="1")
+        if knowledge:
+            env["MCP_TIMEOUT"] = "180000"
         env.pop("ANTHROPIC_AUTH_TOKEN", None)
         env.pop("ANTHROPIC_BASE_URL", None)
         if self.base_url:

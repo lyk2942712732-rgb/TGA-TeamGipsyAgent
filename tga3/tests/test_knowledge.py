@@ -20,14 +20,16 @@ def test_knowledge_is_connected_to_both_native_cli_configs(monkeypatch, tmp_path
     environment(monkeypatch, tmp_path, claude=adapter_type is ClaudeAdapter)
     monkeypatch.setenv("TGA3_CTF_KNOWLEDGE_ROOT", "/knowledge/des-ctf-knowledge")
     adapter = adapter_type()
-    args, _ = adapter.command()
+    args, env = adapter.command()
     if adapter_type is CodexAdapter:
         config = tomllib.loads((tmp_path / ".codex/config.toml").read_text())
         server = config["mcp_servers"]["des-ctf-knowledge"]
+        assert server["startup_timeout_sec"] == 180
     else:
         config = json.loads((tmp_path / ".tga3/mcp.json").read_text())
         server = config["mcpServers"]["des-ctf-knowledge"]
         assert "mcp__des-ctf-knowledge__*" in args[args.index("--allowedTools") + 1]
+        assert env["MCP_TIMEOUT"] == "180000"
     assert server["command"] == "python3"
     assert server["args"] == ["/knowledge/des-ctf-knowledge/mcp/server.py"]
     assert server["env"]["PYTHONDONTWRITEBYTECODE"] == "1"
