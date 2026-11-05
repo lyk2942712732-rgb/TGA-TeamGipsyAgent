@@ -19,7 +19,7 @@ def test_task_directories_are_complete_isolated_and_cannot_escape(tmp_path):
     config = configuration(tmp_path)
     first, second = uuid4(), uuid4()
     config.ensure_task_directories(first)
-    assert {p.name for p in config.task_path(first).iterdir()} == set(KINDS)
+    assert {p.name for p in config.task_path(first).iterdir()} == set(KINDS) | {"findings"}
     assert config.task_path(first, "inputs") != config.task_path(second, "inputs")
     with pytest.raises(ValueError):
         config.task_path("../other", "inputs")

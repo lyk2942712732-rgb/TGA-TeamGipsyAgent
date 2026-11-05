@@ -38,7 +38,7 @@ def test_synchronous_hooks_supply_id_and_body_before_model_without_blackboard_re
     assert action["artifact"]["attachments"] == ["response.txt"]
     assert (hook_env / action["artifact"]["output_path"]).read_text() == ""
     assert action["action_id"] in reply["hookSpecificOutput"]["additionalContext"]
-    assert "finding_publish(action_id, claim, scope)" in reply["hookSpecificOutput"]["additionalContext"]
+    assert "write one JSON file in /findings/" in reply["hookSpecificOutput"]["additionalContext"]
     assert not list((hook_env / ".tga3/action-hooks").glob("*.json"))
 
 
@@ -52,11 +52,6 @@ def test_native_id_reuse_does_not_merge_actions_after_cli_resume(hook_env, monke
     assert [action["tool_call_id"] for action in actions] == ["call_0", "call_0"]
 
 
-def test_publication_itself_is_logged_without_recursive_finding_prompt(hook_env):
-    common = {"tool_name": "mcp__blackboard__finding_publish", "tool_input": {"claim": "fixture"}}
-    record_tool(tool_event(**common))
-    assert checkpoint(tool_event("PostToolUse", tool_response={"saved": True}, **common)) == {}
-    assert len(read_action_log(hook_env / "logs")["actions"]) == 1
 
 
 @pytest.mark.parametrize("response,event", [("Process exited with code 7\nOutput: failed", "PostToolUse"),

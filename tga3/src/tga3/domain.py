@@ -162,9 +162,9 @@ def publication_contract(role: str | None = None) -> str:
                 "Runtime binds identity; a singleton is copied verbatim by the server.")
     fields = ", ".join(f"{name}{'' if field.is_required() else '?'}"
                        for name, field in FinalCandidateBody.model_fields.items())
-    return ("finding_publish: action_id, claim, scope, preconditions?. "
-            f"blackboard_publish: {fields}, topic?. "
-            "Task, actor, kind and retry key are supplied by the runtime; no request wrapper.")
+    return ("/findings/<agent>-<id>.json: action_id, claim, scope, preconditions?. "
+            f"/workspace/result/final-candidate.json: {fields}. "
+            "The system validates files, registers evidence and imports publications into the blackboard.")
 
 
 BODY_BY_KIND: dict[EntryKind, type[BaseModel]] = {

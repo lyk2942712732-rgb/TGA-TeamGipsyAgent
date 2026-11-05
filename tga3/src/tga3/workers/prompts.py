@@ -3,7 +3,6 @@
 import json
 import os
 
-from ..domain import publication_contract as build_publication_contract
 
 
 def worker_instructions() -> str:
@@ -19,8 +18,7 @@ def worker_instructions() -> str:
         "TGA3 runtime identity (authoritative):\n"
         f"- task_id: {os.environ['TGA3_TASK_ID']}\n"
         f"- actor: {json.dumps(actor, ensure_ascii=False, separators=(',', ':'))}\n"
-        "Final candidate task/actor and retry keys are bound by the runtime; do not fill those fields. "
-        "finding_publish receives your identity from the runtime connection; do not fill task_id or actor. "
+        "Publication task/actor and retry keys are bound by the system; do not fill those fields. "
         "Never invent a placeholder task ID or actor."
         " Your CLI working directory is /workspace. Your private output directory is /workspace; "
         "The runtime stores structured execution records in /logs. "
@@ -30,12 +28,6 @@ def worker_instructions() -> str:
         "generated files, all relative to /workspace. Reuse these files as evidence when sufficient. "
         "Use native CLI file/list/search tools "
         "to discover /skills and read each package's SKILL.md, then follow its referenced documents."
-    )
-    publication_contract = (
-        "Blackboard publication contract (authoritative and generated from the runtime models):\n"
-        f"{build_publication_contract(role)}\n"
-        "Use finding_publish for immediate observations. blackboard_publish accepts direct content arguments "
-        "for final candidates without a request wrapper or identity fields."
     )
     if role == "scout":
         if os.environ.get("TGA3_AOE_PARENT_ID"):
@@ -111,45 +103,30 @@ def worker_instructions() -> str:
                 "Native hooks provide the task, blackboard and realtime user prompts at tool boundaries. "
                 "User prompts from actor.role=user are direct user instructions. "
                 "Blackboard reading is supplied by native hooks.")
-    publication_contract += (
-        "\nThe native CLI hooks deliver the initial complete blackboard and subsequent unseen entries automatically. "
-        "Do not reread the full blackboard yourself. At the next tool opportunity, "
-        "updates are supplied only when the configured interval elapsed and new entries exist. "
-        "Before final_candidate, the hook bypasses the interval; review newly supplied entries and retry if blocked. "
-        "Continue working without waiting for updates. Tool hooks handle cursors and elapsed time."
-    )
-    finding_example = {"action_id": f"{actor['agent_id']}-action-<ID supplied with the tool result>",
-                       "claim": "<verified reusable observation>",
-                       "scope": "<tested target, inputs, conditions and limits>"}
-    final_candidate_example = {
-        "conclusion": "<verified final answer>", "rationale": "<why the referenced Findings support this answer>",
-        "answer_type": "flag", "finding_ids": ["<entry.id returned by finding_publish>"],
-    }
-    publication_contract += (
-        "\nUse finding_publish with these arguments (no request wrapper):\n"
-        + json.dumps(finding_example, ensure_ascii=False)
-        + "\nAfter EACH execution, use the result already in this conversation. If it establishes a reusable fact, "
-        "publish it immediately before the next investigation step. One execution is enough; "
-        "do not wait for a validation batch, decisive exploit or final answer. "
-        "Share both what exists/works and what failed under the tested conditions. "
-        "Do not schedule log reviews or reread logs to extract Findings. Ordinary navigation, duplicate facts, "
-        "plans and guesses need no publication. Tool errors/timeouts do not rule out a target capability. "
-        "The post-tool hook supplies the exact action_id; never substitute a native tool-call ID. "
-        "The server resolves task/actor, command/input, execution status, saved output and attachments, "
-        "registers evidence and generates an idempotent retry key. "
-        "Use optional preconditions only for prerequisites not present in the recorded command. "
-        "Check saved=true and entry.id. If publication fails, retain the fact, correct the reported issue "
-        "and retry with the same action_id, claim and scope before further investigation. "
-        "A transport retry with identical arguments cannot create another entry. "
-        "If the result adds no reusable fact, continue normally without an explanation or status entry. "
-        "\nFinal candidate uses blackboard_publish with these arguments:\n"
-        + json.dumps(final_candidate_example, ensure_ascii=False)
-        + "\nFor final_candidate, reference published Finding entry UUIDs in finding_ids, omit evidence_paths, "
-        "do not fill task_id, actor, kind or idempotency_key; the server supplies them. "
-        "Publication is complete only after blackboard_publish returns the saved entry. "
-        + ("The system imports Scout Intel after extraction and merging; "
-           "consume it through the existing blackboard delivery. "
-           if not os.environ.get("TGA3_AOE_PARENT_ID") else "")
+    publication_contract = (
+        "File publication contract (authoritative):\n"
+        "You do not write the blackboard and have no blackboard publication tools. "
+        "After EACH execution, use the result already in this conversation. "
+        "If it establishes a reusable fact, immediately write ONE JSON file in /findings/ "
+        "using a unique filename prefixed by your agent_id, e.g. worker-openai-finding-001.json. "
+        "Fields: action_id, claim, scope, preconditions?; no task_id, actor, evidence IDs or method fields. "
+        "Use the exact action_id supplied with the tool result. One execution is enough; "
+        "share what exists/works and scoped failures. Ordinary navigation, plans, guesses and duplicates need no Finding. "
+        "Do not schedule log reviews or reread logs to extract Findings. "
+        "The system resolves identity, method, output and attachments, registers evidence and imports the Finding. "
+        "A returned TGA system file-import receipt with status=imported and entry_id confirms success. "
+        "If status=error, correct the JSON and retry before further investigation. "
+        "Imported Finding files are immutable; add a new file for a new fact/correction. "
+        "For the final answer write /workspace/result/final-candidate.json with "
+        "conclusion, rationale, answer_type?, finding_ids (entry_id UUIDs from imported Finding receipts). "
+        "The system imports the candidate; never fabricate IDs. "
+        "If waiting_for_blackboard, review the injected updates and continue with a native Read; "
+        "the same candidate file is retried automatically after acknowledgement. "
+        "Do not claim completion until status=imported. "
+        "Native hooks supply the initial blackboard ONCE per fresh question/session, then ONLY unseen entries. "
+        "Do not reread the full blackboard yourself. New entries are normally delivered at the configured interval; "
+        "realtime user instructions and pending final candidates bypass that interval. "
+        "Unacknowledged deliveries may be replayed; continue working without waiting for routine updates."
     )
     if root := os.environ.get("TGA3_CTF_KNOWLEDGE_ROOT"):
         runtime_context += (

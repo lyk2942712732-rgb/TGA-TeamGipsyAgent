@@ -32,7 +32,7 @@ CLI 管理私有会话、工具执行和上下文压缩；不再使用 Agents SD
 - 共享黑板支持实时用户提示；Scout 和两个 Worker 的原生钩子在下一个工具调用前注入这些提示，绕过普通同步间隔。运行中的工具会先完成；收尾和终态任务不再接收新提示。 任务顶部、运行图和 Agent 面板显示 Scout 当前处于“第一轮·侦察执行中”、“第二轮·Intel 提取中”或“第三轮·Intel 合并中”。
 - PostgreSQL 保存任务、共享黑板、只读执行事件和证据/报告索引；Intel 与 Finding 的 `source_action_ids` 持久化在黑板条目。既有数据库连接时自动添加向后兼容的来源字段。
 - `/inputs` 只读；`/workspace` 私有；`/logs/<agent-id>-actions.json` 是各智能体自己的动作汇总。Reporter 通过只读 `/evidence/<agent-id>` 和 `/evidence-files/<agent-id>` 查看记录和产物，自身记录仍写入自己的 `/logs`。已移除 `/recon`。
-- Worker 在单次执行确认可复用事实后立即用 `finding_publish(action_id, claim, scope)` 发布，可选 `preconditions` 补充命令外的前置条件。执行后原生 Hook 在同一次工具返回中提供 action ID，不要求模型审阅 logs。服务端从绑定连接获取身份和任务，自动关联该 action 的方法、状态、结果正文及附件，登记证据并生成重试去重键。Finding 的 detail 包含适用条件和复现方法，其他 Worker 通过黑板直接使用。失败提交保存在私有 `.tga3/finding-outbox/`，相同参数重试返回同一条 Finding。`blackboard_publish` 只用于最终候选；删除未使用的 `blackboard_sync` 工具与旧 Finding 发布分支，黑板由原生 Hook 注入。Finding 不保存或返回 `topic`，界面需要主题时使用 `claim` 前 200 字。相关实际提示词见 [Finding 提示词](FINDING-PROMPTS.md)。Scout 的 `scout_write_intel` 只需 action_id 和内容，服务端绑定任务并关联 source_action_ids 与正文、附件路径，原始 Intel 只校验路径，不登记证据、不保存 `artifact_refs`；合并阶段自动求来源与路径的并集，最终导入黑板时才登记证据并写入关联。取消或提取、合并失败时保留文件，不导入不完整的交接、不启动 Worker。Skills 使用 CLI 原生工具读取。
+- Worker 每次执行确认可复用事实后，在 `/findings/` 写独立 JSON（action_id、claim、scope，可选 preconditions）。系统关联方法、正文与附件，登记证据并导入黑板；Worker 不再调用黑板写入工具。最终候选写 `/workspace/result/final-candidate.json`，由系统检查未读更新并导入。详见 [文件提交与系统导入](FILE-PUBLICATIONS.md)。普通 Scout 保留三轮与 raw/merged Intel 文件；只有最终合并版本由系统导入。
 - CLI 周期在安全点消费合并后的黑板更新；暂停、停止和超时会回收 CLI 的工具进程组。
 
 任务文件统一按 `runtime.task_root`（默认 `data/tasks`）组织：
@@ -44,13 +44,14 @@ data/tasks/<任务ID>/
 │   └── result/                 每条 action 的正文文件
 ├── logs/<agent-id>/
 │   └── <agent-id>-actions.json  该智能体全部 action 的汇总
+├── findings/<agent-id>/       每条 Finding 一个 JSON
 ├── intels/scout/
 │   ├── raw/scout-intels.json    第二轮全部原始 Intel（保留）
 │   └── merged/scout-intels.json 第三轮全部合并 Intel（仅这些导入黑板）
 └── writeups/                   最终报告
 ```
 
-AOE 在 `data/tasks/<批次ID>/<题目ID>/` 下为每题创建上述五个目录。批次自己的目录用于 Scout 前置收集；题目的 `inputs/question.json` 保存原题、连接信息、附件、尝试历史和状态，批次 `inputs/questions.json` 保存完整题目清单。题目结构化记录含 `question_id`；每题独立黑板、证据、Intel 和报告，不将不同题目的相似 Intel 合并。控制状态和证据关联仍由 PostgreSQL 维护，原始执行正文保存在文件中。
+AOE 在 `data/tasks/<批次ID>/<题目ID>/` 下为每题创建上述五个目录。批次自己的目录用于 Scout 前置收集；题目的根目录 `question.json` 保存原题、连接信息、附件、尝试历史和状态，批次 `inputs/questions.json` 保存完整题目清单。题目结构化记录含 `question_id`；每题独立黑板、证据、Intel 和报告，不将不同题目的相似 Intel 合并。控制状态和证据关联仍由 PostgreSQL 维护，原始执行正文保存在文件中。
 
 AOE Scout 只做前置收集，不再逐题侦察、提取或合并 Intel。每道题的题面、附件登记完成即开放调度，Worker 与收集并行；收集期间只认领明确的简单题，整批无难度说明时直接认领。全部来源页面和附件登记后 Scout 结束并退出容器，随后恢复“未经尝试优先，其次题目难度”的原有规则，保留换人尝试和最后共同攻坚。普通单题场景的 Scout 三轮与预算不受影响。总览已解出题排在前面并按最新解出时间倒序，其余按题目获取时间倒序；重启、重复登记和报告生成不改变这些时间。
 
@@ -154,3 +155,5 @@ Worker 用 `blackboard_publish(conclusion, rationale, finding_ids, answer_type?,
 在 `tga3/` 目录执行 `python -m tga3.knowledge` 安装固定版本的 [Des-CTF-Knowledge](https://github.com/Dest1ny-Sec/Des-CTF-Knowledge) 到 `knowledge/des-ctf-knowledge/`。完整知识库由原仓库维护，不复制进任务文件或模型上下文。保留其 LICENSE 和来源；安装器固定 revision，已存在的不同版本不会被自动覆盖。
 
 `runtime.ctf_knowledge_root` 可指定本地路径（默认上述路径）。已安装时只读挂载到两个 Worker 的 `/knowledge/des-ctf-knowledge`，通过原项目 stdio MCP Server 接入 Codex/Claude 两种 CLI；依赖 `mcp` 与 `pyyaml` 随 Worker 安装。先阅读知识库 `SKILL.md`，根据当前题的实测信号调用 `find_technique`、`find_atom`、`search`、`read_topic`、`find_wp`，按需定位章节和来源。知识库是参考资料；脚本需要修改时复制到 `/workspace` 后运行，保留正常 Finding 发布流程。Scout 和 Reporter 不启动知识库 MCP。
+
+AOE 题目预算从 Worker 第一条实际 action 开始；认领和 CLI 初始化不扣解题预算。共同攻坚共享首次 action 开始的截止时间。Hook 的轻量客户端通过本机桥接交给常驻 Worker 处理，远程 HTTP 连接跨周期复用。

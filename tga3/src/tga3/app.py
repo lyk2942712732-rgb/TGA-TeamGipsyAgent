@@ -19,7 +19,8 @@ from .docker_runtime import ContainerRuntime
 from .domain import USER_ACTOR, AgentState, PublishRequest, RunState
 from .errors import TGA3Error
 from .host_agents import Automation, CliHostModel, HostModel
-from .mcp_server import build_mcp, build_scout_mcp
+from .file_publications import FilePublications
+from .mcp_server import build_scout_mcp
 from .model_discovery import discover_provider_models
 from .provider_profiles import PROVIDER_PROFILES, ProviderProtocol
 from .skills import MAX_ARCHIVE_BYTES, SkillCatalog
@@ -76,15 +77,15 @@ def create_app(
     )
     coordinator.change_handlers.append(automation.changed)
     coordinator.aoe.automation = automation
-    mcp = build_mcp(config, coordinator.blackboard)
     scout_mcp = build_scout_mcp(config, coordinator.scout_intel)
     aoe_scout_mcp = build_scout_mcp(config, coordinator.scout_intel, aoe=coordinator.aoe)
     delivery = BlackboardDelivery(config, storage, coordinator.blackboard)
     usage = TokenUsageTracker(config, storage)
+    publications = FilePublications(config, coordinator.blackboard)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
-        async with mcp.session_manager.run(), scout_mcp.session_manager.run(), aoe_scout_mcp.session_manager.run():
+        async with scout_mcp.session_manager.run(), aoe_scout_mcp.session_manager.run():
             await coordinator.restore_aoe()
             try:
                 yield
@@ -96,6 +97,7 @@ def create_app(
     app.state.storage = storage
     app.state.coordinator = coordinator
     app.state.automation = automation
+    app.state.publications = publications
     api = APIRouter(prefix="/api/v3")
     config_lock = asyncio.Lock()
 
@@ -394,12 +396,12 @@ def create_app(
                       "scout_write_intel → /intels/raw/scout-intels.json", "第三轮：Intel 合并",
                       "scout_merge_intel → /intels/merged/scout-intels.json", "系统仅导入合并 Intel"],
             "worker-openai": [
-                "Shell", "Read", "Edit", "原生黑板同步 Hook", "finding_publish", "blackboard_publish",
+                "Shell", "Read", "Edit", "原生黑板同步 Hook", "/findings/ 独立 JSON", "系统导入最终候选文件",
                 "按 action 自动关联复现方法和证据", "发布时自动校验证据路径",
             ],
             "worker-claude": [
                 "Bash", "Read", "Write", "Edit", "Glob", "Grep", "原生黑板同步 Hook",
-                "finding_publish", "blackboard_publish", "按 action 自动关联复现方法和证据", "发布时自动校验证据路径",
+                "/findings/ 独立 JSON", "系统导入最终候选文件", "按 action 自动关联复现方法和证据", "发布时自动校验证据路径",
             ],
             "reporter": ["Read snapshot", "Read evidence", "Read skills", "Markdown Writeup"],
         }
@@ -610,18 +612,29 @@ def create_app(
 
     @app.post("/internal/blackboard/{task_id}/{agent_id}/checkpoint")
     async def blackboard_checkpoint(task_id: UUID, agent_id: str, body: dict) -> dict:
-        return await delivery.checkpoint(
-            task_id, agent_id, ack=str(body.get("ack", "")), final=bool(body.get("final", False)),
+        worker = config.agents.agents[agent_id].role == 'worker'
+        file_sync = worker and bool(body.get('file_sync'))
+        receipts = await publications.sync_findings(task_id, agent_id) if file_sync else []
+        pending_final = file_sync and publications.final_pending(task_id, agent_id)
+        result = await delivery.checkpoint(
+            task_id, agent_id, ack=str(body.get("ack", "")), final=bool(body.get("final", False)) or pending_final,
             ack_only=bool(body.get("ack_only", False)),
             initial_only=bool(body.get("initial_only", False))
         )
+        denied = result.get('context') and (body.get('final') or body.get('force_start'))
+        if worker and body.get('action_start') and not denied:
+            await coordinator.aoe.action_started(task_id, agent_id, str(body['action_start']))
+        if file_sync:
+            receipts.extend(await publications.sync_final(task_id, agent_id))
+        if receipts:
+            result = {**result, 'publication_receipts': receipts}
+        return result
 
     @app.websocket("/internal/agents/{task_id}/{agent_id}")
     async def agent_socket(websocket: WebSocket, task_id: UUID, agent_id: str) -> None:
         await coordinator.gateway.attach(task_id, agent_id, websocket)
 
     app.include_router(api)
-    app.mount("/mcp", mcp.streamable_http_app())
     app.mount("/scout-mcp", scout_mcp.streamable_http_app())
     app.mount("/aoe-scout-mcp", aoe_scout_mcp.streamable_http_app())
     return app

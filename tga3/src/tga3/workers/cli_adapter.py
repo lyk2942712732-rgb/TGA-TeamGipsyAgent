@@ -44,6 +44,7 @@ class CliAdapter(AgentAdapter):
         self.timeout = int(os.environ.get("TGA3_CLI_TIMEOUT_SECONDS", "1800"))
         self.reporter = os.environ.get("TGA3_AGENT_ROLE") == "reporter"
         self.protocol = os.environ["TGA3_PROVIDER_PROTOCOL"]
+        self.hook_service = None
         self.pending_tools: dict[str, str] = {}
         self.final_output = ""
         self.failure = ""
@@ -68,7 +69,7 @@ class CliAdapter(AgentAdapter):
     def hook_config(self) -> dict:
         if os.environ.get("TGA3_AGENT_ROLE") not in {"scout", "worker"}:
             return {}
-        command = "python -m tga3.workers.blackboard_hook"
+        command = "python -m tga3.workers.hook_client"
         events = ["UserPromptSubmit", "PreToolUse"]
         if os.environ.get("TGA3_AGENT_ROLE") == "worker":
             events.append("PostToolUse")
@@ -230,6 +231,11 @@ class CliAdapter(AgentAdapter):
         emit = tracked_emit
         command, env = self.command()
         env["TGA3_CLI_GENERATION"] = str(uuid4())
+        if self.hook_config():
+            if self.hook_service is None:
+                from .hook_service import HookService
+                self.hook_service = HookService()
+            env['TGA3_HOOK_PORT'] = str(self.hook_service.port)
         process = await asyncio.create_subprocess_exec(
             *command,
             cwd=self.output_dir,
@@ -316,7 +322,8 @@ class CliAdapter(AgentAdapter):
             original_generation = os.environ.get("TGA3_CLI_GENERATION")
             os.environ["TGA3_CLI_GENERATION"] = env["TGA3_CLI_GENERATION"]
             try:
-                await asyncio.to_thread(checkpoint, {"ack_only": True})
+                await asyncio.to_thread(checkpoint, {"ack_only": True},
+                                        client=self.hook_service.client if self.hook_service else None)
             finally:
                 if original_generation is None:
                     os.environ.pop("TGA3_CLI_GENERATION", None)
@@ -363,15 +370,8 @@ class CodexAdapter(CliAdapter):
                 'env_key = "CODEX_API_KEY"',
                 'wire_api = "responses"',
             ]
-        if not self.reporter and os.environ.get("TGA3_AGENT_ROLE") != "scout":
-            config += [
-                "[mcp_servers.blackboard]",
-                f"url = {json.dumps(os.environ['TGA3_BLACKBOARD_MCP_URL'])}",
-                "http_headers = {" + ", ".join(f"{json.dumps(k)} = {json.dumps(v)}"
-                                               for k, v in self.mcp_headers().items()) + "}",
-                "required = true",
-            ]
-        elif not self.reporter and self.scout_phase in {"collecting", "extracting", "merging"}:
+        if (not self.reporter and os.environ.get("TGA3_AGENT_ROLE") == "scout"
+                and self.scout_phase in {"collecting", "extracting", "merging"}):
             config += ["[mcp_servers.intel]",
                        f"url = {json.dumps(os.environ['TGA3_SCOUT_INTEL_MCP_URL'])}",
                        "http_headers = {" + ", ".join(f"{json.dumps(k)} = {json.dumps(v)}"
@@ -446,8 +446,7 @@ class ClaudeAdapter(CliAdapter):
         cli_home = self.workspace / ".claude"
         cli_home.mkdir(exist_ok=True)
         mcp_file = self.state_dir / "mcp.json"
-        servers = {"blackboard": {"type": "http", "url": os.environ["TGA3_BLACKBOARD_MCP_URL"],
-                                  "headers": self.mcp_headers()}}
+        servers = {}
         if knowledge := worker_knowledge_server():
             servers["des-ctf-knowledge"] = {"type": "stdio", **knowledge}
         mcp_file.write_text(
@@ -475,7 +474,7 @@ class ClaudeAdapter(CliAdapter):
             "--tools",
             "Bash,Read,Write,Edit,Glob,Grep",
             "--allowedTools",
-            "Bash,Read,Write,Edit,Glob,Grep,mcp__blackboard__*,mcp__des-ctf-knowledge__*",
+            "Bash,Read,Write,Edit,Glob,Grep,mcp__des-ctf-knowledge__*",
             "--disallowedTools",
             "AskUserQuestion",
             "--strict-mcp-config",

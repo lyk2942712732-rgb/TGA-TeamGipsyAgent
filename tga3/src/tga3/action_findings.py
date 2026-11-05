@@ -35,7 +35,7 @@ class ActionFindingPublisher:
     async def publish(self, task_id: UUID, agent_id: str, request: ActionFindingInput) -> dict:
         configured = self.config.agents.agents.get(agent_id)
         if configured is None or configured.role != "worker":
-            raise ContractError("finding_publish requires a bound Worker identity")
+            raise ContractError("Finding import requires a bound Worker identity")
         run = await self.board.storage.get_agent(task_id, agent_id)
         actor = Actor(agent_id=agent_id, display_name=configured.display_name, role="worker", sdk=run.sdk,
                       model=run.model_id)

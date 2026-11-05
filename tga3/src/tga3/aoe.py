@@ -116,7 +116,7 @@ class AOERuntime:
         value = await self.question_view(question)
         digest = hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
         if self._manifest_digests.get(question.id) != digest:
-            self._atomic_json(self.config.task_path(question.id, "inputs") / "question.json", value)
+            self._atomic_json(self.config.task_path(question.id) / "question.json", value)
             self._manifest_digests[question.id] = digest
 
     async def _collection_manifest(self, parent_id: UUID) -> dict:
@@ -283,7 +283,8 @@ class AOERuntime:
                     ),
                 )
                 text = (
-                    f"题目：{spec.title}\n题目 ID：{question_id}\n\n{spec.description}"
+                    f"题目：{spec.title}\n原始题目 ID（source_key）：{spec.source_key}"
+                    f"\n内部题目 ID：{question_id}\n\n{spec.description}"
                     f"\n\n连接信息：{spec.connection_info}\n提交要求：{spec.submission_instructions}"
                 )
                 await self.board.publish(
@@ -329,7 +330,11 @@ class AOERuntime:
                 text=f"AOE 已登记 {len(existing)} 道题目",
                 payload={"question_count": len(existing)},
             )
-            return {"saved": True, **manifest}
+            return {"saved": True, "task_id": str(parent_id), "question_count": len(existing),
+                    "questions": [{"question_id": str(existing[spec.source_key].id),
+                                   "source_key": spec.source_key,
+                                   "path": str(existing[spec.source_key].id) + '/question.json'}
+                                  for spec in specifications]}
 
     async def finish_collection(self, parent_id: UUID, expected_count: int) -> dict:
         async with self.locks[parent_id]:
@@ -440,14 +445,14 @@ class AOERuntime:
                     ),
                 )
         start = self.clock()
-        deadline = start + parent.metadata.get("aoe_attempt_seconds", 1200)
         additions = [
             {
                 "id": str(uuid4()),
                 "agent_id": agent_id,
                 "phase": phase,
-                "started_at": start,
-                "deadline": deadline,
+                "claimed_at": start,
+                "started_at": None,
+                "deadline": None,
                 "outcome": None,
             }
             for agent_id in agents
@@ -465,11 +470,40 @@ class AOERuntime:
 
         question = await self.storage.mutate_task_metadata(question.id, assign)
         await self._save_question(question)
-        # A single deadline is allocated before either joint participant starts.
+        # The first actual action starts the budget, shared by joint participants.
         await asyncio.gather(
             *(self._launch_attempt(parent_id, question, attempt, fresh=phase == "solo") for attempt in additions)
         )
         return question
+
+    async def action_started(self, question_id: UUID, agent_id: str, attempt_id: str) -> None:
+        question = await self.storage.get_task(question_id)
+        if question.parent_task_id is None:
+            return
+        current = next((a for a in active_attempts(question)
+                        if a['id'] == attempt_id and a['agent_id'] == agent_id), None)
+        if current is None or current.get('deadline') is not None:
+            return
+        async with self.locks[question.parent_task_id]:
+            question = await self.storage.get_task(question_id)
+            current = next((a for a in active_attempts(question)
+                            if a['id'] == attempt_id and a['agent_id'] == agent_id), None)
+            if current is None or current.get('deadline') is not None:
+                return
+            parent = await self.storage.get_task(question.parent_task_id)
+            now = self.clock()
+            deadline = now + parent.metadata.get('aoe_attempt_seconds', 1200)
+            def start(metadata):
+                return {**metadata, 'attempts': [
+                    {**a, 'started_at': now, 'deadline': deadline}
+                    if a.get('outcome') is None and (a['id'] == attempt_id or current['phase'] == 'joint')
+                    else a for a in metadata['attempts']]}
+            question = await self.storage.mutate_task_metadata(question.id, start)
+            await self._save_question(question)
+            for attempt in active_attempts(question):
+                if attempt.get('deadline') is not None:
+                    await self.coordinator.gateway.notify(question.id, attempt['agent_id'], 'session.deadline',
+                        {'attempt_id': attempt['id'], 'deadline': attempt['deadline']})
 
     async def _launch_attempt(self, parent_id: UUID, question: TaskRun, attempt: dict, *, fresh: bool) -> None:
         agent_id = attempt["agent_id"]
@@ -625,7 +659,8 @@ class AOERuntime:
                     await self._settle(question, status="solved", flag=candidate.body["conclusion"])
                     continue
                 active = active_attempts(question)
-                expired = {attempt["agent_id"] for attempt in active if attempt["deadline"] <= self.clock()}
+                expired = {attempt["agent_id"] for attempt in active
+                           if attempt.get("deadline") is not None and attempt["deadline"] <= self.clock()}
                 if expired:
                     if any(a["phase"] == "joint" for a in active):
                         # Both participants share this exact deadline; never grant each an extra budget.
@@ -747,7 +782,7 @@ class AOERuntime:
         for question in await self.storage.list_questions(parent_id):
             active = active_attempts(question)
             for attempt in active:
-                if attempt["deadline"] > self.clock():
+                if attempt.get("deadline") is None or attempt["deadline"] > self.clock():
                     await self._stop_worker(question.id, attempt["agent_id"])
                     await self._launch_attempt(parent_id, question, attempt, fresh=False)
             if question.metadata.get("status") in {"solved", "abandoned"} and question.state not in TERMINAL:

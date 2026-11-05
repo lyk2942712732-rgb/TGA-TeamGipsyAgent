@@ -76,9 +76,11 @@ def test_takeover_hook_forces_board_before_first_execution_and_does_not_log_deni
     assert len(records) == 1 and calls[1]["ack"] == "delivery"
 
 
-async def test_worker_deadline_cancels_active_cycle_without_host_control(monkeypatch, tmp_path):
+@pytest.mark.parametrize('dynamic', [False, True])
+async def test_worker_deadline_cancels_active_cycle_without_host_control(monkeypatch, tmp_path, dynamic):
     environment(monkeypatch, tmp_path)
     monkeypatch.setenv("TGA3_ATTEMPT_DEADLINE", str(time.time() + 30))
+    monkeypatch.setenv('TGA3_ATTEMPT_ID', 'fixture-attempt')
 
     class Adapter:
         cancelled = False
@@ -90,6 +92,7 @@ async def test_worker_deadline_cancels_active_cycle_without_host_control(monkeyp
                 self.cancelled = True
 
     class Socket:
+        notified = False
         async def send(self, _payload):
             pass
 
@@ -97,6 +100,11 @@ async def test_worker_deadline_cancels_active_cycle_without_host_control(monkeyp
             return self
 
         async def __anext__(self):
+            if dynamic and not self.notified:
+                self.notified = True
+                await asyncio.sleep(0.05)
+                return json.dumps({'jsonrpc':'2.0', 'method':'session.deadline',
+                                   'params':{'attempt_id':'fixture-attempt', 'deadline':time.time()+0.1}})
             await asyncio.sleep(30)
             raise StopAsyncIteration
 
@@ -104,7 +112,10 @@ async def test_worker_deadline_cancels_active_cycle_without_host_control(monkeyp
     async def connect(*_args, **_kwargs):
         # Begin the short budget after lazy imports/connection setup, so this
         # verifies cancellation of active work rather than pre-expired startup.
-        monkeypatch.setenv("TGA3_ATTEMPT_DEADLINE", str(time.time() + 0.2))
+        if dynamic:
+            monkeypatch.delenv('TGA3_ATTEMPT_DEADLINE')
+        else:
+            monkeypatch.setenv("TGA3_ATTEMPT_DEADLINE", str(time.time() + 0.2))
         yield Socket()
 
     monkeypatch.setattr("websockets.asyncio.client.connect", connect)

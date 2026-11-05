@@ -45,7 +45,7 @@ def test_codex_configuration_and_session_resume(cli_env):
     _, env = adapter.command()
     config = tomllib.loads((cli_env / ".codex/config.toml").read_text(encoding="utf-8"))
     assert config["model_providers"]["tga3"]["base_url"] == "http://provider/v1"
-    assert config["mcp_servers"]["blackboard"]["required"]
+    assert "blackboard" not in config.get("mcp_servers", {})
     assert "secret-key" not in str(config)
     assert env["CODEX_API_KEY"] == "secret-key"
     adapter.remember_session("session-1")
@@ -144,13 +144,13 @@ def test_worker_prompt_injects_exact_blackboard_identity(monkeypatch):
     assert '"agent_id":"worker-openai"' in prompt
     assert "Never invent a placeholder task ID or actor." in prompt
     assert "intel: body={claim, detail?}; artifact_refs=optional" not in prompt
-    assert "finding_publish" in prompt
+    assert "finding_publish" not in prompt
     assert "legacy finding" not in prompt
     assert "conclusion, rationale, answer_type?, finding_ids" in prompt
-    assert "Use finding_publish" in prompt
+    assert "ONE JSON file in /findings/" in prompt
     assert "One execution is enough" in prompt
     assert "Do not schedule log reviews" in prompt
-    assert '"finding_ids": ["<entry.id returned by finding_publish>"]' in prompt
+    assert "entry_id UUIDs from imported Finding receipts" in prompt
 
 
 @pytest.mark.asyncio

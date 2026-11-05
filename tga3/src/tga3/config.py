@@ -348,11 +348,11 @@ class TGA3Config:
         parent = getattr(self, "_question_parents", {}).get(normalized)
         path = root / str(parent) / str(normalized) if parent is not None else root / str(normalized)
         if kind is not None:
-            if kind not in {"inputs", "workspaces", "logs", "intels", "writeups"}:
+            if kind not in {"inputs", "workspaces", "logs", "intels", "findings", "writeups"}:
                 raise ValueError(f"unknown task directory: {kind}")
             path /= kind
         if agent_id is not None:
-            if kind not in {"workspaces", "logs", "intels"} or agent_id not in self.agents.agents:
+            if kind not in {"workspaces", "logs", "intels", "findings"} or agent_id not in self.agents.agents:
                 raise ValueError(f"invalid agent directory: {agent_id}")
             path /= agent_id
         if not path.resolve().is_relative_to(root):
@@ -374,7 +374,7 @@ class TGA3Config:
         return {"question_id": str(normalized)} if normalized in getattr(self, "_question_parents", {}) else {}
 
     def ensure_task_directories(self, task_id: UUID | str) -> None:
-        for kind in ("inputs", "workspaces", "logs", "intels", "writeups"):
+        for kind in ("inputs", "workspaces", "logs", "intels", "findings", "writeups"):
             self.task_path(task_id, kind).mkdir(parents=True, exist_ok=True)
 
     @property

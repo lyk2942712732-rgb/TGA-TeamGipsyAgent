@@ -40,6 +40,8 @@ class WorkerSession:
         self.current_cycle: asyncio.Task[str] | None = None
         self.pending_blackboard_seq = 0
         self.blackboard_wake_queued = False
+        self.attempt_deadline = None
+        self.deadline_changed = asyncio.Event()
 
     async def _queue_blackboard_update(self, latest_seq: int) -> None:
         self.pending_blackboard_seq = max(self.pending_blackboard_seq, latest_seq)
@@ -90,6 +92,10 @@ class WorkerSession:
                         self.current_cycle.cancel()
                         await asyncio.gather(self.current_cycle, return_exceptions=True)
                     await self.adapter.set_model(params)
+                elif message.method == 'session.deadline':
+                    if params.get('attempt_id') == os.environ.get('TGA3_ATTEMPT_ID'):
+                        self.attempt_deadline = float(params['deadline'])
+                        self.deadline_changed.set()
                 elif message.method == "blackboard.changed":
                     self.pending_blackboard_seq = max(self.pending_blackboard_seq, int(params["latest_seq"]))
                 await self._reply(message, {"accepted": True})
@@ -99,7 +105,7 @@ class WorkerSession:
     async def _work(self) -> None:
         await self.queue.put(os.environ["TGA3_STARTUP_PROMPT"])
         while not self.stop.is_set():
-            if os.environ.get("TGA3_ATTEMPT_DEADLINE") and time.time() >= float(os.environ["TGA3_ATTEMPT_DEADLINE"]):
+            if self.attempt_deadline is not None and time.time() >= self.attempt_deadline:
                 self.stop.set()
                 return
             try:
@@ -138,10 +144,19 @@ class WorkerSession:
                 self.current_cycle = None
 
     async def run(self) -> None:
+        try:
+            await self._run_connected()
+        finally:
+            if service := getattr(self.adapter, 'hook_service', None):
+                await asyncio.to_thread(service.close)
+
+    async def _run_connected(self) -> None:
         from websockets.asyncio.client import connect
 
         async with connect(self.control_url, max_size=4 * 1024 * 1024) as socket:
             self.socket = socket
+            if value := os.environ.get('TGA3_ATTEMPT_DEADLINE'):
+                self.attempt_deadline = float(value)
             await self.emit(
                 "session.hello",
                 {"session_id": self.session_id, "runtime": os.environ["TGA3_AGENT_RUNTIME"]},
@@ -149,10 +164,19 @@ class WorkerSession:
             receiver = asyncio.create_task(self._receive())
             worker = asyncio.create_task(self._work())
             tasks = {receiver, worker}
-            if os.environ.get("TGA3_ATTEMPT_DEADLINE"):
+            if os.environ.get("TGA3_ATTEMPT_DEADLINE") or os.environ.get('TGA3_ATTEMPT_ID'):
                 async def deadline():
-                    await asyncio.sleep(max(0, float(os.environ["TGA3_ATTEMPT_DEADLINE"]) - time.time()))
-                    self.stop.set()
+                    while True:
+                        self.deadline_changed.clear()
+                        if self.attempt_deadline is None:
+                            await self.deadline_changed.wait()
+                        else:
+                            try:
+                                await asyncio.wait_for(self.deadline_changed.wait(),
+                                    timeout=max(0, self.attempt_deadline-time.time()))
+                            except TimeoutError:
+                                self.stop.set()
+                                return
                 tasks.add(asyncio.create_task(deadline()))
             done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
             for task in pending:

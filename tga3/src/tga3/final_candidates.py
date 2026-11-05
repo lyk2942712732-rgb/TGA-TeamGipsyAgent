@@ -39,7 +39,7 @@ class FinalCandidatePublisher:
             if task.parent_task_id is not None:
                 active = next((attempt for attempt in task.metadata.get("attempts", [])
                                if attempt["agent_id"] == agent_id and attempt.get("outcome") is None), None)
-                if active is None or active["deadline"] <= time.time():
+                if active is None or active.get("deadline") is None or active["deadline"] <= time.time():
                     raise ContractError("AOE attempt has ended; a late candidate cannot mark this question solved")
             run = await self.board.storage.get_agent(task_id, agent_id)
             if run.metadata.get("blackboard_cursor", -1) < task.blackboard_seq:

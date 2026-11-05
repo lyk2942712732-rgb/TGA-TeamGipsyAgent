@@ -37,17 +37,11 @@ async def test_scout_mcp_uses_generated_ids_and_no_model_assigned_keys():
 async def test_worker_tools_remove_unused_sync_and_legacy_finding_branch():
     mcp = build_mcp(configured(), Blackboard(InMemoryStorage()))
     tools = {tool.name: tool for tool in await mcp.list_tools()}
-    assert set(tools) == {"blackboard_publish", "finding_publish"}
-    final = tools["blackboard_publish"].inputSchema
-    assert set(final["required"]) == {"conclusion", "rationale", "finding_ids"}
-    assert not {"task_id", "actor", "kind", "idempotency_key", "ctx"}.intersection(final["properties"])
-    simple = tools["finding_publish"]
-    assert set(simple.inputSchema["required"]) == {"action_id", "claim", "scope"}
-    assert set(simple.inputSchema["properties"]) == {"action_id", "claim", "scope", "preconditions"}
-    with pytest.raises(Exception, match="Unknown tool"):
-        await mcp.call_tool("blackboard_sync", {"task_id": str(uuid4())})
-    with pytest.raises(Exception, match="validation"):
-        await mcp.call_tool("blackboard_publish", {"request": {"kind": "finding"}})
+    assert tools == {}
+    for name in ["finding_publish", "blackboard_publish", "blackboard_sync"]:
+        with pytest.raises(Exception, match="Unknown tool"):
+            await mcp.call_tool(name, {})
+
 
 
 @pytest.mark.parametrize("relative", ["../outside.txt", "/etc/passwd", "C:/secret", "missing.txt", "nested/../../x"])

@@ -39,7 +39,7 @@ def record_tool(event: dict) -> dict | None:
         return None
     journal = hook_journal()
     native_id = str(event["tool_use_id"])
-    generation = os.environ.get("TGA3_CLI_GENERATION", "")
+    generation = event.get("_tga_generation", os.environ.get("TGA3_CLI_GENERATION", ""))
     token = hashlib.sha256(f"{generation}:{native_id}".encode()).hexdigest()
     path = _pending_directory(journal) / f"{token}.json"
     tool = event.get("tool_name", "unknown")
@@ -87,6 +87,7 @@ def interrupt_hook_actions(generation: str) -> None:
 def result_context(record: dict) -> str:
     return (
         f"TGA action_id: {record['action_id']}\n"
-        "If this result establishes a new reusable fact, immediately call finding_publish(action_id, claim, scope). "
-        "Method/evidence are automatic. Otherwise continue; no log review."
+        "If this result establishes a new reusable fact, immediately write one JSON file in /findings/ "
+        "with action_id, claim, scope and optional preconditions. The system registers evidence and imports it. "
+        "Otherwise continue; no log review."
     )

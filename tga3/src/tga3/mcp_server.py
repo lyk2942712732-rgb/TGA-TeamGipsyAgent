@@ -9,12 +9,9 @@ from uuid import UUID
 from mcp.server.fastmcp import Context, FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 
-from .action_findings import ActionFindingInput, ActionFindingPublisher
 from .aoe_models import AOEQuestionInput
 from .blackboard import Blackboard
 from .config import TGA3Config
-from .domain import FinalCandidateBody
-from .final_candidates import FinalCandidatePublisher
 from .scout_intel import ScoutIntelMergeInput, ScoutIntelStore
 
 
@@ -60,48 +57,7 @@ def bound_identity(ctx: Context, *, scout: bool = False) -> tuple[UUID, str]:
 
 def build_mcp(config: TGA3Config, blackboard: Blackboard) -> FastMCP:
     mcp = _new_mcp(config, "tga3-blackboard", config.runtime.mcp_instructions)
-    findings = ActionFindingPublisher(config, blackboard)
-    finals = FinalCandidatePublisher(config, blackboard)
-
-    @mcp.tool()
-    async def finding_publish(action_id: str, claim: str, scope: str, ctx: Context,
-                              preconditions: str = "") -> dict[str, Any]:
-        """Immediately share one reusable fact from a tool result, without rereading logs.
-
-        action_id: exact TGA action ID supplied after execution (never a native tool-call ID).
-        claim: verified observation useful to another Worker, even before a final answer exists.
-        scope: tested target, inputs and conditions; limit negative results to what was tested.
-        preconditions: optional prerequisites not already shown in the command (e.g. a prior login).
-        Task/actor, method, exit status, result body, attachments and retry key are supplied by the server.
-        Check saved=true and entry.id. On failure correct the reported issue and retry the same fact;
-        identical arguments return the same Finding. Never submit a publication action as evidence.
-        """
-        http_request = ctx.request_context.request
-        if http_request is None:
-            raise ValueError("finding_publish requires the Worker-bound HTTP MCP connection")
-        task_id = http_request.headers.get("x-tga3-task-id")
-        agent_id = http_request.headers.get("x-tga3-agent-id")
-        if not task_id or not agent_id:
-            raise ValueError("Worker identity headers are missing; reconnect using the runtime MCP configuration")
-        return await findings.publish(UUID(task_id), agent_id, ActionFindingInput(
-            action_id=action_id, claim=claim, scope=scope, preconditions=preconditions,
-        ))
-
-    @mcp.tool()
-    async def blackboard_publish(conclusion: str, rationale: str, finding_ids: list[str], ctx: Context,
-                                 answer_type: str = "result", topic: str = "general") -> dict[str, Any]:
-        """Submit a final candidate supported by existing Finding entry IDs.
-
-        Fill only conclusion, rationale, finding_ids and optional answer_type/topic.
-        Runtime headers bind task and Worker; the server generates identity and retry key.
-        Identical retries return the saved entry, including after blackboard freshness changes.
-        Native hooks deliver unread updates before a new final candidate is accepted.
-        """
-        task_id, agent_id = bound_identity(ctx)
-        return await finals.publish(task_id, agent_id, FinalCandidateBody(
-            conclusion=conclusion, rationale=rationale, finding_ids=finding_ids, answer_type=answer_type,
-        ), topic)
-
+    # Workers author files; no agent-facing blackboard write tools.
     return mcp
 
 

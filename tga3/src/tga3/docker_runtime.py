@@ -147,6 +147,9 @@ class DockerContainerRuntime:
             "TGA3_BLACKBOARD_CHANGED_PROMPT": runtime.worker_cycle_prompts.blackboard_changed,
         }
         if binding.role == "worker":
+            findings = self.config.task_path(spec.task_id, 'findings', binding.agent_id)
+            self._ensure_worker_directory(findings)
+            volumes[str(findings)] = {'bind': '/findings', 'mode': 'rw'}
             from .knowledge import CONTAINER_ROOT
 
             knowledge = self.config.resolve_path(runtime.ctf_knowledge_root)

@@ -116,7 +116,10 @@ async def test_two_slots_cross_attempt_then_shared_joint_deadline_and_abandonmen
     assert first.task_id == questions["Easy"].id and first.agent.agent_id == "worker-openai"
     assert second.task_id == questions["Hard"].id and second.agent.agent_id == "worker-claude"
     assert first.fresh_session and second.fresh_session
-    assert first.attempt_deadline == second.attempt_deadline == 1300
+    assert first.attempt_deadline is None and second.attempt_deadline is None
+    for spec in (first, second):
+        await aoe.action_started(spec.task_id, spec.agent.agent_id, spec.attempt_id)
+        assert active_attempts(await storage.get_task(spec.task_id))[0]['deadline'] == 1300
     assert first.task_id != second.task_id
     clock[0] = 200
     await final(storage, first.task_id)
@@ -130,14 +133,18 @@ async def test_two_slots_cross_attempt_then_shared_joint_deadline_and_abandonmen
     await aoe.tick(parent.id)
     crossed = containers.launched[-1]
     assert crossed.task_id == second.task_id and crossed.agent.agent_id == "worker-openai"
-    assert crossed.fresh_session and crossed.attempt_deadline == 2500
+    assert crossed.fresh_session and crossed.attempt_deadline is None
+    await aoe.action_started(crossed.task_id, crossed.agent.agent_id, crossed.attempt_id)
+    assert active_attempts(await storage.get_task(crossed.task_id))[0]['deadline'] == 2500
     assert (await storage.get_agent(parent.id, "worker-claude")).metadata["aoe_waiting"]
     clock[0] = 2500
     await aoe.tick(parent.id)
     joint = containers.launched[-2:]
     assert {s.agent.agent_id for s in joint} == {"worker-openai", "worker-claude"}
     assert {s.task_id for s in joint} == {second.task_id}
-    assert all(not s.fresh_session and s.attempt_deadline == 3700 for s in joint)
+    assert all(not s.fresh_session and s.attempt_deadline is None for s in joint)
+    await aoe.action_started(joint[0].task_id, joint[0].agent.agent_id, joint[0].attempt_id)
+    assert {a['deadline'] for a in active_attempts(await storage.get_task(joint[0].task_id))} == {3700}
     clock[0] = 3700
     await aoe.tick(parent.id)
     abandoned = await storage.get_task(second.task_id)
@@ -151,7 +158,7 @@ async def test_two_slots_cross_attempt_then_shared_joint_deadline_and_abandonmen
     view = await aoe.snapshot(parent.id)
     hard = next(q for q in view["questions"] if q["title"] == "Hard")
     assert hard["attempted_by"] == ["worker-claude", "worker-openai"] and hard["current_agents"] == []
-    saved = json.loads((cfg.task_path(second.task_id, "inputs") / "question.json").read_text(encoding="utf-8"))
+    saved = json.loads((cfg.task_path(second.task_id) / "question.json").read_text(encoding="utf-8"))
     assert saved["question_id"] == str(second.task_id)
 
 
@@ -171,6 +178,8 @@ async def test_collection_files_idempotency_and_scoped_boards_and_paths(tmp_path
         "workspaces",
         "logs",
         "intels",
+        "findings",
+        "question.json",
         "writeups",
     }
     inputs = await storage.list_input_files(question.id)
@@ -267,6 +276,8 @@ async def test_partial_registration_retry_restores_missing_agents_and_early_real
 async def test_recovery_keeps_attempt_deadline_and_expired_candidates_cannot_solve(tmp_path):
     cfg, storage, _, coordinator, parent, clock, questions = await prepare(tmp_path)
     await coordinator.aoe.tick(parent.id)
+    for spec in coordinator.containers.launched:
+        await coordinator.aoe.action_started(spec.task_id, spec.agent.agent_id, spec.attempt_id)
     restored_runtime = FakeContainerRuntime()
     restored = TaskCoordinator(cfg, storage, restored_runtime)
     restored.aoe.clock = lambda: clock[0]

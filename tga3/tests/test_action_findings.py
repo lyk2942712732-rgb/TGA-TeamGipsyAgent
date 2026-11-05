@@ -22,7 +22,7 @@ async def setup(tmp_path, *, completed=True):
     config.runtime.task_root = str(tmp_path / "tasks")
     storage = InMemoryStorage()
     task = await storage.create_task("single observation", "pwn")
-    for agent_id in ("worker-openai", "worker-claude", "scout"):
+    for agent_id in ("worker-openai", "worker-claude", "scout", "reporter"):
         agent = config.agents.agents[agent_id]
         await storage.upsert_agent(AgentRun(task_id=task.id, agent_id=agent_id, sdk=agent.runtime,
                                           provider_id=agent.provider_id, model_id="task-selected-model",
@@ -107,43 +107,28 @@ async def test_invalid_source_or_state_creates_no_evidence_or_finding(tmp_path, 
     assert not await storage.list_entries(task.id)
 
 
-async def test_http_mcp_binds_identity_without_model_arguments(tmp_path):
-    config, storage, task, _, _, request = await setup(tmp_path)
+async def test_files_import_identity_evidence_and_final_candidate_through_checkpoint(tmp_path):
+    config, storage, task, root, _, request = await setup(tmp_path)
     app = create_app(config, storage, FakeContainerRuntime())
-    async with app.router.lifespan_context(app):
-        transport = httpx.ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://localhost:8083") as client:
-            body = {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
-                    "params": {"name": "finding_publish", "arguments": request.model_dump()}}
-            headers = {"accept": "application/json, text/event-stream", "x-tga3-task-id": str(task.id),
-                       "x-tga3-agent-id": "worker-openai"}
-            result = (await client.post("/mcp/", json=body, headers=headers)).json()["result"]
-            assert not result.get("isError")
-            saved = json.loads(result["content"][0]["text"])
-            assert saved["saved"] is True and saved["entry"]["actor"]["agent_id"] == "worker-openai"
-            body["id"] = 2
-            missing = (await client.post("/mcp/", json=body, headers={"accept": headers["accept"]})).json()
-            assert missing["result"]["isError"] is True
-            assert "identity headers are missing" in missing["result"]["content"][0]["text"]
-            second_body = {**body, "id": 4, "params": {**body["params"], "arguments": {
-                **request.model_dump(), "claim": "A second observed fact"}}}
-            second = (await client.post("/mcp/", json=second_body, headers=headers)).json()["result"]
-            second_id = json.loads(second["content"][0]["text"])["entry"]["id"]
-            selected_ids = sorted([second_id, saved["entry"]["id"]], reverse=True)
-            await storage.update_agent(task.id, "worker-openai", metadata={"blackboard_cursor": 2})
-            final_body = {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {
-                "name": "blackboard_publish", "arguments": {
-                    "conclusion": "fixture result", "rationale": "verified",
-                    "finding_ids": selected_ids,
-                },
-            }}
-            final = (await client.post("/mcp/", json=final_body, headers=headers)).json()["result"]
-            assert not final.get("isError")
-            final_entry = json.loads(final["content"][0]["text"])
-            assert final_entry["kind"] == "final_candidate"
-            assert final_entry["body"]["finding_ids"] == selected_ids
-            assert final_entry["actor"] == saved["entry"]["actor"]
-            retry = (await client.post("/mcp/", json=final_body, headers=headers)).json()["result"]
-            assert json.loads(retry["content"][0]["text"])["id"] == json.loads(final["content"][0]["text"])["id"]
-            await app.state.automation.cancel(task.id)
-    assert len(await storage.list_entries(task.id)) == 3
+    findings = config.task_path(task.id, 'findings', 'worker-openai')
+    findings.mkdir(parents=True)
+    (findings/'worker-openai-001.json').write_text(request.model_dump_json())
+    url = f'/internal/blackboard/{task.id}/worker-openai/checkpoint'
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://test') as client:
+        first = (await client.post(url, json={'file_sync': True})).json()
+        receipt = first['publication_receipts'][0]
+        assert receipt['status'] == 'imported'
+        entry = (await storage.list_entries(task.id))[0]
+        assert receipt['entry_id'] == str(entry.id) and entry.actor.agent_id == 'worker-openai'
+        assert len(storage.artifacts) == 2
+        assert len(await storage.finding_links(task.id, entry.id)) == 2
+        await client.post(url, json={'file_sync': True, 'ack': first['delivery_id'], 'ack_only': True})
+        assert len(await storage.list_entries(task.id)) == 1
+        final = root/'result/final-candidate.json'
+        final.write_text(json.dumps({'conclusion':'fixture result', 'rationale':'verified',
+                                     'finding_ids':[receipt['entry_id']]}))
+        saved = (await client.post(url, json={'file_sync': True})).json()
+        assert saved['publication_receipts'][0]['status'] == 'imported'
+        assert (await storage.list_entries(task.id))[-1].kind == 'final_candidate'
+        assert len(await storage.list_entries(task.id)) == 2
+        await app.state.automation.cancel(task.id)

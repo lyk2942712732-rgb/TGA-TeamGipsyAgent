@@ -35,7 +35,8 @@ async def _serve(config: TGA3Config) -> None:
     storage = await PostgresStorage.connect(config.runtime.postgres_dsn)
     try:
         app = create_app(config, storage, DockerContainerRuntime(config))
-        server = uvicorn.Server(uvicorn.Config(app, host=config.runtime.listen_host, port=config.runtime.listen_port))
+        server = uvicorn.Server(uvicorn.Config(app, host=config.runtime.listen_host,
+                                             port=config.runtime.listen_port, timeout_keep_alive=120))
         await server.serve()
     finally:
         await storage.close()

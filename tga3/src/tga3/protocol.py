@@ -53,6 +53,7 @@ CONTROL_METHODS = frozenset(
         "session.resume",
         "session.stop",
         "session.set_model",
+        "session.deadline",
         "blackboard.changed",
     }
 )

@@ -1,3 +1,5 @@
+> 当前版本已改为 Worker 写 Finding/最终候选文件、系统导入黑板；旧版写入 MCP 已移除。以 [FILE-PUBLICATIONS.md](FILE-PUBLICATIONS.md) 为当前规范，下文保留早期迁移记录。
+
 # CLI 执行层
 
 两个 Worker 使用 `codex_cli`（OpenAI Responses）和 `claude_cli`（Anthropic Messages）。

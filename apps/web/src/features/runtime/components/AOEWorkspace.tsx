@@ -92,7 +92,7 @@ function AOEOverviewPanel({ snapshot, onOpen, name }: { snapshot: TGA3RuntimeSna
     }).map(question => {
       const active = question.attempts.filter(attempt => attempt.outcome === null);
       const deadline = active[0]?.deadline;
-      const seconds = deadline === undefined ? null : Math.max(0, Math.ceil(deadline - now));
+      const seconds = deadline == null ? null : Math.max(0, Math.ceil(deadline - now));
       return <article key={question.question_id} className="aoe-question-row" data-status={question.status}>
         <header><div><button className="text-button aoe-question-title" onClick={() => onOpen(question.question_id)}>{question.title}</button>
           <small>{question.difficulty === null ? "未标注难度" : `难度：${question.difficulty}`}</small></div><QuestionStatus question={question} /></header>
@@ -106,7 +106,7 @@ function AOEOverviewPanel({ snapshot, onOpen, name }: { snapshot: TGA3RuntimeSna
           <details className="aoe-attempt-history"><summary>尝试记录（{question.attempts.length}）</summary>
             {question.attempts.length ? <ol>{question.attempts.map(attempt => <li key={attempt.id}>
               <strong>{name(attempt.agent_id)}</strong> · {attempt.phase === "joint" ? "共同攻坚" : "独立尝试"} · {attempt.outcome === null ? "进行中" : ({ solved: "已解出", timeout: "预算已到", interrupted: "已中断", error: "执行失败" })[attempt.outcome]}
-              <small>{formatTime(new Date(attempt.started_at * 1000).toISOString())}{attempt.finished_at ? ` — ${formatTime(new Date(attempt.finished_at * 1000).toISOString())}` : ""}</small>
+              <small>{attempt.started_at == null ? "准备执行，尚未开始计时" : formatTime(new Date(attempt.started_at * 1000).toISOString())}{attempt.finished_at ? ` — ${formatTime(new Date(attempt.finished_at * 1000).toISOString())}` : ""}</small>
             </li>)}</ol> : <p>尚未分配 Worker。</p>}
           </details>
         </footer>

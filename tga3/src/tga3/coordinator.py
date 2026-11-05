@@ -321,6 +321,13 @@ class TaskCoordinator:
                 task_id, agent_id, session_id=session_id, actual_state=AgentState.RUNNING
             )
             await self.events.announce_status(task_id, self.actor_for(run), AgentState.RUNNING.value)
+            task = await self.storage.get_task(task_id)
+            if task.parent_task_id:
+                from .aoe_models import active_attempts
+                active = next((a for a in active_attempts(task) if a['agent_id'] == agent_id), None)
+                if active and active.get('deadline') is not None:
+                    await self.gateway.notify(task_id, agent_id, 'session.deadline',
+                        {'attempt_id': active['id'], 'deadline': active['deadline']})
         elif method == "agent.status":
             state = AgentState(str(params["state"]))
             changes = {"actual_state": state}
@@ -341,6 +348,9 @@ class TaskCoordinator:
                 channel_agent_id=agent_id,
             )
         elif method in {"agent.action.started", "agent.action.completed"}:
+            if method == 'agent.action.started' and params.get('tool_use_id') and run.metadata.get('aoe_attempt_id'):
+                # Native built-in web search has no PreToolUse hook.
+                await self.aoe.action_started(task_id, agent_id, run.metadata['aoe_attempt_id'])
             kind = EventKind.ACTION_STARTED if method.endswith("started") else EventKind.ACTION_COMPLETED
             await self.events.emit(
                 task_id,
