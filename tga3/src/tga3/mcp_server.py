@@ -106,7 +106,8 @@ def build_mcp(config: TGA3Config, blackboard: Blackboard) -> FastMCP:
 
 
 def build_scout_mcp(config: TGA3Config, store: ScoutIntelStore, *, aoe=None) -> FastMCP:
-    mcp = _new_mcp(config, "tga3-scout-intels", "Extract Intel from /logs; save JSON using scout_write_intel. "
+    mcp = _new_mcp(config, "tga3-scout-intels", "Register question metadata and attachments incrementally, then finish collection."
+                   if aoe is not None else "Extract Intel from /logs; save JSON using scout_write_intel. "
                    "Then consolidate all raw Intel using scout_merge_intel in the same session. "
                    "The system imports only merged files after full coverage. No blackboard publication tool.")
 
@@ -128,10 +129,12 @@ def build_scout_mcp(config: TGA3Config, store: ScoutIntelStore, *, aoe=None) -> 
             """Close AOE collection only after the complete source list and all required files are registered.
 
             expected_count must equal the complete list count (including all gateway pages).
-            The following three phases continue in this same native session/container.
+            Scout finishes after collection; there are no further AOE Scout rounds.
             """
             task_id, _ = bound_identity(ctx, scout=True)
             return await aoe.finish_collection(task_id, expected_count)
+
+        return mcp
 
     @mcp.tool()
     async def scout_write_intel(action_id: str, claim: str, ctx: Context, detail: str = "",

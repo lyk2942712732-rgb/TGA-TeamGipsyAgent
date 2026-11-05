@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from ..knowledge import worker_knowledge_server
 from .action_journal import ActionJournal
 from .prompts import worker_instructions
 from .runtime import AgentAdapter, Emit
@@ -376,6 +377,11 @@ class CodexAdapter(CliAdapter):
                        "http_headers = {" + ", ".join(f"{json.dumps(k)} = {json.dumps(v)}"
                                                       for k, v in self.mcp_headers().items()) + "}",
                        "required = true"]
+        if knowledge := worker_knowledge_server():
+            config += ["[mcp_servers.des-ctf-knowledge]",
+                       f"command = {json.dumps(knowledge['command'])}",
+                       f"args = {json.dumps(knowledge['args'])}",
+                       'env = { PYTHONDONTWRITEBYTECODE = "1" }', "required = true"]
         if self.hook_config():
             (cli_home / "hooks.json").write_text(json.dumps(self.hook_config()), encoding="utf-8")
         (cli_home / "config.toml").write_text("\n".join(config) + "\n", encoding="utf-8")
@@ -438,15 +444,12 @@ class ClaudeAdapter(CliAdapter):
         cli_home = self.workspace / ".claude"
         cli_home.mkdir(exist_ok=True)
         mcp_file = self.state_dir / "mcp.json"
+        servers = {"blackboard": {"type": "http", "url": os.environ["TGA3_BLACKBOARD_MCP_URL"],
+                                  "headers": self.mcp_headers()}}
+        if knowledge := worker_knowledge_server():
+            servers["des-ctf-knowledge"] = {"type": "stdio", **knowledge}
         mcp_file.write_text(
-            json.dumps(
-                {
-                    "mcpServers": {
-                        "blackboard": {"type": "http", "url": os.environ["TGA3_BLACKBOARD_MCP_URL"],
-                                       "headers": self.mcp_headers()},
-                    }
-                }
-            ),
+            json.dumps({"mcpServers": servers}),
             encoding="utf-8",
         )
         env = dict(os.environ, CLAUDE_CONFIG_DIR=str(cli_home), ANTHROPIC_API_KEY=self.api_key, DISABLE_AUTOUPDATER="1")
@@ -468,7 +471,7 @@ class ClaudeAdapter(CliAdapter):
             "--tools",
             "Bash,Read,Write,Edit,Glob,Grep",
             "--allowedTools",
-            "Bash,Read,Write,Edit,Glob,Grep,mcp__blackboard__*",
+            "Bash,Read,Write,Edit,Glob,Grep,mcp__blackboard__*,mcp__des-ctf-knowledge__*",
             "--disallowedTools",
             "AskUserQuestion",
             "--strict-mcp-config",

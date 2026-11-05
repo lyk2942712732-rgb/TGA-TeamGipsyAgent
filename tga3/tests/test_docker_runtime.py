@@ -20,7 +20,7 @@ class FakeContainers:
         return SimpleNamespace(id="container-id")
 
 
-async def test_aoe_question_requests_reuse_container_and_ignore_stale_results_after_timeout(tmp_path):
+async def test_aoe_collection_requests_reuse_container_and_ignore_stale_results(tmp_path):
     config = TGA3Config(Path(__file__).parents[1] / "config")
     config.runtime.task_root = str(tmp_path / "tasks")
     config.models.provider("openai").api_keys[0].api_key = SecretStr("fixture-key")
@@ -78,13 +78,7 @@ async def test_aoe_question_requests_reuse_container_and_ignore_stale_results_af
     async def emit(method, params):
         emitted.append(params)
 
-    for ident, phase in [
-        (None, "collecting"),
-        (first, "executing"),
-        (first, "extracting"),
-        (first, "merging"),
-        (second, "executing"),
-    ]:
+    for ident, phase in [(None, "collecting"), (None, "collecting")]:
         spec = LaunchSpec(
             task_id=parent,
             agent=config.resolve_agent("scout"),
@@ -98,10 +92,13 @@ async def test_aoe_question_requests_reuse_container_and_ignore_stale_results_af
                 await runtime.scout(spec, emit)
         else:
             await runtime.scout(spec, emit)
-    assert len(launched) == 1 and len(set(seen)) == 5
-    assert parent in runtime._scouts  # A question's merge does not stop the batch Scout.
+    assert len(launched) == 1 and len(set(seen)) == 2
+    assert parent in runtime._scouts  # The controller closes it after collection completes.
     assert {e["cli_session_id"] for e in emitted if "cli_session_id" in e} == {"same-native-session"}
-    assert {e["question_id"] for e in emitted if "cli_session_id" in e} == {None, str(first), str(second)}
+    assert {e["question_id"] for e in emitted if "cli_session_id" in e} == {None}
+    with pytest.raises(RuntimeUnavailableError, match="only batch collection"):
+        await runtime.scout(LaunchSpec(task_id=parent, agent=config.resolve_agent("scout"),
+                                      aoe_parent_id=parent, scout_phase="executing"), emit)
 
 
 def test_scout_mounts_intels_once_for_three_phases(tmp_path):

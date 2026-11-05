@@ -36,9 +36,10 @@ export type AOEQuestion = {
   status: string; attempted_by: string[]; current_agents: string[]; attempts: AOEAttempt[]; flag: string | null;
   report_state: "pending" | "generating" | "completed" | "failed"; blackboard_seq: number;
   scout_ready?: boolean; scout_phase?: string;
+  registered_at?: number; solved_at?: number | null;
   attachments: Array<{ id: string; name: string; media_type: string; size_bytes: number; sha256: string }>;
 };
-export type AOEOverview = { task_id: string; phase: string; attempt_seconds: number; scout_question_seconds?: number; questions: AOEQuestion[] };
+export type AOEOverview = { task_id: string; phase: string; attempt_seconds: number; scout_mode?: string; collection_complete?: boolean; scout_question_seconds?: number; questions: AOEQuestion[] };
 export type TGA3RuntimeSnapshot = { task: TGA3Task; agents: TGA3Agent[]; blackboard: TGA3BoardEntry[]; events: TGA3TaskEvent[]; aoe?: AOEOverview };
 type TaskDetail = { task: TGA3Task; agents: TGA3Agent[] };
 

@@ -209,6 +209,7 @@ tempCodeRunnerFile.py
 runs/
 output/
 tga3/data/
+tga3/knowledge/
 
 # TGA web UI dependencies/build output
 apps/web/node_modules/

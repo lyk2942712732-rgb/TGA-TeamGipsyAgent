@@ -146,6 +146,13 @@ class DockerContainerRuntime:
             "TGA3_PERIODIC_PROMPT": runtime.worker_cycle_prompts.periodic,
             "TGA3_BLACKBOARD_CHANGED_PROMPT": runtime.worker_cycle_prompts.blackboard_changed,
         }
+        if binding.role == "worker":
+            from .knowledge import CONTAINER_ROOT
+
+            knowledge = self.config.resolve_path(runtime.ctf_knowledge_root)
+            if (knowledge / "mcp/server.py").is_file():
+                volumes[str(knowledge)] = {"bind": CONTAINER_ROOT, "mode": "ro"}
+                environment["TGA3_CTF_KNOWLEDGE_ROOT"] = CONTAINER_ROOT
         if question_scope := self.config.question_scope(spec.task_id):
             # Reporter also launches through the ordinary report path. Its
             # journal must retain question provenance even without attempt args.
@@ -257,7 +264,9 @@ class DockerContainerRuntime:
                     await self.stop(spec.task_id, spec.agent.agent_id)
 
     async def _aoe_scout(self, spec: LaunchSpec, emit) -> None:
-        """Request one question phase; keep the batch container alive between handoffs."""
+        """Run the collection pre-phase while Workers claim registered questions."""
+        if spec.scout_phase != "collecting" or spec.scout_question_id is not None:
+            raise RuntimeUnavailableError("AOE Scout supports only batch collection")
         if not hasattr(self, "_scouts"):
             self._scouts = {}
         state_dir = self.config.task_path(spec.task_id, "workspaces", "scout") / ".tga3"

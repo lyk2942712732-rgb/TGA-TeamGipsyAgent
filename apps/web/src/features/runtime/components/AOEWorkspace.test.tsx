@@ -46,9 +46,10 @@ describe("AOE question workspace", () => {
     const overview = screen.getByRole("region", { name: "题目总览" });
     expect(overview).toHaveTextContent("已尝试"); expect(overview).toHaveTextContent("正在解题");
     expect(overview).toHaveTextContent("flag{two}");
-    await user.click(within(overview).getAllByText(/题面与附件/)[0]);
-    expect(within(overview).getAllByRole("link", { name: "source.zip" })[0]).toHaveAttribute("href", "http://fixture/api/v3/tasks/batch/questions/q1/files/file-q1");
-    await user.click(within(overview).getAllByRole("button", { name: /进入黑板详情/ })[0]);
+    const row = within(overview).getByRole("button", { name: "Question One" }).closest("article")!;
+    await user.click(within(row).getByText(/题面与附件/));
+    expect(within(row).getByRole("link", { name: "source.zip" })).toHaveAttribute("href", "http://fixture/api/v3/tasks/batch/questions/q1/files/file-q1");
+    await user.click(within(row).getByRole("button", { name: /进入黑板详情/ }));
     expect(screen.getByRole("heading", { name: "Only question one's fact" })).toBeInTheDocument();
     expect(screen.getByLabelText("题目筛选")).toHaveValue("q1");
     await user.click(screen.getByRole("button", { name: "返回总览" }));
@@ -75,7 +76,7 @@ describe("AOE question workspace", () => {
     render(<TGA3RuntimeGraph snapshot={parent} />);
     expect(screen.getByRole("button", { name: "查看 Codex Worker" })).toHaveTextContent("题目：Question One");
   });
-  it("distinguishes Scout preparation from available questions and shows the per-question budget", () => {
+  it("can display historical preparation without advertising an obsolete AOE budget", () => {
     const preparing = { ...parent, aoe: { ...parent.aoe!, scout_question_seconds: 300,
       questions: [{ ...question("q1", "Question One"), scout_ready: false, scout_phase: "extracting", status: "preparing", current_agents: [], attempted_by: [] },
         { ...question("q2", "Question Two"), scout_ready: true, status: "queued", current_agents: [] }] } };
@@ -83,6 +84,22 @@ describe("AOE question workspace", () => {
     expect(screen.getByText("第二轮提取")).toBeInTheDocument();
     expect(screen.getByText("待解题")).toBeInTheDocument();
     expect(screen.getByText(/1 待交接/)).toBeInTheDocument();
-    expect(screen.getByText(/每题侦察 300 秒/)).toBeInTheDocument();
+    expect(screen.queryByText(/每题侦察/)).not.toBeInTheDocument();
+  });
+  it("sorts solved questions by solve time and remaining questions by registration time", () => {
+    const data = { ...parent, aoe: { ...parent.aoe!, scout_mode: "collection_only", collection_complete: false,
+      questions: [
+        { ...question("old", "Older unsolved"), registered_at: 10 },
+        { ...question("s1", "Earlier solved"), status: "solved", solved_at: 100, registered_at: 40 },
+        { ...question("new", "Newest unsolved"), registered_at: 50 },
+        { ...question("s2", "Latest solved"), status: "solved", solved_at: 200, registered_at: 20 },
+      ] } };
+    render(<MemoryRouter><AOEWorkspace snapshot={data} tab="blackboard" onTab={vi.fn()} selectedAgentId={null} onChanged={vi.fn()} /></MemoryRouter>);
+    const panel = screen.getByRole("region", { name: "题目总览" });
+    expect([...panel.querySelectorAll(".aoe-question-title")].map(node => node.textContent)).toEqual([
+      "Latest solved", "Earlier solved", "Newest unsolved", "Older unsolved",
+    ]);
+    expect(screen.getByText(/收集题目与解题并行/)).toBeInTheDocument();
+    expect(screen.getByText(/Scout 仅收集题面与附件/)).toBeInTheDocument();
   });
 });

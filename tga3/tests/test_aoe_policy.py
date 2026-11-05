@@ -1,6 +1,6 @@
 from uuid import uuid4
 
-from tga3.aoe_models import active_attempts, joint_ready, next_joint_question, next_solo_question
+from tga3.aoe_models import active_attempts, joint_ready, next_joint_question, next_solo_question, schedulable_questions
 from tga3.domain import TaskRun
 
 WORKERS = ("worker-openai", "worker-claude")
@@ -50,3 +50,13 @@ def test_terminal_questions_never_lease_and_unknown_difficulty_preserves_source_
     earlier, later = question("earlier", "unrated", ordinal=1), question("later", ordinal=2)
     assert next_solo_question([solved, abandoned, later, earlier], WORKERS[0]).id == earlier.id
     assert not joint_ready([solved, abandoned], WORKERS)
+
+
+def test_only_collection_limits_difficulty_and_original_priority_returns_afterwards():
+    easy = question("easy retry", "简单", tried=[WORKERS[1]])
+    hard = question("untouched hard", "hard")
+    assert schedulable_questions([easy, hard], collection_complete=False) == [easy]
+    assert next_solo_question(schedulable_questions([easy, hard]), WORKERS[0]).id == hard.id
+    unrated = question("unrated", "unrated")
+    assert schedulable_questions([unrated], collection_complete=False) == [unrated]
+    assert schedulable_questions([hard, unrated], collection_complete=False) == []

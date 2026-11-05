@@ -212,6 +212,7 @@ class RuntimeConfig(BaseModel):
     intel_root: str = "data/intels"
     writeup_root: str = "data/writeups"
     skills_root: str
+    ctf_knowledge_root: str = "knowledge/des-ctf-knowledge"
     mcp_instructions: str = Field(min_length=1)
     cli_timeout_seconds: int = Field(default=1800, ge=30, le=86400)
     scout_timeout_seconds: int = Field(default=300, ge=60, le=600)

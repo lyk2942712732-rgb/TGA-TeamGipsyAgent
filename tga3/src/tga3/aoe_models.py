@@ -80,6 +80,26 @@ def scout_ready(question: TaskRun) -> bool:
     return question.metadata.get("scout_ready", question.state != RunState.SCOUTING)
 
 
+def schedulable_questions(questions: list[TaskRun], *, collection_complete: bool = True) -> list[TaskRun]:
+    """During collection solve easy questions; afterwards retain the existing policy."""
+    remaining = unfinished(questions)
+    if collection_complete:
+        return remaining
+    if all(math.isinf(difficulty_order(q.metadata.get("difficulty"))) for q in questions):
+        return remaining
+    return [q for q in remaining if difficulty_order(q.metadata.get("difficulty")) <= 1]
+
+
+def overview_order(question: TaskRun) -> tuple[int, float, int, str]:
+    solved = question.metadata.get("status") == "solved"
+    timestamp = question.metadata.get("solved_at") if solved else None
+    if timestamp is None and solved:
+        timestamp = max((a.get("finished_at", 0) for a in question.metadata.get("attempts", [])
+                         if a.get("outcome") == "solved"), default=question.updated_at.timestamp())
+    timestamp = timestamp if solved else question.metadata.get("registered_at", question.created_at.timestamp())
+    return (0 if solved else 1, -timestamp, -question.metadata.get("ordinal", 0), str(question.id))
+
+
 def next_solo_question(questions: list[TaskRun], agent_id: str) -> TaskRun | None:
     eligible = [
         q

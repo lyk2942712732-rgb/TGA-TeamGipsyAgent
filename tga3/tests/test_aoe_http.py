@@ -98,7 +98,7 @@ async def test_aoe_collection_mcp_budget_owned_downloads_and_hierarchical_events
             first, second = [UUID(item["question_id"]) for item in receipt["questions"]]
             overview = (await client.get(f"/api/v3/tasks/{parent_id}/questions")).json()
             assert len(overview["questions"]) == 2 and overview["attempt_seconds"] == 420
-            first_view = overview["questions"][0]
+            first_view = next(q for q in overview["questions"] if q["source_key"] == "q1")
             file_id = first_view["attachments"][0]["id"]
             assert (
                 await client.get(f"/api/v3/tasks/{parent_id}/questions/{first}/files/{file_id}")

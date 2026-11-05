@@ -55,7 +55,7 @@ export function AOEWorkspace({ snapshot, tab, selectedAgentId, onTab, onChanged 
         <option value="">全部题目 / 总览</option>
         {overview.questions.map(item => <option key={item.question_id} value={item.question_id}>{item.title}</option>)}
       </select></label>
-      <span>{PHASE[overview.phase] ?? overview.phase} · 每次尝试 {overview.attempt_seconds / 60} 分钟{overview.scout_question_seconds !== undefined ? ` · 每题侦察 ${overview.scout_question_seconds} 秒` : ""}</span>
+      <span>{overview.scout_mode === "collection_only" && !overview.collection_complete ? "收集题目与解题并行" : PHASE[overview.phase] ?? overview.phase} · 每次尝试 {overview.attempt_seconds / 60} 分钟{overview.scout_mode === "collection_only" ? " · Scout 仅收集题面与附件" : ""}</span>
     </div>
     {requested && !question ? <p role="alert">该题目不属于当前任务，或尚未完成登记。</p> : null}
     {question ? <section className="aoe-question-context">
@@ -76,13 +76,20 @@ function AOEOverviewPanel({ snapshot, onOpen, name }: { snapshot: TGA3RuntimeSna
   const overview = snapshot.aoe!;
   const [now, setNow] = useState(Date.now() / 1000);
   useEffect(() => { const timer = window.setInterval(() => setNow(Date.now() / 1000), 1000); return () => window.clearInterval(timer); }, []);
-  if (!overview.questions.length) return <div className="tga3-empty"><BookOpen /><h3>Scout 正在收集题目</h3><p>完整登记题面、附件与已知难度后，系统会继续按题侦察和分配。</p></div>;
+  if (!overview.questions.length) return <div className="tga3-empty"><BookOpen /><h3>Scout 正在收集题目</h3><p>题面与附件登记后即可分配；收集期间先解简单题，无难度说明时直接分配。</p></div>;
   const solved = overview.questions.filter(item => item.status === "solved").length;
   const abandoned = overview.questions.filter(item => item.status === "abandoned").length;
   const preparing = overview.questions.filter(item => item.scout_ready === false).length;
   return <section className="aoe-overview" aria-label="题目总览">
     <header><h3>{overview.questions.length} 道题目</h3><span>{solved} 已解出 · {abandoned} 已放弃{preparing ? ` · ${preparing} 待交接` : ""}</span></header>
-    <div className="aoe-question-roster">{overview.questions.map(question => {
+    <div className="aoe-question-roster">{[...overview.questions].sort((a, b) => {
+      const solvedA = a.status === "solved", solvedB = b.status === "solved";
+      if (solvedA !== solvedB) return solvedA ? -1 : 1;
+      const stamp = (q: AOEQuestion) => q.status === "solved"
+        ? q.solved_at ?? Math.max(0, ...q.attempts.filter(t => t.outcome === "solved").map(t => t.finished_at ?? 0))
+        : q.registered_at ?? 0;
+      return stamp(b) - stamp(a);
+    }).map(question => {
       const active = question.attempts.filter(attempt => attempt.outcome === null);
       const deadline = active[0]?.deadline;
       const seconds = deadline === undefined ? null : Math.max(0, Math.ceil(deadline - now));

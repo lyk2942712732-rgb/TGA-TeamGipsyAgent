@@ -52,7 +52,7 @@ data/tasks/<任务ID>/
 
 AOE 在 `data/tasks/<批次ID>/<题目ID>/` 下为每题创建上述五个目录。批次自己的目录用于 Scout 前置收集；题目的 `inputs/question.json` 保存原题、连接信息、附件、尝试历史和状态，批次 `inputs/questions.json` 保存完整题目清单。题目结构化记录含 `question_id`；每题独立黑板、证据、Intel 和报告，不将不同题目的相似 Intel 合并。控制状态和证据关联仍由 PostgreSQL 维护，原始执行正文保存在文件中。
 
-AOE Scout 完成前置收集后，按已知难度逐题完成“第一轮侦察 → 第二轮提取 → 第三轮合并 → 写入该题黑板”。第一轮预算由每道题独立享有（默认每题 300 秒，在 Solver 配置），不会分摊整个题库的总预算；提前完成可直接进入下一轮，重启保留该题原截止时间。第二、三轮无总预算，直到该题 action 和原始 Intel 全覆盖才交接，原始与合并后的 JSON 均保留。某题交接完成后即可由空闲 Worker 认领，Scout 同时继续下一题；始终复用同一容器与原生 CLI 会话。
+AOE Scout 只做前置收集，不再逐题侦察、提取或合并 Intel。每道题的题面、附件登记完成即开放调度，Worker 与收集并行；收集期间只认领明确的简单题，整批无难度说明时直接认领。全部来源页面和附件登记后 Scout 结束并退出容器，随后恢复“未经尝试优先，其次题目难度”的原有规则，保留换人尝试和最后共同攻坚。普通单题场景的 Scout 三轮与预算不受影响。总览已解出题排在前面并按最新解出时间倒序，其余按题目获取时间倒序；重启、重复登记和报告生成不改变这些时间。
 
 AOE 固定两个 Worker 槽位。独立阶段每人领取不同的已交接题目，优先双方都没做过的题，再尝试对方做过的题；有明确难度时先易后难，无可领题则等待。交接和调度共用任务锁，先记录占用再启动，防止同时领取同题。每次独立换题新开原生会话，保留旧题会话供共同攻坚恢复。仅当所有题目已交接、剩余题目双方都独立尝试完毕后，两个 Worker 才按题共同攻坚，恢复各自该题会话并立即获取黑板新信息。创建任务时可设置每次尝试预算，默认 20 分钟；共同攻坚的一题共享一份预算，超时放弃。单题完成只停止该题参与者并生成该题报告，其他题继续。
 
@@ -147,3 +147,10 @@ Intel 文件不保存 `artifact_refs`，仅在最终黑板导入时登记合并�
 Worker 用 `blackboard_publish(conclusion, rationale, finding_ids, answer_type?, topic?)` 提交最终候选，
 不再填写任务、身份、kind 和去重键。新候选的原生 Hook 新鲜度检查保留。
 后续可交给代码的索引与校验工作见 [分工审查](CODE-VS-MODEL-REVIEW.md)。
+
+
+### Des-CTF-Knowledge
+
+在 `tga3/` 目录执行 `python -m tga3.knowledge` 安装固定版本的 [Des-CTF-Knowledge](https://github.com/Dest1ny-Sec/Des-CTF-Knowledge) 到 `knowledge/des-ctf-knowledge/`。完整知识库由原仓库维护，不复制进任务文件或模型上下文。保留其 LICENSE 和来源；安装器固定 revision，已存在的不同版本不会被自动覆盖。
+
+`runtime.ctf_knowledge_root` 可指定本地路径（默认上述路径）。已安装时只读挂载到两个 Worker 的 `/knowledge/des-ctf-knowledge`，通过原项目 stdio MCP Server 接入 Codex/Claude 两种 CLI；依赖 `mcp` 与 `pyyaml` 随 Worker 安装。先阅读知识库 `SKILL.md`，根据当前题的实测信号调用 `find_technique`、`find_atom`、`search`、`read_topic`、`find_wp`，按需定位章节和来源。知识库是参考资料；脚本需要修改时复制到 `/workspace` 后运行，保留正常 Finding 发布流程。Scout 和 Reporter 不启动知识库 MCP。

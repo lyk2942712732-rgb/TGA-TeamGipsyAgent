@@ -1,4 +1,4 @@
-"""Four AOE work phases, one Codex adapter, native session and container."""
+"""AOE collection only: register question inputs while Workers solve concurrently."""
 
 from __future__ import annotations
 
@@ -9,8 +9,6 @@ from pathlib import Path
 from uuid import UUID
 
 from ..action_logs import read_action_log
-from ..action_materials import action_materials
-from ..scout_intel import read_intels
 from .action_journal import ActionJournal
 from .cli_adapter import CodexAdapter
 
@@ -30,205 +28,75 @@ def recover_unfinished(journal: ActionJournal) -> None:
 
 
 def instructions() -> str:
-    phase = os.environ.get("TGA3_SCOUT_PHASE", "collecting")
-    workspace = os.environ.get("TGA3_WORKSPACE", "/workspace")
-    inputs = os.environ.get("TGA3_INPUTS", "/inputs")
-    logs = os.environ.get("TGA3_LOGS", "/logs")
-    intels = os.environ.get("TGA3_INTELS", "/intels")
-    common = (
-        os.environ["TGA3_SYSTEM_PROMPT"] + "\nAOE Scout: the pre-phase and three rounds are work divisions "
-        "inside ONE native CLI session/container. Never launch a separate agent/session for a phase or question. "
-        "Finish all three rounds for the current question before the runtime hands it to Workers and moves "
-        "you to the next question. Other questions may already be solved concurrently by Workers. "
-        f"Current phase: {phase}. Task binding: {os.environ['TGA3_TASK_ID']}. "
-        f"Working directory: {workspace}. Inputs: {inputs}. Logs: {logs}. Intel: {intels}. "
-        "Recorded artifact paths are relative to this question's working directory. Use these exact paths; "
-        "the old /workspace,/inputs,/logs mounts refer to batch collection when working on a question. "
-        "Native Skills are under /skills; read only useful SKILL.md and referenced documents. "
-    )
-    if phase == "collecting":
-        return common + (
-            "Collect the COMPLETE question list from the user's text/files or gateway. Follow pagination and "
-            "preserve original IDs, names/descriptions, shared user constraints, targets, submission requirements "
-            "and explicitly supplied difficulty. Download all required question attachments into /workspace "
-            "before registration, or reference supplied /inputs files. Do not invent difficulty or declare a "
-            "failed download complete. Use scout_register_questions with source_key,title,description, optional "
-            "difficulty,connection_info,submission_instructions,attachments (local /workspace or /inputs paths). "
-            "Use original gateway IDs as source_key; for user text use distinct stable source labels. "
-            "Registration can be batched and identical retries are deduplicated. Do not solve questions yet. "
-            "Only after the entire accessible list and its files are registered call scout_finish_collection "
-            "with expected_count equal to the complete source list count. No fixed total collection budget."
-        )
-    if phase == "executing":
-        return common + (
-            "FIRST ROUND: only inspect this assigned question's attachments/targets and preserve raw results. "
-            "Use the current question working directory for all downloads/scripts/outputs. "
-            "Do not call Intel tools or write reports. The runtime journals all executions for this question. "
-            "Each question has its OWN first-round budget, independent of other questions. "
-            "Basic recon is enough; finish this turn early when done. "
-            f"Remaining first-round budget for this question: {os.environ.get('TGA3_PHASE_BUDGET', '300')} seconds."
-        )
-    if phase == "extracting":
-        return common + (
-            "SECOND ROUND: cover every action of THIS question, including errors and unfinished checks. "
-            "Use provided literal materials first; read full files when truncated, missing or binary. "
-            "An omitted excerpt is not an empty result or proof a capability is absent. "
-            "scout_write_intel(action_id,claim,detail?,topic?) automatically binds THIS question and recorded "
-            "result/attachments. Check saved=true. No new probes, evidence modifications or merges. "
-            "No total time budget: finish only after every supplied action is covered. "
-            "Second/third-round tools are not journaled."
-        )
-    return common + (
-        "THIRD ROUND: consolidate the raw Intel of THIS question only. Never group different questions. "
-        "AI chooses semantic groups and writes multi-entry summaries preserving conditions, independent facts, "
-        "negative-test scope and later corrections. Use scout_merge_intel(merged_from_ids,claim?,detail?,topic?). "
-        "For a singleton give ONLY its original ID; the server copies original text verbatim. "
-        "Every raw ID must appear exactly once; retained raw JSON must not change. "
-        "No new probes. No total time budget; finish after full coverage. The system imports final Intel "
-        "to this question's own board, never a combined batch board."
+    return (
+        "You are the TGA AOE question collector. AOE Scout has ONLY the collection pre-phase. "
+        "These AOE-specific instructions replace the generic three-round Scout role. "
+        "Collect the COMPLETE question list from the "
+        "user's text/files or gateway, including pagination. Preserve original IDs, names, descriptions, "
+        "shared constraints, targets, submission requirements and explicitly supplied difficulty. "
+        "Never invent difficulty. Inputs are /inputs (read-only), private files /workspace, Skills /skills. "
+        "Download each question's required attachments before registering it, or reference supplied /inputs files. "
+        "Call scout_register_questions(source_key,title,description,difficulty?,connection_info?,"
+        "submission_instructions?,attachments?) as soon as that question's metadata and files are complete. "
+        "Register incrementally; prioritize supplied easy questions when possible. Workers immediately solve "
+        "registered easy/unrated questions while you continue collecting. Do not wait to accumulate a batch. "
+        "Do not probe or solve targets, start/close challenge instances, extract Intel, merge Intel or write reports. "
+        "Do not omit failed downloads or pagination. Only after the complete list and files are registered call "
+        "scout_finish_collection(expected_count), then finish immediately. There are NO later Scout rounds "
+        "and no collection time budget. Other Workers' ongoing questions must not be touched."
     )
 
 
 async def scout() -> None:
     batch_id = os.environ["TGA3_AOE_PARENT_ID"]
-    root_workspace = Path(os.environ.get("TGA3_WORKSPACE", "/workspace"))
-    state = root_workspace / ".tga3"
+    workspace = Path(os.environ.get("TGA3_WORKSPACE", "/workspace"))
+    state = workspace / ".tga3"
     state.mkdir(parents=True, exist_ok=True)
-    os.environ["TGA3_CLI_HOME"] = str(root_workspace / ".codex")
+    os.environ["TGA3_CLI_HOME"] = str(workspace / ".codex")
     adapter = CodexAdapter()
     adapter.journal.identity["scope"] = "batch_collection"
-    batch_root = Path(os.environ.get("TGA3_AOE_ROOT", "/aoe"))
-    manifest_path = batch_root / "inputs/questions.json"
+    adapter.journal.enabled = True
+    adapter.timeout = None
+    manifest_path = Path(os.environ.get("TGA3_AOE_ROOT", "/aoe")) / "inputs/questions.json"
 
     async def emit(method, params):
-        question_id = os.environ.get("TGA3_QUESTION_ID")
-        print(
-            json.dumps(
-                {"method": method, "params": {**params, **({"question_id": question_id} if question_id else {})}},
-                ensure_ascii=False,
-            ),
-            flush=True,
-        )
+        print(json.dumps({"method": method, "params": params}, ensure_ascii=False), flush=True)
 
     def manifest():
-        return (
-            json.loads(manifest_path.read_text(encoding="utf-8"))
-            if manifest_path.is_file()
-            else {"collection_complete": False, "questions": []}
-        )
-
-    def switch(question: dict, phase: str):
-        ident = question["question_id"]
-        root = batch_root / ident
-        workspace, logs = root / "workspaces/scout", root / "logs/scout"
-        workspace.mkdir(parents=True, exist_ok=True)
-        logs.mkdir(parents=True, exist_ok=True)
-        adapter.workspace = adapter.output_dir = workspace
-        os.environ.update(
-            TGA3_TASK_ID=ident,
-            TGA3_QUESTION_ID=ident,
-            TGA3_WORKSPACE=str(workspace),
-            TGA3_INPUTS=str(root / "inputs"),
-            TGA3_LOGS=str(logs),
-            TGA3_INTELS=str(root / "intels/scout"),
-        )
-        adapter.journal = ActionJournal(
-            logs,
-            identity={"task_id": ident, "question_id": ident, "agent_id": "scout", "runtime": adapter.runtime},
-            secret=adapter.api_key,
-            enabled=phase == "executing",
-            output_directory=workspace,
-        )
-        recover_unfinished(adapter.journal)
+        return json.loads(manifest_path.read_text(encoding="utf-8")) if manifest_path.is_file() else {
+            "collection_complete": False, "questions": []}
 
     previous_request = None
     while True:
-        request_path = state / "aoe-scout-request.json"
-        if not request_path.is_file():
+        path = state / "aoe-scout-request.json"
+        if not path.is_file():
             await asyncio.sleep(0.1)
             continue
-        request = json.loads(request_path.read_text(encoding="utf-8"))
+        request = json.loads(path.read_text(encoding="utf-8"))
         if request["id"] == previous_request:
             await asyncio.sleep(0.1)
             continue
         previous_request = request["id"]
-        phase = request["phase"]
-        os.environ["TGA3_SCOUT_PHASE"] = adapter.scout_phase = phase
-        budget = float(request["budget_seconds"]) if phase == "executing" else None
-        adapter.timeout = budget + 5 if budget is not None else None
-        os.environ["TGA3_PHASE_BUDGET"] = str(budget) if budget is not None else "unbounded"
-        result = {
-            "task_id": batch_id,
-            "question_id": request.get("question_id"),
-            "phase": phase,
-            "finish_reason": "completed",
-            "error": None,
-            "budget_seconds": budget,
-        }
+        result = {"task_id": batch_id, "question_id": None, "phase": request["phase"],
+                  "finish_reason": "completed", "error": None, "budget_seconds": None}
         try:
-            async with asyncio.timeout(budget):
-                if phase == "collecting":
-                    adapter.journal.enabled = True
-                    stalled = 0
-                    while not manifest()["collection_complete"]:
-                        before = len(manifest()["questions"])
-                        output = await adapter.run_cycle(instructions(), emit)
-                        if output.strip():
-                            await emit("agent.output.delta", {"text": output})
-                        stalled = stalled + 1 if len(manifest()["questions"]) == before else 0
-                        if stalled >= 3 and not manifest()["collection_complete"]:
-                            raise RuntimeError(
-                                "Scout ended three collection turns without registering more questions; "
-                                "the complete source list has not been collected"
-                            )
-                else:
-                    question = next(q for q in manifest()["questions"] if q["question_id"] == request["question_id"])
-                    switch(question, phase)
-                    if phase == "executing":
-                        await adapter.run_cycle(
-                            instructions() + "\nQuestion:\n" + json.dumps(question, ensure_ascii=False),
-                            emit,
-                        )
-                    else:
-                        while True:
-                            intel_dir = Path(os.environ["TGA3_INTELS"])
-                            ident = UUID(question["question_id"])
-                            raw = read_intels(intel_dir / "raw", ident)
-                            if phase == "extracting":
-                                covered = {a for item in (raw.intels if raw else []) for a in item.source_action_ids}
-                                missing = [
-                                    a["action_id"]
-                                    for a in read_action_log(adapter.journal.directory)["actions"]
-                                    if a["action_id"] not in covered
-                                ]
-                                if not missing:
-                                    break
-                                materials = action_materials(
-                                    adapter.journal.directory, adapter.workspace, ident, missing
-                                )
-                            else:
-                                merged = read_intels(intel_dir / "merged", ident, merged=True)
-                                covered = {
-                                    a for item in (merged.intels if merged else []) for a in item.merged_from_ids
-                                }
-                                materials = [
-                                    {"id": item.id, "topic": item.topic, "body": item.body.model_dump()}
-                                    for item in (raw.intels if raw else [])
-                                    if item.id not in covered
-                                ]
-                                if not materials:
-                                    break
-                            await adapter.run_cycle(
-                                instructions() + "\nQuestion materials:\n" + json.dumps(materials, ensure_ascii=False),
-                                emit,
-                            )
-        except TimeoutError:
-            result["finish_reason"] = "timeout"
+            if request["phase"] != "collecting" or request.get("question_id"):
+                raise ValueError("AOE Scout supports only batch collection")
+            os.environ["TGA3_SCOUT_PHASE"] = adapter.scout_phase = "collecting"
+            stalled = 0
+            while not manifest()["collection_complete"]:
+                before = len(manifest()["questions"])
+                output = await adapter.run_cycle(instructions(), emit)
+                if output.strip():
+                    await emit("agent.output.delta", {"text": output})
+                stalled = stalled + 1 if len(manifest()["questions"]) == before else 0
+                if stalled >= 3 and not manifest()["collection_complete"]:
+                    raise RuntimeError("Scout ended three turns without registering more questions")
         except Exception as exc:
             result.update(finish_reason="error", error=str(exc).replace(adapter.api_key, "[redacted]"))
         results = state / "aoe-scout-results"
         results.mkdir(exist_ok=True)
-        result_id = UUID(request["id"]).hex
-        temporary = results / f"{result_id}.tmp"
+        target = results / (UUID(request["id"]).hex + ".json")
+        temporary = target.with_suffix(".tmp")
         temporary.write_text(json.dumps(result, ensure_ascii=False), encoding="utf-8")
-        temporary.replace(results / f"{result_id}.json")
+        temporary.replace(target)
