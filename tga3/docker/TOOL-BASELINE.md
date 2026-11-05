@@ -15,6 +15,27 @@ Debian 的 python3-* 包供系统 Python/工具使用，Worker 默认的 `python
 额外保留 ripgrep，支持原生 CLI 文件搜索。不会引入 Pi、StrikeAgent 后端、前端或其 Agent 调度逻辑。
 不再额外预装旧基线的 Ghidra/Android、angr、QEMU、专业取证/多媒体和整套 Kali headless 工具组；清单依赖可能带入少量相关运行库。
 
+## 项目独立依赖层
+
+安全工具之外，两个 Worker 镜像都通过 `pip install /opt/tga3` 安装项目本体与 `pyproject.toml` 的统一运行依赖：
+
+| 依赖 | 用途 |
+|---|---|
+| httpx | 常驻 Hook 的 HTTP 通信、项目 HTTP 请求 |
+| websockets | Worker 与控制面的双向控制通道 |
+| pydantic | 控制协议、配置及结构化数据校验 |
+| pyyaml | 知识库 YAML 读取；验收确认 C 加速 SafeLoader 可用 |
+| mcp | 项目 MCP 协议与服务支持 |
+| asyncpg | 项目 PostgreSQL 持久化模块 |
+| fastapi | 项目控制面 HTTP API |
+| python-multipart | 项目附件上传 |
+| uvicorn[standard] | 项目 ASGI 服务运行 |
+
+后四项主要供控制面模块使用，目前随项目整包安装。Worker 不直接连接 PostgreSQL。
+这些依赖沿用项目现有声明；安装库不等于每次动作都初始化对应模块。Hook 的命令客户端仍只加载标准库。
+Python 构建工具 pip/setuptools/wheel、Node 与两个 CLI 也保留在独立层；其他传递依赖由 pip 解析，使用 `pip check` 验收。
+宿主机的 Docker SDK 属于 `[control]` 可选依赖，不额外装进 Worker 镜像。
+
 ## 构建与验收
 
 ```sh

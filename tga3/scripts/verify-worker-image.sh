@@ -4,7 +4,7 @@ image="${1:-tga3-ctf-base:local}"
 docker run --rm --entrypoint /bin/bash "${image}" -c '
 set -euo pipefail
 required_commands=(
-  curl wget git jq rg vim less ps ip ping gcc g++ make nasm pkg-config
+  curl wget git jq rg vim.tiny less ps ip ping gcc g++ make nasm pkg-config
   unzip 7z xz file xxd strings readelf strace ltrace tmux openssl
   nmap socat nc gdb php ruby mysql redis-cli psql smbclient exiftool
 )
