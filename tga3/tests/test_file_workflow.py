@@ -94,8 +94,26 @@ async def test_registration_receipts_only_include_this_call_and_question_lives_a
     question = next(q for q in await storage.list_questions(parent.id) if q.title == 'New')
     assert (cfg.task_path(question.id)/'question.json').is_file()
     assert not (cfg.task_path(question.id, 'inputs')/'question.json').exists()
-    overview = json.loads((cfg.task_path(parent.id, 'inputs')/'questions.json').read_text())
+    overview = json.loads((cfg.task_path(parent.id)/'questions.json').read_text())
     assert len(overview['questions']) == 3
+    assert not (cfg.task_path(parent.id, 'inputs')/'questions.json').exists()
+
+
+async def test_question_attachment_index_has_relative_collected_path_and_board_has_container_path(tmp_path):
+    cfg, storage, _, c, parent, _ = await aoe_setup(tmp_path)
+    upload = cfg.task_path(parent.id, 'inputs')/'original.zip'
+    upload.write_bytes(b'fixture attachment')
+    await c.aoe.register_questions(parent.id, [AOEQuestionInput(
+        source_key='attachment',title='Attachment',description='original',attachments=['/inputs/original.zip'])])
+    question = (await storage.list_questions(parent.id))[0]
+    value = json.loads((cfg.task_path(question.id)/'question.json').read_text())
+    attachment = value['attachments'][0]
+    assert attachment['path'].startswith('inputs/')
+    assert (cfg.task_path(question.id)/attachment['path']).read_bytes() == b'fixture attachment'
+    assert (cfg.task_path(parent.id, 'inputs')/'original.zip').is_file()
+    assert not (cfg.task_path(parent.id, 'inputs')/'questions.json').exists()
+    file_entry = next(e for e in await storage.list_entries(question.id) if e.kind == 'user_file')
+    assert '/'+attachment['path'] in file_entry.body['description']
 
 
 async def test_finding_files_are_bound_isolated_idempotent_and_immutable_after_import(tmp_path):
@@ -126,11 +144,14 @@ async def test_final_file_waits_for_unread_updates_then_imports_after_ack(tmp_pa
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://test') as client:
         initial = (await client.post(url, json={'file_sync':True})).json()
         ident = initial['publication_receipts'][0]['entry_id']
-        (workspace/'result/final-candidate.json').write_text(json.dumps({
+        (workspace/'final-candidate.json').write_text(json.dumps({
             'conclusion':'verified', 'rationale':'observed', 'finding_ids':[ident]}))
         pending = (await client.post(url, json={'file_sync':True})).json()
         assert pending['publication_receipts'][0]['status'] == 'waiting_for_blackboard'
         assert not any(e.kind == 'final_candidate' for e in await storage.list_entries(task.id))
         imported = (await client.post(url, json={'file_sync':True, 'ack':initial['delivery_id'], 'ack_only':True})).json()
         assert imported['publication_receipts'][0]['status'] == 'imported'
+        canonical = cfg.task_path(task.id)/'final-candidate.json'
+        assert json.loads(canonical.read_text())['conclusion'] == 'verified'
+        assert not (workspace/'result/final-candidate.json').exists()
         await app.state.automation.cancel(task.id)

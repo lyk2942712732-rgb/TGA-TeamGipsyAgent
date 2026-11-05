@@ -19,6 +19,7 @@ class FilePublications:
         self.findings = ActionFindingPublisher(config, board)
         self.finals = FinalCandidatePublisher(config, board)
         self.locks = defaultdict(asyncio.Lock)
+        self.question_locks = defaultdict(asyncio.Lock)
         self.versions = {}
 
     def _receipt_path(self, task_id, agent_id, label):
@@ -84,23 +85,28 @@ class FilePublications:
         return receipts
 
     def final_pending(self, task_id, agent_id):
-        path = self.config.task_path(task_id, 'workspaces', agent_id) / 'result/final-candidate.json'
-        receipt = self._receipt_path(task_id, agent_id, '/workspace/result/final-candidate.json')
+        path = self.config.task_path(task_id, 'workspaces', agent_id) / 'final-candidate.json'
+        receipt = self._receipt_path(task_id, agent_id, '/workspace/final-candidate.json')
         return path.is_file() and (not receipt.is_file() or
                json.loads(receipt.read_text()).get('status') != 'imported')
 
     async def sync_final(self, task_id, agent_id):
         if self.config.agents.agents[agent_id].role != 'worker' or not self.final_pending(task_id, agent_id):
             return []
-        label = '/workspace/result/final-candidate.json'
-        path = self.config.task_path(task_id, 'workspaces', agent_id) / 'result/final-candidate.json'
-        async with self.locks[task_id, agent_id]:
+        label = '/workspace/final-candidate.json'
+        path = self.config.task_path(task_id, 'workspaces', agent_id) / 'final-candidate.json'
+        async with self.locks[task_id, agent_id], self.question_locks[task_id]:
             try:
                 value, digest, receipt_path = self._read(task_id, agent_id, path, label)
                 if value is None:
                     return []
                 body = FinalCandidateBody.model_validate(value)
                 result = await self.finals.publish(task_id, agent_id, body, 'general')
+                # The first accepted candidate is the same one AOE settles by seq.
+                # Only the system writes this shared canonical file.
+                canonical = self.config.task_path(task_id) / 'final-candidate.json'
+                if not canonical.exists():
+                    self._save(canonical, result['body'])
                 receipt = {'path': label, 'status': 'imported', 'entry_id': result['id'], 'sha256': digest}
                 self._save(receipt_path, receipt)
                 return [receipt]

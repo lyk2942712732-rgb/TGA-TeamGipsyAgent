@@ -7,9 +7,11 @@ Worker 使用原生文件/命令工具写 JSON，不再配置或提供 Finding/�
 ```text
 data/tasks/<批次ID>/<题目ID>/
 ├── question.json             系统维护的题目信息、附件索引、状态与尝试历史
+├── final-candidate.json      系统确认后的正式最终候选
 ├── inputs/                   原始附件
 ├── workspaces/<agent-id>/
-│   └── result/final-candidate.json
+│   ├── final-candidate.json  该 Worker 私有提交文件
+│   └── result/               原始执行正文
 ├── findings/<agent-id>/       在该 Worker 容器内挂载为 /findings
 │   └── <agent-id>-finding-001.json
 ├── logs/<agent-id>/
@@ -47,7 +49,7 @@ Worker 不填写 task_id、actor、证据 UUID、复现方法或重试键。
 }
 ```
 
-最终候选写到 `/workspace/result/final-candidate.json`：
+Worker 的最终候选提交文件写到 `/workspace/final-candidate.json`：
 
 ```json
 {
@@ -59,6 +61,8 @@ Worker 不填写 task_id、actor、证据 UUID、复现方法或重试键。
 ```
 
 系统先导入 Finding，再检查黑板未读信息，最后导入最终候选。
+系统将首先接受的候选正文保存到题目根目录 `final-candidate.json`，与 `question.json` 并列。
+两位 Worker 的私有提交文件隔离，避免共同攻坚互相覆盖。`result/` 不再保存候选 JSON。
 `waiting_for_blackboard` 表示先阅读系统注入的新消息，下一次原生工具调用或周期结束确认后自动重试同一文件。
 只有 `status=imported` 表示成功，`status=error` 需要修正。
 导入回执保存在私有工作区 `.tga3/publication-receipts/`，可在恢复会话时检查。
@@ -71,3 +75,12 @@ AOE 每次认领先记录 claimed_at；started_at/deadline 在第一条实际 ac
 黑板通过每题、每 Worker 的游标增量投递。初次认领/新会话提供初始信息，恢复同一会话的普通续轮不重放完整快照。
 未确认送达的消息可重放；实时用户指令和最终候选检查会越过普通投递间隔。
 Hook 的原生命令仅运行标准库客户端，处理和 HTTP 连接池常驻在 Worker 进程中，跨 CLI 工作周期复用。
+
+批次目录的 `questions.json` 是采集清单，与 `inputs/` 并列。批次 `inputs/` 只保存用户上传材料，仅 Scout 挂载读取。
+题目自身的 `inputs/` 保存 Scout 收集并由系统复制的附件；`question.json.attachments[].path` 是相对题目目录的路径，如 `inputs/abc.zip`。
+
+Worker 的项目 MCP 工具为八个本地知识工具和只读 `web_search`；Finding 使用原生文件工具，不需要额外 MCP。
+Codex 显式启用 live web search，Claude 开放 WebSearch/WebFetch。当前供应商的 Claude 原生搜索不可用时优先使用项目 `web_search`。
+项目搜索复用服务端所配置的 worker-openai Responses 搜索后端，不新增容器或工具依赖，不把搜索后端凭证发送给 Claude。
+每次搜索限制一次上游 web search，结果只保留公开摘要与来源 URL，不传递模型推理内容。
+同一尝试连续两次失败后，项目搜索停止发出新的网络请求；提示词也要求停止重复搜索并继续本地分析。

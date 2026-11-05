@@ -177,7 +177,7 @@ async def test_collection_runner_uses_only_one_collecting_session(monkeypatch, t
 
         async def run_cycle(self, prompt, emit):
             assert "NO later Scout rounds" in prompt and self.timeout is None
-            (batch / "inputs/questions.json").write_text(json.dumps({"collection_complete": True, "questions": []}))
+            (batch / "questions.json").write_text(json.dumps({"collection_complete": True, "questions": []}))
             return "collected"
 
     monkeypatch.setattr(aoe_scout, "CodexAdapter", Adapter)

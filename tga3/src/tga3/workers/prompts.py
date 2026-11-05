@@ -22,6 +22,8 @@ def worker_instructions() -> str:
         "Never invent a placeholder task ID or actor."
         " Your CLI working directory is /workspace. Your private output directory is /workspace; "
         "The runtime stores structured execution records in /logs. "
+        "Use native tools to author Finding files: Codex exec_command/apply_patch; Claude Write/Bash. "
+        "These are native CLI tools, not MCP tools. No Finding MCP tool is required. "
         f"Each action in /logs/{actor['agent_id']}-actions.json has artifact.output_path "
         "pointing to its saved result body "
         "and artifact.attachments listing "
@@ -39,7 +41,10 @@ def worker_instructions() -> str:
             "Working directory: /workspace. Inputs: /inputs (read-only). Output files: "
             "/workspace. Execution records: /logs. "
             "Action artifact paths are relative to /workspace; output bodies are saved in /workspace/result/. "
-            "Skills: /skills, read SKILL.md only when useful."
+            "Skills: /skills, read SKILL.md only when useful. "
+            "Project MCP tools by phase: scout_write_intel(action_id,claim,detail?,topic?,evidence_paths?) "
+            "during extraction, scout_merge_intel(merged_from_ids,claim?,detail?,topic?) during consolidation. "
+            "No Intel MCP tool is enabled for first-round execution."
         )
         phase = os.environ.get("TGA3_SCOUT_PHASE", "executing")
         if phase == "extracting":
@@ -108,7 +113,7 @@ def worker_instructions() -> str:
         "You do not write the blackboard and have no blackboard publication tools. "
         "After EACH execution, use the result already in this conversation. "
         "If it establishes a reusable fact, immediately write ONE JSON file in /findings/ "
-        "using a unique filename prefixed by your agent_id, e.g. worker-openai-finding-001.json. "
+        f"using a unique filename prefixed by your agent_id, e.g. {actor['agent_id']}-finding-001.json. "
         "Fields: action_id, claim, scope, preconditions?; no task_id, actor, evidence IDs or method fields. "
         "Use the exact action_id supplied with the tool result. One execution is enough; "
         "share what exists/works and scoped failures. Ordinary navigation, plans, guesses and duplicates need no Finding. "
@@ -117,9 +122,14 @@ def worker_instructions() -> str:
         "A returned TGA system file-import receipt with status=imported and entry_id confirms success. "
         "If status=error, correct the JSON and retry before further investigation. "
         "Imported Finding files are immutable; add a new file for a new fact/correction. "
-        "For the final answer write /workspace/result/final-candidate.json with "
+        "Example Finding JSON: {\"action_id\":\"<actual action_id from the hook>\","
+        "\"claim\":\"<observed reusable fact>\",\"scope\":\"<tested conditions and limits>\"}. "
+        "For the final answer write /workspace/final-candidate.json with "
         "conclusion, rationale, answer_type?, finding_ids (entry_id UUIDs from imported Finding receipts). "
         "The system imports the candidate; never fabricate IDs. "
+        "The system stores the accepted final-candidate.json beside question.json at the question root. "
+        "Your private submission stays at the workspace root to avoid overwriting another Worker's candidate. "
+        "/workspace/result/ is exclusively for recorded raw execution output. "
         "If waiting_for_blackboard, review the injected updates and continue with a native Read; "
         "the same candidate file is retried automatically after acknowledgement. "
         "Do not claim completion until status=imported. "
@@ -128,9 +138,22 @@ def worker_instructions() -> str:
         "realtime user instructions and pending final candidates bypass that interval. "
         "Unacknowledged deliveries may be replayed; continue working without waiting for routine updates."
     )
+    runtime_context += (
+        "\nPublic web research is enabled. Codex can use native web_search; Claude can use WebSearch/WebFetch. "
+        "The project MCP server web also provides web_search(query,max_results?) to BOTH Workers "
+        "for compatible public research; prefer this MCP tool on Claude when its native search is unavailable. "
+        "Search for relevant documentation, prior techniques and writeups when useful to find an approach. "
+        "Never put task credentials or secrets in a query. Search results are references, not target evidence. "
+        "After two consecutive unsuccessful searches, STOP searching for this attempt; do not repeat, "
+        "rephrase indefinitely or switch to shell scraping to bypass the failure. Continue local analysis."
+    )
     if root := os.environ.get("TGA3_CTF_KNOWLEDGE_ROOT"):
         runtime_context += (
             f"\nDes-CTF-Knowledge is available read-only at {root}. Read {root}/SKILL.md once, "
+            "Your project-specific knowledge MCP tools are: find_technique (match an observed signal), "
+            "find_atom (focused knowledge unit), find_wp (prior writeups), search (search the LOCAL knowledge base), "
+            "read_topic (relevant sections), get_payload (payload references), run_script (script references), "
+            "solve_hint (initial hints for the current problem). Local search is distinct from public web_search. "
             "then use the des-ctf-knowledge MCP tools from BOTH native CLI runtimes. "
             "After observing a concrete signal, call find_technique; use find_atom/search/find_wp "
             "and read_topic only for relevant methods/sections. Keep results small and cite source paths/lines. "
@@ -144,6 +167,9 @@ def worker_instructions() -> str:
             "\nIn AOE, Scout ONLY collects question metadata and attachments. There is no per-question "
             "Scout reconnaissance/Intel extraction. Inspect your assigned question yourself, using its "
             "board and /inputs. Never start, stop or close another question's target instance. "
+            "These /inputs are the collected attachments of YOUR question, not the batch's original uploads. "
+            "Attachment path values in question.json are relative to the question root (inputs/filename); "
+            "read them at /inputs/filename inside this container. "
             "The runtime assigns questions; do not claim other questions yourself."
         )
     return f"{os.environ['TGA3_SYSTEM_PROMPT'].rstrip()}\n\n{runtime_context}\n\n{publication_contract}"

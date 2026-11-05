@@ -92,7 +92,8 @@ class AOERuntime:
             ),
             "blackboard_seq": question.blackboard_seq,
             "attachments": [
-                {key: value for key, value in item.model_dump(mode="json").items() if key != "storage_path"}
+                {**{key: value for key, value in item.model_dump(mode="json").items() if key != "storage_path"},
+                 "path": Path(item.storage_path).relative_to(self.config.task_path(question.id)).as_posix()}
                 for item in files
             ],
         }
@@ -143,7 +144,7 @@ class AOERuntime:
                 for q in questions
             ],
         }
-        self._atomic_json(self.config.task_path(parent_id, "inputs") / "questions.json", value)
+        self._atomic_json(self.config.task_path(parent_id) / "questions.json", value)
         return value
 
     async def _collecting_parent(self, task_id: UUID) -> TaskRun:
@@ -211,7 +212,7 @@ class AOERuntime:
                     "name": item.name,
                     "media_type": item.media_type,
                     "sha256": item.sha256,
-                    "description": "AOE question attachment",
+                    "description": f"AOE question attachment: /inputs/{path.name}",
                 },
             ),
         )

@@ -361,6 +361,8 @@ class CodexAdapter(CliAdapter):
             'approval_policy = "never"',
             f"developer_instructions = {json.dumps(instructions)}",
         ]
+        if os.environ.get('TGA3_AGENT_ROLE') == 'worker':
+            config += ['web_search = "live"']
         if self.base_url:
             config += [
                 'model_provider = "tga3"',
@@ -377,6 +379,10 @@ class CodexAdapter(CliAdapter):
                        "http_headers = {" + ", ".join(f"{json.dumps(k)} = {json.dumps(v)}"
                                                       for k, v in self.mcp_headers().items()) + "}",
                        "required = true"]
+        if web_url := os.environ.get('TGA3_WEB_SEARCH_MCP_URL'):
+            config += ['[mcp_servers.web]', f'url = {json.dumps(web_url)}',
+                       'http_headers = {'+', '.join(f'{json.dumps(k)} = {json.dumps(v)}'
+                                                   for k,v in self.mcp_headers().items())+'}', 'required = true']
         if knowledge := worker_knowledge_server():
             config += ["[mcp_servers.des-ctf-knowledge]",
                        f"command = {json.dumps(knowledge['command'])}",
@@ -447,6 +453,8 @@ class ClaudeAdapter(CliAdapter):
         cli_home.mkdir(exist_ok=True)
         mcp_file = self.state_dir / "mcp.json"
         servers = {}
+        if web_url := os.environ.get('TGA3_WEB_SEARCH_MCP_URL'):
+            servers['web'] = {'type':'http', 'url':web_url, 'headers':self.mcp_headers()}
         if knowledge := worker_knowledge_server():
             servers["des-ctf-knowledge"] = {"type": "stdio", **knowledge}
         mcp_file.write_text(
@@ -472,9 +480,9 @@ class ClaudeAdapter(CliAdapter):
             "--system-prompt",
             worker_instructions(),
             "--tools",
-            "Bash,Read,Write,Edit,Glob,Grep",
+            "Bash,Read,Write,Edit,Glob,Grep,WebSearch,WebFetch",
             "--allowedTools",
-            "Bash,Read,Write,Edit,Glob,Grep,mcp__des-ctf-knowledge__*",
+            "Bash,Read,Write,Edit,Glob,Grep,WebSearch,WebFetch,mcp__web__web_search,mcp__des-ctf-knowledge__*",
             "--disallowedTools",
             "AskUserQuestion",
             "--strict-mcp-config",

@@ -61,6 +61,22 @@ def build_mcp(config: TGA3Config, blackboard: Blackboard) -> FastMCP:
     return mcp
 
 
+def build_web_mcp(config: TGA3Config, service) -> FastMCP:
+    mcp = _new_mcp(config, 'tga3-web', 'Public web research for Workers. Never include credentials in queries. Stop after two failed searches.')
+
+    @mcp.tool()
+    async def web_search(query: str, ctx: Context, max_results: int = 5) -> dict[str, Any]:
+        """Search public documentation, techniques and writeups; returns concise references and URLs.
+
+        Use a focused public query, never task secrets or credentials. Results are research references,
+        not evidence that the current target is vulnerable. After two failures stop and continue locally.
+        """
+        task_id, agent_id = bound_identity(ctx)
+        return await service.search(task_id, agent_id, query, max_results)
+
+    return mcp
+
+
 def build_scout_mcp(config: TGA3Config, store: ScoutIntelStore, *, aoe=None) -> FastMCP:
     mcp = _new_mcp(config, "tga3-scout-intels", "Register question metadata and attachments incrementally, then finish collection."
                    if aoe is not None else "Extract Intel from /logs; save JSON using scout_write_intel. "
@@ -122,4 +138,4 @@ def build_scout_mcp(config: TGA3Config, store: ScoutIntelStore, *, aoe=None) -> 
     return mcp
 
 
-__all__ = ["build_mcp", "build_scout_mcp"]
+__all__ = ["build_mcp", "build_scout_mcp", "build_web_mcp"]

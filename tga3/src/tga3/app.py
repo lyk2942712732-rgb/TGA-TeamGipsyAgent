@@ -20,7 +20,8 @@ from .domain import USER_ACTOR, AgentState, PublishRequest, RunState
 from .errors import TGA3Error
 from .host_agents import Automation, CliHostModel, HostModel
 from .file_publications import FilePublications
-from .mcp_server import build_scout_mcp
+from .mcp_server import build_scout_mcp, build_web_mcp
+from .web_search import WebSearchService
 from .model_discovery import discover_provider_models
 from .provider_profiles import PROVIDER_PROFILES, ProviderProtocol
 from .skills import MAX_ARCHIVE_BYTES, SkillCatalog
@@ -79,18 +80,21 @@ def create_app(
     coordinator.aoe.automation = automation
     scout_mcp = build_scout_mcp(config, coordinator.scout_intel)
     aoe_scout_mcp = build_scout_mcp(config, coordinator.scout_intel, aoe=coordinator.aoe)
+    web_search = WebSearchService(config, storage)
+    web_mcp = build_web_mcp(config, web_search)
     delivery = BlackboardDelivery(config, storage, coordinator.blackboard)
     usage = TokenUsageTracker(config, storage)
     publications = FilePublications(config, coordinator.blackboard)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
-        async with scout_mcp.session_manager.run(), aoe_scout_mcp.session_manager.run():
+        async with scout_mcp.session_manager.run(), aoe_scout_mcp.session_manager.run(), web_mcp.session_manager.run():
             await coordinator.restore_aoe()
             try:
                 yield
             finally:
                 await coordinator.close()
+                await web_search.close()
 
     app = FastAPI(title="TGA3 Control Plane", version="0.1.0", lifespan=lifespan)
     app.state.config = config
@@ -98,6 +102,7 @@ def create_app(
     app.state.coordinator = coordinator
     app.state.automation = automation
     app.state.publications = publications
+    app.state.web_search = web_search
     api = APIRouter(prefix="/api/v3")
     config_lock = asyncio.Lock()
 
@@ -396,11 +401,11 @@ def create_app(
                       "scout_write_intel → /intels/raw/scout-intels.json", "第三轮：Intel 合并",
                       "scout_merge_intel → /intels/merged/scout-intels.json", "系统仅导入合并 Intel"],
             "worker-openai": [
-                "Shell", "Read", "Edit", "原生黑板同步 Hook", "/findings/ 独立 JSON", "系统导入最终候选文件",
+                "Shell", "Read", "Edit", "web_search", "原生黑板同步 Hook", "/findings/ 独立 JSON", "系统导入最终候选文件",
                 "按 action 自动关联复现方法和证据", "发布时自动校验证据路径",
             ],
             "worker-claude": [
-                "Bash", "Read", "Write", "Edit", "Glob", "Grep", "原生黑板同步 Hook",
+                "Bash", "Read", "Write", "Edit", "Glob", "Grep", "web_search", "WebSearch", "WebFetch", "原生黑板同步 Hook",
                 "/findings/ 独立 JSON", "系统导入最终候选文件", "按 action 自动关联复现方法和证据", "发布时自动校验证据路径",
             ],
             "reporter": ["Read snapshot", "Read evidence", "Read skills", "Markdown Writeup"],
@@ -637,6 +642,7 @@ def create_app(
     app.include_router(api)
     app.mount("/scout-mcp", scout_mcp.streamable_http_app())
     app.mount("/aoe-scout-mcp", aoe_scout_mcp.streamable_http_app())
+    app.mount('/web-mcp', web_mcp.streamable_http_app())
     return app
 
 

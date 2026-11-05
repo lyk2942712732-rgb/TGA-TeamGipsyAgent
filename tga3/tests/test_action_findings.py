@@ -124,11 +124,12 @@ async def test_files_import_identity_evidence_and_final_candidate_through_checkp
         assert len(await storage.finding_links(task.id, entry.id)) == 2
         await client.post(url, json={'file_sync': True, 'ack': first['delivery_id'], 'ack_only': True})
         assert len(await storage.list_entries(task.id)) == 1
-        final = root/'result/final-candidate.json'
+        final = root/'final-candidate.json'
         final.write_text(json.dumps({'conclusion':'fixture result', 'rationale':'verified',
                                      'finding_ids':[receipt['entry_id']]}))
         saved = (await client.post(url, json={'file_sync': True})).json()
         assert saved['publication_receipts'][0]['status'] == 'imported'
+        assert json.loads((config.task_path(task.id)/'final-candidate.json').read_text())['finding_ids'] == [receipt['entry_id']]
         assert (await storage.list_entries(task.id))[-1].kind == 'final_candidate'
         assert len(await storage.list_entries(task.id)) == 2
         await app.state.automation.cancel(task.id)

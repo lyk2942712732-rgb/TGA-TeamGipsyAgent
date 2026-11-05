@@ -163,7 +163,7 @@ def publication_contract(role: str | None = None) -> str:
     fields = ", ".join(f"{name}{'' if field.is_required() else '?'}"
                        for name, field in FinalCandidateBody.model_fields.items())
     return ("/findings/<agent>-<id>.json: action_id, claim, scope, preconditions?. "
-            f"/workspace/result/final-candidate.json: {fields}. "
+            f"/workspace/final-candidate.json: {fields}. "
             "The system validates files, registers evidence and imports publications into the blackboard.")
 
 

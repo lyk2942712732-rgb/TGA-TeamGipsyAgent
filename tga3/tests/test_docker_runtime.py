@@ -146,6 +146,28 @@ def test_workers_get_private_workspaces_and_evidence_reporter_gets_read_only_uni
     assert reporter["/logs"][1] == "rw"
 
 
+def test_batch_uploads_are_scout_only_and_question_inputs_are_separate(tmp_path):
+    config = TGA3Config(Path(__file__).parents[1]/'config')
+    config.runtime.task_root = str(tmp_path/'tasks')
+    for provider in config.models.providers:
+        provider.api_keys[0].api_key = SecretStr('fixture-key')
+    parent, question = uuid4(), uuid4()
+    config.register_question_path(parent, question)
+    containers = FakeContainers()
+    runtime = DockerContainerRuntime.__new__(DockerContainerRuntime)
+    runtime.config, runtime.client = config, SimpleNamespace(containers=containers)
+    runtime._launch_sync(LaunchSpec(task_id=parent, aoe_parent_id=parent, agent=config.resolve_agent('scout')))
+    scout = containers.kwargs['volumes']
+    assert scout[str(config.task_path(parent))] == {'bind':'/aoe','mode':'ro'}
+    runtime._launch_sync(LaunchSpec(task_id=question, aoe_parent_id=parent, agent=config.resolve_agent('worker-openai')))
+    mounts = containers.kwargs['volumes']
+    assert mounts[str(config.task_path(question,'inputs'))] == {'bind':'/inputs','mode':'ro'}
+    assert str(config.task_path(parent,'inputs')) not in mounts and str(config.task_path(parent)) not in mounts
+    assert containers.kwargs['environment']['TGA3_WEB_SEARCH_MCP_URL'].endswith('/web-mcp/')
+    with pytest.raises(RuntimeUnavailableError, match='Batch uploads'):
+        runtime._launch_sync(LaunchSpec(task_id=parent, aoe_parent_id=parent, agent=config.resolve_agent('worker-claude')))
+
+
 def test_worker_container_uses_stable_non_root_identity(tmp_path: Path):
     config = TGA3Config(Path(__file__).parents[1] / "config")
     for provider in config.models.providers:

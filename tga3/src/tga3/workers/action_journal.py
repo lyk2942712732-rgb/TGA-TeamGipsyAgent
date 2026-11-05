@@ -37,7 +37,8 @@ class ActionJournal:
             for name in names:
                 path = root / name
                 try:
-                    if path.is_symlink() or name == "report-input.json":
+                    if (path.is_symlink() or name == "report-input.json" or
+                            path == self.output_directory / 'final-candidate.json'):
                         continue
                     stat = path.stat()
                     result[path.relative_to(self.output_directory).as_posix()] = (

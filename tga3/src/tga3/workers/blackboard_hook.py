@@ -18,7 +18,7 @@ def publications_changed():
     workspace = Path(os.environ.get('TGA3_WORKSPACE', '/workspace'))
     root = Path(os.environ.get('TGA3_FINDINGS', '/findings'))
     paths = [*root.glob('*.json')]
-    final = workspace / 'result/final-candidate.json'
+    final = workspace / 'final-candidate.json'
     if final.is_file():
         paths.append(final)
     version = tuple(sorted((str(p), p.stat().st_mtime_ns, p.stat().st_ctime_ns, p.stat().st_size) for p in paths))

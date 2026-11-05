@@ -101,7 +101,9 @@ class DockerContainerRuntime:
                 self._ensure_worker_directory(intels / stage)
             volumes[str(intels)] = {"bind": "/intels", "mode": "ro"}
             if spec.aoe_parent_id is not None:
-                volumes[str(self.config.task_path(spec.aoe_parent_id))] = {"bind": "/aoe", "mode": "rw"}
+                volumes[str(self.config.task_path(spec.aoe_parent_id))] = {"bind": "/aoe", "mode": "ro"}
+        elif spec.aoe_parent_id == spec.task_id:
+            raise RuntimeUnavailableError('Batch uploads are readable only by Scout; Workers require an assigned question')
         if is_reporter:
             volumes[str(self.config.task_path(spec.task_id, "logs"))] = {"bind": "/evidence", "mode": "ro"}
             for agent_id in self.config.agents.agents:
@@ -147,6 +149,8 @@ class DockerContainerRuntime:
             "TGA3_BLACKBOARD_CHANGED_PROMPT": runtime.worker_cycle_prompts.blackboard_changed,
         }
         if binding.role == "worker":
+            environment['TGA3_WEB_SEARCH_MCP_URL'] = (
+                runtime.blackboard_mcp_url.rstrip('/').removesuffix('/mcp')+'/web-mcp/')
             findings = self.config.task_path(spec.task_id, 'findings', binding.agent_id)
             self._ensure_worker_directory(findings)
             volumes[str(findings)] = {'bind': '/findings', 'mode': 'rw'}

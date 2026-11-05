@@ -34,10 +34,15 @@ def instructions() -> str:
         "Collect the COMPLETE question list from the "
         "user's text/files or gateway, including pagination. Preserve original IDs, names, descriptions, "
         "shared constraints, targets, submission requirements and explicitly supplied difficulty. "
-        "Never invent difficulty. Inputs are /inputs (read-only), private files /workspace, Skills /skills. "
+        "Never invent difficulty. Pre-task uploads are /inputs (read-only, Scout only); "
+        "private downloads and files go in /workspace; Skills /skills. "
+        "Project-specific tools available to you: scout_register_questions and scout_finish_collection. "
+        "The system maintains the collection manifest at /aoe/questions.json, outside uploaded /inputs. "
         "Download each question's required attachments before registering it, or reference supplied /inputs files. "
-        "Call scout_register_questions(source_key,title,description,difficulty?,connection_info?,"
-        "submission_instructions?,attachments?) as soon as that question's metadata and files are complete. "
+        "Call scout_register_questions(questions=[{source_key,title,description,difficulty?,connection_info?,"
+        "submission_instructions?,attachments?}]) as soon as one question's metadata and files are complete. "
+        "attachments contains local /inputs/... or /workspace/... paths. The system copies these into each "
+        "question's own inputs directory and records its path in question.json. "
         "Register incrementally; prioritize supplied easy questions when possible. Workers immediately solve "
         "registered easy/unrated questions while you continue collecting. Do not wait to accumulate a batch. "
         "Do not probe or solve targets, start/close challenge instances, extract Intel, merge Intel or write reports. "
@@ -57,7 +62,7 @@ async def scout() -> None:
     adapter.journal.identity["scope"] = "batch_collection"
     adapter.journal.enabled = True
     adapter.timeout = None
-    manifest_path = Path(os.environ.get("TGA3_AOE_ROOT", "/aoe")) / "inputs/questions.json"
+    manifest_path = Path(os.environ.get("TGA3_AOE_ROOT", "/aoe")) / "questions.json"
 
     async def emit(method, params):
         print(json.dumps({"method": method, "params": params}, ensure_ascii=False), flush=True)
