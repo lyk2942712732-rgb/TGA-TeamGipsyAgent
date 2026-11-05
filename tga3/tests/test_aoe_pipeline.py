@@ -6,8 +6,49 @@ import pytest
 from test_aoe_runtime import final, setup
 
 from tga3.aoe_models import AOEQuestionInput, active_attempts
+from tga3.blackboard_delivery import BlackboardDelivery
 from tga3.docker_runtime import FakeContainerRuntime
-from tga3.domain import RunState
+from tga3.domain import RunState, USER_ACTOR, PublishRequest
+
+
+async def test_each_claim_inherits_original_access_context_without_scout_copy_or_duplicates(tmp_path):
+    cfg, storage, runtime, c, parent, _ = await setup(tmp_path)
+    delivery = BlackboardDelivery(cfg, storage, c.blackboard)
+    shared = "API https://platform.example/openapi; BENCHMARK_TOKEN: fixture-platform-secret"
+    await c.blackboard.publish(parent.id, USER_ACTOR, PublishRequest(
+        kind="user_prompt", topic="task", body={"text": shared}, idempotency_key="initial-user-prompt"))
+    await c.aoe.register_questions(parent.id, [AOEQuestionInput(
+        source_key=str(i), title=str(i), description="Only relative /start endpoint", difficulty="easy")
+        for i in range(3)])
+    await c.aoe.tick(parent.id)
+    assert len(runtime.launched) == 2
+    first = await storage.get_task(runtime.launched[0].task_id)
+    for spec in runtime.launched:
+        entries = [e for e in await storage.list_entries(spec.task_id) if e.topic == "task_context"]
+        assert len(entries) == 1 and shared in entries[0].body["text"]
+        assert entries[0].actor.role == "user"
+        context = await delivery.checkpoint(spec.task_id, spec.agent.agent_id, final=True)
+        assert shared in context["context"]
+    # New question with a new CLI session receives the same exact credentials.
+    await final(storage, first.id)
+    await c.aoe.tick(parent.id)
+    next_spec = runtime.launched[-1]
+    assert next_spec.task_id != first.id and next_spec.fresh_session
+    assert shared in next(e.body["text"] for e in await storage.list_entries(next_spec.task_id)
+                          if e.topic == "task_context")
+    # A subsequent attempt on an existing question is idempotent, and receives
+    # realtime corrections made after question registration.
+    await c.blackboard.publish(parent.id, USER_ACTOR, PublishRequest(
+        kind="user_prompt", topic="realtime", body={"text": "Use updated credential fixture-new"},
+        idempotency_key="late-access-update"))
+    await c.aoe._finish_attempts(await storage.get_task(next_spec.task_id), {next_spec.agent.agent_id}, "timeout")
+    question = await storage.get_task(next_spec.task_id)
+    await c.aoe._new_attempts(parent.id, question, (next_spec.agent.agent_id,), "solo")
+    entries = await storage.list_entries(next_spec.task_id)
+    assert sum(e.topic == "task_context" for e in entries) == 1
+    assert any(e.topic == "realtime" and "fixture-new" in e.body["text"] for e in entries)
+    context = await delivery.checkpoint(next_spec.task_id, next_spec.agent.agent_id, final=True)
+    assert shared in context["context"] and "fixture-new" in context["context"]
 
 
 async def test_workers_claim_during_collection_scout_has_no_later_rounds(tmp_path):

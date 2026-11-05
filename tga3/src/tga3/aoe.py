@@ -421,6 +421,24 @@ class AOERuntime:
 
     async def _new_attempts(self, parent_id: UUID, question: TaskRun, agents: tuple[str, ...], phase: str) -> TaskRun:
         parent = await self.storage.get_task(parent_id)
+        # Bind the original shared access instructions at EVERY claim, including
+        # questions collected before an upgrade and fresh/cross/joint attempts.
+        # Never rely on Scout to copy credentials out of free-form user input.
+        for entry in await self.storage.list_entries(parent_id, limit=10_000):
+            if entry.kind == "user_prompt" and entry.actor.role == "user" and entry.topic in {"task", "realtime"}:
+                await self.board.publish(
+                    question.id,
+                    entry.actor,
+                    PublishRequest(
+                        kind="user_prompt",
+                        topic="task_context" if entry.topic == "task" else "realtime",
+                        body={"text": (
+                            "AOE 批次公共说明：以下包含用户提供的平台接口、访问凭证与公共要求。"
+                            "仅处理当前认领题目，题面与题目 ID 以本题记录为准。\n\n" + entry.body["text"]
+                        )} if entry.topic == "task" else entry.body,
+                        idempotency_key="aoe-" + entry.idempotency_key,
+                    ),
+                )
         start = self.clock()
         deadline = start + parent.metadata.get("aoe_attempt_seconds", 1200)
         additions = [
