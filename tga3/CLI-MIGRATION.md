@@ -18,7 +18,7 @@ docker compose up -d --wait postgres
 ```
 
 构建安装固定版本的官方 npm CLI 包，不复制宿主账号登录信息。
-Kali 工具基础镜像保持不变。Dockerfile 的 `CLI_VERSION` build arg 可用于经过验证的版本升级。
+基础系统和工具已切换到 Debian Bookworm / StrikeAgent 评测基线，详见 [工具基线](docker/TOOL-BASELINE.md)。Dockerfile 的 `CLI_VERSION` build arg 可用于经过验证的版本升级。
 主服务与 Worker 不再依赖 `openai-agents`、`claude-agent-sdk` 或项目维护的 SQLiteSession。
 
 ## 认证与协议
@@ -98,7 +98,7 @@ npm test
 npm run build
 ```
 
-部署时还需验证真实镜像版本、Kali 工具、数据库记录、CLI 会话恢复、Worker → Reporter 串行收尾与清理。
+部署时还需验证真实镜像版本、基线工具、数据库记录、CLI 会话恢复、Worker → Reporter 串行收尾与清理。
 
 ## Scout 前置侦察
 

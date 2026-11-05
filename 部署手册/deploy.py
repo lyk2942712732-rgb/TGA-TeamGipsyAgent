@@ -72,7 +72,8 @@ def deploy(
     source: Path,
     *,
     skip_images: bool,
-    kali_mirror: str | None,
+    debian_mirror: str | None,
+    python_image: str | None,
     build_network: str | None,
 ) -> None:
     if platform.system() != "Linux":
@@ -97,8 +98,10 @@ def deploy(
         print("已跳过镜像构建。创建真实任务前必须保证 runtime.json 指定的镜像存在。")
     else:
         environment = os.environ.copy()
-        if kali_mirror:
-            environment["KALI_MIRROR"] = kali_mirror
+        if debian_mirror is not None:
+            environment["DEBIAN_MIRROR"] = debian_mirror
+        if python_image:
+            environment["PYTHON_IMAGE"] = python_image
         if build_network:
             environment["DOCKER_BUILD_NETWORK"] = build_network
         run(["bash", str(build_script)], cwd=project_dir, env=environment)
@@ -129,7 +132,8 @@ def main() -> int:
     parser.add_argument("--source-dir", help="TGA-TeamGipsyAgent 源码目录")
     parser.add_argument("--check-only", action="store_true", help="仅运行统一部署预检")
     parser.add_argument("--skip-images", action="store_true", help="更新或控制面开发时跳过 Worker 镜像构建")
-    parser.add_argument("--kali-mirror", help="传给镜像构建的 KALI_MIRROR")
+    parser.add_argument("--debian-mirror", help="传给镜像构建的 DEBIAN_MIRROR（主机名；空串保留官方源）")
+    parser.add_argument("--python-image", help="Python 3.12 slim-bookworm 基础镜像地址")
     parser.add_argument(
         "--build-network",
         choices=("host", "bridge", "default", "none"),
@@ -145,7 +149,8 @@ def main() -> int:
     deploy(
         source,
         skip_images=args.skip_images,
-        kali_mirror=args.kali_mirror,
+        debian_mirror=args.debian_mirror,
+        python_image=args.python_image,
         build_network=args.build_network,
     )
     return 0

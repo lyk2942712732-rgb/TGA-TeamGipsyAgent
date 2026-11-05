@@ -397,7 +397,7 @@ def create_app(
     @api.get("/agent-definitions")
     async def agent_definitions() -> list[dict[str, Any]]:
         tools = {
-            "scout": ["第一轮：Shell / Kali 工具 / logs 留存", "第二轮：只读 logs",
+            "scout": ["第一轮：Shell / 安全工具 / logs 留存", "第二轮：只读 logs",
                       "scout_write_intel → /intels/raw/scout-intels.json", "第三轮：Intel 合并",
                       "scout_merge_intel → /intels/merged/scout-intels.json", "系统仅导入合并 Intel"],
             "worker-openai": [

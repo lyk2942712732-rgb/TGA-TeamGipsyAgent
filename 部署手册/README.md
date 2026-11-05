@@ -39,9 +39,9 @@ Worker 不需要手工启动，也不应写进 Compose 常驻服务。创建任�
 - Docker Engine 和 Docker Compose v2；`docker compose up --help` 中应包含 `--wait`。
 - Node.js 18 或更高版本及 npm。
 - Git、curl 和 Nginx；Nginx 仅在生产反向代理时需要。
-- 可访问模型供应商 API 和 Kali 软件源的网络。
+- 可访问模型供应商 API 和 Debian 软件源的网络。
 
-资源按默认配置估算：每个 Worker 上限为 2 CPU、4096 MB 内存，两个 Worker 可并行运行。建议至少 8 核 CPU、16 GB 内存和 50 GB 可用磁盘；构建 Kali 基础镜像时应预留更多磁盘和时间。
+资源按默认配置估算：每个 Worker 上限为 2 CPU、4096 MB 内存，两个 Worker 可并行运行。建议至少 8 核 CPU、16 GB 内存和 50 GB 可用磁盘；构建 Debian 基础镜像时应预留更多磁盘和时间。
 
 ## 快速部署
 
@@ -62,7 +62,7 @@ chmod +x deploy.sh
 ./deploy.sh
 ```
 
-`deploy.sh` 只进入同目录的 `deploy.py`，所有完整部署步骤只在 `deploy.py` 维护。脚本会统一执行环境检查、启动 PostgreSQL、调用源码镜像构建组件、创建 Python 虚拟环境、安装控制面，并构建前端。首次构建耗时主要取决于 Kali 镜像下载与软件包安装。
+`deploy.sh` 只进入同目录的 `deploy.py`，所有完整部署步骤只在 `deploy.py` 维护。脚本会统一执行环境检查、启动 PostgreSQL、调用源码镜像构建组件、创建 Python 虚拟环境、安装控制面，并构建前端。首次构建耗时主要取决于 Python/Debian 镜像下载与软件包安装。
 
 构建完成后，在前台启动控制面：
 

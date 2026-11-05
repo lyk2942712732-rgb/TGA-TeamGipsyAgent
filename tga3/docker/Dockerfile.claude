@@ -1,8 +1,9 @@
-FROM tga3-cli-base:local
+ARG CLI_BASE_IMAGE=tga3-cli-base:local
+FROM ${CLI_BASE_IMAGE}
 
 USER root
 ARG CLI_VERSION=2.1.123
-RUN npm install -g @anthropic-ai/claude-code@${CLI_VERSION}
+RUN npm install -g @anthropic-ai/claude-code@${CLI_VERSION} && npm cache clean --force
 COPY pyproject.toml README.md /opt/tga3/
 COPY src /opt/tga3/src
 RUN pip install --no-cache-dir /opt/tga3

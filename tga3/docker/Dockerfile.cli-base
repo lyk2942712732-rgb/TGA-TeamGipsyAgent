@@ -1,8 +1,9 @@
-FROM tga3-ctf-base:local
+ARG CTF_BASE_IMAGE=tga3-ctf-base:local
+FROM ${CTF_BASE_IMAGE}
 
 USER root
 ARG NODE_DOWNLOAD_BASE=https://nodejs.org/dist
-# Fixed official release and checksums; leave the Kali tool/library floor intact.
+# Keep the verified CLI runtime version and architecture-specific checksums.
 RUN set -eu; \
     case "$(uname -m)" in \
       x86_64) arch=x64; checksum=9aa8e9d2298ab68c600bd6fb86a6c13bce11a4eca1ba9b39d79fa021755d7c37 ;; \

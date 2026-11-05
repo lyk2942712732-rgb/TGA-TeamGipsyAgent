@@ -120,10 +120,10 @@ chmod +x scripts/*.sh
 ./scripts/build-images.sh
 ```
 
-国内网络可指定 Kali 镜像：
+国内网络可指定 Debian 软件源（主机名）：
 
 ```bash
-KALI_MIRROR=https://mirrors.tuna.tsinghua.edu.cn/kali \
+DEBIAN_MIRROR=mirrors.aliyun.com \
   ./scripts/build-images.sh
 ```
 

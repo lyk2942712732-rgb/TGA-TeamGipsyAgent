@@ -1,14 +1,15 @@
 # TGA3 CLI 黑板运行时
 
-两个 Worker 在独立 Kali 容器中并行运行 Codex CLI 和 Claude Code CLI。
+两个 Worker 在独立 Debian Bookworm 容器中并行运行 Codex CLI 和 Claude Code CLI。
+基础系统和工具采用 [StrikeAgent 评测基线](docker/TOOL-BASELINE.md)，项目运行代码、CLI 和知识库接入保持。
 出现最终候选后，控制层等待收尾宽限期、停止并回收 Worker，固定黑板快照，
 再用与 Codex Worker 相同的镜像启动一次性 Reporter 容器。
 Scout 分三轮工作内容，复用同一个容器、CLI 会话和上下文：第一轮执行并留存 logs；第二轮覆盖全部 action，保存原始 Intel JSON；第三轮基于全部原始 Intel 统一合并，另存最终 JSON。控制层只导入合并版本，完整覆盖后才启动两个 Worker。
 
 ```text
 Web UI → FastAPI 控制层 → PostgreSQL / 共享黑板 / MCP
-                    ├─ Kali + Codex CLI Worker ──────┐
-                    └─ Kali + Claude Code Worker ────┤ 并行
+                    ├─ Debian + Codex CLI Worker ──────┐
+                    └─ Debian + Claude Code Worker ────┤ 并行
                                                     ↓ 停止两者
                                     固定快照 + 只读证据 / Skills
                                                     ↓

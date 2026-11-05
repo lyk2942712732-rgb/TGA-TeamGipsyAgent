@@ -1,6 +1,6 @@
 # TGA — Team Gipsy Agent
 
-TGA3 使用独立 Kali 容器中的 Codex CLI 和 Claude Code CLI 并行执行任务，
+TGA3 使用独立 Debian Bookworm 容器中的 Codex CLI 和 Claude Code CLI 并行执行任务，
 通过共享黑板协作。两个 Worker 停止后，再启动 Codex CLI Reporter 生成报告。
 项目控制层管理任务、PostgreSQL、文件、MCP 和容器；执行顺序为 Scout → 两个 Worker 并行 → Reporter。
 
