@@ -64,6 +64,9 @@ def checkpoint(event: dict, *, client=None) -> dict:
     final = (str(event.get("tool_name", "")).split("__")[-1] == "blackboard_publish"
              or candidate(arguments))
     start_token = os.environ.get("TGA3_BOARD_START_TOKEN", "")
+    experience_generation = os.environ.get("TGA3_EXPERIENCE_SESSION_TOKEN") or start_token or "task-context"
+    experience_ack_file = state_dir / "experience-ack.json"
+    experience_previous = json.loads(experience_ack_file.read_text()) if experience_ack_file.is_file() else {}
     start_file = state_dir / "aoe-start-token"
     force_start = bool(start_token and event_name in {"UserPromptSubmit", "PreToolUse"} and
                        (not start_file.is_file() or start_file.read_text() != start_token))
@@ -79,6 +82,9 @@ def checkpoint(event: dict, *, client=None) -> dict:
             "action_start": (os.environ.get("TGA3_ATTEMPT_ID", "")
                              if event_name == "PreToolUse" and event.get("tool_use_id") else ""),
             "force_start": force_start,
+            "experience_generation": experience_generation,
+            "experience_ack": (experience_previous.get("delivery_id", "")
+                               if experience_previous.get("generation") == experience_generation else ""),
         },
         timeout=10,
     )
@@ -94,6 +100,10 @@ def checkpoint(event: dict, *, client=None) -> dict:
     parts = [result_context(record)] if record else []
     if context:
         parts.append(context)
+    if advice := delivery.get("experience_context"):
+        parts.append(advice)
+        experience_ack_file.write_text(json.dumps({"generation": experience_generation,
+            "delivery_id": delivery["experience_delivery_id"]}))
     if receipts := delivery.get("publication_receipts"):
         parts.append("TGA system file-import receipts: " + json.dumps(receipts, ensure_ascii=False))
     if not parts:

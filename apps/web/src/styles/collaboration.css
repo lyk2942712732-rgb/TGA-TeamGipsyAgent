@@ -21,7 +21,7 @@
 .collab-placeholder { font-size: 12px; color: var(--c-text-muted); }
 .resource-input { grid-column: 1; grid-row: 1; }
 .resource-skills { grid-column: 2; grid-row: 1; }
-.collab-capabilities { grid-column: 2; grid-row: 1; display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 10px; min-width: 0; }
+.collab-capabilities { grid-column: 2; grid-row: 1; display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 10px; min-width: 0; }
 .collab-capabilities > .collab-resource { grid-column: auto; grid-row: auto; align-self: stretch; }
 .resource-output { grid-column: 3; grid-row: 1; }
 .collab-scout { grid-column: 1; grid-row: 2; min-width: 0; }
@@ -58,9 +58,22 @@
 .collab-detail p { line-height: 1.8; overflow-wrap: anywhere; }
 .collab-detail pre { font-size: 12px; line-height: 1.8; margin: 9px 0 0; padding: 10px 12px; background: var(--c-text); color: var(--c-surface); border-radius: 2px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .collab-detail button { align-self: start; padding: 2px; background: transparent; color: var(--c-text-muted); }
+.experience-cards { min-width: 0; max-height: 560px; overflow: auto; padding-right: 8px; }
+.experience-card { margin-top: 12px; border: 1px solid var(--c-border); border-radius: 4px; }
+.experience-card > summary { padding: 12px; cursor: pointer; overflow-wrap: anywhere; }
+.experience-card-body { padding: 0 14px 14px; }
+.experience-card-body h4 { margin: 14px 0 6px; font-size: 12px; }
+.experience-card-body ol, .experience-card-body ul { padding-left: 20px; line-height: 1.9; }
+.experience-card-body a { text-decoration: underline; overflow-wrap: anywhere; }
 .collab-foot { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; padding: 9px 14px; border-top: 1px solid var(--c-border); font-size: 10px; color: var(--c-text-muted); }
 .collab-foot > span { display: flex; align-items: center; gap: 6px; }
 .collab-foot small { font-size: 10px; }
 .collab-foot i { width: 17px; border-top: 1px solid var(--c-text); }
 .collab-foot i.passive { border-color: var(--c-border); margin-left: 10px; }
 @media (max-width: 1050px) { .collab-grid { column-gap: 46px; grid-template-columns: minmax(0,1fr) minmax(0,1.25fr) minmax(0,1fr); } .collab-stage { padding: 16px 13px; } .collab-node { padding: 10px; } }
+@media (max-width: 650px) {
+  .collab-capabilities { grid-template-columns: minmax(0,1fr); }
+  .collab-detail { grid-template-columns: minmax(0,1fr) 20px; }
+  .collab-detail > div:nth-child(2) { grid-column: 1 / -1; grid-row: 2; }
+  .collab-detail > button { grid-column: 2; grid-row: 1; }
+}

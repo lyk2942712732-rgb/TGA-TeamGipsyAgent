@@ -40,8 +40,8 @@ export type AOEQuestion = {
   attachments: Array<{ id: string; name: string; media_type: string; size_bytes: number; sha256: string }>;
 };
 export type AOEOverview = { task_id: string; phase: string; attempt_seconds: number; scout_mode?: string; collection_complete?: boolean; scout_question_seconds?: number; questions: AOEQuestion[] };
-export type TGA3RuntimeSnapshot = { task: TGA3Task; agents: TGA3Agent[]; blackboard: TGA3BoardEntry[]; events: TGA3TaskEvent[]; aoe?: AOEOverview };
-type TaskDetail = { task: TGA3Task; agents: TGA3Agent[] };
+export type TGA3RuntimeSnapshot = { task: TGA3Task; agents: TGA3Agent[]; blackboard: TGA3BoardEntry[]; events: TGA3TaskEvent[]; aoe?: AOEOverview; experience_count?: number };
+type TaskDetail = { task: TGA3Task; agents: TGA3Agent[]; experience_count?: number };
 
 /** Load the native TGA3 task, agent, blackboard, and activity event contracts. */
 export async function loadTGA3Snapshot(taskId: string): Promise<TGA3RuntimeSnapshot> {
@@ -56,7 +56,7 @@ export async function loadTGA3Snapshot(taskId: string): Promise<TGA3RuntimeSnaps
       requestJson<AOEOverview>(`/api/v3/tasks/${encoded}/questions`),
       requestJson<{ events: TGA3TaskEvent[] }>(`/api/v3/tasks/${encoded}/aoe/events?limit=500`),
     ]);
-    return { task: detail.task, agents: detail.agents, blackboard: board.entries, events: activity.events, aoe };
+    return { task: detail.task, agents: detail.agents, blackboard: board.entries, events: activity.events, aoe, experience_count: detail.experience_count };
   }
   if (detail.task.parent_task_id) {
     // Child boards and events have independent sequence spaces. Load every page in order.
@@ -73,5 +73,5 @@ export async function loadTGA3Snapshot(taskId: string): Promise<TGA3RuntimeSnaps
       events.push(...page); eventCursor = page[page.length - 1].seq;
     }
   }
-  return { task: detail.task, agents: detail.agents, blackboard: board.entries, events };
+  return { task: detail.task, agents: detail.agents, blackboard: board.entries, events, experience_count: detail.experience_count };
 }

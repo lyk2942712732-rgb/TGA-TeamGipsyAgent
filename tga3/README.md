@@ -1,5 +1,8 @@
 # TGA3 CLI 黑板运行时
 
+[任务内问题经验卡的存储、提炼与按需读取](EXPERIENCE.md)：成功题目的局部解决经验由 Reporter
+同次提炼，Worker 先了解目录、遇到具体问题再读取；运行图与 Skills、知识库并列展示。
+
 两个 Worker 在独立 Debian Bookworm 容器中并行运行 Codex CLI 和 Claude Code CLI。
 基础系统和工具采用 [StrikeAgent 评测基线](docker/TOOL-BASELINE.md)，项目运行代码、CLI 和知识库接入保持。
 出现最终候选后，控制层等待收尾宽限期、停止并回收 Worker，固定黑板快照，

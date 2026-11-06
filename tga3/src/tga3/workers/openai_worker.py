@@ -8,6 +8,8 @@ from uuid import UUID
 
 from ..action_logs import read_action_log
 from ..action_materials import action_materials
+from ..errors import ContractError
+from ..experience import check_report_file
 from ..scout_intel import read_intels
 from .cli_adapter import CodexAdapter
 from .prompts import worker_instructions
@@ -18,9 +20,22 @@ async def report() -> None:
     async def emit(method, params):
         print(json.dumps({"method": method, "params": params}, ensure_ascii=False), flush=True)
 
-    output = await CodexAdapter().run_cycle(
+    adapter = CodexAdapter()
+    output = await adapter.run_cycle(
         "Read /workspace/report-input.json and produce the final Markdown report.", emit
     )
+    if os.environ.get("TGA3_REPORT_EXPERIENCE") == "1":
+        # Correct a missing/malformed file in the existing CLI session, not a new review agent.
+        try:
+            check_report_file(Path("/workspace"), Path("/evidence"))
+        except (OSError, ValueError, TypeError, ContractError) as exc:
+            repaired = await adapter.run_cycle(
+                f"The required experience-cards.json has a file/citation error: {exc}. "
+                "In this SAME session, write the required JSON using the success evidence you already read. "
+                "Use {\"cards\":[]} if no transferable method. Do not run new reconnaissance. "
+                "Then return the final Markdown report again.", emit)
+            if repaired.strip():
+                output = repaired
     if not output.strip():
         raise RuntimeError("Reporter returned an empty report")
     Path("/workspace/result/writeup.md").write_text(output, encoding="utf-8")

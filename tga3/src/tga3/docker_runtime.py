@@ -88,6 +88,7 @@ class DockerContainerRuntime:
             (workspace / "report-input.json").write_text(spec.report_input or "[]", encoding="utf-8")
             (workspace / "result").mkdir(exist_ok=True)
             (workspace / "result" / "writeup.md").unlink(missing_ok=True)
+            (workspace / "experience-cards.json").unlink(missing_ok=True)
         volumes = {
             str(workspace): {"bind": "/workspace", "mode": "rw"},
             str(inputs): {"bind": "/inputs", "mode": "ro"},
@@ -136,6 +137,7 @@ class DockerContainerRuntime:
             "TGA3_SCOUT_PHASE": spec.scout_phase or "executing",
             "TGA3_SCOUT_INTEL_MCP_URL": runtime.blackboard_mcp_url.rstrip("/").removesuffix("/mcp") + "/scout-mcp/",
             "TGA3_SYSTEM_PROMPT": binding.system_prompt,
+            "TGA3_REPORT_EXPERIENCE": "1" if is_reporter and "experience-cards.json" in binding.system_prompt else "0",
             "TGA3_CONTROL_WS_URL": runtime.control_ws_url,
             "TGA3_BLACKBOARD_MCP_URL": blackboard_mcp_url,
             "TGA3_PROVIDER_ID": binding.provider.id,
@@ -149,6 +151,10 @@ class DockerContainerRuntime:
             "TGA3_BLACKBOARD_CHANGED_PROMPT": runtime.worker_cycle_prompts.blackboard_changed,
         }
         if binding.role == "worker":
+            from .experience import ExperienceStore
+
+            view = ExperienceStore(self.config).prepare_view(spec.task_id)
+            volumes[str(view)] = {"bind": "/experience", "mode": "ro"}
             environment['TGA3_WEB_SEARCH_MCP_URL'] = (
                 runtime.blackboard_mcp_url.rstrip('/').removesuffix('/mcp')+'/web-mcp/')
             findings = self.config.task_path(spec.task_id, 'findings', binding.agent_id)

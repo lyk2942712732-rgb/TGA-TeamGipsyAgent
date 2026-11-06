@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 from collections.abc import Awaitable, Callable
 from typing import Protocol
 from uuid import UUID
@@ -14,6 +15,7 @@ from .config import ResolvedAgent, TGA3Config
 from .docker_runtime import ContainerRuntime, LaunchSpec
 from .domain import SYSTEM_ACTOR, Actor, AgentState, EntryKind, EventKind, RunState
 from .events import TaskEvents
+from .experience import REPORT_INSTRUCTIONS, ExperienceStore
 from .storage import Storage
 
 
@@ -78,6 +80,7 @@ class Automation:
     ) -> None:
         self.config, self.storage, self.blackboard = config, storage, blackboard
         self.events, self.model, self.stop_workers = events, model, stop_workers
+        self.experience = ExperienceStore(config)
         self._reporter_jobs: dict[UUID, asyncio.Task[None]] = {}
 
     async def changed(self, task_id: UUID, latest_seq: int) -> None:
@@ -132,6 +135,10 @@ class Automation:
             await self.storage.update_agent(task_id, "reporter", actual_state=AgentState.RUNNING)
             await self.events.announce_status(task_id, reporter, AgentState.RUNNING.value)
             entries = (await self.blackboard.sync(task_id, up_to_seq=snapshot_seq, limit=10_000)).entries
+            successful = (task.metadata.get("status") == "solved" if task.parent_task_id else
+                          any(entry.kind == EntryKind.FINAL_CANDIDATE for entry in entries))
+            if successful:
+                binding = binding.model_copy(update={"system_prompt": binding.system_prompt + REPORT_INSTRUCTIONS})
             snapshot = json.dumps([entry.model_dump(mode="json") for entry in entries], ensure_ascii=False, indent=2)
             markdown = await self.model.report(snapshot, binding)
             if not markdown.strip():
@@ -142,6 +149,11 @@ class Automation:
             path.write_text(markdown, encoding="utf-8")
             digest = hashlib.sha256(path.read_bytes()).hexdigest()
             await self.storage.save_writeup(task_id, snapshot_seq, str(path), digest)
+            # Card failure is file-backed and must never change the solved/report outcome.
+            try:
+                await asyncio.to_thread(self.experience.import_report, task_id, successful=successful)
+            except OSError:
+                logging.getLogger(__name__).exception("Could not persist experience for %s", task_id)
         except Exception as exc:
             await self.storage.update_agent(
                 task_id,

@@ -103,6 +103,7 @@ def create_app(
     app.state.automation = automation
     app.state.publications = publications
     app.state.web_search = web_search
+    app.state.experience = automation.experience
     api = APIRouter(prefix="/api/v3")
     config_lock = asyncio.Lock()
 
@@ -223,6 +224,7 @@ def create_app(
 
         return {
             "task": task.model_dump(mode="json"),
+            "experience_count": len(automation.experience.cards(task_id)),
             "agents": [
                 {
                     **item.model_dump(mode="json"),
@@ -264,6 +266,21 @@ def create_app(
         if question.parent_task_id != task_id:
             raise ValueError("题目不属于当前 AOE 任务")
         return question
+
+    @api.get("/tasks/{task_id}/experience")
+    async def experience_cards(task_id: UUID) -> dict:
+        await storage.get_task(task_id)
+        cards, states = await asyncio.gather(
+            asyncio.to_thread(automation.experience.cards, task_id),
+            asyncio.to_thread(automation.experience.states, task_id),
+        )
+        return {"cards": cards, "state": states}
+
+    @api.get("/tasks/{task_id}/experience/{card_id}/resources/{relative:path}")
+    async def experience_resource(task_id: UUID, card_id: str, relative: str) -> FileResponse:
+        await storage.get_task(task_id)
+        path = await asyncio.to_thread(automation.experience.resource, task_id, card_id, relative)
+        return FileResponse(path, filename=path.name, media_type="application/octet-stream")
 
     @api.get("/tasks/{task_id}/questions/{question_id}/files/{file_id}")
     async def question_file(task_id: UUID, question_id: UUID, file_id: UUID):
@@ -366,6 +383,7 @@ def create_app(
     async def delete_task(task_id: UUID) -> None:
         await automation.cancel(task_id)
         await coordinator.delete_task(task_id)
+        await asyncio.to_thread(automation.experience.delete_task, task_id)
 
     @api.get("/models")
     async def models() -> dict[str, Any]:
@@ -633,6 +651,14 @@ def create_app(
             receipts.extend(await publications.sync_final(task_id, agent_id))
         if receipts:
             result = {**result, 'publication_receipts': receipts}
+        if worker and not body.get("ack_only"):
+            advice = await asyncio.to_thread(
+                automation.experience.deliver, task_id, agent_id,
+                str(body.get("experience_generation", "")), str(body.get("experience_ack", "")),
+            )
+            if advice:
+                result = {**result, "experience_context": advice["context"],
+                          "experience_delivery_id": advice["delivery_id"]}
         return result
 
     @app.websocket("/internal/agents/{task_id}/{agent_id}")

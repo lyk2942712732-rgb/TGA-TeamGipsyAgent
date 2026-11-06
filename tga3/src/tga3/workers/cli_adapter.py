@@ -38,6 +38,12 @@ class CliAdapter(AgentAdapter):
         self.session_id: str | None = None
         if self.pointer.is_file() and os.environ.get("TGA3_FORCE_NEW_SESSION") != "1":
             self.session_id = json.loads(self.pointer.read_text())["session_id"]
+        if os.environ.get("TGA3_AGENT_ROLE") == "worker":
+            # An action generation changes on every invocation; catalog delivery belongs to the CLI context.
+            token_file = self.state_dir / "experience-session-token"
+            token = token_file.read_text() if self.session_id and token_file.is_file() else uuid4().hex
+            token_file.write_text(token)
+            os.environ["TGA3_EXPERIENCE_SESSION_TOKEN"] = token
         self.model_name = os.environ["TGA3_MODEL_NAME"]
         self.api_key = os.environ["TGA3_API_KEY"]
         self.base_url = os.environ.get("TGA3_BASE_URL") or ""
