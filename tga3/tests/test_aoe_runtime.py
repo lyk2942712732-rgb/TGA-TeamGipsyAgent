@@ -162,6 +162,37 @@ async def test_two_slots_cross_attempt_then_shared_joint_deadline_and_abandonmen
     assert saved["question_id"] == str(second.task_id)
 
 
+async def test_stage_budgets_start_on_actions_and_joint_deadline_is_shared(tmp_path):
+    _, storage, containers, coordinator, parent, clock, questions = await prepare(tmp_path)
+    await storage.update_task(parent.id, metadata={"aoe_attempt_budgets": {"first": 60, "second": 120, "joint": 180}})
+    aoe = coordinator.aoe
+    assert (await aoe.snapshot(parent.id))["attempt_budgets"] == {"first": 60, "second": 120, "joint": 180}
+    await aoe.tick(parent.id)
+    for spec in containers.launched[:2]:
+        assert active_attempts(await storage.get_task(spec.task_id))[0]["deadline"] is None
+        await aoe.action_started(spec.task_id, spec.agent.agent_id, spec.attempt_id)
+        assert active_attempts(await storage.get_task(spec.task_id))[0]["deadline"] == 160
+    clock[0] = 160
+    await aoe.tick(parent.id)
+    crossed = containers.launched[2:]
+    assert len(crossed) == 2
+    for spec in crossed:
+        await aoe.action_started(spec.task_id, spec.agent.agent_id, spec.attempt_id)
+        assert active_attempts(await storage.get_task(spec.task_id))[0]["deadline"] == 280
+    clock[0] = 280
+    await aoe.tick(parent.id)
+    joint = containers.launched[-2:]
+    assert joint[0].task_id == joint[1].task_id == questions["Easy"].id
+    await aoe.action_started(joint[0].task_id, joint[0].agent.agent_id, joint[0].attempt_id)
+    clock[0] = 300
+    await aoe.action_started(joint[1].task_id, joint[1].agent.agent_id, joint[1].attempt_id)
+    assert {a["deadline"] for a in active_attempts(await storage.get_task(joint[0].task_id))} == {460}
+    assert {a["started_at"] for a in active_attempts(await storage.get_task(joint[0].task_id))} == {280}
+    clock[0] = 460
+    await aoe.tick(parent.id)
+    assert (await storage.get_task(joint[0].task_id)).metadata["status"] == "abandoned"
+
+
 async def test_collection_files_idempotency_and_scoped_boards_and_paths(tmp_path):
     cfg, storage, _, coordinator, parent, _ = await setup(tmp_path)
     source = cfg.task_path(parent.id, "inputs") / "sample.bin"

@@ -42,10 +42,27 @@
 .aoe-report-list > article > div { display: flex; flex-direction: column; gap: 6px; }
 .aoe-report-list small { font-size: 12px; color: var(--c-text-muted); }
 .aoe-event-question { display: block; margin: 14px 0 4px; color: var(--c-text-muted); font-size: 12px; }
-.aoe-budget-field > input { max-width: 180px; }
-.aoe-budget-field > span { color: var(--c-text-muted); font-size: 12px; line-height: 1.7; font-weight: 400; }
+.aoe-budget-field { min-width: 0; margin: 0; padding: 14px; border: 1px solid var(--c-border); border-radius: var(--r-md); }
+.aoe-budget-field legend { padding: 0 5px; font-size: 13px; font-weight: 600; }
+.aoe-budget-inputs { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 14px; }
+.aoe-budget-inputs label { display: flex; flex-direction: column; gap: 8px; font-size: 12px; }
+.aoe-budget-field > p { margin: 12px 0 0; color: var(--c-text-muted); font-size: 12px; line-height: 1.7; }
+.aoe-worker-record h3 { margin: 0; font-size: 14px; }
+.aoe-worker-record header p { color: var(--c-text-muted); font-size: 12px; line-height: 1.7; }
+.aoe-worker-record ol { list-style: none; margin: 0; padding: 0; }
+.aoe-worker-record li { padding: 13px 0; border-top: 1px solid var(--c-border); }
+.aoe-worker-record li > div { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.aoe-worker-record li a { font-size: 14px; overflow-wrap: anywhere; }
+.aoe-worker-record li strong { white-space: nowrap; font-size: 13px; font-variant-numeric: tabular-nums; }
+.aoe-worker-record li small { display: block; margin-top: 7px; color: var(--c-text-muted); font-size: 11px; }
 .collab-agent-question { display: block; font-size: 12px; line-height: 1.6; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
-@media (max-width: 640px) { .aoe-question-ownership { grid-template-columns: 1fr; gap: 10px; } .aoe-scope-toolbar label { width: 100%; } .aoe-scope-toolbar select { min-width: 0; flex: 1; } .aoe-report-list > article { align-items: flex-start; flex-direction: column; } }
+@media (max-width: 640px) { .aoe-budget-inputs { grid-template-columns: 1fr; } .aoe-question-ownership { grid-template-columns: 1fr; gap: 10px; } .aoe-scope-toolbar label { width: 100%; } .aoe-scope-toolbar select { min-width: 0; flex: 1; } .aoe-report-list > article { align-items: flex-start; flex-direction: column; } }
+@media (max-width: 640px) {
+  .workbench-new-task .scene-card-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .workbench-new-task .task-agent-models > div { grid-template-columns: minmax(0,1fr); }
+  .workbench-new-task .task-agent-models label { display: flex; flex-direction: column; align-items: stretch; gap: 8px; }
+  .workbench-new-task .task-agent-models select { min-width: 0; width: 100%; max-width: 100%; }
+}
 @media (max-width: 760px) {
   .aoe-runtime-page .collab-grid { grid-template-columns: minmax(0,1fr); gap: 16px; }
   .aoe-runtime-page .collab-grid > * { grid-column: 1; grid-row: auto; }

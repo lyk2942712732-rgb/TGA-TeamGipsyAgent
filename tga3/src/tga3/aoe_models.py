@@ -97,7 +97,24 @@ def overview_order(question: TaskRun) -> tuple[int, float, int, str]:
         timestamp = max((a.get("finished_at", 0) for a in question.metadata.get("attempts", [])
                          if a.get("outcome") == "solved"), default=question.updated_at.timestamp())
     timestamp = timestamp if solved else question.metadata.get("registered_at", question.created_at.timestamp())
-    return (0 if solved else 1, -timestamp, -question.metadata.get("ordinal", 0), str(question.id))
+    priority = 0 if question.metadata.get("status") == "running" else 1 if solved else 2
+    return (priority, -timestamp, -question.metadata.get("ordinal", 0), str(question.id))
+
+
+def attempt_budgets(metadata: dict) -> dict[str, int]:
+    """New per-stage budgets, preserving the uniform budget of historical tasks."""
+    legacy = metadata.get("aoe_attempt_seconds", 1200)
+    configured = metadata.get("aoe_attempt_budgets", {})
+    return {stage: configured.get(stage, legacy) for stage in ("first", "second", "joint")}
+
+
+def attempt_budget_seconds(metadata: dict, attempts: list[dict], current: dict) -> int:
+    if current["phase"] == "joint":
+        stage = "joint"
+    else:
+        solo = [attempt for attempt in attempts if attempt["phase"] == "solo"]
+        stage = "first" if solo[0]["id"] == current["id"] else "second"
+    return attempt_budgets(metadata)[stage]
 
 
 def next_solo_question(questions: list[TaskRun], agent_id: str) -> TaskRun | None:

@@ -86,7 +86,7 @@ describe("AOE question workspace", () => {
     expect(screen.getByText(/1 待交接/)).toBeInTheDocument();
     expect(screen.queryByText(/每题侦察/)).not.toBeInTheDocument();
   });
-  it("sorts solved questions by solve time and remaining questions by registration time", () => {
+  it("puts running questions first in both picker and overview, then newest solved", () => {
     const data = { ...parent, aoe: { ...parent.aoe!, scout_mode: "collection_only", collection_complete: false,
       questions: [
         { ...question("old", "Older unsolved"), registered_at: 10 },
@@ -97,9 +97,26 @@ describe("AOE question workspace", () => {
     render(<MemoryRouter><AOEWorkspace snapshot={data} tab="blackboard" onTab={vi.fn()} selectedAgentId={null} onChanged={vi.fn()} /></MemoryRouter>);
     const panel = screen.getByRole("region", { name: "题目总览" });
     expect([...panel.querySelectorAll(".aoe-question-title")].map(node => node.textContent)).toEqual([
-      "Latest solved", "Earlier solved", "Newest unsolved", "Older unsolved",
+      "Newest unsolved", "Older unsolved", "Latest solved", "Earlier solved",
     ]);
+    expect(within(screen.getByLabelText("题目筛选")).getAllByRole("option").map(node => node.getAttribute("value")))
+      .toEqual(["", "new", "old", "s2", "s1"]);
     expect(screen.getByText(/收集题目与解题并行/)).toBeInTheDocument();
     expect(screen.getByText(/Scout 仅收集题面与附件/)).toBeInTheDocument();
+  });
+  it("filters the picker and overview by attempted/solved/unattempted without leaking a stale child", async () => {
+    const user = userEvent.setup();
+    const data = { ...parent, aoe: { ...parent.aoe!, questions: [question("q1", "Active"),
+      { ...question("solved", "Won"), status: "solved", current_agents: [] },
+      { ...question("tried", "Timed out"), status: "queued", current_agents: [] },
+      { ...question("fresh", "Fresh"), status: "queued", current_agents: [], attempted_by: [] }] } };
+    render(<MemoryRouter><AOEWorkspace snapshot={data} tab="blackboard" onTab={vi.fn()} selectedAgentId={null} onChanged={vi.fn()} /></MemoryRouter>);
+    const titles = () => [...screen.getByRole("region", { name: "题目总览" }).querySelectorAll(".aoe-question-title")].map(x => x.textContent);
+    await user.selectOptions(screen.getByLabelText("解题状态筛选"), "solved"); expect(titles()).toEqual(["Won"]);
+    expect(within(screen.getByLabelText("题目筛选")).queryByRole("option", { name: "Fresh" })).not.toBeInTheDocument();
+    await user.selectOptions(screen.getByLabelText("解题状态筛选"), "attempted"); expect(titles()).toEqual(["Active", "Timed out"]);
+    await user.selectOptions(screen.getByLabelText("题目筛选"), "q1");
+    await user.selectOptions(screen.getByLabelText("解题状态筛选"), "unattempted");
+    expect(screen.getByLabelText("题目筛选")).toHaveValue(""); expect(titles()).toEqual(["Fresh"]);
   });
 });

@@ -66,6 +66,9 @@ class TaskCoordinator:
         task_id: UUID | None = None,
         model_overrides: dict[str, tuple[str, str, ProviderProtocol]] | None = None,
         aoe_attempt_minutes: int = 20,
+        aoe_first_attempt_minutes: int | None = None,
+        aoe_second_attempt_minutes: int | None = None,
+        aoe_joint_minutes: int | None = None,
     ):
         scene = self.config.scene(scene_id)
         model_overrides = model_overrides or {}
@@ -78,10 +81,18 @@ class TaskCoordinator:
             )
             for agent_id, configured in self.config.agents.agents.items()
         }
-        if scene_id == "aoe" and not 1 <= aoe_attempt_minutes <= 1440:
-            raise ValueError("AOE attempt budget must be between 1 and 1440 minutes")
+        stage_minutes = {"first": aoe_first_attempt_minutes, "second": aoe_second_attempt_minutes,
+                         "joint": aoe_joint_minutes}
+        if scene_id == "aoe" and any(not 1 <= value <= 1440
+                                    for value in [aoe_attempt_minutes, *stage_minutes.values()] if value is not None):
+            raise ValueError("AOE attempt budgets must be between 1 and 1440 minutes")
+        budget_metadata = ({"aoe_attempt_budgets": {
+            stage: (minutes if minutes is not None else aoe_attempt_minutes) * 60
+            for stage, minutes in stage_minutes.items()
+        }} if any(value is not None for value in stage_minutes.values()) else
+            {"aoe_attempt_seconds": aoe_attempt_minutes * 60})
         task = await self.storage.create_task(title, scene.id, task_id, metadata={
-            "aoe_attempt_seconds": aoe_attempt_minutes * 60, "aoe_phase": "collecting",
+            **budget_metadata, "aoe_phase": "collecting",
             "aoe_scout_mode": "collection_only", "scout_complete": False,
         } if scene_id == "aoe" else None)
         self.config.ensure_task_directories(task.id)

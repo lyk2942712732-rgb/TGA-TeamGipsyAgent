@@ -26,6 +26,28 @@ class CollectingRuntime(FakeContainerRuntime):
                 await asyncio.sleep(0.01)
 
 
+async def test_create_aoe_with_separate_stage_budgets_and_reject_invalid_values(tmp_path):
+    cfg = TGA3Config(Path(__file__).parents[1] / "config")
+    cfg.runtime.task_root = str(tmp_path / "tasks")
+    for provider in cfg.models.providers:
+        provider.api_keys[0].api_key = SecretStr("fixture-key")
+    storage = InMemoryStorage()
+    app = create_app(cfg, storage, CollectingRuntime(storage), host_model=DeterministicHostModel())
+    async with app.router.lifespan_context(app):
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+            payload = {"title": "batch", "prompt": "collect", "scene_id": "aoe",
+                       "aoe_first_attempt_minutes": "30", "aoe_second_attempt_minutes": "15", "aoe_joint_minutes": "20"}
+            response = await client.post("/api/v3/tasks", data=payload)
+            assert response.status_code == 200
+            assert response.json()["metadata"]["aoe_attempt_budgets"] == {"first": 1800, "second": 900, "joint": 1200}
+            assert "aoe_attempt_seconds" not in response.json()["metadata"]
+            overview = await client.get(f'/api/v3/tasks/{response.json()["id"]}/questions')
+            assert overview.json()["attempt_budgets"] == {"first": 1800, "second": 900, "joint": 1200}
+            for field in ("aoe_first_attempt_minutes", "aoe_second_attempt_minutes", "aoe_joint_minutes"):
+                for value in ("0", "1441", "1.5"):
+                    assert (await client.post("/api/v3/tasks", data={**payload, field: value})).status_code == 422
+
+
 async def test_aoe_collection_mcp_budget_owned_downloads_and_hierarchical_events(tmp_path):
     cfg = TGA3Config(Path(__file__).parents[1] / "config")
     cfg.runtime.task_root = str(tmp_path / "tasks")

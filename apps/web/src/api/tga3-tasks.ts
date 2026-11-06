@@ -91,13 +91,22 @@ export async function createTask(input: {
   fileIds: string[];
   agentModels: Record<string, { provider_id: string; model_id: string; protocol: ProviderProtocol }>;
   aoeAttemptMinutes?: number;
+  aoeFirstAttemptMinutes?: number;
+  aoeSecondAttemptMinutes?: number;
+  aoeJointMinutes?: number;
 }): Promise<TGA3TaskListItem> {
   const form = new FormData();
   form.set("title", input.title);
   form.set("scene_id", input.sceneId);
   form.set("prompt", input.prompt);
   form.set("agent_models", JSON.stringify(input.agentModels));
-  if (input.sceneId === "aoe") form.set("aoe_attempt_minutes", String(input.aoeAttemptMinutes ?? 20));
+  if (input.sceneId === "aoe") {
+    if ([input.aoeFirstAttemptMinutes, input.aoeSecondAttemptMinutes, input.aoeJointMinutes].some(value => value !== undefined)) {
+      form.set("aoe_first_attempt_minutes", String(input.aoeFirstAttemptMinutes ?? 30));
+      form.set("aoe_second_attempt_minutes", String(input.aoeSecondAttemptMinutes ?? 15));
+      form.set("aoe_joint_minutes", String(input.aoeJointMinutes ?? 20));
+    } else form.set("aoe_attempt_minutes", String(input.aoeAttemptMinutes ?? 20));
+  }
   for (const id of input.fileIds) {
     const file = pendingFiles.get(id);
     if (file) form.append("files", file, file.name);

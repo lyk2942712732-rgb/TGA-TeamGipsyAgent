@@ -1,5 +1,6 @@
 import { Bot, Box, CirclePause, CirclePlay, Settings2 } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
+import { Link } from "react-router-dom";
 import { tga3RuntimeApi } from "../../../api/tga3-runtime-control";
 import { fetchAgentModelOptions } from "../../../api/tga3-tasks";
 import type { ProviderProtocol } from "../../../api/tga3-config";
@@ -7,27 +8,35 @@ import type { TaskMode } from "../../../modes";
 import type { TGA3Agent, TGA3RuntimeSnapshot } from "../../../runtime/tga3-runtime";
 import { BOARD_KIND_LABELS, bodyText, formatTime, protocolLabel, roleLabel, sdkLabel, agentStateLabel, stateLabel, stateTone } from "../tga3-view";
 import { EventCard } from "./TGA3Workspace";
+import { attemptLabel, formatElapsed, workerWins } from "../aoe-view";
 
-type InspectorTab = "overview" | "activity" | "control";
+type InspectorTab = "overview" | "activity" | "control" | "record";
 const TABS: Array<[InspectorTab, string]> = [["overview", "概览"], ["activity", "活动"], ["control", "模型与控制"]];
 
 export function TGA3AgentInspector({ snapshot, agent, onChanged }: { snapshot: TGA3RuntimeSnapshot; agent: TGA3Agent | null; onChanged: () => void }) {
   const [tab, setTab] = useState<InspectorTab>("overview");
   if (!agent) return <aside className="tga3-agent-inspector"><div className="tga3-empty"><Bot /><h3>未选择 Agent</h3><p>从上方运行图选择一个 Agent 查看状态和活动。</p></div></aside>;
+  const tabs: typeof TABS = snapshot.aoe && agent.role === "worker" ? [...TABS, ["record", "战绩"]] : TABS;
+  const activeTab = tabs.some(([value]) => value === tab) ? tab : "overview";
   return <aside className="tga3-agent-inspector">
     <header><div><h2>{agent.display_name}</h2><p>{agent.agent_id} · {roleLabel(agent)}</p></div><span className={`tga3-state-pill tone-${stateTone(agent.actual_state)}`}><i />{agentStateLabel(agent)}</span></header>
-    <div className="tga3-inspector-tabs" role="tablist">{TABS.map(([value, label]) => <button key={value} role="tab" aria-selected={tab === value} onClick={() => setTab(value)}>{label}</button>)}</div>
+    <div className="tga3-inspector-tabs" role="tablist">{tabs.map(([value, label]) => <button key={value} role="tab" aria-selected={activeTab === value} onClick={() => setTab(value)}>{label}</button>)}</div>
     <div className="tga3-inspector-body">
-      {tab === "overview" ? <Overview agent={agent} /> : null}
-      {tab === "activity" ? <Activity snapshot={snapshot} agent={agent} /> : null}
-      {tab === "control" ? <Controls snapshot={snapshot} agent={agent} onChanged={onChanged} /> : null}
+      {activeTab === "overview" ? <Overview snapshot={snapshot} agent={agent} /> : null}
+      {activeTab === "activity" ? <Activity snapshot={snapshot} agent={agent} /> : null}
+      {activeTab === "control" ? <Controls snapshot={snapshot} agent={agent} onChanged={onChanged} /> : null}
+      {activeTab === "record" ? <Record snapshot={snapshot} agent={agent} /> : null}
     </div>
   </aside>;
 }
 
-function Overview({ agent }: { agent: TGA3Agent }) {
+function Overview({ snapshot, agent }: { snapshot: TGA3RuntimeSnapshot; agent: TGA3Agent }) {
   const tools = agentTools(agent);
   return <div className="tga3-agent-overview">
+    {snapshot.aoe && agent.role === "worker" ? <Info title="解题进度">
+      <Row label="已解出" value={`${workerWins(snapshot.aoe.questions, agent.agent_id).length} 道`} />
+      <Row label="正在解题" value={snapshot.aoe.questions.filter(q => q.status === "running" && q.current_agents.includes(agent.agent_id)).map(q => q.title).join("、") || "暂无"} />
+    </Info> : null}
     <Info title="运行身份"><Row label="角色" value={roleLabel(agent)} /><Row label="运行位置" value={agent.runtime_location === "container" ? "隔离容器" : "主服务"} /><Row label="执行后端" value={sdkLabel(agent.sdk)} /><Row label="期望状态" value={stateLabel(agent.desired_state)} /><Row label="实际状态" value={agentStateLabel(agent)} /></Info>
     <Info title="模型"><Row label="供应商" value={agent.provider_id} /><Row label="模型" value={agent.model_id} /><Row label="协议" value={protocolLabel(agent.protocol)} /></Info>
     {agent.role === "worker" && agent.metadata?.blackboard_cursor !== undefined ? <Info title="黑板同步"><Row label="已确认读取" value={`#${agent.metadata.blackboard_cursor}`} /><Row label="最近读取" value={agent.metadata.blackboard_read_at ? formatTime(new Date(agent.metadata.blackboard_read_at * 1000).toISOString()) : "尚未读取"} /></Info> : null}
@@ -35,6 +44,17 @@ function Overview({ agent }: { agent: TGA3Agent }) {
     <Info title="可用工具"><div className="tga3-tool-tags">{tools.map((tool) => <span key={tool}>{tool}</span>)}</div></Info>
     {agent.actual_state === "failed" && agent.last_error ? <div className="tga3-agent-failure" role="alert"><strong>最近错误</strong><p>{agent.last_error}</p><small>{formatTime(agent.updated_at)}</small></div> : null}
   </div>;
+}
+
+function Record({ snapshot, agent }: { snapshot: TGA3RuntimeSnapshot; agent: TGA3Agent }) {
+  const wins = workerWins(snapshot.aoe?.questions ?? [], agent.agent_id);
+  return <section className="aoe-worker-record" aria-label={`${agent.display_name} 战绩`}>
+    <header><h3>已解出 {wins.length} 道题</h3><p>按解出时间倒序。耗时为本次成功尝试从首条动作到结束的时间；共同攻坚计入参与者战绩。</p></header>
+    {wins.length ? <ol>{wins.map(({ question, attempt, seconds }) => <li key={question.question_id}>
+      <div><Link to={`/tasks/${encodeURIComponent(snapshot.task.id)}/runtime?question=${encodeURIComponent(question.question_id)}&tab=blackboard`}>{question.title}</Link><strong>{formatElapsed(seconds)}</strong></div>
+      <small>{attemptLabel(question, attempt)}{attempt.finished_at != null ? ` · ${formatTime(new Date(attempt.finished_at * 1000).toISOString())}` : ""}</small>
+    </li>)}</ol> : <p className="tga3-muted">暂无已解出题目。</p>}
+  </section>;
 }
 
 function Activity({ snapshot, agent }: { snapshot: TGA3RuntimeSnapshot; agent: TGA3Agent }) {

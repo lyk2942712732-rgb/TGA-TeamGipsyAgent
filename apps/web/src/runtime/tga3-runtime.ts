@@ -39,7 +39,7 @@ export type AOEQuestion = {
   registered_at?: number; solved_at?: number | null;
   attachments: Array<{ id: string; name: string; media_type: string; size_bytes: number; sha256: string }>;
 };
-export type AOEOverview = { task_id: string; phase: string; attempt_seconds: number; scout_mode?: string; collection_complete?: boolean; scout_question_seconds?: number; questions: AOEQuestion[] };
+export type AOEOverview = { task_id: string; phase: string; attempt_seconds: number; attempt_budgets?: { first: number; second: number; joint: number }; scout_mode?: string; collection_complete?: boolean; scout_question_seconds?: number; questions: AOEQuestion[] };
 export type TGA3RuntimeSnapshot = { task: TGA3Task; agents: TGA3Agent[]; blackboard: TGA3BoardEntry[]; events: TGA3TaskEvent[]; aoe?: AOEOverview; experience_count?: number };
 type TaskDetail = { task: TGA3Task; agents: TGA3Agent[]; experience_count?: number };
 

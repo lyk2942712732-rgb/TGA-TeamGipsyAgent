@@ -161,6 +161,9 @@ def create_app(
         scene_id: Annotated[str, Form(min_length=1, max_length=100)],
         agent_models: Annotated[str, Form()] = "{}",
         aoe_attempt_minutes: Annotated[int, Form(ge=1, le=1440)] = 20,
+        aoe_first_attempt_minutes: Annotated[int | None, Form(ge=1, le=1440)] = None,
+        aoe_second_attempt_minutes: Annotated[int | None, Form(ge=1, le=1440)] = None,
+        aoe_joint_minutes: Annotated[int | None, Form(ge=1, le=1440)] = None,
         files: Annotated[list[UploadFile] | None, File()] = None,
     ) -> dict[str, Any]:
         raw_overrides = json.loads(agent_models)
@@ -188,6 +191,9 @@ def create_app(
                 for agent_id, value in overrides.items()
             },
             aoe_attempt_minutes=aoe_attempt_minutes,
+            aoe_first_attempt_minutes=aoe_first_attempt_minutes,
+            aoe_second_attempt_minutes=aoe_second_attempt_minutes,
+            aoe_joint_minutes=aoe_joint_minutes,
         )
         return task.model_dump(mode="json")
 

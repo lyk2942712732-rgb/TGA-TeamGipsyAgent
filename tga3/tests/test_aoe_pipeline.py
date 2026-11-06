@@ -142,7 +142,7 @@ async def test_unrated_stream_and_retry_do_not_complete_batch_early(tmp_path):
     assert len(runtime.launched) == 3
 
 
-async def test_overview_solved_first_newest_solved_then_newest_registered(tmp_path):
+async def test_overview_running_then_newest_solved_then_newest_registered(tmp_path):
     _, storage, _, c, parent, clock = await setup(tmp_path)
     ids = []
     for i in range(4):
@@ -151,9 +151,10 @@ async def test_overview_solved_first_newest_solved_then_newest_registered(tmp_pa
         ids.append(next(q.id for q in await storage.list_questions(parent.id) if q.title == str(i)))
     await storage.update_task(ids[0], metadata={"status": "solved", "solved_at": 200})
     await storage.update_task(ids[1], metadata={"status": "solved", "solved_at": 210})
+    await storage.update_task(ids[2], metadata={"status": "running"})
     await storage.update_task(ids[0], state=RunState.COMPLETED)
     view = await c.aoe.snapshot(parent.id)
-    assert [q["title"] for q in view["questions"]] == ["1", "0", "3", "2"]
+    assert [q["title"] for q in view["questions"]] == ["2", "1", "0", "3"]
 
 
 async def test_collection_runner_uses_only_one_collecting_session(monkeypatch, tmp_path):

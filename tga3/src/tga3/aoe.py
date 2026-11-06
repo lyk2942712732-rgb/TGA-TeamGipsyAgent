@@ -15,6 +15,8 @@ from uuid import UUID, uuid4, uuid5
 from .aoe_models import (
     AOEQuestionInput,
     active_attempts,
+    attempt_budget_seconds,
+    attempt_budgets,
     attempted_by,
     joint_ready,
     next_joint_question,
@@ -107,7 +109,8 @@ class AOERuntime:
         return {
             "task_id": str(parent_id),
             "phase": parent.metadata.get("aoe_phase", "collecting"),
-            "attempt_seconds": parent.metadata.get("aoe_attempt_seconds", 1200),
+            "attempt_seconds": attempt_budgets(parent.metadata)["first"],
+            "attempt_budgets": attempt_budgets(parent.metadata),
             "scout_mode": parent.metadata.get("aoe_scout_mode", "legacy_recon"),
             "collection_complete": parent.metadata.get("collection_complete", False),
             "questions": views,
@@ -493,7 +496,7 @@ class AOERuntime:
                 return
             parent = await self.storage.get_task(question.parent_task_id)
             now = self.clock()
-            deadline = now + parent.metadata.get('aoe_attempt_seconds', 1200)
+            deadline = now + attempt_budget_seconds(parent.metadata, question.metadata['attempts'], current)
             def start(metadata):
                 return {**metadata, 'attempts': [
                     {**a, 'started_at': now, 'deadline': deadline}
