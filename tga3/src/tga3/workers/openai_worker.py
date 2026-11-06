@@ -8,8 +8,6 @@ from uuid import UUID
 
 from ..action_logs import read_action_log
 from ..action_materials import action_materials
-from ..errors import ContractError
-from ..experience import check_report_file
 from ..scout_intel import read_intels
 from .cli_adapter import CodexAdapter
 from .prompts import worker_instructions
@@ -25,6 +23,9 @@ async def report() -> None:
         "Read /workspace/report-input.json and produce the final Markdown report.", emit
     )
     if os.environ.get("TGA3_REPORT_EXPERIENCE") == "1":
+        from ..errors import ContractError
+        from ..experience import check_report_file
+
         # Correct a missing/malformed file in the existing CLI session, not a new review agent.
         try:
             check_report_file(Path("/workspace"), Path("/evidence"))

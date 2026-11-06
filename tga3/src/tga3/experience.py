@@ -8,11 +8,14 @@ import re
 import shutil
 import threading
 from pathlib import Path, PurePosixPath
+from typing import TYPE_CHECKING
 from uuid import UUID, uuid4, uuid5
 
 from .action_logs import read_action_log
-from .config import TGA3Config
 from .errors import ContractError
+
+if TYPE_CHECKING:
+    from .config import TGA3Config
 
 _LOCKS: dict[str, threading.RLock] = {}
 CARD_FIELDS = {"card_id", "title", "applies", "steps", "verify", "limits", "resources", "sources"}
