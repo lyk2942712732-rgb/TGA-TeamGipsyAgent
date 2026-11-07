@@ -146,11 +146,42 @@ def test_catalog_is_not_filtered_by_statement_and_task_deletion_cleans_only_its_
     for question in (q1, q2, foreign):
         assert store.import_report(question, successful=True)["status"] == "completed"
     catalog = store.deliver(q2, "worker-openai", "session")["context"]
-    assert "2 available" in catalog and "jvm" in catalog and "png" in catalog
+    assert "2 available" in catalog
+    assert all(card["card_id"] in catalog for card in store.cards(parent))
+    assert '"signals"' not in catalog and "jvm" not in catalog and "png" not in catalog
     assert "php" not in catalog
     store.delete_task(parent)
     assert store.cards(parent) == []
     assert len(store.cards(foreign)) == 1
+
+
+def test_complete_title_catalog_exceeds_old_limit_and_migrates_prior_ack(config):
+    parent, source, target = uuid4(), uuid4(), uuid4()
+    for question in (source, target):
+        config.register_question_path(parent, question)
+    store = ExperienceStore(config)
+    for batch in range(30):
+        question = uuid4()
+        config.register_question_path(parent, question)
+        value = draft(config, question)
+        template = value["cards"][0]
+        value["cards"] = [{**template, "title": f"Problem {batch * 3 + i:03d}: " + "specific remedy " * 10}
+                          for i in range(3)]
+        atomic_json(config.task_path(question, "workspaces", "reporter") / "experience-cards.json", value)
+        assert store.import_report(question, successful=True)["status"] == "completed"
+    view = store.prepare_view(target)
+    path = config.task_path(target, "workspaces", "worker-openai") / ".tga3/experience-delivery.json"
+    atomic_json(path, {"generation": "same", "seen": ["old-hidden-card"], "catalog_sent": True,
+                       "query_key": str((view / "index.json").stat().st_mtime_ns)})
+    delivery = store.deliver(target, "worker-openai", "same")
+    assert "90 new entries (90 listed below)" in delivery["context"]
+    assert len(delivery["context"]) > 6000
+    for card in store.cards(parent):
+        assert card["card_id"] in delivery["context"] and card["title"] in delivery["context"]
+    assert "parse and extract" not in delivery["context"]
+    assert store.deliver(target, "worker-openai", "same") == delivery
+    assert store.deliver(target, "worker-openai", "same", delivery["delivery_id"]) == {}
+    assert all(set(item) == {"card_id", "title"} for item in json.loads((view / "index.json").read_text()))
 
 
 async def test_http_card_and_resource_isolation(config):

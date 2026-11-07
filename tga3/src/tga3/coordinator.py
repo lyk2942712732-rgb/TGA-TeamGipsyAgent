@@ -277,6 +277,7 @@ class TaskCoordinator:
     async def close(self) -> None:
         for task_id in list(self._startup_jobs):
             await self.cancel_startup(task_id)
+        await self.aoe.targets.close()
 
     async def add_input_file(
         self, task_id: UUID, raw_name: str, media_type: str, content: bytes
@@ -534,11 +535,17 @@ class TaskCoordinator:
                 *(self.containers.stop(task_id, run.agent_id) for run in workers),
                 return_exceptions=True,
             )
+        if task.scene_id == "aoe" and task.parent_task_id is None:
+            if not await self.aoe.targets.release_parent(task_id):
+                from .errors import ConflictError
+
+                raise ConflictError("Target cleanup is pending; retry deletion after platform close succeeds")
         await self.gateway.disconnect_task(task_id)
         # Keep task data recoverable if the database deletion fails. Filesystem
         # cleanup is intentionally best-effort and only begins after the database
         # transaction has committed.
         await self.storage.delete_task(task_id)
+        self.aoe.targets.forget_parent(task_id)
         path = self.config.task_path(task_id)
         await asyncio.to_thread(shutil.rmtree, path, True)
 

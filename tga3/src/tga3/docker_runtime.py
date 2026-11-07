@@ -27,6 +27,8 @@ class LaunchSpec:
     attempt_id: str | None = None
     attempt_deadline: float | None = None
     scout_question_id: UUID | None = None
+    target_mode: str = "unknown"
+    target_addresses: tuple[str, ...] = ()
 
 
 class ContainerRuntime(Protocol):
@@ -181,6 +183,8 @@ class DockerContainerRuntime:
                 environment["TGA3_QUESTION_ID"] = str(spec.task_id)
             if binding.role == "worker":
                 environment.update(TGA3_FORCE_NEW_SESSION="1" if spec.fresh_session else "0",
+                    TGA3_TARGET_MODE=spec.target_mode,
+                    TGA3_TARGET_ADDRESSES=json.dumps(spec.target_addresses),
                     TGA3_ATTEMPT_ID=spec.attempt_id or "", TGA3_ATTEMPT_DEADLINE=str(spec.attempt_deadline or ""),
                     TGA3_BOARD_START_TOKEN=uuid4().hex)
         container = self.client.containers.run(

@@ -30,6 +30,7 @@ from .docker_runtime import LaunchSpec
 from .domain import SYSTEM_ACTOR, AgentRun, AgentState, EventKind, InputFile, PublishRequest, RunState, TaskRun
 from .errors import ConflictError, ContractError
 from .evidence import evidence_files
+from .target_instances import TargetInstances
 
 if TYPE_CHECKING:
     from .coordinator import TaskCoordinator
@@ -48,6 +49,8 @@ class AOERuntime:
         self.automation = None
         self._checked_sequences: dict[UUID, int] = {}
         self._manifest_digests: dict[UUID, str] = {}
+        self.targets = TargetInstances(self.config, clock=lambda: self.clock())
+        self._recovering: set[UUID] = set()
 
     async def restore_paths(self) -> None:
         for question in await self.storage.list_questions():
@@ -118,6 +121,8 @@ class AOERuntime:
 
     async def _save_question(self, question: TaskRun) -> None:
         value = await self.question_view(question)
+        value["target"] = self.targets.spec(question).model_dump(mode="json")
+        value["target_runtime"] = self.targets.state(question.id)
         digest = hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
         if self._manifest_digests.get(question.id) != digest:
             self._atomic_json(self.config.task_path(question.id) / "question.json", value)
@@ -141,6 +146,7 @@ class AOERuntime:
                             "difficulty",
                             "connection_info",
                             "submission_instructions",
+                            "target",
                         )
                     },
                 }
@@ -239,7 +245,11 @@ class AOERuntime:
                     json.dumps(payload, ensure_ascii=False, sort_keys=True).encode()
                 ).hexdigest()
                 if spec.source_key in existing:
-                    if existing[spec.source_key].metadata.get("registration_digest") != fingerprint:
+                    old = existing[spec.source_key]
+                    legacy = hashlib.sha256(json.dumps({k: v for k, v in payload.items() if k != "target"},
+                                                       ensure_ascii=False, sort_keys=True).encode()).hexdigest()
+                    compatible = old.metadata.get("target") is None and spec.target.mode == "unknown"
+                    if old.metadata.get("registration_digest") not in ({fingerprint, legacy} if compatible else {fingerprint}):
                         raise ConflictError("Original question key already registered with different data")
                     if existing[spec.source_key].metadata.get("registration_complete"):
                         continue
@@ -473,6 +483,17 @@ class AOERuntime:
             return {**metadata, "status": "running", "attempts": [*metadata.get("attempts", []), *additions]}
 
         question = await self.storage.mutate_task_metadata(question.id, assign)
+        target = self.targets.spec(question)
+        if target.mode != "unknown":
+            state = self.targets.state(question.id)
+            text = ("靶场由系统管理，已经就绪。当前地址：" + json.dumps(state.get("addresses", []), ensure_ascii=False)
+                    + "。直接使用这些地址，不要自行调用平台的启动或关闭接口。"
+                    if target.mode == "managed" else
+                    "本题无需靶场实例；使用已收集的附件和题目信息解题，不要申请平台实例。"
+                    if target.mode == "none" else
+                    "本题使用题面已有的固定目标地址，不需要申请动态实例。")
+            await self.board.publish(question.id, SYSTEM_ACTOR, PublishRequest(kind="user_prompt",
+                topic="target_runtime", body={"text": text}, idempotency_key="target:" + additions[0]["id"]))
         await self._save_question(question)
         # The first actual action starts the budget, shared by joint participants.
         await asyncio.gather(
@@ -567,6 +588,8 @@ class AOERuntime:
                     fresh_session=fresh,
                     attempt_id=attempt["id"],
                     attempt_deadline=attempt["deadline"],
+                    target_mode=self.targets.spec(question).mode,
+                    target_addresses=tuple(self.targets.state(question.id).get("addresses", [])),
                 )
             )
         )
@@ -612,6 +635,8 @@ class AOERuntime:
             return {**metadata, "attempts": attempts}
 
         question = await self.storage.mutate_task_metadata(question.id, finish)
+        if not active_attempts(question):
+            await self.targets.release(question.id, force=True)
         await self._save_question(question)
         return question
 
@@ -649,6 +674,17 @@ class AOERuntime:
         )
         return question
 
+    async def _prepare_target(self, question: TaskRun) -> bool:
+        previous = self.targets.state(question.id)
+        ready = await self.targets.prepare(question)
+        current = self.targets.state(question.id)
+        if not ready and current.get("reason") != previous.get("reason"):
+            reason = "平台实例配额不足" if current.get("reason") == "quota" else current.get("reason", "准备中")
+            await self.events.emit(question.parent_task_id, actor=SYSTEM_ACTOR, kind=EventKind.SYSTEM,
+                text=f"等待靶场资源：{question.title}（{reason}），尚未开始解题尝试",
+                payload={"question_id": str(question.id), "target_state": current.get("state"), "reason": reason})
+        return ready
+
     async def tick(self, parent_id: UUID) -> bool:
         """One serialized scheduling decision; tests advance the injected clock without sleeping."""
         async with self.locks[parent_id]:
@@ -657,6 +693,7 @@ class AOERuntime:
                 return True
             workers = self.config.worker_agent_ids
             questions = await self.storage.list_questions(parent_id)
+            await self.targets.reconcile(questions, parent_id=parent_id)
             for question in unfinished(questions):
                 candidate = await self._candidate(question)
                 if candidate is not None:
@@ -679,6 +716,11 @@ class AOERuntime:
                             text=f"独立尝试预算已到，保留黑板并换题：{question.title}",
                             payload={"question_id": str(question.id), "agents": sorted(expired)},
                         )
+                    self._recovering.discard(question.id)
+                elif active and question.id in self._recovering and await self.targets.prepare(question):
+                    for attempt in active:
+                        await self._launch_attempt(parent_id, question, attempt, fresh=False)
+                    self._recovering.discard(question.id)
             questions = await self.storage.list_questions(parent_id)
             occupied = {a["agent_id"] for q in questions for a in active_attempts(q)}
             slots = {agent_id: await self.storage.get_agent(parent_id, agent_id) for agent_id in workers}
@@ -695,16 +737,38 @@ class AOERuntime:
             await self.storage.update_task(parent_id, metadata={"aoe_phase": phase})
             if phase == "solo":
                 for agent_id in available:
-                    question = next_solo_question(eligible, agent_id)
-                    if question is not None:
+                    candidates = list(eligible)
+                    quota_blocked = self.targets.quota_blocked(eligible)
+                    while True:
+                        offline = [q for q in candidates if self.targets.spec(q).mode == "none"]
+                        question = next_solo_question(offline, agent_id) if quota_blocked else None
+                        question = question or next_solo_question(candidates, agent_id)
+                        if question is None:
+                            break
+                        if not await self._prepare_target(question):
+                            quota_blocked |= self.targets.state(question.id).get("reason") == "quota"
+                            candidates = [q for q in candidates if q.id != question.id]
+                            continue
                         await self._new_attempts(parent_id, question, (agent_id,), "solo")
                         questions = await self.storage.list_questions(parent_id)
                         eligible = schedulable_questions(questions,
                                      collection_complete=parent.metadata.get("collection_complete", False))
+                        break
             elif phase == "joint" and not occupied and len(available) == len(workers):
-                question = next_joint_question(eligible)
-                if question is not None:
+                candidates = list(eligible)
+                quota_blocked = self.targets.quota_blocked(eligible)
+                while True:
+                    offline = [q for q in candidates if self.targets.spec(q).mode == "none"]
+                    question = next_joint_question(offline) if quota_blocked else None
+                    question = question or next_joint_question(candidates)
+                    if question is None:
+                        break
+                    if not await self._prepare_target(question):
+                        quota_blocked |= self.targets.state(question.id).get("reason") == "quota"
+                        candidates = [q for q in candidates if q.id != question.id]
+                        continue
                     await self._new_attempts(parent_id, question, workers, "joint")
+                    break
             questions = await self.storage.list_questions(parent_id)
             for question in questions:
                 await self._save_question(question)
@@ -785,6 +849,11 @@ class AOERuntime:
     async def _recover_attempts(self, parent_id: UUID) -> None:
         for question in await self.storage.list_questions(parent_id):
             active = active_attempts(question)
+            if active and not await self.targets.prepare(question):
+                # A managed lease that cannot be restored must not run a CLI against stale addresses.
+                await asyncio.gather(*(self._stop_worker(question.id, a["agent_id"]) for a in active))
+                self._recovering.add(question.id)
+                continue
             for attempt in active:
                 if attempt.get("deadline") is None or attempt["deadline"] > self.clock():
                     await self._stop_worker(question.id, attempt["agent_id"])
@@ -803,3 +872,4 @@ class AOERuntime:
             await self.containers.stop(question.id, "reporter")
             if cancelled and question.state not in TERMINAL:
                 await self.storage.update_task(question.id, state=RunState.CANCELLED, metadata={"status": "cancelled"})
+        await self.targets.release_parent(parent_id)

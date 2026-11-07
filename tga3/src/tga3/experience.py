@@ -214,8 +214,7 @@ class ExperienceStore:
             for path in (root / "assets").rglob("*"):
                 if path.is_file() and path.relative_to(root).as_posix() not in allowed_assets:
                     path.unlink(missing_ok=True)
-            index = [{"card_id": c["card_id"], "title": c["title"], "signals": c["applies"]["signals"],
-                      "path": f"cards/{c['card_id']}.json"} for c in cards]
+            index = [{"card_id": c["card_id"], "title": c["title"]} for c in cards]
             if read_json(root / "index.json") != index:
                 atomic_json(root / "index.json", index)
             return root
@@ -225,8 +224,8 @@ class ExperienceStore:
         with self.lock:
             state_path = self.config.task_path(question_id, "workspaces", agent_id) / ".tga3/experience-delivery.json"
             state = read_json(state_path, {})
-            if state.get("generation") != generation:
-                state = {"generation": generation, "seen": [], "catalog_sent": False}
+            if state.get("generation") != generation or state.get("catalog_format") != 2:
+                state = {"generation": generation, "catalog_format": 2, "seen": [], "catalog_sent": False}
             pending = state.get("pending")
             if pending and ack == pending["delivery_id"]:
                 state["seen"] = list(dict.fromkeys([*state["seen"], *pending["fingerprints"]]))
@@ -241,20 +240,16 @@ class ExperienceStore:
             if state.get("query_key") == key:
                 return {}
             # Deliver catalog entries only. The Worker chooses a card in response to an actual problem.
-            cards = [{"card_id": card["card_id"], "title": card["title"],
-                      "signals": card["applies"]["signals"],
-                      "path": f"/experience/cards/{card['card_id']}.json"} for card in self.cards(question_id)]
+            cards = [{"card_id": card["card_id"], "title": card["title"]}
+                     for card in self.cards(question_id)]
             unseen = [(card, hashlib.sha256(json.dumps(card, sort_keys=True).encode()).hexdigest()) for card in cards]
             unseen = [(c, f) for c, f in unseen if f not in state["seen"]]
             state["query_key"] = key
             pieces = []
             fingerprints = []
-            total = 0
             for card, fingerprint in unseen:
                 text = json.dumps(card, ensure_ascii=False)
-                if total + len(text) <= 6000:
-                    pieces.append(text)
-                    total += len(text)
+                pieces.append(text)
                 fingerprints.append(fingerprint)
             if not unseen and state["catalog_sent"]:
                 atomic_json(state_path, state)
@@ -262,6 +257,8 @@ class ExperienceStore:
             context = (f"TGA task-scoped problem-solving card catalog: {len(cards)} available; "
                        f"{len(unseen)} new entries ({len(pieces)} listed below). "
                        "Full catalog: /experience/index.json. This is an inventory, not a strategy for your question. "
+                       "Every available card title is listed on the first delivery, with all new/changed titles "
+                       "on subsequent deliveries; no entries are truncated. Card bodies: /experience/cards/<card_id>.json. "
                        "When an actual error, obstacle or reusable subproblem arises, use native Grep/Read or shell "
                        "to search this catalog and read the corresponding card and assets then. Check applies.requires "
                        "and validate the remedy locally. Do not read every full card up front "

@@ -8,6 +8,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from .domain import RunState, TaskRun
+from .target_instances import TargetSpec
 
 
 class AOEQuestionInput(BaseModel):
@@ -19,6 +20,7 @@ class AOEQuestionInput(BaseModel):
     connection_info: str = Field(default="", max_length=20000)
     submission_instructions: str = Field(default="", max_length=20000)
     attachments: list[str] = Field(default_factory=list, max_length=100)
+    target: TargetSpec = Field(default_factory=lambda: TargetSpec(mode="unknown"))
 
     @field_validator("difficulty", mode="before")
     @classmethod

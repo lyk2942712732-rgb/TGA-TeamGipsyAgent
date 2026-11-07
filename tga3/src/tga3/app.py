@@ -90,9 +90,26 @@ def create_app(
     async def lifespan(_app: FastAPI):
         async with scout_mcp.session_manager.run(), aoe_scout_mcp.session_manager.run(), web_mcp.session_manager.run():
             await coordinator.restore_aoe()
+            async def clean_target_leases():
+                while True:
+                    parents = {v["parent_id"] for v in coordinator.aoe.targets.records.values() if v.get("owned")}
+                    for parent in parents:
+                        try:
+                            await coordinator.aoe.targets.reconcile(await storage.list_questions(UUID(parent)),
+                                                                   parent_id=UUID(parent))
+                        except Exception as exc:
+                            # A transient database/network failure must not permanently stop cleanup.
+                            import logging
+
+                            logging.getLogger(__name__).warning("Target cleanup will retry: %s", type(exc).__name__)
+                    await asyncio.sleep(5)
+
+            target_cleanup = asyncio.create_task(clean_target_leases())
             try:
                 yield
             finally:
+                target_cleanup.cancel()
+                await asyncio.gather(target_cleanup, return_exceptions=True)
                 await coordinator.close()
                 await web_search.close()
 
