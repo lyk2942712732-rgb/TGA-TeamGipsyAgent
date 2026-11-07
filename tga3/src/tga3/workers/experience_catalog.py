@@ -3,7 +3,10 @@
 import hashlib
 import json
 import os
+import threading
 from pathlib import Path
+
+_catalog_lock = threading.Lock()
 
 
 def initial_catalog() -> str:
@@ -37,6 +40,11 @@ def initial_catalog() -> str:
 
 
 def record_catalog(fingerprints: list[str] | None = None) -> None:
+    with _catalog_lock:
+        _record_catalog(fingerprints)
+
+
+def _record_catalog(fingerprints: list[str] | None) -> None:
     root = Path(os.environ.get("TGA3_WORKSPACE", "/workspace")) / ".tga3"
     pending = root / "experience-initial-catalog.json"
     generation = os.environ.get("TGA3_EXPERIENCE_SESSION_TOKEN", "")

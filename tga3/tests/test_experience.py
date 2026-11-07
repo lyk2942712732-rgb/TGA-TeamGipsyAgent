@@ -199,6 +199,13 @@ def test_complete_title_catalog_exceeds_old_limit_and_migrates_prior_ack(config,
     assert len(all_titles) > 1
     assert all(card["title"] in "\n".join(all_titles) for card in store.cards(parent))
     assert all(set(item) == {"card_id", "title"} for item in json.loads((view / "index.json").read_text()))
+    from concurrent.futures import ThreadPoolExecutor
+
+    known_file = workspace / ".tga3/experience-known-catalog.json"
+    known_file.unlink()
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        list(executor.map(record_catalog, [fingerprints[i:i + 5] for i in range(0, len(fingerprints), 5)]))
+    assert set(json.loads(known_file.read_text())["fingerprints"]) == set(fingerprints)
 
 
 async def test_http_card_and_resource_isolation(config):
