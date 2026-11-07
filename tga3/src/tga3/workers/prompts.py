@@ -184,9 +184,8 @@ def worker_instructions() -> str:
         target_mode = os.environ.get("TGA3_TARGET_MODE", "unknown")
         if target_mode == "managed":
             runtime_context += (
-                "\nThe system has ALREADY acquired this question's target instance. Current addresses: "
-                + os.environ.get("TGA3_TARGET_ADDRESSES", "[]")
-                + ". Use these addresses, overriding old addresses in previous attempts. The SYSTEM alone "
+                "\nThe system has ALREADY acquired this question's target instance. Use the current "
+                "runtime target assignment supplied in CLI input, overriding old addresses in previous attempts. The SYSTEM alone "
                 "starts/closes platform instances and handles quotas. Do not call any platform start/close "
                 "interface, including your own question's, even if older instructions suggest it. "
                 "Normal connections, reconnaissance and solving against these addresses are allowed."

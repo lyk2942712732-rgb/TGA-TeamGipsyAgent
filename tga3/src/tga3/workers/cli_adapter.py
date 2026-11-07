@@ -236,6 +236,11 @@ class CliAdapter(AgentAdapter):
 
         emit = tracked_emit
         command, env = self.command()
+        if os.environ.get("TGA3_TARGET_MODE") == "managed":
+            assignment = {"attempt_id": os.environ.get("TGA3_ATTEMPT_ID"),
+                          "addresses": json.loads(os.environ.get("TGA3_TARGET_ADDRESSES", "[]"))}
+            prompt = ("TGA runtime target assignment (current; supersedes prior attempt addresses): "
+                      + json.dumps(assignment) + "\nThe system owns platform start/close; use the assigned target.\n\n" + prompt)
         if os.environ.get("TGA3_AGENT_ROLE") == "worker":
             from .experience_catalog import initial_catalog
 

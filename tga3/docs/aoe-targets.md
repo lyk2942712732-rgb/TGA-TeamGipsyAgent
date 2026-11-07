@@ -50,6 +50,8 @@ while its managed instance is pending. Once ready, the ordinary first-Worker-act
 Joint attempts share one target lease. Solved, timed-out and cancelled attempts stop Workers before
 releasing the lease. Failed closes keep occupying local capacity and retry after backoff, including after
 a control-plane restart. The system never evicts an instance leased to another active attempt/task.
+Current addresses are supplied in the native CLI input, including when resuming a previous attempt's
+session; mutable addresses are not frozen into that session's developer instructions.
 
 Lease state and cleanup contracts live in `data/tasks/<parent>/target-instances.json`, not a new SQL table.
 The API client is reused. No shell commands or new model calls are used for lifecycle operations. Normal
