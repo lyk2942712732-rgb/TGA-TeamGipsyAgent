@@ -57,11 +57,12 @@ service shutdown preserves active leases/deadlines for recovery; explicit task c
 Historical questions without target metadata retain `unknown` behavior; existing records are not rewritten.
 
 Workers receive a complete task-scoped card catalog containing only `card_id` and `title`, without a
-length cutoff or statement-based filtering. Initial titles go directly into CLI system instructions,
+length cutoff or statement-based filtering. Initial titles go directly into CLI startup input,
 because native CLI hooks truncate large outputs before the model sees them. The hook acknowledges those
 exact title fingerprints without duplicating their contents. New/renamed titles during execution arrive
 at ordinary tool boundaries, with bounded batches and exact ACKs; a backlog continues even if the index
-mtime stays unchanged. CLI resume refreshes the full system catalog. ACK means delivered, not adopted. Body and assets
+mtime stays unchanged. CLI resume supplies any titles not already in that context through its normal input,
+not config overrides (which a resumed CLI may ignore). ACK means delivered, not adopted. Body and assets
 remain on-demand at `/experience/cards/<card_id>.json` and the card's resource paths. Old catalog ACK state
 is migrated by redelivering the complete compact catalog once. This feature does not change Python,
 installed dependencies or native CLI command lookup.

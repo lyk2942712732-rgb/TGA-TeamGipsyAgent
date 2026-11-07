@@ -236,6 +236,11 @@ class CliAdapter(AgentAdapter):
 
         emit = tracked_emit
         command, env = self.command()
+        if os.environ.get("TGA3_AGENT_ROLE") == "worker":
+            from .experience_catalog import initial_catalog
+
+            if catalog := initial_catalog():
+                prompt = catalog + "\n\n" + prompt
         env["TGA3_CLI_GENERATION"] = str(uuid4())
         if self.hook_config():
             if self.hook_service is None:
@@ -278,6 +283,10 @@ class CliAdapter(AgentAdapter):
             assert process.stdin is not None
             process.stdin.write(prompt.encode("utf-8"))
             await process.stdin.drain()
+            if os.environ.get("TGA3_AGENT_ROLE") == "worker":
+                from .experience_catalog import record_catalog
+
+                record_catalog()
             process.stdin.close()
             await asyncio.gather(read_stdout(), read_stderr())
             await process.wait()
@@ -474,8 +483,6 @@ class ClaudeAdapter(CliAdapter):
         env.pop("ANTHROPIC_BASE_URL", None)
         if self.base_url:
             env["ANTHROPIC_BASE_URL"] = self.base_url
-        system_prompt = self.state_dir / "cli-system-prompt.txt"
-        system_prompt.write_text(worker_instructions(), encoding="utf8")
         args = [
             self.binary,
             "-p",
@@ -485,8 +492,8 @@ class ClaudeAdapter(CliAdapter):
             "--dangerously-skip-permissions",
             "--model",
             self.model_name,
-            "--system-prompt-file",
-            str(system_prompt),
+            "--system-prompt",
+            worker_instructions(),
             "--tools",
             "Bash,Read,Write,Edit,Glob,Grep,WebSearch,WebFetch",
             "--allowedTools",

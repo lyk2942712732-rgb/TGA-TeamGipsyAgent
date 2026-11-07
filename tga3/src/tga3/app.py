@@ -682,6 +682,7 @@ def create_app(
             )
             if advice:
                 result = {**result, "experience_context": advice["context"],
+                          "experience_fingerprints": advice["fingerprints"],
                           "experience_delivery_id": advice["delivery_id"]}
         return result
 

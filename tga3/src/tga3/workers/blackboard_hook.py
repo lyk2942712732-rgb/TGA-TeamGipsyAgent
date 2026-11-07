@@ -105,13 +105,18 @@ def checkpoint(event: dict, *, client=None) -> dict:
         record_tool(event)
     if context:
         ack_file.write_text(json.dumps({"generation": generation, "delivery_id": delivery["delivery_id"]}))
-    parts = [result_context(record)] if record else []
-    if context:
-        parts.append(context)
+    parts = []
     if advice := delivery.get("experience_context"):
         parts.append(advice)
+        from .experience_catalog import record_catalog
+
+        record_catalog(delivery.get("experience_fingerprints", []))
         experience_ack_file.write_text(json.dumps({"generation": experience_generation,
             "delivery_id": delivery["experience_delivery_id"]}))
+    if record:
+        parts.append(result_context(record))
+    if context:
+        parts.append(context)
     if receipts := delivery.get("publication_receipts"):
         parts.append("TGA system file-import receipts: " + json.dumps(receipts, ensure_ascii=False))
     if not parts:

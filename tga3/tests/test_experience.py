@@ -156,7 +156,7 @@ def test_catalog_is_not_filtered_by_statement_and_task_deletion_cleans_only_its_
 
 
 def test_complete_title_catalog_exceeds_old_limit_and_migrates_prior_ack(config, monkeypatch):
-    from tga3.workers.experience_catalog import initial_catalog
+    from tga3.workers.experience_catalog import initial_catalog, record_catalog
 
     parent, source, target = uuid4(), uuid4(), uuid4()
     for question in (source, target):
@@ -185,6 +185,8 @@ def test_complete_title_catalog_exceeds_old_limit_and_migrates_prior_ack(config,
         assert card["card_id"] in context and card["title"] in context
     assert "parse and extract" not in context
     fingerprints = json.loads((workspace / ".tga3/experience-initial-catalog.json").read_text())["fingerprints"]
+    record_catalog()
+    assert initial_catalog() == ""  # Resume must not inject the same titles a second time.
     assert store.deliver(target, "worker-openai", "same", initial=fingerprints) == {}
     assert len(json.loads(path.read_text())["seen"]) == 90
     # Backlogged updates must drain even when index mtime does not change, acknowledging only each page.

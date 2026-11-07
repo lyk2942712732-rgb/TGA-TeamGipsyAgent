@@ -274,7 +274,7 @@ class ExperienceStore:
             context = (f"TGA task-scoped problem-solving card catalog: {len(cards)} available; "
                        f"{len(unseen)} new entries ({len(pieces)} listed below). "
                        "Full catalog: /experience/index.json. This is an inventory, not a strategy for your question. "
-                       "Your CLI system instructions contain the complete initial title catalog. "
+                       "Your CLI context contains the complete initial title catalog. "
                        "These are additional titles; remaining entries will follow at ordinary tool boundaries. "
                        "Card bodies: /experience/cards/<card_id>.json. "
                        "When an actual error, obstacle or reusable subproblem arises, use native Grep/Read or shell "
