@@ -474,6 +474,8 @@ class ClaudeAdapter(CliAdapter):
         env.pop("ANTHROPIC_BASE_URL", None)
         if self.base_url:
             env["ANTHROPIC_BASE_URL"] = self.base_url
+        system_prompt = self.state_dir / "cli-system-prompt.txt"
+        system_prompt.write_text(worker_instructions(), encoding="utf8")
         args = [
             self.binary,
             "-p",
@@ -483,8 +485,8 @@ class ClaudeAdapter(CliAdapter):
             "--dangerously-skip-permissions",
             "--model",
             self.model_name,
-            "--system-prompt",
-            worker_instructions(),
+            "--system-prompt-file",
+            str(system_prompt),
             "--tools",
             "Bash,Read,Write,Edit,Glob,Grep,WebSearch,WebFetch",
             "--allowedTools",

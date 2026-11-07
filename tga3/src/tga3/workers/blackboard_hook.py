@@ -67,6 +67,11 @@ def checkpoint(event: dict, *, client=None) -> dict:
     experience_generation = os.environ.get("TGA3_EXPERIENCE_SESSION_TOKEN") or start_token or "task-context"
     experience_ack_file = state_dir / "experience-ack.json"
     experience_previous = json.loads(experience_ack_file.read_text()) if experience_ack_file.is_file() else {}
+    initial_file = state_dir / "experience-initial-catalog.json"
+    initial_ack_file = state_dir / "experience-initial-ack"
+    initial = json.loads(initial_file.read_text()) if initial_file.is_file() else {}
+    send_initial = (initial.get("generation") == experience_generation and initial.get("key")
+                    and (not initial_ack_file.is_file() or initial_ack_file.read_text() != initial["key"]))
     start_file = state_dir / "aoe-start-token"
     force_start = bool(start_token and event_name in {"UserPromptSubmit", "PreToolUse"} and
                        (not start_file.is_file() or start_file.read_text() != start_token))
@@ -85,11 +90,14 @@ def checkpoint(event: dict, *, client=None) -> dict:
             "experience_generation": experience_generation,
             "experience_ack": (experience_previous.get("delivery_id", "")
                                if experience_previous.get("generation") == experience_generation else ""),
+            **({"experience_initial": initial["fingerprints"]} if send_initial else {}),
         },
         timeout=10,
     )
     response.raise_for_status()
     delivery = response.json()
+    if send_initial:
+        initial_ack_file.write_text(initial["key"])
     if force_start:
         start_file.write_text(start_token)
     context = delivery.get("context", "")

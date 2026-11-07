@@ -31,7 +31,8 @@ def worker_instructions() -> str:
         "Use native CLI file/list/search tools "
         "to discover /skills and read each package's SKILL.md, then follow its referenced documents."
         " Task-scoped experience from successfully solved sibling questions is read-only at /experience. "
-        "Native hooks provide the COMPLETE compact card catalog (card_id and title only). "
+        "Your CLI instructions include the COMPLETE compact card catalog (card_id and title only); "
+        "native hooks supply new titles during execution. "
         "When you encounter a concrete error, obstacle or repeated subproblem during execution, check the catalog "
         "for relevant experience before reinventing the same solution, then read only matching cards as needed. "
         "Use native Read/Grep or shell tools to read /experience/index.json and cards/assets only when useful. "
@@ -194,7 +195,9 @@ def worker_instructions() -> str:
             runtime_context += "\nThis question needs NO target instance. Work from its inputs; do not request one."
         elif target_mode == "static":
             runtime_context += "\nUse the fixed target in the question; no platform instance start/close is needed."
-    return f"{os.environ['TGA3_SYSTEM_PROMPT'].rstrip()}\n\n{runtime_context}\n\n{publication_contract}"
+    from .experience_catalog import initial_catalog
+
+    return f"{os.environ['TGA3_SYSTEM_PROMPT'].rstrip()}\n\n{runtime_context}\n\n{publication_contract}{initial_catalog()}"
 
 
 __all__ = ["worker_instructions"]

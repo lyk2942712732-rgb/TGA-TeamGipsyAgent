@@ -155,7 +155,9 @@ def test_catalog_is_not_filtered_by_statement_and_task_deletion_cleans_only_its_
     assert len(store.cards(foreign)) == 1
 
 
-def test_complete_title_catalog_exceeds_old_limit_and_migrates_prior_ack(config):
+def test_complete_title_catalog_exceeds_old_limit_and_migrates_prior_ack(config, monkeypatch):
+    from tga3.workers.experience_catalog import initial_catalog
+
     parent, source, target = uuid4(), uuid4(), uuid4()
     for question in (source, target):
         config.register_question_path(parent, question)
@@ -173,14 +175,27 @@ def test_complete_title_catalog_exceeds_old_limit_and_migrates_prior_ack(config)
     path = config.task_path(target, "workspaces", "worker-openai") / ".tga3/experience-delivery.json"
     atomic_json(path, {"generation": "same", "seen": ["old-hidden-card"], "catalog_sent": True,
                        "query_key": str((view / "index.json").stat().st_mtime_ns)})
-    delivery = store.deliver(target, "worker-openai", "same")
-    assert "90 new entries (90 listed below)" in delivery["context"]
-    assert len(delivery["context"]) > 6000
+    workspace = config.task_path(target, "workspaces", "worker-openai")
+    for key, value in {"TGA3_WORKSPACE": str(workspace), "TGA3_EXPERIENCE_ROOT": str(view),
+                       "TGA3_AGENT_ROLE": "worker", "TGA3_EXPERIENCE_SESSION_TOKEN": "same"}.items():
+        monkeypatch.setenv(key, value)
+    context = initial_catalog()
+    assert len(context) > 6000
     for card in store.cards(parent):
-        assert card["card_id"] in delivery["context"] and card["title"] in delivery["context"]
-    assert "parse and extract" not in delivery["context"]
-    assert store.deliver(target, "worker-openai", "same") == delivery
-    assert store.deliver(target, "worker-openai", "same", delivery["delivery_id"]) == {}
+        assert card["card_id"] in context and card["title"] in context
+    assert "parse and extract" not in context
+    fingerprints = json.loads((workspace / ".tga3/experience-initial-catalog.json").read_text())["fingerprints"]
+    assert store.deliver(target, "worker-openai", "same", initial=fingerprints) == {}
+    assert len(json.loads(path.read_text())["seen"]) == 90
+    # Backlogged updates must drain even when index mtime does not change, acknowledging only each page.
+    all_titles = []
+    delivery = store.deliver(target, "worker-claude", "other-context")
+    while delivery:
+        assert store.deliver(target, "worker-claude", "other-context") == delivery
+        all_titles.append(delivery["context"])
+        delivery = store.deliver(target, "worker-claude", "other-context", delivery["delivery_id"])
+    assert len(all_titles) > 1
+    assert all(card["title"] in "\n".join(all_titles) for card in store.cards(parent))
     assert all(set(item) == {"card_id", "title"} for item in json.loads((view / "index.json").read_text()))
 
 

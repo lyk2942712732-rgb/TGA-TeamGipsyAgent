@@ -678,6 +678,7 @@ def create_app(
             advice = await asyncio.to_thread(
                 automation.experience.deliver, task_id, agent_id,
                 str(body.get("experience_generation", "")), str(body.get("experience_ack", "")),
+                body.get("experience_initial"),
             )
             if advice:
                 result = {**result, "experience_context": advice["context"],

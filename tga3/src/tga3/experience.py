@@ -219,13 +219,14 @@ class ExperienceStore:
                 atomic_json(root / "index.json", index)
             return root
 
-    def deliver(self, question_id: UUID, agent_id: str, generation: str, ack: str = "") -> dict:
+    def deliver(self, question_id: UUID, agent_id: str, generation: str, ack: str = "",
+                initial: list[str] | None = None) -> dict:
         """File-only ACK/replay at existing hook boundaries; never starts a model turn."""
         with self.lock:
             state_path = self.config.task_path(question_id, "workspaces", agent_id) / ".tga3/experience-delivery.json"
             state = read_json(state_path, {})
-            if state.get("generation") != generation or state.get("catalog_format") != 2:
-                state = {"generation": generation, "catalog_format": 2, "seen": [], "catalog_sent": False}
+            if state.get("generation") != generation or state.get("catalog_format") != 3:
+                state = {"generation": generation, "catalog_format": 3, "seen": [], "catalog_sent": False}
             pending = state.get("pending")
             if pending and ack == pending["delivery_id"]:
                 state["seen"] = list(dict.fromkeys([*state["seen"], *pending["fingerprints"]]))
@@ -233,6 +234,15 @@ class ExperienceStore:
                 state.pop("pending", None)
                 atomic_json(state_path, state)
                 pending = None
+            if initial is not None:
+                known = {hashlib.sha256(json.dumps({"card_id": card["card_id"], "title": card["title"]},
+                    sort_keys=True).encode()).hexdigest() for card in self.cards(question_id)}
+                state["seen"] = list(dict.fromkeys([*state["seen"], *[f for f in initial if f in known]]))
+                state["catalog_sent"] = True
+                state.pop("query_key", None)
+                state.pop("pending", None)
+                pending = None
+                atomic_json(state_path, state)
             if pending:
                 return pending
             index = self._view(self.owner(question_id)) / "index.json"
@@ -244,21 +254,29 @@ class ExperienceStore:
                      for card in self.cards(question_id)]
             unseen = [(card, hashlib.sha256(json.dumps(card, sort_keys=True).encode()).hexdigest()) for card in cards]
             unseen = [(c, f) for c, f in unseen if f not in state["seen"]]
-            state["query_key"] = key
             pieces = []
             fingerprints = []
+            size = 0
             for card, fingerprint in unseen:
                 text = json.dumps(card, ensure_ascii=False)
+                if size + len(text.encode()) > 4000:
+                    break
                 pieces.append(text)
                 fingerprints.append(fingerprint)
+                size += len(text.encode())
+            if len(pieces) == len(unseen):
+                state["query_key"] = key
+            else:
+                state.pop("query_key", None)
             if not unseen and state["catalog_sent"]:
                 atomic_json(state_path, state)
                 return {}
             context = (f"TGA task-scoped problem-solving card catalog: {len(cards)} available; "
                        f"{len(unseen)} new entries ({len(pieces)} listed below). "
                        "Full catalog: /experience/index.json. This is an inventory, not a strategy for your question. "
-                       "Every available card title is listed on the first delivery, with all new/changed titles "
-                       "on subsequent deliveries; no entries are truncated. Card bodies: /experience/cards/<card_id>.json. "
+                       "Your CLI system instructions contain the complete initial title catalog. "
+                       "These are additional titles; remaining entries will follow at ordinary tool boundaries. "
+                       "Card bodies: /experience/cards/<card_id>.json. "
                        "When an actual error, obstacle or reusable subproblem arises, use native Grep/Read or shell "
                        "to search this catalog and read the corresponding card and assets then. Check applies.requires "
                        "and validate the remedy locally. Do not read every full card up front "
