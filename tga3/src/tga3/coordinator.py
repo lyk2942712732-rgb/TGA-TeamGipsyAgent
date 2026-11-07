@@ -277,7 +277,7 @@ class TaskCoordinator:
     async def close(self) -> None:
         for task_id in list(self._startup_jobs):
             await self.cancel_startup(task_id)
-        await self.aoe.targets.close()
+        await self.aoe.close()
 
     async def add_input_file(
         self, task_id: UUID, raw_name: str, media_type: str, content: bytes

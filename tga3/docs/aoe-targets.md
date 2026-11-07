@@ -47,6 +47,8 @@ The runtime shares quota accounting by endpoint host, account headers and option
 When capacity is exhausted it first schedules explicitly `none` questions, retaining existing untouched/
 difficulty ordering within that subset and collection-phase restrictions. No attempt or CLI is started
 while its managed instance is pending. Once ready, the ordinary first-Worker-action budget still applies.
+Slow lifecycle HTTP calls run outside the scheduling lock, with a question reservation to prevent duplicate
+assignment; they cannot stall another Worker's action/deadline receipts.
 Joint attempts share one target lease. Solved, timed-out and cancelled attempts stop Workers before
 releasing the lease. Failed closes keep occupying local capacity and retry after backoff, including after
 a control-plane restart. The system never evicts an instance leased to another active attempt/task.

@@ -205,3 +205,30 @@ async def test_account_quota_is_shared_across_tasks_and_cleanup_is_owned(tmp_pat
     assert calls == [("/start", "first"), ("/close", "first"), ("/start", "second")]
     await coord.aoe.targets.release(second.id)
     await coord.close()
+
+
+async def test_slow_platform_io_does_not_block_other_workers_action_receipts(tmp_path):
+    allow = asyncio.Event()
+    calls = []
+    async def handler(request):
+        calls.append(request.url.path)
+        if request.url.path == "/start":
+            await allow.wait()
+            return httpx.Response(200, json={"container_addr": ["target:1"]})
+        return httpx.Response(200, json={"closed": True})
+    _, storage, containers, coord, parent, _, qs = await batch(tmp_path,
+        [question("managed", target=contract()), question("offline")], handler)
+    await asyncio.wait_for(coord.aoe.tick(parent.id), timeout=1)
+    assert len(containers.launched) == 1 and containers.launched[0].task_id == qs["offline"].id
+    offline = containers.launched[0]
+    await asyncio.wait_for(coord.aoe.action_started(offline.task_id, offline.agent.agent_id, offline.attempt_id), timeout=1)
+    assert active_attempts(await storage.get_task(offline.task_id))[0]["started_at"] is not None
+    assert (await storage.get_task(qs["managed"].id)).metadata["attempts"] == []
+    allow.set()
+    await asyncio.wait_for(coord.aoe.tick(parent.id), timeout=1)
+    assert len(containers.launched) == 2 and calls == ["/start"]
+    managed = containers.launched[-1]
+    assert managed.task_id == qs["managed"].id
+    assert active_attempts(await storage.get_task(managed.task_id))[0]["deadline"] is None
+    await coord.aoe.stop_children(parent.id, cancelled=True)
+    await coord.close()

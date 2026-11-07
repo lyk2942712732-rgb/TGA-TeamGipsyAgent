@@ -51,6 +51,9 @@ class AOERuntime:
         self._manifest_digests: dict[UUID, str] = {}
         self.targets = TargetInstances(self.config, clock=lambda: self.clock())
         self._recovering: set[UUID] = set()
+        self._target_jobs: dict[UUID, asyncio.Task] = {}
+        self._target_claims: dict[UUID, tuple[str, ...]] = {}
+        self._target_closes: dict[UUID, asyncio.Task] = {}
 
     async def restore_paths(self) -> None:
         for question in await self.storage.list_questions():
@@ -393,6 +396,7 @@ class AOERuntime:
                 if not scout_job.done():
                     scout_job.cancel()
                 await asyncio.gather(scout_job, return_exceptions=True)
+            await self._cancel_target_jobs(parent_id)
 
     async def _scout(self, parent_id: UUID, bindings: dict) -> None:
         parent = await self.storage.get_task(parent_id)
@@ -635,8 +639,10 @@ class AOERuntime:
             return {**metadata, "attempts": attempts}
 
         question = await self.storage.mutate_task_metadata(question.id, finish)
-        if not active_attempts(question):
-            await self.targets.release(question.id, force=True)
+        if not active_attempts(question) and self.targets.spec(question).mode == "managed":
+            job = self._target_closes[question.id] = asyncio.create_task(self.targets.release(question.id, force=True))
+            # Permit the fast path without holding the scheduler lock across network delays.
+            await asyncio.wait({job}, timeout=0.05)
         await self._save_question(question)
         return question
 
@@ -674,16 +680,29 @@ class AOERuntime:
         )
         return question
 
-    async def _prepare_target(self, question: TaskRun) -> bool:
+    async def _prepare_target(self, question: TaskRun, agents: tuple[str, ...]) -> bool:
+        if self.targets.spec(question).mode != "managed":
+            return True
         previous = self.targets.state(question.id)
-        ready = await self.targets.prepare(question)
+        job = self._target_jobs.get(question.id)
+        if job is None:
+            if previous.get("retry_at", 0) > self.clock() and previous.get("state") != "ready":
+                return False
+            job = self._target_jobs[question.id] = asyncio.create_task(self.targets.prepare(question))
+            self._target_claims[question.id] = agents
+        await asyncio.wait({job}, timeout=0.05)
+        if not job.done():
+            return False
+        self._target_jobs.pop(question.id, None)
+        self._target_claims.pop(question.id, None)
+        ready = job.result()
         current = self.targets.state(question.id)
         if not ready and current.get("reason") != previous.get("reason"):
             reason = "平台实例配额不足" if current.get("reason") == "quota" else current.get("reason", "准备中")
             await self.events.emit(question.parent_task_id, actor=SYSTEM_ACTOR, kind=EventKind.SYSTEM,
                 text=f"等待靶场资源：{question.title}（{reason}），尚未开始解题尝试",
                 payload={"question_id": str(question.id), "target_state": current.get("state"), "reason": reason})
-        return ready
+        return ready and current.get("state") == "ready"
 
     async def tick(self, parent_id: UUID) -> bool:
         """One serialized scheduling decision; tests advance the injected clock without sleeping."""
@@ -693,7 +712,6 @@ class AOERuntime:
                 return True
             workers = self.config.worker_agent_ids
             questions = await self.storage.list_questions(parent_id)
-            await self.targets.reconcile(questions, parent_id=parent_id)
             for question in unfinished(questions):
                 candidate = await self._candidate(question)
                 if candidate is not None:
@@ -717,7 +735,8 @@ class AOERuntime:
                             payload={"question_id": str(question.id), "agents": sorted(expired)},
                         )
                     self._recovering.discard(question.id)
-                elif active and question.id in self._recovering and await self.targets.prepare(question):
+                elif active and question.id in self._recovering and await self._prepare_target(
+                        question, tuple(a["agent_id"] for a in active)):
                     for attempt in active:
                         await self._launch_attempt(parent_id, question, attempt, fresh=False)
                     self._recovering.discard(question.id)
@@ -737,15 +756,19 @@ class AOERuntime:
             await self.storage.update_task(parent_id, metadata={"aoe_phase": phase})
             if phase == "solo":
                 for agent_id in available:
-                    candidates = list(eligible)
+                    candidates = [q for q in eligible if q.id not in self._target_claims
+                                  or agent_id in self._target_claims[q.id]]
                     quota_blocked = self.targets.quota_blocked(eligible)
                     while True:
                         offline = [q for q in candidates if self.targets.spec(q).mode == "none"]
-                        question = next_solo_question(offline, agent_id) if quota_blocked else None
+                        question = next((q for q in candidates if q.id in self._target_claims), None)
+                        question = question or (next_solo_question(offline, agent_id) if quota_blocked else None)
                         question = question or next_solo_question(candidates, agent_id)
                         if question is None:
                             break
-                        if not await self._prepare_target(question):
+                        if not await self._prepare_target(question, (agent_id,)):
+                            if question.id in self._target_claims:
+                                break
                             quota_blocked |= self.targets.state(question.id).get("reason") == "quota"
                             candidates = [q for q in candidates if q.id != question.id]
                             continue
@@ -759,11 +782,14 @@ class AOERuntime:
                 quota_blocked = self.targets.quota_blocked(eligible)
                 while True:
                     offline = [q for q in candidates if self.targets.spec(q).mode == "none"]
-                    question = next_joint_question(offline) if quota_blocked else None
+                    question = next((q for q in candidates if q.id in self._target_claims), None)
+                    question = question or (next_joint_question(offline) if quota_blocked else None)
                     question = question or next_joint_question(candidates)
                     if question is None:
                         break
-                    if not await self._prepare_target(question):
+                    if not await self._prepare_target(question, workers):
+                        if question.id in self._target_claims:
+                            break
                         quota_blocked |= self.targets.state(question.id).get("reason") == "quota"
                         candidates = [q for q in candidates if q.id != question.id]
                         continue
@@ -863,6 +889,7 @@ class AOERuntime:
                     self.automation.start_report(question.id)
 
     async def stop_children(self, parent_id: UUID, *, cancelled: bool = False) -> None:
+        await self._cancel_target_jobs(parent_id)
         for question in await self.storage.list_questions(parent_id):
             if self.automation is not None:
                 await self.automation.cancel(question.id)
@@ -873,3 +900,29 @@ class AOERuntime:
             if cancelled and question.state not in TERMINAL:
                 await self.storage.update_task(question.id, state=RunState.CANCELLED, metadata={"status": "cancelled"})
         await self.targets.release_parent(parent_id)
+
+    async def _cancel_target_jobs(self, parent_id: UUID) -> None:
+        questions = {q.id for q in await self.storage.list_questions(parent_id)}
+        jobs = []
+        for mapping in (self._target_jobs, self._target_closes):
+            for ident in questions:
+                job = mapping.pop(ident, None)
+                if job is not None:
+                    if not job.done():
+                        job.cancel()
+                    jobs.append(job)
+                self._target_claims.pop(ident, None)
+        if jobs:
+            await asyncio.gather(*jobs, return_exceptions=True)
+
+    async def close(self) -> None:
+        jobs = [*self._target_jobs.values(), *self._target_closes.values()]
+        for job in jobs:
+            if not job.done():
+                job.cancel()
+        if jobs:
+            await asyncio.gather(*jobs, return_exceptions=True)
+        self._target_jobs.clear()
+        self._target_closes.clear()
+        self._target_claims.clear()
+        await self.targets.close()
