@@ -121,6 +121,7 @@ async def test_aoe_collection_mcp_budget_owned_downloads_and_hierarchical_events
             first, second = [UUID(item["question_id"]) for item in receipt["questions"]]
             saved = json.loads((cfg.task_path(first) / "question.json").read_text())
             assert saved["target"]["mode"] == "none"
+            assert "target" not in (await storage.get_task(first)).metadata
             overview = (await client.get(f"/api/v3/tasks/{parent_id}/questions")).json()
             assert len(overview["questions"]) == 2 and overview["attempt_seconds"] == 420
             first_view = next(q for q in overview["questions"] if q["source_key"] == "q1")

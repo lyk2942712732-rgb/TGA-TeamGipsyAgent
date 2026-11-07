@@ -1,7 +1,7 @@
 # AOE target lifecycle and card catalog
 
 Scout records each question's target requirements in its `target` field. The contract is saved in the
-question's `question.json` and the parent's `questions.json`; lifecycle requests are not added to the
+question's `question.json` and the parent's `questions.json`; contracts are not added to SQL task metadata or the
 frontend question overview. Modes:
 
 - `none`: source data/collected attachments suffice; no target instance is required.

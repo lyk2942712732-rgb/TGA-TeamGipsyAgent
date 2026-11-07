@@ -74,12 +74,21 @@ class TargetInstances:
             temporary.unlink(missing_ok=True)
 
     def spec(self, question) -> TargetSpec:
-        value = question.metadata.get("target") or {"mode": "unknown"}
         cached = self._specs.get(question.id)
+        value = question.metadata.get("target")
+        if value is None:
+            if cached is not None:
+                return cached[1]
+            path = self.config.task_path(question.id) / "question.json"
+            value = json.loads(path.read_text(encoding="utf8")).get("target") if path.is_file() else None
+        value = value or {"mode": "unknown"}
         if cached is None or cached[0] != value:
             parsed = TargetSpec.model_validate(value)
             cached = self._specs[question.id] = (deepcopy(value), parsed)
         return cached[1]
+
+    def register(self, question_id: UUID, spec: TargetSpec) -> None:
+        self._specs[question_id] = (spec.model_dump(), spec)
 
     @staticmethod
     def group(spec: TargetSpec) -> str:

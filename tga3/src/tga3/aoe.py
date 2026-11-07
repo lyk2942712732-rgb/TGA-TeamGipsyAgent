@@ -141,6 +141,7 @@ class AOERuntime:
                 {
                     "question_id": str(q.id),
                     "title": q.title,
+                    "target": self.targets.spec(q).model_dump(mode="json"),
                     **{
                         key: q.metadata.get(key)
                         for key in (
@@ -149,7 +150,6 @@ class AOERuntime:
                             "difficulty",
                             "connection_info",
                             "submission_instructions",
-                            "target",
                         )
                     },
                 }
@@ -265,7 +265,7 @@ class AOERuntime:
                     question_id,
                     parent_task_id=parent_id,
                     metadata={
-                        **{key: value for key, value in payload.items() if key not in {"title", "attachments"}},
+                        **{key: value for key, value in payload.items() if key not in {"title", "attachments", "target"}},
                         "registration_digest": fingerprint,
                         "ordinal": len(existing),
                         "status": "preparing",
@@ -274,6 +274,7 @@ class AOERuntime:
                         "attempts": [],
                     },
                 )
+                self.targets.register(question.id, spec.target)
                 registered_agents = {run.agent_id for run in await self.storage.list_agents(question.id)}
                 for run in await self.storage.list_agents(parent_id):
                     if run.agent_id not in registered_agents:
