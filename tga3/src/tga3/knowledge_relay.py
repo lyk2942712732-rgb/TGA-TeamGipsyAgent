@@ -12,7 +12,10 @@ class KnowledgeRelay:
         self.config = config
         self.client = httpx.AsyncClient(
             timeout=httpx.Timeout(30, connect=10), trust_env=False, follow_redirects=False,
-            limits=httpx.Limits(max_connections=10, max_keepalive_connections=4, keepalive_expiry=120),
+            # ctf42 currently returns finite JSON/405 responses, not a persistent
+            # GET stream. Queue native discovery requests on the same connection
+            # instead of racing new connections through the host's proxy route.
+            limits=httpx.Limits(max_connections=1, max_keepalive_connections=1, keepalive_expiry=120),
             transport=transport,
         )
 
