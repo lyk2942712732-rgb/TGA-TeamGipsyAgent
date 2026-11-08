@@ -9,19 +9,21 @@ description = "Blackboard-first dual-agent runtime for Team Gipsy Agent."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "asyncpg>=0.30,<1",
-    "fastapi>=0.116,<1",
     "httpx>=0.28,<1",
     "mcp>=1.24,<2",
     "pydantic>=2.11,<3",
     "pyyaml>=6,<7",
-    "python-multipart>=0.0.20,<1",
-    "uvicorn[standard]>=0.35,<1",
     "websockets>=15,<16",
 ]
 
 [project.optional-dependencies]
-control = ["docker>=7.1,<8"]
+control = [
+    "asyncpg>=0.30,<1",
+    "fastapi>=0.116,<1",
+    "python-multipart>=0.0.20,<1",
+    "uvicorn[standard]>=0.35,<1",
+    "docker>=7.1,<8",
+]
 dev = ["pytest>=8", "pytest-asyncio>=0.25", "ruff>=0.12"]
 
 [project.scripts]

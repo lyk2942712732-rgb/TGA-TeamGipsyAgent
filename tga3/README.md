@@ -126,7 +126,7 @@ Worker 不在 Compose 中常驻；创建任务时由 Docker SDK 动态启动，�
 ## 开发验证
 
 ```bash
-python -m pip install -e ".[dev]"
+python -m pip install -e ".[dev,control]"
 pytest
 ruff check src tests
 

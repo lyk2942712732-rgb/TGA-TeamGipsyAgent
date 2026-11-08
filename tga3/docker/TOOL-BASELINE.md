@@ -1,60 +1,78 @@
-# 执行镜像工具基线
+# 执行镜像：slim 单一 Python 环境
 
-基础系统和安全工具清单对齐 StrikeAgent 的 TSecBench 评测 Dockerfile：
+工具范围参考 StrikeAgent TSecBench Dockerfile：
 https://github.com/Yean-Sec/StrikeAgent_AtkBrain-Flash/blob/7526baa7ea88de04b1900f04a06b13b77ab5682e/Dockerfile
 
-采用 Python 3.12 slim-bookworm，按同一清单安装基础网络、编译、调试、Web、Pwn、Crypto 与常用取证工具。
-安全类 pip 清单为 pwntools、pycryptodome、gmpy2、z3-solver、ropper。
-Debian 的 python3-* 包供系统 Python/工具使用，Worker 默认的 `python` 是独立的 Python 3.12 venv；不要假定两个 Python 的第三方包完全相同。
+从固定摘要的 Python 3.12 slim-bookworm **重新构建**，不继承旧 TGA/Kali/venv 镜像。
+系统工具交给 apt；Python 安全工具和项目运行依赖全部由同一个 Python/pip 管理。
 
-沿用对方的可选包策略：必装包失败即构建失败，可选包不可用则跳过。
-每项结果保存为镜像内 `/opt/tga3/tool-install-status.tsv`，构建自检会输出它。
-不因清单中出现名称就向智能体保证该工具已经安装。
+## 唯一的执行环境
 
-项目保留自己的运行代码、Python 运行依赖、两个 CLI、Node 22.22.0、非 root 用户和挂载/权限机制。
-额外保留 ripgrep，支持原生 CLI 文件搜索。不会引入 Pi、StrikeAgent 后端、前端或其 Agent 调度逻辑。
-不再额外预装旧基线的 Ghidra/Android、angr、QEMU、专业取证/多媒体和整套 Kali headless 工具组；清单依赖可能带入少量相关运行库。
+- Python 为 `/usr/local/bin/python3`，包统一位于 `/usr/local/lib/python3.12/site-packages`。
+- `python`、`python3`、`/usr/bin/python3` 指向同一解释器；不建立 `/opt/tga3-venv`。
+- 普通 shell、登录 shell、CLI shell、Hook 和知识库 MCP 都使用该环境。
+- `/etc/profile` 保留已传入的 PATH，避免登录 shell 丢掉原生 CLI 的临时工具目录（如 Codex 的 apply_patch 辅助入口）。仅在 PATH 为空时设置系统默认值。
+- 公共 site-packages 与 Python 命令目录可由容器内 UID 1000 写入，题内确需 pip 安装依赖时仍装在同一环境，不自动退回另一份 user-site。写入只影响该执行容器，不改基础镜像或其他容器。
+- 不通过 apt 安装 Python 应用或 `python3-*` 第三方库，也不把 Debian 3.11 包目录拼接进 3.12 的路径。
+- Debian GDB 依赖 `libpython3.11` 及标准库以执行它自己的嵌入式脚本。这是 GDB 的系统运行库，不提供第二个 Python 命令、pip 或安全工具包环境；不将它冒充可以卸载的冗余。
+- 不改宿主机服务的 `.venv`，它不属于执行容器。
 
-## 项目独立依赖层
+## 工具安装分工
 
-安全工具之外，两个 Worker 镜像都通过 `pip install /opt/tga3` 安装项目本体与 `pyproject.toml` 的统一运行依赖：
+apt 保留网络、编译、调试、Web、密码和取证工具，包括 nmap/ncat、GCC/GDB、
+ffuf/gobuster/dirb、hydra/john、tshark、whatweb、steghide 和各服务客户端。
 
-| 依赖 | 用途 |
-|---|---|
-| httpx | 常驻 Hook 的 HTTP 通信、项目 HTTP 请求 |
-| websockets | Worker 与控制面的双向控制通道 |
-| pydantic | 控制协议、配置及结构化数据校验 |
-| pyyaml | 知识库 YAML 读取；验收确认 C 加速 SafeLoader 可用 |
-| mcp | 项目 MCP 协议与服务支持 |
-| asyncpg | 项目 PostgreSQL 持久化模块 |
-| fastapi | 项目控制面 HTTP API |
-| python-multipart | 项目附件上传 |
-| uvicorn[standard] | 项目 ASGI 服务运行 |
+原来由 Debian Python 安装的 sqlmap、wfuzz、wafw00f、hashID、binwalk、Impacket、
+SymPy、Pillow、BeautifulSoup、密码库改由同一 pip 环境提供。
+pwntools、ROPgadget、ropper、gmpy2、Z3 与这些库共存；checksec 只保留 pwntools 实现。
+Impacket 使用上游的 `smbclient.py` 等入口。
+PyCryptodome 的 `Crypto` 与 Impacket 所需 PyCryptodomex 的 `Cryptodome` 是两个命名空间，保留两者是依赖要求。
 
-后四项主要供控制面模块使用，目前随项目整包安装。Worker 不直接连接 PostgreSQL。
-这些依赖沿用项目现有声明；安装库不等于每次动作都初始化对应模块。Hook 的命令客户端仍只加载标准库。
-Python 构建工具 pip/setuptools/wheel、Node 与两个 CLI 也保留在独立层；其他传递依赖由 pip 解析，使用 `pip check` 验收。
-宿主机的 Docker SDK 属于 `[control]` 可选依赖，不额外装进 Worker 镜像。
+`ctf-python-requirements.txt` 固定直接依赖，`python-constraints.txt` 固定已验收的传递依赖。
+镜像内 `/opt/tga3/python-packages.lock` 记录实际版本。
+可选的 nikto/radare2/feroxbuster/enum4linux 仍按可用性安装；若会带入另一个 Python 应用环境则跳过。
+结果保存为 `/opt/tga3/tool-install-status.tsv`，不能凭工具清单承诺其已经存在。
+
+旧工具只做必要兼容修补，源归档 SHA256 在 `build-python-tools.py` 中固定：
+
+- wfuzz 3.1.0：修正非法的 `pyparsing>=2.4*` 依赖声明；插件加载器从 imp 改为 importlib。
+- binwalk v2.3.4 源码：将已移除的 `imp.load_source` 改为 importlib；该源码的包元数据版本是 2.3.3。
+- Capstone 固定稳定的 5.x，保留 binwalk 2.x 使用的 ARM64 API。
+
+不额外安装 Ghidra/Android、angr、QEMU、Sage 或整套 Kali headless。
+
+## 项目特定依赖
+
+两个 Worker 只安装项目核心依赖：HTTPX、WebSockets、Pydantic、PyYAML、MCP。
+MCP 自身依赖 uvicorn、python-multipart，仍由解析器安装，不能误删。
+asyncpg、FastAPI、`uvicorn[standard]`、Docker SDK 放在 `[control]`，供控制端安装：
+
+```sh
+python -m pip install '.[control]'
+# 开发/完整测试
+python -m pip install -e '.[dev,control]'
+```
+
+项目仅以 wheel 安装一份，构建目录、源码副本和 wheel 缓存留在构建阶段，不带入最终镜像。
+两个 Worker 共享 Node/安全工具基础层，各自只加对应 CLI 与一份项目安装包。
+项目 wheel 在独立构建阶段生成，并在 CLI 安装之后安装；以后改项目代码不会使 CLI 的 npm 安装缓存失效。
+保留 Node 22.22.0、Codex 0.158.0、Claude Code 2.1.123；不改 CLI 内部组件。
+Node 开发头文件不进入最终镜像；GCC/make/nasm 保留以便题内编译。
+Z3 同内容的两个动态库名字用硬链接共用实体。
+
+知识库、Skill、经验卡与任务数据仍由运行时挂载，不烘焙进镜像，也不包含模型凭证。
+Worker UID/GID 1000 与挂载机制保持一致。
 
 ## 构建与验收
 
 ```sh
-bash scripts/build-images.sh
+TGA3_IMAGE_TAG=unified-candidate bash scripts/build-images.sh
 ```
 
-默认沿用 `:local` 标签。可在不覆盖运行标签的情况下完整构建候选：
+验证包括：两种 shell 的解释器一致性、没有 venv/第二个 Python 命令、分发元数据无重复、
+pip check、安全库运算、汇编反汇编、GCC 编译、GDB、真实 binwalk 签名识别、
+ROP 工具、所有必需命令与项目各角色入口导入。候选通过后才切换运行标签。
+完整任务机制另用隔离本地服务和原生 CLI 验证，不向真实题目注入测试操作。
 
-```sh
-TGA3_IMAGE_TAG=bookworm-candidate bash scripts/build-images.sh
-```
-
-构建脚本依次构建安全工具层、Node 层、两个 CLI/项目代码层，运行命令/Python/GDB自检、项目模块导入与 CLI 版本检查。
-镜像中不写 API 密钥；模型、MCP、知识库与任务挂载仍由项目运行时提供。
-
-可配置 `PYTHON_IMAGE`（仍须为 Python 3.12 slim-bookworm）、`DEBIAN_MIRROR`（主机名）、`NODE_DOWNLOAD_BASE`、`DOCKER_BUILD_NETWORK`。
-`DEBIAN_MIRROR=` 保留基础镜像中的官方 Debian 源。默认基础镜像家族和 Debian 镜像站与上游相同。
-基础镜像固定为本轮实测的镜像摘要，避免同名 tag 更新导致工具层漂移；升级基础系统时显式覆盖 `PYTHON_IMAGE` 并重新验收。
-Node 和两个 CLI 使用项目已验证的固定版本，传输保持 TLS 验证。
-
-基础层的实际变化需要从新 FROM 重新构建；在旧 Kali 镜像上删除文件不能移除旧层。
-候选验收通过后再切换 Worker 标签，保留旧镜像用于回滚，不清理数据库卷和任务数据。
+基础镜像、Node 下载源、Debian 镜像站与网络参数沿用构建脚本；保持 TLS 校验。
+旧镜像仅供回滚，不自动删除任务数据、数据库卷或旧镜像。

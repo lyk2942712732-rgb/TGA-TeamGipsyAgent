@@ -1,30 +1,17 @@
-# Tool baseline: StrikeAgent TSecBench Dockerfile at
-# https://github.com/Yean-Sec/StrikeAgent_AtkBrain-Flash/blob/7526baa7ea88de04b1900f04a06b13b77ab5682e/Dockerfile
+# Fresh slim base; never inherit an existing TGA tool/worker image.
 ARG PYTHON_IMAGE=docker.m.daocloud.io/library/python:3.12-slim-bookworm@sha256:e697c81897302a4c4333bade000d98038fbb21eb064f8ee1fd42d02ebcd9d337
-FROM ${PYTHON_IMAGE}
-
+FROM ${PYTHON_IMAGE} AS system
 ARG DEBIAN_MIRROR=mirrors.aliyun.com
-ENV DEBIAN_FRONTEND=noninteractive \
-    LANG=C.UTF-8 \
-    LC_ALL=C.UTF-8 \
-    PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+ENV DEBIAN_FRONTEND=noninteractive LANG=C.UTF-8 LC_ALL=C.UTF-8 \
+    PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 TERM=xterm \
     PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/ \
     NPM_CONFIG_REGISTRY=https://registry.npmmirror.com
-
-# Match upstream required packages. ripgrep supports native CLI file search.
-# Keep transport retries bounded and TLS verification on.
 RUN set -eu; \
     if [ -n "${DEBIAN_MIRROR}" ]; then \
-      for source in /etc/apt/sources.list.d/debian.sources /etc/apt/sources.list; do \
-        if [ -f "$source" ]; then \
-          sed -i "s|deb.debian.org|${DEBIAN_MIRROR}|g; s|security.debian.org|${DEBIAN_MIRROR}|g" "$source"; \
-        fi; \
-      done; \
+      sed -i "s|deb.debian.org|${DEBIAN_MIRROR}|g; s|security.debian.org|${DEBIAN_MIRROR}|g" /etc/apt/sources.list.d/debian.sources; \
     fi; \
-    printf '%s\n' 'Acquire::Retries "3";' 'Acquire::http::Timeout "60";' \
-      'Acquire::https::Timeout "60";' > /etc/apt/apt.conf.d/80-tga3-network; \
+    printf '%s\n' 'Acquire::Retries "3";' 'Acquire::http::Timeout "60";' 'Acquire::https::Timeout "60";' > /etc/apt/apt.conf.d/80-tga3-network; \
     apt-get update; \
     apt-get install -y --no-install-recommends \
       ca-certificates curl wget git jq vim-tiny less procps iproute2 iputils-ping \
@@ -32,43 +19,44 @@ RUN set -eu; \
       unzip p7zip-full xz-utils file bsdmainutils xxd binutils elfutils \
       strace ltrace tmux openssl nmap socat netcat-traditional gdb php-cli ruby \
       default-mysql-client redis-tools postgresql-client smbclient \
-      libimage-exiftool-perl ripgrep; \
-    apt-get clean; \
-    rm -rf /var/lib/apt/lists/*
-
-# Match StrikeAgent optional packages and its skip-on-unavailable policy.
-# Persist outcomes so verification exposes absent optional scanners.
-RUN set -eu; \
+      libimage-exiftool-perl ripgrep ncat gdbserver gobuster dirb hydra john \
+      sslscan foremost steghide ffuf masscan whatweb tshark libmagic1 libcurl4; \
     mkdir -p /opt/tga3; \
     : > /opt/tga3/tool-install-status.tsv; \
-    apt-get update; \
-    for package in \
-      ncat gdbserver sqlmap nikto gobuster dirb wfuzz hydra john \
-      radare2 binwalk sslscan foremost steghide python3-impacket \
-      python3-pycryptodome python3-sympy python3-bs4 python3-pil \
-      ffuf feroxbuster masscan whatweb wafw00f hashid enum4linux tshark checksec; do \
-      if apt-get install -y --no-install-recommends "$package"; then \
+    for package in nikto radare2 feroxbuster enum4linux; do \
+      if apt-get -s install --no-install-recommends "$package" > /tmp/optional-plan 2>&1 \
+         && ! grep -Eq '^Inst (python3([ .:-]|$)|libpython3[.][0-9]+-stdlib)' /tmp/optional-plan; then \
+        apt-get install -y --no-install-recommends "$package"; \
         printf '%s\tinstalled\n' "$package" >> /opt/tga3/tool-install-status.tsv; \
-      else \
-        printf '%s\tunavailable\n' "$package" >> /opt/tga3/tool-install-status.tsv; \
-        echo "[tga3] optional package unavailable: $package"; \
-      fi; \
+      else printf '%s\tunavailable\n' "$package" >> /opt/tga3/tool-install-status.tsv; fi; \
     done; \
-    apt-get clean; \
-    rm -rf /var/lib/apt/lists/*
+    test ! -e /usr/bin/python3; \
+    ln -s /usr/local/bin/python3 /usr/bin/python3; \
+    apt-get clean; rm -rf /var/lib/apt/lists/* /tmp/optional-plan
 
-COPY docker/ctf-python-requirements.txt /opt/tga3/ctf-python-requirements.txt
-ENV PATH="/opt/tga3-venv/bin:${PATH}"
-RUN python3 -m venv /opt/tga3-venv \
-    && pip install --no-cache-dir --upgrade pip setuptools wheel \
-    && pip install --no-cache-dir -r /opt/tga3/ctf-python-requirements.txt
+FROM system AS python-wheels
+# Compilation tools specific to building Python wheels stay in this stage.
+RUN apt-get update && apt-get install -y --no-install-recommends libcurl4-openssl-dev \
+    && python -m pip install --no-cache-dir setuptools==80.9.0 wheel==0.45.1
+COPY docker/ctf-python-requirements.txt docker/build-python-tools.py docker/python-tool-compat.py docker/python-constraints.txt /build/
+RUN python /build/build-python-tools.py \
+    && python -m pip wheel --no-cache-dir --wheel-dir /wheels \
+       --constraint /build/python-constraints.txt \
+       --requirement /build/ctf-python-requirements.txt /wheels/wfuzz-*.whl /wheels/binwalk-*.whl
 
+FROM system AS runtime
 ARG TGA3_WORKER_UID=1000
 ARG TGA3_WORKER_GID=1000
 RUN groupadd --gid "${TGA3_WORKER_GID}" tga3 \
     && useradd --uid "${TGA3_WORKER_UID}" --gid "${TGA3_WORKER_GID}" --create-home --shell /bin/bash tga3 \
-    && install -d -o "${TGA3_WORKER_UID}" -g "${TGA3_WORKER_GID}" \
-       /workspace /logs /findings /home/tga3/.cache
-
-ENV HOME=/home/tga3
+    && install -d -o "${TGA3_WORKER_UID}" -g "${TGA3_WORKER_GID}" /workspace /logs /findings /home/tga3/.cache \
+    && python -c 'from pathlib import Path; import re; p=Path("/etc/profile"); s=p.read_text(); s,n=re.subn(r"(?m)^(\s*)PATH=\"([^\"]*)\"$",lambda m:m[1]+"PATH=\"${PATH:-"+m[2]+"}\"",s); assert n==2,n; p.write_text(s)'
+# Mount wheel artifacts at build time; do not retain another copy in a layer.
+RUN --mount=type=bind,from=python-wheels,source=/wheels,target=/wheels \
+    python -m pip install --no-cache-dir --no-index /wheels/*.whl \
+    && python -m pip check \
+    && python -c 'import importlib.metadata as m; print("\n".join(sorted(d.metadata["Name"]+"=="+d.version for d in m.distributions())))' > /opt/tga3/python-packages.lock \
+    && python -c 'from pathlib import Path; import hashlib,os,z3; d=Path(z3.__file__).parent/"lib"; a=d/"libz3.so"; b=d/"libz3.so.5.3"; same=a.exists() and b.exists() and hashlib.sha256(a.read_bytes()).digest()==hashlib.sha256(b.read_bytes()).digest(); same and b.unlink(); same and os.link(a,b)' \
+    && chown -R "${TGA3_WORKER_UID}:${TGA3_WORKER_GID}" /usr/local/lib/python3.12/site-packages /usr/local/bin
+ENV HOME=/home/tga3 PATH=/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin
 WORKDIR /workspace

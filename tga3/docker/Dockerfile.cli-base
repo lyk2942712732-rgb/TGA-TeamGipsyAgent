@@ -1,5 +1,5 @@
 ARG CTF_BASE_IMAGE=tga3-ctf-base:local
-FROM ${CTF_BASE_IMAGE}
+FROM ${CTF_BASE_IMAGE} AS node-runtime
 
 USER root
 ARG NODE_DOWNLOAD_BASE=https://nodejs.org/dist
@@ -15,5 +15,6 @@ RUN set -eu; \
       "${NODE_DOWNLOAD_BASE}/v22.22.0/${archive}" -o "/tmp/${archive}"; \
     echo "${checksum}  /tmp/${archive}" | sha256sum -c -; \
     tar -xJf "/tmp/${archive}" -C /usr/local --strip-components=1; \
-    rm "/tmp/${archive}"; \
+    rm "/tmp/${archive}"; rm -rf /usr/local/include/node; \
+    chown tga3:tga3 /usr/local/bin; \
     node --version; npm --version

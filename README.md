@@ -23,7 +23,7 @@ TGA3 使用独立 Debian Bookworm 容器中的 Codex CLI 和 Claude Code CLI 并
 
 ```bash
 cd tga3
-python -m pip install -e ".[dev]"
+python -m pip install -e ".[dev,control]"
 pytest
 ruff check src tests
 

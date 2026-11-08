@@ -1,7 +1,26 @@
-# Match StrikeAgent's TSecBench pip security-tool baseline (Python 3.12).
-# Project runtime dependencies are installed separately from pyproject.toml.
-pwntools
-pycryptodome
-gmpy2
-z3-solver
-ropper
+# One shared Python 3.12 site-packages for security tools and project runtime.
+# Legacy wfuzz/binwalk wheels are built from hash-verified sources separately.
+pwntools==4.15.0
+pycryptodome==4.3.0
+gmpy2==2.3.2
+z3-solver==5.3.3.0
+ropper==1.13.13
+# Binwalk 2.x requires CS_ARCH_ARM64, retained by stable Capstone 5.
+capstone==5.0.9
+sympy==1.14.0
+Pillow==13.0.0
+beautifulsoup4==4.15.0
+impacket==0.13.1
+sqlmap==1.10.11
+wafw00f==2.4.2
+hashID==3.1.4
+pycurl==7.49.0
+chardet==5.2.0
+pyparsing==3.2.5
+# Older security tools still import pkg_resources.
+setuptools==80.9.0
+httpx==0.28.1
+websockets==15.0.1
+mcp==1.30.0
+pydantic==2.14.3
+PyYAML==6.0.3
