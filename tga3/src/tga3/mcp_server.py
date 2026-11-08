@@ -86,21 +86,24 @@ def build_scout_mcp(config: TGA3Config, store: ScoutIntelStore, *, aoe=None) -> 
     if aoe is not None:
         @mcp.tool()
         async def scout_register_questions(questions: list[AOEQuestionInput], ctx: Context) -> dict[str, Any]:
-            """AOE pre-phase only: register original question metadata and downloaded attachments.
+            """AOE pre-phase only: register original question metadata and available local attachments.
 
             source_key is the original gateway ID or a stable label from user text. Preserve description,
             shared user constraints and submission requirements. Difficulty is supplied information only.
             attachments are existing local /inputs/... or /workspace/... files, not remote URLs.
-            Multiple batches allowed; identical retries are deduplicated. Do not omit failed downloads.
+            If an attachment entry point is unknown, leave attachments empty and note it in connection_info.
+            Register without waiting; never guess attachment URLs, API endpoints or parameters.
+            Multiple batches allowed; identical retries are deduplicated. Record known download failures.
             """
             task_id, _ = bound_identity(ctx, scout=True)
             return await aoe.register_questions(task_id, questions)
 
         @mcp.tool()
         async def scout_finish_collection(expected_count: int, ctx: Context) -> dict[str, Any]:
-            """Close AOE collection only after the complete source list and all required files are registered.
+            """Close AOE collection after the complete source list and available local files are registered.
 
             expected_count must equal the complete list count (including all gateway pages).
+            Unknown attachment entry points may remain empty; never guess them to finish collection.
             Scout finishes after collection; there are no further AOE Scout rounds.
             """
             task_id, _ = bound_identity(ctx, scout=True)
