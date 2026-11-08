@@ -6,19 +6,21 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import httpx
 
+from .action_hook import HookActionRecorder
 from .blackboard_hook import checkpoint
 
 
 class HookService:
     def __init__(self):
         self.client = httpx.Client(timeout=10, trust_env=False, limits=httpx.Limits(keepalive_expiry=120))
+        self.actions = HookActionRecorder()
         service = self
 
         class Handler(BaseHTTPRequestHandler):
             def do_POST(self):
                 try:
                     event = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
-                    result = checkpoint(event, client=service.client)
+                    result = checkpoint(event, client=service.client, record_action=service.actions.record)
                     status = 200
                 except Exception as exc:
                     result, status = {'error': f'{type(exc).__name__}: {exc}'}, 500

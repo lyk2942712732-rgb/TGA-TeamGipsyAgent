@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import re
+import threading
 from pathlib import Path
 
 from .action_journal import ActionJournal
@@ -19,6 +20,7 @@ def hook_journal() -> ActionJournal:
                   "runtime": os.environ["TGA3_AGENT_RUNTIME"]},
         secret=os.environ.get("TGA3_API_KEY", ""),
         output_directory=Path(os.environ.get("TGA3_WORKSPACE", "/workspace")),
+        snapshot_on_init=False,
     )
 
 
@@ -34,10 +36,10 @@ def _restore(journal: ActionJournal, state: dict) -> dict:
     return record
 
 
-def record_tool(event: dict) -> dict | None:
+def record_tool(event: dict, *, journal: ActionJournal | None = None) -> dict | None:
     if os.environ.get("TGA3_AGENT_ROLE") != "worker" or not event.get("tool_use_id"):
         return None
-    journal = hook_journal()
+    journal = journal if journal is not None else hook_journal()
     native_id = str(event["tool_use_id"])
     generation = event.get("_tga_generation", os.environ.get("TGA3_CLI_GENERATION", ""))
     token = hashlib.sha256(f"{generation}:{native_id}".encode()).hexdigest()
@@ -51,11 +53,12 @@ def record_tool(event: dict) -> dict | None:
             inputs = {"command": inputs}
     if event["hook_event_name"] == "PreToolUse":
         if not path.exists():
-            record = journal.record(native_id, tool, inputs=inputs, cwd=event.get("cwd", "/workspace"))
+            record = journal.record(native_id, tool, inputs=inputs, cwd=event.get("cwd", "/workspace"),
+                                    before_execution=True)
             journal._write(path, json.dumps({"generation": generation, "record": record,
                                             "snapshot": journal.output_snapshots[native_id]}))
         return None
-    if path.is_file():
+    if native_id not in journal.pending and path.is_file():
         _restore(journal, json.loads(path.read_text(encoding="utf-8")))
     response = event.get("tool_response", event.get("error", ""))
     code = response.get("exit_code") if isinstance(response, dict) else None
@@ -73,8 +76,8 @@ def record_tool(event: dict) -> dict | None:
     return record
 
 
-def interrupt_hook_actions(generation: str) -> None:
-    journal = hook_journal()
+def interrupt_hook_actions(generation: str, *, journal: ActionJournal | None = None) -> None:
+    journal = journal if journal is not None else hook_journal()
     for path in _pending_directory(journal).glob("*.json"):
         state = json.loads(path.read_text(encoding="utf-8"))
         if state["generation"] != generation:
@@ -82,6 +85,47 @@ def interrupt_hook_actions(generation: str) -> None:
         record = _restore(journal, state)
         journal.record(record["tool_call_id"], record["action"]["tool"], status="interrupted")
         path.unlink()
+
+
+class HookActionRecorder:
+    """One resident journal per CLI invocation; tools retain individual snapshots.
+
+    The lock covers bookkeeping, not command execution or remote checkpoints.
+    Pending files remain the recovery source when the Worker process restarts.
+    """
+
+    def __init__(self):
+        self.lock = threading.RLock()
+        self.generation: str | None = None
+        self.journal: ActionJournal | None = None
+
+    def start(self, generation: str) -> None:
+        with self.lock:
+            if self.generation is not None:
+                raise RuntimeError("Previous hook generation has not finished")
+            self.generation = generation
+
+    def record(self, event: dict) -> dict | None:
+        if os.environ.get("TGA3_AGENT_ROLE") != "worker" or not event.get("tool_use_id"):
+            return None
+        generation = event.get("_tga_generation", os.environ.get("TGA3_CLI_GENERATION", ""))
+        with self.lock:
+            # A late HTTP request from an ended CLI must not recreate its action.
+            if self.generation is None or generation != self.generation:
+                return None
+            if self.journal is None:
+                self.journal = hook_journal()
+            return record_tool(event, journal=self.journal)
+
+    def interrupt(self, generation: str) -> None:
+        with self.lock:
+            if self.generation != generation:
+                return
+            try:
+                interrupt_hook_actions(generation, journal=self.journal)
+            finally:
+                self.journal = None
+                self.generation = None
 
 
 def result_context(record: dict) -> str:

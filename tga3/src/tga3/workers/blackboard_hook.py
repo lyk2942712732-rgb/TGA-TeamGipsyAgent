@@ -28,12 +28,13 @@ def publications_changed():
     return changed
 
 
-def checkpoint(event: dict, *, client=None) -> dict:
+def checkpoint(event: dict, *, client=None, record_action=None) -> dict:
     if os.environ.get("TGA3_AGENT_ROLE") not in {"scout", "worker"}:
         return {}
     event_name = event.get("hook_event_name", "PreToolUse")
     post_tool = event_name in {"PostToolUse", "PostToolUseFailure"}
-    record = record_tool(event) if post_tool else None
+    record_action = record_action or record_tool
+    record = record_action(event) if post_tool else None
     if post_tool and not publications_changed():
         return ({"hookSpecificOutput": {"hookEventName": event_name, "additionalContext": result_context(record)}}
                 if record else {})
@@ -73,13 +74,16 @@ def checkpoint(event: dict, *, client=None) -> dict:
     send_initial = (initial.get("generation") == experience_generation and initial.get("key")
                     and (not initial_ack_file.is_file() or initial_ack_file.read_text() != initial["key"]))
     start_file = state_dir / "aoe-start-token"
-    force_start = bool(start_token and event_name in {"UserPromptSubmit", "PreToolUse"} and
-                       (not start_file.is_file() or start_file.read_text() != start_token))
+    force_start = bool(
+        start_token and event_name in {"UserPromptSubmit", "PreToolUse"}
+        and (not start_file.is_file() or start_file.read_text() != start_token)
+    )
     base = os.environ["TGA3_BLACKBOARD_MCP_URL"].rstrip("/").removesuffix("/mcp")
     response = (client.post if client is not None else httpx.post)(
         f"{base}/internal/blackboard/{os.environ['TGA3_TASK_ID']}/{os.environ['TGA3_AGENT_ID']}/checkpoint",
         json={
-            "ack": previous.get("delivery_id", "") if not post_tool and previous.get("generation") == generation else "",
+            "ack": (previous.get("delivery_id", "")
+                    if not post_tool and previous.get("generation") == generation else ""),
             "final": final or force_start,
             "ack_only": bool(event.get("ack_only")),
             "initial_only": event.get("hook_event_name") == "UserPromptSubmit" and not force_start,
@@ -102,7 +106,7 @@ def checkpoint(event: dict, *, client=None) -> dict:
         start_file.write_text(start_token)
     context = delivery.get("context", "")
     if event_name == "PreToolUse" and not ((final or force_start) and context):
-        record_tool(event)
+        record_action(event)
     if context:
         ack_file.write_text(json.dumps({"generation": generation, "delivery_id": delivery["delivery_id"]}))
     parts = []

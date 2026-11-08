@@ -14,7 +14,7 @@ from ..action_logs import action_log_name, read_action_log
 
 class ActionJournal:
     def __init__(self, directory: Path, *, identity: dict, secret: str = "", enabled: bool = True,
-                 output_directory: Path | None = None):
+                 output_directory: Path | None = None, snapshot_on_init: bool = True):
         self.directory = directory
         self.identity = {**identity, "agent_id": identity.get("agent_id") or "agent"}
         self.secret, self.enabled = secret, enabled
@@ -23,7 +23,9 @@ class ActionJournal:
         self.output_directory = output_directory or directory.parent / "workspace"
         self.pending: dict[str, dict] = {}
         self.output_snapshots: dict[str, dict] = {}
-        self.output_baseline = self._snapshot()
+        # Stream starts may arrive after a fast command has already written files.
+        # Synchronous hooks instead capture their own baseline before execution.
+        self.output_baseline = self._snapshot() if snapshot_on_init else None
 
     def _snapshot(self) -> dict:
         result = {}
@@ -104,11 +106,13 @@ class ActionJournal:
         return relative
 
     def record(self, tool_call_id: str, tool: str, *, inputs=None, result=None, status="started",
-               cwd: str | None = None) -> dict | None:
+               cwd: str | None = None, before_execution: bool = False) -> dict | None:
         if not self.enabled:
             return
         now = datetime.now(UTC).isoformat()
         current_outputs = self._snapshot()
+        if self.output_baseline is None:
+            self.output_baseline = current_outputs
         record = self.pending.get(tool_call_id, {
             "action_id": self.agent_prefix + "-action-" + uuid4().hex, "tool_call_id": tool_call_id,
             "action": {"tool": tool}, "started_at": now,
@@ -123,7 +127,8 @@ class ActionJournal:
             record["action"]["cwd"] = cwd
         if status == "started":
             # Stream delivery may lag behind a very fast command's file writes.
-            self.output_snapshots.setdefault(tool_call_id, self.output_baseline)
+            self.output_snapshots.setdefault(tool_call_id,
+                                             current_outputs if before_execution else self.output_baseline)
         else:
             before = self.output_snapshots.pop(tool_call_id, self.output_baseline)
             attachments = sorted(path for path, value in current_outputs.items() if before.get(path) != value)

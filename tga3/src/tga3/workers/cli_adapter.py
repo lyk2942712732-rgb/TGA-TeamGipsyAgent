@@ -240,7 +240,8 @@ class CliAdapter(AgentAdapter):
             assignment = {"attempt_id": os.environ.get("TGA3_ATTEMPT_ID"),
                           "addresses": json.loads(os.environ.get("TGA3_TARGET_ADDRESSES", "[]"))}
             prompt = ("TGA runtime target assignment (current; supersedes prior attempt addresses): "
-                      + json.dumps(assignment) + "\nThe system owns platform start/close; use the assigned target.\n\n" + prompt)
+                      + json.dumps(assignment)
+                      + "\nThe system owns platform start/close; use the assigned target.\n\n" + prompt)
         if os.environ.get("TGA3_AGENT_ROLE") == "worker":
             from .experience_catalog import initial_catalog
 
@@ -252,16 +253,22 @@ class CliAdapter(AgentAdapter):
                 from .hook_service import HookService
                 self.hook_service = HookService()
             env['TGA3_HOOK_PORT'] = str(self.hook_service.port)
-        process = await asyncio.create_subprocess_exec(
-            *command,
-            cwd=self.output_dir,
-            env=env,
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            limit=8 * 1024 * 1024,
-            start_new_session=os.name == "posix",
-        )
+            self.hook_service.actions.start(env["TGA3_CLI_GENERATION"])
+        try:
+            process = await asyncio.create_subprocess_exec(
+                *command,
+                cwd=self.output_dir,
+                env=env,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                limit=8 * 1024 * 1024,
+                start_new_session=os.name == "posix",
+            )
+        except BaseException:
+            if self.hook_service is not None:
+                self.hook_service.actions.interrupt(env["TGA3_CLI_GENERATION"])
+            raise
 
         async def read_stdout() -> None:
             nonlocal last_activity
@@ -322,9 +329,10 @@ class CliAdapter(AgentAdapter):
                 await self._terminate(process)
             finally:
                 if os.environ.get("TGA3_AGENT_ROLE") == "worker":
-                    from .action_hook import interrupt_hook_actions
-                    interrupt_hook_actions(env["TGA3_CLI_GENERATION"])
+                    self.hook_service.actions.interrupt(env["TGA3_CLI_GENERATION"])
                     self.journal.enabled = True
+                elif self.hook_service is not None:
+                    self.hook_service.actions.interrupt(env["TGA3_CLI_GENERATION"])
                 try:
                     self.journal.interrupt_pending()
                 finally:
