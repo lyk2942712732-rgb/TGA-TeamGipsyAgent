@@ -52,8 +52,9 @@ class TargetSpec(BaseModel):
 
 
 class TargetInstances:
-    def __init__(self, config, *, clock=time.time, client: httpx.AsyncClient | None = None):
+    def __init__(self, config, *, clock=time.time, client: httpx.AsyncClient | None = None, on_change=None):
         self.config, self.clock, self.client = config, clock, client
+        self.on_change = on_change
         self.lock = asyncio.Lock()
         self.records: dict[str, dict] = {}
         self._specs: dict[UUID, tuple[dict, TargetSpec]] = {}
@@ -72,6 +73,8 @@ class TargetInstances:
             temporary.replace(path)
         finally:
             temporary.unlink(missing_ok=True)
+        if self.on_change:
+            self.on_change(UUID(parent))
 
     def spec(self, question) -> TargetSpec:
         cached = self._specs.get(question.id)
@@ -173,7 +176,8 @@ class TargetInstances:
                 elif status >= 400:
                     record.update(state="waiting", owned=previously_owned, reason=f"http_{status}", retry_at=now + 30)
                 elif isinstance(body, dict) and body.get("code") not in (None, 0, 200, "ok", "success"):
-                    record.update(state="waiting", owned=previously_owned, reason="application_error", retry_at=now + 30)
+                    record.update(state="waiting", owned=previously_owned,
+                                  reason="application_error", retry_at=now + 30)
                 else:
                     record["owned"] = True
                     addresses = self._addresses(body, spec.addresses_path)

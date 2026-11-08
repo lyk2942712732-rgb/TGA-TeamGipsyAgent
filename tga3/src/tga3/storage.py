@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from collections import defaultdict
 from collections.abc import Callable, Sequence
+from functools import wraps
 from pathlib import Path
 from typing import Any, Protocol
 from uuid import UUID, uuid4
@@ -53,6 +55,8 @@ class Storage(Protocol):
     async def register_artifact(self, artifact: Artifact) -> Artifact: ...
     async def register_input_file(self, item: InputFile) -> InputFile: ...
     async def list_input_files(self, task_id: UUID) -> list[InputFile]: ...
+    async def list_question_input_files(self, parent_id: UUID) -> list[InputFile]: ...
+    def subscribe_changes(self, callback: Callable[[str, Any], None]) -> Callable[[], None]: ...
     async def publish(self, task_id: UUID, actor: Actor, request: PublishRequest) -> BlackboardEntry: ...
     async def list_entries(
         self, task_id: UUID, *, after_seq: int = 0, up_to_seq: int | None = None, limit: int = 500
@@ -100,8 +104,37 @@ def _validate_publish(
             raise FindingRejectedError(f"final candidate references unknown findings: {', '.join(missing)}")
 
 
+def _changed(kind):
+    """Notify only after the mutation (including its transaction) has finished."""
+    def decorate(method):
+        @wraps(method)
+        async def wrapped(self, *args, **kwargs):
+            value = await method(self, *args, **kwargs)
+            for callback in tuple(self._change_listeners):
+                try:
+                    callback(kind, value)
+                except Exception:
+                    # Persistence already succeeded; reconciliation is the fallback.
+                    logging.getLogger(__name__).exception("Storage change notification failed")
+            return value
+        return wrapped
+    return decorate
+
+
 class QuestionScopes:
     """Derived serialization provenance; no duplicate scope columns in evidence tables."""
+
+    def __init__(self):
+        self._change_listeners = []
+
+    def subscribe_changes(self, callback):
+        self._change_listeners.append(callback)
+
+        def unsubscribe():
+            if callback in self._change_listeners:
+                self._change_listeners.remove(callback)
+
+        return unsubscribe
 
     def _remember_task(self, task: TaskRun) -> TaskRun:
         if task.parent_task_id is not None:
@@ -122,6 +155,7 @@ class InMemoryStorage(QuestionScopes):
         return next((entry for entry in self.entries[task_id]
                      if entry.actor.agent_id == agent_id and entry.idempotency_key == key), None)
     def __init__(self) -> None:
+        super().__init__()
         self.tasks: dict[UUID, TaskRun] = {}
         self._question_ids: set[UUID] = set()
         self.agents: dict[tuple[UUID, str], AgentRun] = {}
@@ -133,6 +167,7 @@ class InMemoryStorage(QuestionScopes):
         self.writeups: dict[UUID, Writeup] = {}
         self._locks: defaultdict[UUID, asyncio.Lock] = defaultdict(asyncio.Lock)
 
+    @_changed('task')
     async def create_task(self, title: str, scene_id: str, task_id: UUID | None = None, *,
                           parent_task_id: UUID | None = None, metadata: dict | None = None) -> TaskRun:
         if parent_task_id is not None:
@@ -187,6 +222,7 @@ class InMemoryStorage(QuestionScopes):
         self.tasks.pop(task_id, None)
         self._question_ids.discard(task_id)
 
+    @_changed('task')
     async def update_task(
         self, task_id: UUID, *, state: RunState | None = None, final_snapshot_seq: int | None = None,
         metadata: dict | None = None,
@@ -204,6 +240,7 @@ class InMemoryStorage(QuestionScopes):
             self.tasks[task_id] = run
             return run
 
+    @_changed('task')
     async def mutate_task_metadata(self, task_id, transform) -> TaskRun:
         async with self._locks[task_id]:
             current = await self.get_task(task_id)
@@ -213,6 +250,7 @@ class InMemoryStorage(QuestionScopes):
             self.tasks[task_id] = updated
             return updated
 
+    @_changed('agent')
     async def upsert_agent(self, run: AgentRun) -> AgentRun:
         run = self._scoped(run)
         self.agents[(run.task_id, run.agent_id)] = run
@@ -227,6 +265,7 @@ class InMemoryStorage(QuestionScopes):
     async def list_agents(self, task_id: UUID) -> list[AgentRun]:
         return [value for (tid, _), value in self.agents.items() if tid == task_id]
 
+    @_changed('agent')
     async def update_agent(self, task_id: UUID, agent_id: str, **changes: Any) -> AgentRun:
         run = await self.get_agent(task_id, agent_id)
         allowed = set(AgentRun.model_fields) - {"task_id", "agent_id"}
@@ -240,6 +279,7 @@ class InMemoryStorage(QuestionScopes):
         self.agents[(task_id, agent_id)] = run
         return run
 
+    @_changed('agent')
     async def mutate_agent_metadata(self, task_id, agent_id, transform) -> AgentRun:
         async with self._locks[task_id]:
             current = await self.get_agent(task_id, agent_id)
@@ -257,6 +297,7 @@ class InMemoryStorage(QuestionScopes):
         self.artifacts[artifact.id] = artifact
         return artifact
 
+    @_changed('input')
     async def register_input_file(self, item: InputFile) -> InputFile:
         await self.get_task(item.task_id)
         item = self._scoped(item)
@@ -269,6 +310,11 @@ class InMemoryStorage(QuestionScopes):
         await self.get_task(task_id)
         return [item for item in self.input_files.values() if item.task_id == task_id]
 
+    async def list_question_input_files(self, parent_id: UUID) -> list[InputFile]:
+        questions = {q.id for q in self.tasks.values() if q.parent_task_id == parent_id}
+        return [item for item in self.input_files.values() if item.task_id in questions]
+
+    @_changed('board')
     async def publish(self, task_id: UUID, actor: Actor, request: PublishRequest) -> BlackboardEntry:
         async with self._locks[task_id]:
             task = await self.get_task(task_id)
@@ -407,6 +453,7 @@ class PostgresStorage(QuestionScopes):
     """PostgreSQL store. Per-task advisory locks serialize sequence allocation."""
 
     def __init__(self, pool: Any) -> None:
+        super().__init__()
         self.pool = pool
         self._question_ids: set[UUID] = set()
 
@@ -461,6 +508,7 @@ class PostgresStorage(QuestionScopes):
     async def _lock(conn: Any, task_id: UUID) -> None:
         await conn.execute("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", str(task_id))
 
+    @_changed('task')
     async def create_task(self, title: str, scene_id: str, task_id: UUID | None = None, *,
                           parent_task_id: UUID | None = None, metadata: dict | None = None) -> TaskRun:
         if parent_task_id is not None:
@@ -523,6 +571,7 @@ class PostgresStorage(QuestionScopes):
             raise NotFoundError(f"task not found: {task_id}")
         self._question_ids.discard(task_id)
 
+    @_changed('task')
     async def update_task(
         self, task_id: UUID, *, state: RunState | None = None, final_snapshot_seq: int | None = None,
         metadata: dict | None = None,
@@ -540,6 +589,7 @@ class PostgresStorage(QuestionScopes):
             raise NotFoundError(f"task not found: {task_id}")
         return self._remember_task(_task(row))
 
+    @_changed('task')
     async def mutate_task_metadata(self, task_id, transform) -> TaskRun:
         async with self.pool.acquire() as conn, conn.transaction():
             row = await conn.fetchrow("SELECT * FROM task_runs WHERE id=$1 FOR UPDATE", task_id)
@@ -550,6 +600,7 @@ class PostgresStorage(QuestionScopes):
                                       "WHERE id=$1 RETURNING *", task_id, _json(metadata))
             return self._remember_task(_task(row))
 
+    @_changed('agent')
     async def upsert_agent(self, run: AgentRun) -> AgentRun:
         row = await self.pool.fetchrow(
             """INSERT INTO agent_runs(task_id,agent_id,sdk,desired_state,actual_state,provider_id,model_id,protocol,
@@ -590,6 +641,7 @@ class PostgresStorage(QuestionScopes):
             for row in await self.pool.fetch("SELECT * FROM agent_runs WHERE task_id=$1 ORDER BY agent_id", task_id)
         ]
 
+    @_changed('agent')
     async def update_agent(self, task_id: UUID, agent_id: str, **changes: Any) -> AgentRun:
         current = await self.get_agent(task_id, agent_id)
         allowed = set(AgentRun.model_fields) - {"task_id", "agent_id"}
@@ -614,6 +666,7 @@ class PostgresStorage(QuestionScopes):
             raise NotFoundError(f"agent not found: {task_id}/{agent_id}")
         return self._scoped(_agent(row))
 
+    @_changed('agent')
     async def mutate_agent_metadata(self, task_id, agent_id, transform) -> AgentRun:
         async with self.pool.acquire() as conn, conn.transaction():
             row = await conn.fetchrow(
@@ -651,6 +704,7 @@ class PostgresStorage(QuestionScopes):
         data["created_by"] = _object(data["created_by"])
         return self._scoped(Artifact.model_validate(data))
 
+    @_changed('input')
     async def register_input_file(self, item: InputFile) -> InputFile:
         await self.get_task(item.task_id)
         row = await self.pool.fetchrow(
@@ -672,6 +726,14 @@ class PostgresStorage(QuestionScopes):
         rows = await self.pool.fetch("SELECT * FROM input_files WHERE task_id=$1 ORDER BY created_at,id", task_id)
         return [self._scoped(InputFile.model_validate(dict(row))) for row in rows]
 
+    async def list_question_input_files(self, parent_id: UUID) -> list[InputFile]:
+        rows = await self.pool.fetch(
+            "SELECT f.* FROM input_files f JOIN task_runs q ON q.id=f.task_id "
+            "WHERE q.parent_task_id=$1 ORDER BY f.task_id,f.id", parent_id,
+        )
+        return [self._scoped(InputFile.model_validate(dict(row))) for row in rows]
+
+    @_changed('board')
     async def publish(self, task_id: UUID, actor: Actor, request: PublishRequest) -> BlackboardEntry:
         await self.get_task(task_id)
         async with self.pool.acquire() as conn, conn.transaction():

@@ -8,6 +8,7 @@ import json
 import mimetypes
 import time
 from collections import defaultdict
+from copy import deepcopy
 from pathlib import Path
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4, uuid5
@@ -40,7 +41,7 @@ TERMINAL = {RunState.COMPLETED, RunState.FAILED, RunState.CANCELLED}
 
 
 class AOERuntime:
-    def __init__(self, coordinator: TaskCoordinator, *, clock=time.time):
+    def __init__(self, coordinator: TaskCoordinator, *, clock=time.time, reconcile_seconds=5.0):
         self.coordinator = coordinator
         self.config, self.storage = coordinator.config, coordinator.storage
         self.containers, self.board, self.events = coordinator.containers, coordinator.blackboard, coordinator.events
@@ -49,15 +50,90 @@ class AOERuntime:
         self.automation = None
         self._checked_sequences: dict[UUID, int] = {}
         self._manifest_digests: dict[UUID, str] = {}
-        self.targets = TargetInstances(self.config, clock=lambda: self.clock())
+        self._collection_digests: dict[UUID, str] = {}
+        self._manifest_sources: dict[UUID, tuple] = {}
+        self._input_files: dict[UUID, list[InputFile]] = {}
+        self._parents: dict[UUID, UUID] = {}
+        self._agent_sources: dict[tuple[UUID, str], tuple] = {}
+        self._wakeups: dict[UUID, asyncio.Event] = {}
+        self._next_due: dict[UUID, float | None] = {}
+        self.reconcile_seconds = reconcile_seconds
+        self._unsubscribe = self.storage.subscribe_changes(self._storage_changed)
+        self.targets = TargetInstances(self.config, clock=lambda: self.clock(), on_change=self.wake)
         self._recovering: set[UUID] = set()
         self._target_jobs: dict[UUID, asyncio.Task] = {}
         self._target_claims: dict[UUID, tuple[str, ...]] = {}
         self._target_closes: dict[UUID, asyncio.Task] = {}
 
+    def wake(self, parent_id: UUID) -> None:
+        if event := self._wakeups.get(parent_id):
+            event.set()
+
+    def _storage_changed(self, kind, value) -> None:
+        if kind == "task":
+            if value.scene_id != "aoe":
+                return
+            parent_id = value.parent_task_id or value.id
+            self._parents[value.id] = parent_id
+        else:
+            parent_id = self._parents.get(value.task_id)
+            if parent_id is None:
+                return
+            if kind == "input":
+                self._input_files.pop(value.task_id, None)
+                self._manifest_sources.pop(value.task_id, None)
+            elif kind == "agent":
+                # Token/accounting and acknowledgement metadata do not affect scheduling.
+                key = (value.task_id, value.agent_id)
+                source = (value.desired_state, value.actual_state, value.container_id, value.last_error,
+                          *(value.metadata.get(k) for k in ("aoe_paused", "scout_phase", "aoe_attempt_id",
+                            "current_question_id", "current_question_title", "cli_session_id")))
+                if self._agent_sources.get(key) == source:
+                    return
+                self._agent_sources[key] = source
+        self.wake(parent_id)
+
     async def restore_paths(self) -> None:
         for question in await self.storage.list_questions():
             self.config.register_question_path(question.parent_task_id, question.id)
+            self._parents[question.id] = question.parent_task_id
+
+    async def _attachments(self, question_id: UUID) -> list[InputFile]:
+        if question_id not in self._input_files:
+            files = await self.storage.list_input_files(question_id)
+            self._input_files[question_id] = sorted(files, key=lambda f: (f.created_at, f.id))
+        return self._input_files[question_id]
+
+    async def _reconcile_inputs(self, parent_id: UUID, questions: list[TaskRun]) -> None:
+        # One batch query also recovers a missed input notification; no N+1 reads.
+        grouped = defaultdict(list)
+        for item in await self.storage.list_question_input_files(parent_id):
+            grouped[item.task_id].append(item)
+        for question in questions:
+            files = sorted(grouped[question.id], key=lambda f: (f.created_at, f.id))
+            if files != self._input_files.get(question.id):
+                self._manifest_sources.pop(question.id, None)
+                self._input_files[question.id] = files
+
+    async def _update_agent(self, current: AgentRun, **changes) -> AgentRun:
+        metadata = changes.get("metadata", {})
+        if (any(getattr(current, k) != v for k, v in changes.items() if k != "metadata")
+                or any(current.metadata.get(k) != v or k not in current.metadata for k, v in metadata.items())):
+            return await self.storage.update_agent(current.task_id, current.agent_id, **changes)
+        return current
+
+    async def _update_parent(self, current: TaskRun, *, state=None, metadata=None) -> TaskRun:
+        if (state is not None and current.state != state
+                or any(current.metadata.get(k) != v for k, v in (metadata or {}).items())):
+            return await self.storage.update_task(current.id, state=state, metadata=metadata)
+        return current
+
+    def _question_source(self, question: TaskRun) -> tuple:
+        fields = ("description", "source_key", "difficulty", "connection_info", "submission_instructions",
+                  "status", "registered_at", "solved_at", "scout_ready", "scout_phase", "attempts", "flag")
+        return (question.title, question.state, question.created_at, question.blackboard_seq,
+                *(question.metadata.get(k) for k in fields), self.targets.spec(question).model_dump(mode="json"),
+                self.targets.state(question.id))
 
     def _atomic_json(self, path: Path, value: dict) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -70,7 +146,7 @@ class AOERuntime:
 
     async def question_view(self, question: TaskRun) -> dict:
         attempts = question.metadata.get("attempts", [])
-        files = await self.storage.list_input_files(question.id)
+        files = await self._attachments(question.id)
         return {
             "question_id": str(question.id),
             "parent_task_id": str(question.parent_task_id),
@@ -123,17 +199,24 @@ class AOERuntime:
         }
 
     async def _save_question(self, question: TaskRun) -> None:
+        source = self._question_source(question)
+        path = self.config.task_path(question.id) / "question.json"
+        if self._manifest_sources.get(question.id) == source and path.is_file():
+            return
         value = await self.question_view(question)
         value["target"] = self.targets.spec(question).model_dump(mode="json")
         value["target_runtime"] = self.targets.state(question.id)
         digest = hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
         if self._manifest_digests.get(question.id) != digest:
-            self._atomic_json(self.config.task_path(question.id) / "question.json", value)
+            self._atomic_json(path, value)
             self._manifest_digests[question.id] = digest
+        elif not path.is_file():
+            self._atomic_json(path, value)
+        self._manifest_sources[question.id] = deepcopy(source)
 
-    async def _collection_manifest(self, parent_id: UUID) -> dict:
-        parent = await self.storage.get_task(parent_id)
-        questions = await self.storage.list_questions(parent_id)
+    async def _collection_manifest(self, parent_id: UUID, *, parent=None, questions=None) -> dict:
+        parent = parent if parent is not None else await self.storage.get_task(parent_id)
+        questions = questions if questions is not None else await self.storage.list_questions(parent_id)
         value = {
             "task_id": str(parent_id),
             "collection_complete": parent.metadata.get("collection_complete", False),
@@ -156,7 +239,11 @@ class AOERuntime:
                 for q in questions
             ],
         }
-        self._atomic_json(self.config.task_path(parent_id) / "questions.json", value)
+        path = self.config.task_path(parent_id) / "questions.json"
+        digest = hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
+        if self._collection_digests.get(parent_id) != digest or not path.is_file():
+            self._atomic_json(path, value)
+            self._collection_digests[parent_id] = digest
         return value
 
     async def _collecting_parent(self, task_id: UUID) -> TaskRun:
@@ -252,7 +339,8 @@ class AOERuntime:
                     legacy = hashlib.sha256(json.dumps({k: v for k, v in payload.items() if k != "target"},
                                                        ensure_ascii=False, sort_keys=True).encode()).hexdigest()
                     compatible = old.metadata.get("target") is None and spec.target.mode == "unknown"
-                    if old.metadata.get("registration_digest") not in ({fingerprint, legacy} if compatible else {fingerprint}):
+                    accepted = {fingerprint, legacy} if compatible else {fingerprint}
+                    if old.metadata.get("registration_digest") not in accepted:
                         raise ConflictError("Original question key already registered with different data")
                     if existing[spec.source_key].metadata.get("registration_complete"):
                         continue
@@ -265,7 +353,8 @@ class AOERuntime:
                     question_id,
                     parent_task_id=parent_id,
                     metadata={
-                        **{key: value for key, value in payload.items() if key not in {"title", "attachments", "target"}},
+                        **{key: value for key, value in payload.items()
+                           if key not in {"title", "attachments", "target"}},
                         "registration_digest": fingerprint,
                         "ordinal": len(existing),
                         "status": "preparing",
@@ -338,9 +427,9 @@ class AOERuntime:
                                                 metadata={"scout_phase": "completed"})
                 existing[spec.source_key] = await self.storage.get_task(question.id)
                 await self._save_question(existing[spec.source_key])
-            await self.storage.update_task(parent_id, state=RunState.RUNNING,
-                                           metadata={"aoe_scout_mode": "collection_only"})
-            manifest = await self._collection_manifest(parent_id)
+            parent = await self.storage.update_task(parent_id, state=RunState.RUNNING,
+                                                    metadata={"aoe_scout_mode": "collection_only"})
+            await self._collection_manifest(parent_id, parent=parent, questions=list(existing.values()))
             await self.events.emit(
                 parent_id,
                 actor=SYSTEM_ACTOR,
@@ -366,11 +455,15 @@ class AOERuntime:
                 raise ContractError("Collected question count does not match the complete source list")
             if not parent.metadata.get("collection_complete"):
                 await self._collecting_parent(parent_id)
-                await self.storage.update_task(parent_id, metadata={"collection_complete": True})
-            return {"saved": True, **await self._collection_manifest(parent_id)}
+                parent = await self.storage.update_task(parent_id, metadata={"collection_complete": True})
+            return {"saved": True, **await self._collection_manifest(parent_id, parent=parent, questions=questions)}
 
     async def run(self, parent_id: UUID, bindings: dict) -> None:
         scout_job = None
+        wakeup = self._wakeups.setdefault(parent_id, asyncio.Event())
+        self._parents[parent_id] = parent_id
+        loop = asyncio.get_running_loop()
+        next_reconcile = loop.time()
         try:
             parent = await self.storage.get_task(parent_id)
             await self._recover_attempts(parent_id)
@@ -380,12 +473,25 @@ class AOERuntime:
             )
             if pending:
                 scout_job = asyncio.create_task(self._scout(parent_id, bindings))
-            while (await self.storage.get_task(parent_id)).state not in TERMINAL:
+                scout_job.add_done_callback(lambda _job: self.wake(parent_id))
+            while True:
+                # Clear before reading authoritative state, so changes arriving
+                # during this tick remain set and cannot be lost before waiting.
+                wakeup.clear()
                 if scout_job is not None and scout_job.done():
                     await scout_job  # Surface Scout failure while Workers are running.
-                if await self.tick(parent_id):
+                reconcile = loop.time() >= next_reconcile
+                if await self.tick(parent_id, reconcile=reconcile):
                     break
-                await asyncio.sleep(0.5)
+                if reconcile:
+                    next_reconcile = loop.time() + self.reconcile_seconds
+                delay = max(0, next_reconcile - loop.time())
+                if (due := self._next_due.get(parent_id)) is not None:
+                    delay = min(delay, max(0, due - self.clock()))
+                try:
+                    await asyncio.wait_for(wakeup.wait(), timeout=delay)
+                except TimeoutError:
+                    pass
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -398,6 +504,19 @@ class AOERuntime:
                     scout_job.cancel()
                 await asyncio.gather(scout_job, return_exceptions=True)
             await self._cancel_target_jobs(parent_id)
+            self._wakeups.pop(parent_id, None)
+            self._next_due.pop(parent_id, None)
+            self._clear_views(parent_id)
+
+    def _clear_views(self, parent_id: UUID) -> None:
+        self._collection_digests.pop(parent_id, None)
+        for question_id, owner in list(self._parents.items()):
+            if owner == parent_id:
+                self._input_files.pop(question_id, None)
+                self._manifest_sources.pop(question_id, None)
+                self._manifest_digests.pop(question_id, None)
+        self._agent_sources = {k: v for k, v in self._agent_sources.items()
+                               if self._parents.get(k[0]) != parent_id}
 
     async def _scout(self, parent_id: UUID, bindings: dict) -> None:
         parent = await self.storage.get_task(parent_id)
@@ -444,7 +563,6 @@ class AOERuntime:
             await self.containers.stop(parent_id, "scout")
 
     async def _new_attempts(self, parent_id: UUID, question: TaskRun, agents: tuple[str, ...], phase: str) -> TaskRun:
-        parent = await self.storage.get_task(parent_id)
         # Bind the original shared access instructions at EVERY claim, including
         # questions collected before an upgrade and fresh/cross/joint attempts.
         # Never rely on Scout to copy credentials out of free-form user input.
@@ -642,6 +760,7 @@ class AOERuntime:
         question = await self.storage.mutate_task_metadata(question.id, finish)
         if not active_attempts(question) and self.targets.spec(question).mode == "managed":
             job = self._target_closes[question.id] = asyncio.create_task(self.targets.release(question.id, force=True))
+            job.add_done_callback(lambda _job: self.wake(question.parent_task_id))
             # Permit the fast path without holding the scheduler lock across network delays.
             await asyncio.wait({job}, timeout=0.05)
         await self._save_question(question)
@@ -671,7 +790,7 @@ class AOERuntime:
         if self.automation is not None:
             self.automation.start_report(question.id)
         elif status == "abandoned":
-            await self.storage.update_task(question.id, state=RunState.CANCELLED)
+            question = await self.storage.update_task(question.id, state=RunState.CANCELLED)
         await self.events.emit(
             question.parent_task_id,
             actor=SYSTEM_ACTOR,
@@ -690,6 +809,7 @@ class AOERuntime:
             if previous.get("retry_at", 0) > self.clock() and previous.get("state") != "ready":
                 return False
             job = self._target_jobs[question.id] = asyncio.create_task(self.targets.prepare(question))
+            job.add_done_callback(lambda _job: self.wake(question.parent_task_id))
             self._target_claims[question.id] = agents
         await asyncio.wait({job}, timeout=0.05)
         if not job.done():
@@ -705,7 +825,7 @@ class AOERuntime:
                 payload={"question_id": str(question.id), "target_state": current.get("state"), "reason": reason})
         return ready and current.get("state") == "ready"
 
-    async def tick(self, parent_id: UUID) -> bool:
+    async def tick(self, parent_id: UUID, *, reconcile=False) -> bool:
         """One serialized scheduling decision; tests advance the injected clock without sleeping."""
         async with self.locks[parent_id]:
             parent = await self.storage.get_task(parent_id)
@@ -713,10 +833,21 @@ class AOERuntime:
                 return True
             workers = self.config.worker_agent_ids
             questions = await self.storage.list_questions(parent_id)
+            if reconcile:
+                await self._reconcile_inputs(parent_id, questions)
+                if not (self.config.task_path(parent_id) / "questions.json").is_file():
+                    await self._collection_manifest(parent_id, parent=parent, questions=questions)
+
+            def replace(question):
+                for index, current in enumerate(questions):
+                    if current.id == question.id:
+                        questions[index] = question
+                        break
+
             for question in unfinished(questions):
                 candidate = await self._candidate(question)
                 if candidate is not None:
-                    await self._settle(question, status="solved", flag=candidate.body["conclusion"])
+                    replace(await self._settle(question, status="solved", flag=candidate.body["conclusion"]))
                     continue
                 active = active_attempts(question)
                 expired = {attempt["agent_id"] for attempt in active
@@ -724,10 +855,10 @@ class AOERuntime:
                 if expired:
                     if any(a["phase"] == "joint" for a in active):
                         # Both participants share this exact deadline; never grant each an extra budget.
-                        await self._settle(question, status="abandoned")
+                        replace(await self._settle(question, status="abandoned"))
                     else:
                         question = await self._finish_attempts(question, expired, "timeout")
-                        await self.storage.update_task(question.id, metadata={"status": "queued"})
+                        replace(await self.storage.update_task(question.id, metadata={"status": "queued"}))
                         await self.events.emit(
                             parent_id,
                             actor=SYSTEM_ACTOR,
@@ -741,9 +872,8 @@ class AOERuntime:
                     for attempt in active:
                         await self._launch_attempt(parent_id, question, attempt, fresh=False)
                     self._recovering.discard(question.id)
-            questions = await self.storage.list_questions(parent_id)
             occupied = {a["agent_id"] for q in questions for a in active_attempts(q)}
-            slots = {agent_id: await self.storage.get_agent(parent_id, agent_id) for agent_id in workers}
+            slots = {run.agent_id: run for run in await self.storage.list_agents(parent_id)}
             available = [
                 agent_id
                 for agent_id in workers
@@ -754,7 +884,9 @@ class AOERuntime:
             phase = "joint" if parent.metadata.get("collection_complete") and joint_ready(eligible, workers) else "solo"
             if any(a["phase"] == "joint" for q in questions for a in active_attempts(q)):
                 phase = "joint"
-            await self.storage.update_task(parent_id, metadata={"aoe_phase": phase})
+            if parent.metadata.get("collection_complete") and questions and not unfinished(questions):
+                phase = "reporting"
+            parent = await self._update_parent(parent, metadata={"aoe_phase": phase})
             if phase == "solo":
                 for agent_id in available:
                     candidates = [q for q in eligible if q.id not in self._target_claims
@@ -773,8 +905,7 @@ class AOERuntime:
                             quota_blocked |= self.targets.state(question.id).get("reason") == "quota"
                             candidates = [q for q in candidates if q.id != question.id]
                             continue
-                        await self._new_attempts(parent_id, question, (agent_id,), "solo")
-                        questions = await self.storage.list_questions(parent_id)
+                        replace(await self._new_attempts(parent_id, question, (agent_id,), "solo"))
                         eligible = schedulable_questions(questions,
                                      collection_complete=parent.metadata.get("collection_complete", False))
                         break
@@ -794,15 +925,21 @@ class AOERuntime:
                         quota_blocked |= self.targets.state(question.id).get("reason") == "quota"
                         candidates = [q for q in candidates if q.id != question.id]
                         continue
-                    await self._new_attempts(parent_id, question, workers, "joint")
+                    replace(await self._new_attempts(parent_id, question, workers, "joint"))
                     break
-            questions = await self.storage.list_questions(parent_id)
             for question in questions:
                 await self._save_question(question)
-            await self._sync_slots(parent_id, questions)
+            await self._sync_slots(parent_id, questions, slots)
+            due = [a["deadline"] for q in questions for a in active_attempts(q)
+                   if a.get("deadline") is not None]
+            due.extend(record["retry_at"] for record in self.targets.records.values()
+                       if record["parent_id"] == str(parent_id) and record.get("retry_at", 0) > self.clock()
+                       and record.get("state") != "ready")
+            self._next_due[parent_id] = min(due, default=None)
             if (parent.metadata.get("collection_complete") and questions and not unfinished(questions)
                     and any(q.state not in TERMINAL for q in questions)):
-                await self.storage.update_task(parent_id, state=RunState.REPORTING, metadata={"aoe_phase": "reporting"})
+                parent = await self._update_parent(parent, state=RunState.REPORTING,
+                                                   metadata={"aoe_phase": "reporting"})
             if (
                 questions
                 and parent.metadata.get("collection_complete")
@@ -828,16 +965,15 @@ class AOERuntime:
                 return True
             return False
 
-    async def _sync_slots(self, parent_id: UUID, questions: list[TaskRun]) -> None:
+    async def _sync_slots(self, parent_id: UUID, questions: list[TaskRun], slots: dict[str, AgentRun]) -> None:
         for agent_id in self.config.worker_agent_ids:
-            slot = await self.storage.get_agent(parent_id, agent_id)
+            slot = slots[agent_id]
             current = next(((q, a) for q in questions for a in active_attempts(q) if a["agent_id"] == agent_id), None)
             if current:
                 question, attempt = current
                 run = await self.storage.get_agent(question.id, agent_id)
-                await self.storage.update_agent(
-                    parent_id,
-                    agent_id,
+                await self._update_agent(
+                    slot,
                     actual_state=run.actual_state,
                     container_id=run.container_id,
                     last_error=run.last_error,
@@ -850,9 +986,8 @@ class AOERuntime:
                     },
                 )
             else:
-                await self.storage.update_agent(
-                    parent_id,
-                    agent_id,
+                await self._update_agent(
+                    slot,
                     actual_state=AgentState.PAUSED if slot.metadata.get("aoe_paused") else AgentState.IDLE,
                     container_id=None,
                     metadata={
@@ -863,9 +998,8 @@ class AOERuntime:
                     },
                 )
         reporting = next((q for q in questions if q.state == RunState.REPORTING), None)
-        await self.storage.update_agent(
-            parent_id,
-            "reporter",
+        await self._update_agent(
+            slots["reporter"],
             actual_state=AgentState.RUNNING if reporting else AgentState.IDLE,
             metadata={
                 "current_question_id": str(reporting.id) if reporting else None,
@@ -917,6 +1051,7 @@ class AOERuntime:
             await asyncio.gather(*jobs, return_exceptions=True)
 
     async def close(self) -> None:
+        self._unsubscribe()
         jobs = [*self._target_jobs.values(), *self._target_closes.values()]
         for job in jobs:
             if not job.done():
@@ -926,4 +1061,12 @@ class AOERuntime:
         self._target_jobs.clear()
         self._target_closes.clear()
         self._target_claims.clear()
+        self._input_files.clear()
+        self._manifest_sources.clear()
+        self._manifest_digests.clear()
+        self._collection_digests.clear()
+        self._agent_sources.clear()
+        self._parents.clear()
+        self._next_due.clear()
+        self._wakeups.clear()
         await self.targets.close()
