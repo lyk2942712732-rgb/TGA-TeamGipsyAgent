@@ -129,7 +129,7 @@ finally:
     server.shutdown()
     server.server_close()
 for module in ['tga3.workers.openai_worker', 'tga3.workers.claude_worker',
-               'tga3.workers.hook_service', 'tga3.workers.knowledge_server', 'tga3.workers.aoe_scout']:
+               'tga3.workers.hook_service', 'tga3.knowledge', 'tga3.workers.aoe_scout']:
     # The safety-tool base has no project wheel yet.
     if importlib.util.find_spec('tga3'):
         importlib.import_module(module)

@@ -156,11 +156,13 @@ Worker 用 `blackboard_publish(conclusion, rationale, finding_ids, answer_type?,
 后续可交给代码的索引与校验工作见 [分工审查](CODE-VS-MODEL-REVIEW.md)。
 
 
-### Des-CTF-Knowledge
+### 在线知识库 ctf42
 
-在 `tga3/` 目录执行 `python -m tga3.knowledge` 安装固定版本的 [Des-CTF-Knowledge](https://github.com/Dest1ny-Sec/Des-CTF-Knowledge) 到 `knowledge/des-ctf-knowledge/`。完整知识库由原仓库维护，不复制进任务文件或模型上下文。保留其 LICENSE 和来源；安装器固定 revision，已存在的不同版本不会被自动覆盖。
+两个 Worker 的原生 CLI 使用 [ctf42](https://ctf42.online/about/) 的 Streamable HTTP MCP：`https://ctf42.online/mcp`，无需密钥或本地索引进程。可用 `runtime.ctf_knowledge_mcp_url` 配置上游端点，设为空字符串可禁用。由于部署环境的 Docker 网桥无法直达该公网地址，容器连接现有控制服务的 `/knowledge-mcp/`，后端以复用的 HTTP 客户端转发固定配置的上游，不增加服务/进程。只转发 MCP 协议头，不转发模型 API Key、Authorization、Cookie 或内部任务标识。
 
-`runtime.ctf_knowledge_root` 可指定本地路径（默认上述路径）。已安装时只读挂载到两个 Worker 的 `/knowledge/des-ctf-knowledge`，通过原项目 stdio MCP Server 接入 Codex/Claude 两种 CLI；依赖 `mcp` 与 `pyyaml` 随 Worker 安装。先阅读知识库 `SKILL.md`，根据当前题的实测信号调用 `find_technique`、`find_atom`、`search`、`read_topic`、`find_wp`，按需定位章节和来源。知识库是参考资料；脚本需要修改时复制到 `/workspace` 后运行，保留正常 Finding 发布流程。Scout 和 Reporter 不启动知识库 MCP。
+按当前障碍用 `list_techniques` / `list_technologies` 定位标签，再用 `search_challenges` 小批量查历史例题，`get_challenge` 取详情；`find_similar_challenges` 接受 ctf42 题目整数 ID。`search_ctfs` / `get_ctf` 用于定位赛事。WP 多为外链，需要再读取正文，不能把返回链接当作已读取解法。连续两次不可用/失败后，本次尝试停止重试并继续本地解题。原生 MCP 初始化超时为 15 秒；Codex 连接不设为启动必需，避免在线服务失效阻断解题。Scout、Reporter 不接入此知识库。
+
+旧 `ctf_knowledge_root` 仅兼容读取既有配置，不再挂载 Des-CTF-Knowledge、启动其 stdio 服务或执行启动前全库索引；既有资料目录不作破坏性删除。离线库可独立选择 CTF Wiki，当前没有自动安装或启用离线替代服务。
 
 AOE 题目预算从 Worker 第一条实际 action 开始；认领和 CLI 初始化不扣解题预算。共同攻坚共享首次 action 开始的截止时间。Hook 的轻量客户端通过本机桥接交给常驻 Worker 处理，远程 HTTP 连接跨周期复用。
 

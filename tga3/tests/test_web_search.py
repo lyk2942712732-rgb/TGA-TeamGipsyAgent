@@ -4,13 +4,13 @@ import tomllib
 import httpx
 import pytest
 from pydantic import SecretStr
-
 from test_action_findings import setup as finding_setup
+from test_aoe_sessions import environment
+
 from tga3.mcp_server import build_web_mcp
 from tga3.web_search import WebSearchService
-from tga3.workers.cli_adapter import CodexAdapter, ClaudeAdapter
+from tga3.workers.cli_adapter import ClaudeAdapter, CodexAdapter
 from tga3.workers.prompts import worker_instructions
-from test_aoe_sessions import environment
 
 
 async def setup(tmp_path):
@@ -89,7 +89,7 @@ async def test_search_mcp_is_read_only_and_has_no_publication_tools(tmp_path):
 def test_worker_tool_catalog_native_file_publication_and_enabled_search(monkeypatch, tmp_path, kind):
     environment(monkeypatch, tmp_path, claude=kind=='claude')
     monkeypatch.setenv('TGA3_WEB_SEARCH_MCP_URL','http://fixture/web-mcp/')
-    monkeypatch.setenv('TGA3_CTF_KNOWLEDGE_ROOT','/knowledge/des-ctf-knowledge')
+    monkeypatch.setenv('TGA3_CTF_KNOWLEDGE_MCP_URL','https://ctf42.online/mcp')
     adapter = ClaudeAdapter() if kind=='claude' else CodexAdapter()
     args, _ = adapter.command()
     if kind=='codex':
@@ -100,7 +100,8 @@ def test_worker_tool_catalog_native_file_publication_and_enabled_search(monkeypa
         assert 'WebSearch' in args[args.index('--tools')+1] and 'WebFetch' in args[args.index('--tools')+1]
         assert 'mcp__web__web_search' in args[args.index('--allowedTools')+1]
     prompt = worker_instructions()
-    for tool in ['find_technique','find_atom','find_wp','search','read_topic','get_payload','run_script','solve_hint','web_search']:
+    for tool in ['list_techniques','list_technologies','search_challenges','get_challenge',
+                 'find_similar_challenges','search_ctfs','get_ctf','web_search']:
         assert tool in prompt
     assert 'Codex exec_command/apply_patch; Claude Write/Bash' in prompt
     assert 'After two consecutive unsuccessful searches, STOP' in prompt

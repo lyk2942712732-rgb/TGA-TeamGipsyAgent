@@ -106,7 +106,8 @@ class DockerContainerRuntime:
             if spec.aoe_parent_id is not None:
                 volumes[str(self.config.task_path(spec.aoe_parent_id))] = {"bind": "/aoe", "mode": "ro"}
         elif spec.aoe_parent_id == spec.task_id:
-            raise RuntimeUnavailableError('Batch uploads are readable only by Scout; Workers require an assigned question')
+            raise RuntimeUnavailableError(
+                'Batch uploads are readable only by Scout; Workers require an assigned question')
         if is_reporter:
             volumes[str(self.config.task_path(spec.task_id, "logs"))] = {"bind": "/evidence", "mode": "ro"}
             for agent_id in self.config.agents.agents:
@@ -162,12 +163,9 @@ class DockerContainerRuntime:
             findings = self.config.task_path(spec.task_id, 'findings', binding.agent_id)
             self._ensure_worker_directory(findings)
             volumes[str(findings)] = {'bind': '/findings', 'mode': 'rw'}
-            from .knowledge import CONTAINER_ROOT
-
-            knowledge = self.config.resolve_path(runtime.ctf_knowledge_root)
-            if (knowledge / "mcp/server.py").is_file():
-                volumes[str(knowledge)] = {"bind": CONTAINER_ROOT, "mode": "ro"}
-                environment["TGA3_CTF_KNOWLEDGE_ROOT"] = CONTAINER_ROOT
+            environment["TGA3_CTF_KNOWLEDGE_MCP_URL"] = (
+                runtime.blackboard_mcp_url.rstrip('/').removesuffix('/mcp') + '/knowledge-mcp/'
+                if runtime.ctf_knowledge_mcp_url.strip() else '')
         if question_scope := self.config.question_scope(spec.task_id):
             # Reporter also launches through the ordinary report path. Its
             # journal must retain question provenance even without attempt args.

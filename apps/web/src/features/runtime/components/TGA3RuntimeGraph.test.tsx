@@ -61,13 +61,17 @@ describe("live collaboration graph", () => {
     expect(toolActivity(event("5", "worker-claude", { payload: { tool: "mcp__des-ctf-knowledge__find_technique", input: { signal: "PNG CRC" } } }))).toMatchObject({ from: "knowledge", to: "agent:worker-claude", shortLabel: "检索知识库" });
     expect(toolActivity(event("6", "worker-openai", { text: "find_technique", payload: { tool: "mcp_tool_call", server: "des-ctf-knowledge" } }))).toMatchObject({ from: "knowledge", to: "agent:worker-openai" });
   });
+  it("routes ctf42 calls from both native CLI formats to knowledge", () => {
+    expect(toolActivity(event("ctf42-claude", "worker-claude", { payload: { tool: "mcp__ctf42__list_techniques", input: { query: "heap" } } }))).toMatchObject({ from: "knowledge", to: "agent:worker-claude" });
+    expect(toolActivity(event("ctf42-codex", "worker-openai", { payload: { tool: "mcp_tool_call", server: "ctf42" } }))).toMatchObject({ from: "knowledge", to: "agent:worker-openai" });
+  });
   it("opens knowledge details and highlights only actual retrieval events", () => {
     const base = snapshot(), view = render(<TGA3RuntimeGraph snapshot={base} />);
     const node = screen.getByRole("button", { name: /CTF 知识库/ });
     expect(node).toHaveAttribute("data-active", "false");
     fireEvent.click(node);
-    expect(screen.getByRole("link", { name: "查看知识库与接入说明" })).toHaveAttribute("href", "https://github.com/Dest1ny-Sec/Des-CTF-Knowledge");
-    const read = event("knowledge-1", "worker-openai", { payload: { tool: "mcp__des-ctf-knowledge__search", input: { query: "PNG IHDR CRC" } } });
+    expect(screen.getByRole("link", { name: "查看知识库与接入说明" })).toHaveAttribute("href", "https://ctf42.online/about/");
+    const read = event("knowledge-1", "worker-openai", { payload: { tool: "mcp__ctf42__search_challenges", input: { query: "PNG IHDR CRC" } } });
     view.rerender(<TGA3RuntimeGraph snapshot={{ ...base, events: [read] }} />);
     expect(node).toHaveAttribute("data-active", "true");
     expect(screen.getAllByText("Codex Worker 检索 CTF 知识库").length).toBeGreaterThan(0);

@@ -10,6 +10,7 @@ from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, model_validator
 
+from .knowledge import DEFAULT_MCP_URL
 from .provider_profiles import (
     ProviderProtocol,
     normalize_endpoint_base,
@@ -212,7 +213,9 @@ class RuntimeConfig(BaseModel):
     intel_root: str = "data/intels"
     writeup_root: str = "data/writeups"
     skills_root: str
-    ctf_knowledge_root: str = "knowledge/des-ctf-knowledge"
+    ctf_knowledge_mcp_url: str = DEFAULT_MCP_URL
+    # Read legacy settings without mounting or starting the retired local server.
+    ctf_knowledge_root: str | None = Field(default=None, exclude=True)
     mcp_instructions: str = Field(min_length=1)
     cli_timeout_seconds: int = Field(default=1800, ge=30, le=86400)
     scout_timeout_seconds: int = Field(default=300, ge=60, le=600)

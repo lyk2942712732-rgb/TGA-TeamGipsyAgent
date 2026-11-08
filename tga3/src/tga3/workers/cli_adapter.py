@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from ..knowledge import worker_knowledge_server
+from ..knowledge import SERVER_NAME, worker_knowledge_server
 from .action_journal import ActionJournal
 from .prompts import worker_instructions
 from .runtime import AgentAdapter, Emit
@@ -412,11 +412,8 @@ class CodexAdapter(CliAdapter):
                        'http_headers = {'+', '.join(f'{json.dumps(k)} = {json.dumps(v)}'
                                                    for k,v in self.mcp_headers().items())+'}', 'required = true']
         if knowledge := worker_knowledge_server():
-            config += ["[mcp_servers.des-ctf-knowledge]",
-                       f"command = {json.dumps(knowledge['command'])}",
-                       f"args = {json.dumps(knowledge['args'])}",
-                       'env = { PYTHONDONTWRITEBYTECODE = "1" }',
-                       "startup_timeout_sec = 180", "tool_timeout_sec = 120", "required = true"]
+            config += [f"[mcp_servers.{SERVER_NAME}]", f"url = {json.dumps(knowledge['url'])}",
+                       "startup_timeout_sec = 15", "tool_timeout_sec = 30", "required = false"]
         if self.hook_config():
             (cli_home / "hooks.json").write_text(json.dumps(self.hook_config()), encoding="utf-8")
         (cli_home / "config.toml").write_text("\n".join(config) + "\n", encoding="utf-8")
@@ -484,14 +481,14 @@ class ClaudeAdapter(CliAdapter):
         if web_url := os.environ.get('TGA3_WEB_SEARCH_MCP_URL'):
             servers['web'] = {'type':'http', 'url':web_url, 'headers':self.mcp_headers()}
         if knowledge := worker_knowledge_server():
-            servers["des-ctf-knowledge"] = {"type": "stdio", **knowledge}
+            servers[SERVER_NAME] = {"type": "http", **knowledge}
         mcp_file.write_text(
             json.dumps({"mcpServers": servers}),
             encoding="utf-8",
         )
         env = dict(os.environ, CLAUDE_CONFIG_DIR=str(cli_home), ANTHROPIC_API_KEY=self.api_key, DISABLE_AUTOUPDATER="1")
         if knowledge:
-            env["MCP_TIMEOUT"] = "180000"
+            env["MCP_TIMEOUT"] = "15000"
         env.pop("ANTHROPIC_AUTH_TOKEN", None)
         env.pop("ANTHROPIC_BASE_URL", None)
         if self.base_url:
@@ -510,7 +507,7 @@ class ClaudeAdapter(CliAdapter):
             "--tools",
             "Bash,Read,Write,Edit,Glob,Grep,WebSearch,WebFetch",
             "--allowedTools",
-            "Bash,Read,Write,Edit,Glob,Grep,WebSearch,WebFetch,mcp__web__web_search,mcp__des-ctf-knowledge__*",
+            f"Bash,Read,Write,Edit,Glob,Grep,WebSearch,WebFetch,mcp__web__web_search,mcp__{SERVER_NAME}__*",
             "--disallowedTools",
             "AskUserQuestion",
             "--strict-mcp-config",

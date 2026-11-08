@@ -18,15 +18,16 @@ from .coordinator import TaskCoordinator
 from .docker_runtime import ContainerRuntime
 from .domain import USER_ACTOR, AgentState, PublishRequest, RunState
 from .errors import TGA3Error
-from .host_agents import Automation, CliHostModel, HostModel
 from .file_publications import FilePublications
+from .host_agents import Automation, CliHostModel, HostModel
+from .knowledge_relay import KnowledgeRelay
 from .mcp_server import build_scout_mcp, build_web_mcp
-from .web_search import WebSearchService
 from .model_discovery import discover_provider_models
 from .provider_profiles import PROVIDER_PROFILES, ProviderProtocol
 from .skills import MAX_ARCHIVE_BYTES, SkillCatalog
 from .storage import Storage
 from .token_usage import COUNTERS, TokenUsageTracker
+from .web_search import WebSearchService
 
 
 class ModelRequest(BaseModel):
@@ -81,6 +82,7 @@ def create_app(
     scout_mcp = build_scout_mcp(config, coordinator.scout_intel)
     aoe_scout_mcp = build_scout_mcp(config, coordinator.scout_intel, aoe=coordinator.aoe)
     web_search = WebSearchService(config, storage)
+    knowledge_relay = KnowledgeRelay(config)
     web_mcp = build_web_mcp(config, web_search)
     delivery = BlackboardDelivery(config, storage, coordinator.blackboard)
     usage = TokenUsageTracker(config, storage)
@@ -112,6 +114,7 @@ def create_app(
                 await asyncio.gather(target_cleanup, return_exceptions=True)
                 await coordinator.close()
                 await web_search.close()
+                await knowledge_relay.close()
 
     app = FastAPI(title="TGA3 Control Plane", version="0.1.0", lifespan=lifespan)
     app.state.config = config
@@ -120,9 +123,14 @@ def create_app(
     app.state.automation = automation
     app.state.publications = publications
     app.state.web_search = web_search
+    app.state.knowledge_relay = knowledge_relay
     app.state.experience = automation.experience
     api = APIRouter(prefix="/api/v3")
     config_lock = asyncio.Lock()
+
+    @app.api_route("/knowledge-mcp/", methods=["GET", "POST", "DELETE"])
+    async def knowledge_mcp(request: Request):
+        return await knowledge_relay.forward(request)
 
     @app.exception_handler(TGA3Error)
     async def tga3_error(_request: Request, exc: TGA3Error) -> JSONResponse:
