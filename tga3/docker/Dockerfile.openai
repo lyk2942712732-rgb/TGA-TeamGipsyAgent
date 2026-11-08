@@ -14,4 +14,10 @@ RUN npm install -g @openai/codex@${CLI_VERSION} && npm cache clean --force
 USER tga3:tga3
 RUN --mount=type=bind,from=project-wheel,source=/project-wheel,target=/project-wheel \
     python -m pip install --no-cache-dir --no-deps /project-wheel/*.whl && python -m pip check
+
+# The slim base omits stdlib bytecode. Compile the hook import path once at
+# build time; runtime hooks can read it with PYTHONDONTWRITEBYTECODE=1.
+USER root
+RUN python -c 'import sys; sys.dont_write_bytecode = False; import tga3.workers.hook_client'
+USER tga3:tga3
 ENTRYPOINT ["python", "-m", "tga3.workers.openai_worker"]

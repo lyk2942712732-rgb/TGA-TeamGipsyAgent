@@ -8,6 +8,7 @@ import re
 import shutil
 import subprocess
 import sys
+import sysconfig
 import tempfile
 import threading
 import zipfile
@@ -40,8 +41,15 @@ names = [re.sub(r'[-_.]+', '-', d.metadata['Name']).lower() for d in metadata.di
 assert len(names) == len(set(names)), 'duplicate distribution metadata'
 assert not {'asyncpg', 'fastapi', 'uvloop', 'httptools', 'watchfiles'} & set(names)
 assert not Path('/opt/tga3/src').exists() and not Path('/opt/tga3/build').exists()
+if importlib.util.find_spec('tga3'):
+    # Check the image as shipped, before importing project modules below.
+    assert sys.dont_write_bytecode, 'runtime bytecode writes must stay disabled'
+    stdlib = Path(sysconfig.get_path('stdlib'))
+    for source in ['http/client.py', 'json/__init__.py', 'ssl.py', 'email/message.py']:
+        cache = Path(importlib.util.cache_from_source(str(stdlib / source)))
+        assert cache.is_file(), f'missing build-time hook bytecode: {source}'
+        assert cache.read_bytes()[:4] == importlib.util.MAGIC_NUMBER, cache
 if os.getuid() == 1000:
-    import sysconfig
     assert os.access(sysconfig.get_path('purelib'), os.W_OK)
     assert os.access('/usr/local/bin', os.W_OK)
 for module in ['pwn', 'Crypto', 'Cryptodome', 'gmpy2', 'z3', 'ropper', 'capstone',
