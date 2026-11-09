@@ -12,6 +12,7 @@ import httpx
 
 from ..flag_signals import FLAG
 from .action_hook import record_tool, result_context
+from .aoe_access import overview_policy
 
 _publication_versions = {}
 
@@ -34,6 +35,9 @@ def checkpoint(event: dict, *, client=None, record_action=None) -> dict:
     if os.environ.get("TGA3_AGENT_ROLE") not in {"scout", "worker"}:
         return {}
     event_name = event.get("hook_event_name", "PreToolUse")
+    if reason := overview_policy(event):
+        return {'hookSpecificOutput': {'hookEventName': event_name, 'permissionDecision': 'deny',
+                                      'permissionDecisionReason': reason}}
     post_tool = event_name in {"PostToolUse", "PostToolUseFailure"}
     record_action = record_action or record_tool
     record = record_action(event) if post_tool else None

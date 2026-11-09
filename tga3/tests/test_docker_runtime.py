@@ -25,6 +25,10 @@ async def test_aoe_collection_requests_reuse_container_and_ignore_stale_results(
     config.runtime.task_root = str(tmp_path / "tasks")
     config.models.provider("openai").api_keys[0].api_key = SecretStr("fixture-key")
     parent, first, second = uuid4(), uuid4(), uuid4()
+    overview = config.task_path(parent) / 'overview'
+    overview.mkdir(parents=True)
+    for name in ['scene.md', 'task.md']:
+        (overview / name).write_text('Full original '+name)
     directory = config.task_path(parent, "workspaces", "scout") / ".tga3"
     emitted, launched, seen = [], [], []
 
@@ -153,6 +157,12 @@ def test_batch_uploads_are_scout_only_and_question_inputs_are_separate(tmp_path)
         provider.api_keys[0].api_key = SecretStr('fixture-key')
     parent, question = uuid4(), uuid4()
     config.register_question_path(parent, question)
+    config.task_path(question).mkdir(parents=True)
+    (config.task_path(question) / 'source.json').write_text('{"original":true}')
+    overview = config.task_path(parent) / 'overview'
+    overview.mkdir(parents=True)
+    for name in ['scene.md', 'task.md']:
+        (overview / name).write_text('Full original '+name)
     containers = FakeContainers()
     runtime = DockerContainerRuntime.__new__(DockerContainerRuntime)
     runtime.config, runtime.client = config, SimpleNamespace(containers=containers)
@@ -164,6 +174,9 @@ def test_batch_uploads_are_scout_only_and_question_inputs_are_separate(tmp_path)
     assert mounts[str(config.task_path(question,'inputs'))] == {'bind':'/inputs','mode':'ro'}
     assert str(config.task_path(parent,'inputs')) not in mounts and str(config.task_path(parent)) not in mounts
     assert containers.kwargs['environment']['TGA3_WEB_SEARCH_MCP_URL'].endswith('/web-mcp/')
+    assert mounts[str(overview)] == {'bind': '/task-overview', 'mode': 'ro'}
+    assert '/task-overview/scene.md' in containers.kwargs['environment']['TGA3_STARTUP_PROMPT']
+    assert mounts[str(config.task_path(question) / 'source.json')] == {'bind': '/question-source.json', 'mode': 'ro'}
     with pytest.raises(RuntimeUnavailableError, match='Batch uploads'):
         runtime._launch_sync(LaunchSpec(task_id=parent, aoe_parent_id=parent, agent=config.resolve_agent('worker-claude')))
 

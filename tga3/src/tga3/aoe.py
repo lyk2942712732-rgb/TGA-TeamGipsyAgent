@@ -27,10 +27,12 @@ from .aoe_models import (
     scout_ready,
     unfinished,
 )
+from .batch_context import BatchContext
 from .docker_runtime import LaunchSpec
 from .domain import SYSTEM_ACTOR, AgentRun, AgentState, EventKind, InputFile, PublishRequest, RunState, TaskRun
 from .errors import ConflictError, ContractError
 from .evidence import evidence_files
+from .question_collection import QuestionCollection
 from .submissions import Submissions
 from .target_instances import TargetInstances
 
@@ -62,6 +64,8 @@ class AOERuntime:
         self._unsubscribe = self.storage.subscribe_changes(self._storage_changed)
         self.targets = TargetInstances(self.config, clock=lambda: self.clock(), on_change=self.wake)
         self.submissions = Submissions(self.config)
+        self.overview = BatchContext(self.config, self.storage)
+        self.collection = QuestionCollection(self)
         self._recovering: set[UUID] = set()
         self._target_jobs: dict[UUID, asyncio.Task] = {}
         self._target_claims: dict[UUID, tuple[str, ...]] = {}
@@ -210,6 +214,8 @@ class AOERuntime:
         submission = self.submissions.spec(question)
         value["submission"] = submission.model_dump(mode="json") if submission else None
         value["target_runtime"] = self.targets.state(question.id)
+        if (path.parent / 'source.json').is_file():
+            value['source_path'] = 'source.json'
         digest = hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
         if self._manifest_digests.get(question.id) != digest:
             self._atomic_json(path, value)
@@ -334,7 +340,7 @@ class AOERuntime:
                 or not existing[spec.source_key].metadata.get("registration_complete")
             }
             for spec in specifications:
-                payload = spec.model_dump(mode="json")
+                payload = spec.model_dump(mode="json", exclude={'source'})
                 fingerprint = hashlib.sha256(
                     json.dumps(payload, ensure_ascii=False, sort_keys=True).encode()
                 ).hexdigest()
@@ -351,6 +357,9 @@ class AOERuntime:
                 question_id = uuid5(parent_id, "aoe-question:" + spec.source_key)
                 self.config.register_question_path(parent_id, question_id)
                 self.config.ensure_task_directories(question_id)
+                source_path = self.config.task_path(question_id) / 'source.json'
+                if spec.source is not None and not source_path.is_file():
+                    self._atomic_json(source_path, spec.source)
                 question = existing.get(spec.source_key) or await self.storage.create_task(
                     spec.title,
                     "aoe",
@@ -385,16 +394,6 @@ class AOERuntime:
                             )
                         )
                 await self.storage.update_task(question.id, state=RunState.SCOUTING)
-                await self.board.publish(
-                    question.id,
-                    SYSTEM_ACTOR,
-                    PublishRequest(
-                        kind="user_prompt",
-                        topic="scene",
-                        body={"text": self.config.scene("aoe").system_prompt},
-                        idempotency_key="scene-prompt",
-                    ),
-                )
                 text = (
                     f"题目：{spec.title}\n原始题目 ID（source_key）：{spec.source_key}"
                     f"\n内部题目 ID：{question_id}\n\n{spec.description}"
@@ -460,6 +459,7 @@ class AOERuntime:
             ):
                 raise ContractError("Collected question count does not match the complete source list")
             if not parent.metadata.get("collection_complete"):
+                await self.overview.prepare(parent_id)
                 await self._collecting_parent(parent_id)
                 parent = await self.storage.update_task(parent_id, metadata={"collection_complete": True})
             return {"saved": True, **await self._collection_manifest(parent_id, parent=parent, questions=questions)}
@@ -526,6 +526,7 @@ class AOERuntime:
 
     async def _scout(self, parent_id: UUID, bindings: dict) -> None:
         parent = await self.storage.get_task(parent_id)
+        await self.overview.prepare(parent_id)
 
         async def emit(method: str, params: dict):
             if method == "container.started":
@@ -569,21 +570,17 @@ class AOERuntime:
             await self.containers.stop(parent_id, "scout")
 
     async def _new_attempts(self, parent_id: UUID, question: TaskRun, agents: tuple[str, ...], phase: str) -> TaskRun:
-        # Bind the original shared access instructions at EVERY claim, including
-        # questions collected before an upgrade and fresh/cross/joint attempts.
-        # Never rely on Scout to copy credentials out of free-form user input.
+        # Initial shared instructions stay in the overview; only live corrections
+        # join the question's incremental blackboard.
         for entry in await self.storage.list_entries(parent_id, limit=10_000):
-            if entry.kind == "user_prompt" and entry.actor.role == "user" and entry.topic in {"task", "realtime"}:
+            if entry.kind == "user_prompt" and entry.actor.role == "user" and entry.topic == "realtime":
                 await self.board.publish(
                     question.id,
                     entry.actor,
                     PublishRequest(
                         kind="user_prompt",
-                        topic="task_context" if entry.topic == "task" else "realtime",
-                        body={"text": (
-                            "AOE 批次公共说明：以下包含用户提供的平台接口、访问凭证与公共要求。"
-                            "仅处理当前认领题目，题面与题目 ID 以本题记录为准。\n\n" + entry.body["text"]
-                        )} if entry.topic == "task" else entry.body,
+                        topic="realtime",
+                        body=entry.body,
                         idempotency_key="aoe-" + entry.idempotency_key,
                     ),
                 )
@@ -660,6 +657,7 @@ class AOERuntime:
                         {'attempt_id': attempt['id'], 'deadline': attempt['deadline']})
 
     async def _launch_attempt(self, parent_id: UUID, question: TaskRun, attempt: dict, *, fresh: bool) -> None:
+        await self.overview.prepare(parent_id)
         agent_id = attempt["agent_id"]
         self.submissions.write_context(question, agent_id)
         slot = await self.storage.get_agent(parent_id, agent_id)

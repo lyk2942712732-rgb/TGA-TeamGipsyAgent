@@ -80,7 +80,8 @@ class CliAdapter(AgentAdapter):
             return {}
         command = "python -m tga3.workers.hook_client"
         events = ["UserPromptSubmit", "PreToolUse"]
-        if os.environ.get("TGA3_AGENT_ROLE") == "worker":
+        if (os.environ.get("TGA3_AGENT_ROLE") == "worker"
+                or os.environ.get("TGA3_AGENT_ROLE") == "scout" and os.environ.get('TGA3_AOE_PARENT_ID')):
             events.append("PostToolUse")
             if self.runtime == "claude_cli":
                 events.append("PostToolUseFailure")
@@ -394,6 +395,8 @@ class CodexAdapter(CliAdapter):
         ]
         if os.environ.get('TGA3_AGENT_ROLE') == 'worker':
             config += ['web_search = "live"']
+        elif os.environ.get('TGA3_AOE_PARENT_ID') and os.environ.get('TGA3_AGENT_ROLE') == 'scout':
+            config += ['web_search = "disabled"']
         if self.base_url:
             config += [
                 'model_provider = "tga3"',

@@ -211,7 +211,7 @@ class Submissions:
             if not started or datetime.fromisoformat(started).timestamp() < attempt["started_at"]:
                 continue
             command = operation.get("command") or operation.get("input", {}).get("command", "")
-            if re.search(r"github|ctftime|writeup|/experience/|/skills/|/logs|hook_outputs", command, re.I):
+            if re.search(r"github|ctftime|writeup|/experience/|/skills/|/logs|/task-overview/|hook_outputs", command, re.I):
                 continue
             try:
                 text = self._body(question, agent_id, action)

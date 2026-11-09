@@ -11,7 +11,7 @@ from tga3.docker_runtime import FakeContainerRuntime
 from tga3.domain import RunState, USER_ACTOR, PublishRequest
 
 
-async def test_each_claim_inherits_original_access_context_without_scout_copy_or_duplicates(tmp_path):
+async def test_each_context_reads_shared_originals_without_question_board_copies(tmp_path):
     cfg, storage, runtime, c, parent, _ = await setup(tmp_path)
     delivery = BlackboardDelivery(cfg, storage, c.blackboard)
     shared = "API https://platform.example/openapi; BENCHMARK_TOKEN: fixture-platform-secret"
@@ -25,17 +25,17 @@ async def test_each_claim_inherits_original_access_context_without_scout_copy_or
     first = await storage.get_task(runtime.launched[0].task_id)
     for spec in runtime.launched:
         entries = [e for e in await storage.list_entries(spec.task_id) if e.topic == "task_context"]
-        assert len(entries) == 1 and shared in entries[0].body["text"]
-        assert entries[0].actor.role == "user"
+        assert not entries
+        assert not any(e.topic == "scene" for e in await storage.list_entries(spec.task_id))
+        assert (cfg.task_path(parent.id) / "overview/task.md").read_text(encoding="utf-8") == shared
         context = await delivery.checkpoint(spec.task_id, spec.agent.agent_id, final=True)
-        assert shared in context["context"]
+        assert shared not in context["context"]
     # New question with a new CLI session receives the same exact credentials.
     await final(storage, first.id)
     await c.aoe.tick(parent.id)
     next_spec = runtime.launched[-1]
     assert next_spec.task_id != first.id and next_spec.fresh_session
-    assert shared in next(e.body["text"] for e in await storage.list_entries(next_spec.task_id)
-                          if e.topic == "task_context")
+    assert not any(e.topic == "task_context" for e in await storage.list_entries(next_spec.task_id))
     # A subsequent attempt on an existing question is idempotent, and receives
     # realtime corrections made after question registration.
     await c.blackboard.publish(parent.id, USER_ACTOR, PublishRequest(
@@ -45,10 +45,10 @@ async def test_each_claim_inherits_original_access_context_without_scout_copy_or
     question = await storage.get_task(next_spec.task_id)
     await c.aoe._new_attempts(parent.id, question, (next_spec.agent.agent_id,), "solo")
     entries = await storage.list_entries(next_spec.task_id)
-    assert sum(e.topic == "task_context" for e in entries) == 1
+    assert sum(e.topic == "task_context" for e in entries) == 0
     assert any(e.topic == "realtime" and "fixture-new" in e.body["text"] for e in entries)
     context = await delivery.checkpoint(next_spec.task_id, next_spec.agent.agent_id, final=True)
-    assert shared in context["context"] and "fixture-new" in context["context"]
+    assert shared not in context["context"] and "fixture-new" in context["context"]
 
 
 async def test_workers_claim_during_collection_scout_has_no_later_rounds(tmp_path):
@@ -83,7 +83,7 @@ async def test_workers_claim_during_collection_scout_has_no_later_rounds(tmp_pat
         assert not (await storage.get_task(parent.id)).metadata.get("collection_complete")
         q = (await storage.list_questions(parent.id))[0]
         assert runtime.launched[0].task_id == q.id
-        assert [e.kind for e in await storage.list_entries(q.id)] == ["user_prompt", "user_prompt"]
+        assert [e.kind for e in await storage.list_entries(q.id)] == ["user_prompt"]
         await asyncio.gather(*(coordinator.aoe.tick(parent.id) for _ in range(10)))
         assert len(active_attempts(await storage.get_task(q.id))) == 1
         assert len(runtime.launched) == 1
@@ -177,7 +177,7 @@ async def test_collection_runner_uses_only_one_collecting_session(monkeypatch, t
             self.journal = ActionJournal(tmp_path / "logs", identity={"agent_id": "scout"})
 
         async def run_cycle(self, prompt, emit):
-            assert "NO later Scout rounds" in prompt and self.timeout is None
+            assert "collect the supplied question-list API" in prompt and self.timeout is None
             (batch / "questions.json").write_text(json.dumps({"collection_complete": True, "questions": []}))
             return "collected"
 

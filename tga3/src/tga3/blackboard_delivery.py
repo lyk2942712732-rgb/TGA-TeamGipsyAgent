@@ -71,7 +71,10 @@ class BlackboardDelivery:
                 page = await self.board.sync(task_id, after_seq=through, up_to_seq=task.blackboard_seq, limit=200)
                 if not page.entries:
                     break
-                entries.extend(entry.model_dump(mode="json") for entry in page.entries)
+                entries.extend(entry.model_dump(mode="json") for entry in page.entries
+                               if not (task.scene_id == 'aoe' and entry.kind == 'user_prompt'
+                                       and entry.topic in ({'scene', 'task_context'} if task.parent_task_id
+                                                           else {'scene', 'task'})))
                 through = page.entries[-1].seq
             delivery = {
                 "delivery_id": str(uuid4()),

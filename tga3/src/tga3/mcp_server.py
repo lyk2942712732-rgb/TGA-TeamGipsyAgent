@@ -9,7 +9,7 @@ from uuid import UUID
 from mcp.server.fastmcp import Context, FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 
-from .aoe_models import AOEQuestionInput
+from .question_collection import CollectionPlan
 from .blackboard import Blackboard
 from .config import TGA3Config
 from .scout_intel import ScoutIntelMergeInput, ScoutIntelStore
@@ -85,20 +85,21 @@ def build_scout_mcp(config: TGA3Config, store: ScoutIntelStore, *, aoe=None) -> 
 
     if aoe is not None:
         @mcp.tool()
-        async def scout_register_questions(questions: list[AOEQuestionInput], ctx: Context) -> dict[str, Any]:
-            """AOE pre-phase only: register original question metadata and available local attachments.
+        async def scout_collect_questions(plan: CollectionPlan, ctx: Context) -> dict[str, Any]:
+            """Fetch only the explicitly supplied question-list API, preserve original items and register them.
 
-            source_key is the original gateway ID or a stable label from user text. Preserve description,
-            shared user constraints and submission requirements. Difficulty is supplied information only.
-            attachments are existing local /inputs/... or /workspace/... files, not remote URLs.
-            If an attachment entry point is unknown, leave attachments empty and note it in connection_info.
-            Register without waiting; never guess attachment URLs, API endpoints or parameters.
-            When documented, submission declares request(method,url,headers,params,body) with literal
-            {flag} placeholder plus success_path and duplicate_code; include actual platform credentials.
-            Multiple batches allowed; identical retries are deduplicated. Record known download failures.
+            Read /task-overview/task.md first. request supplies the exact list URL/method/actual credentials.
+            fields maps source_key/title/description/difficulty to original JSON dot paths; items_path is
+            empty for a root array. next_url_path and total_path map documented pagination URL and total count.
+            target and submission are shared documented templates; {unique_code} expands from each item,
+            {flag} stays literal. Specify actual supplied credentials in headers. preflight is only for an
+            explicitly supplied GET VPN connectivity check requiring status=ok. Source fields are preserved
+            in source.json; do not reproduce the list through the model. Attachments may map only an explicit
+            source attachments field containing local supplied paths; unknown entry points stay empty.
+            Completes collection automatically after all pages; then stop. No target/API/frontend exploration.
             """
             task_id, _ = bound_identity(ctx, scout=True)
-            return await aoe.register_questions(task_id, questions)
+            return await aoe.collection.collect(task_id, plan)
 
         @mcp.tool()
         async def scout_finish_collection(expected_count: int, ctx: Context) -> dict[str, Any]:

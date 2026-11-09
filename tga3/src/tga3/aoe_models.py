@@ -23,6 +23,8 @@ class AOEQuestionInput(BaseModel):
     attachments: list[str] = Field(default_factory=list, max_length=100)
     target: TargetSpec = Field(default_factory=lambda: TargetSpec(mode="unknown"))
     submission: SubmissionSpec | None = None
+    # Exact list item is file-backed; never copy a second source blob into SQL.
+    source: dict[str, Any] | None = None
 
     @field_validator("difficulty", mode="before")
     @classmethod

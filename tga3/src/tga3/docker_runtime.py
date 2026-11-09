@@ -173,6 +173,12 @@ class DockerContainerRuntime:
         if spec.aoe_parent_id is not None:
             environment.update(TGA3_AOE_PARENT_ID=str(spec.aoe_parent_id),
                                TGA3_SCOUT_START_PHASE=spec.scout_phase or "collecting")
+            if binding.role in {'scout', 'worker'}:
+                overview = self.config.task_path(spec.aoe_parent_id) / 'overview'
+                if not all((overview / name).is_file() for name in ['scene.md', 'task.md']):
+                    raise RuntimeUnavailableError('AOE overview originals must be prepared before launch')
+                volumes[str(overview)] = {'bind': '/task-overview', 'mode': 'ro'}
+                environment['TGA3_TASK_OVERVIEW_ROOT'] = '/task-overview'
             if binding.role == "scout":
                 environment["TGA3_SCOUT_INTEL_MCP_URL"] = (
                     runtime.blackboard_mcp_url.rstrip("/").removesuffix("/mcp") + "/aoe-scout-mcp/"
@@ -180,6 +186,17 @@ class DockerContainerRuntime:
             if spec.task_id != spec.aoe_parent_id:
                 environment["TGA3_QUESTION_ID"] = str(spec.task_id)
             if binding.role == "worker":
+                source = self.config.task_path(spec.task_id) / 'source.json'
+                if source.is_file():
+                    volumes[str(source)] = {'bind': '/question-source.json', 'mode': 'ro'}
+                    environment['TGA3_QUESTION_SOURCE'] = '/question-source.json'
+                environment['TGA3_STARTUP_PROMPT'] = (
+                    'In a NEW CLI context, read /task-overview/scene.md and /task-overview/task.md separately. '
+                    'When resuming the same context, use the originals already read without reading them again. '
+                    'These are the complete shared scene and initial user instructions, including platform credentials. '
+                    'Use native Read or cat with sufficient output allowance (Codex max_output_tokens=12000). '
+                    'Then solve only the assigned question from the initial question blackboard. '
+                    'Do not reread the blackboard or overview each turn; hooks deliver subsequent question updates.')
                 environment.update(TGA3_FORCE_NEW_SESSION="1" if spec.fresh_session else "0",
                     TGA3_TARGET_MODE=spec.target_mode,
                     TGA3_TARGET_ADDRESSES=json.dumps(spec.target_addresses),
