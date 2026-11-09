@@ -882,8 +882,6 @@ class AOERuntime:
             parent = await self.storage.get_task(parent_id)
             if parent.state in TERMINAL:
                 return True
-            slots = {run.agent_id: run for run in await self.storage.list_agents(parent_id)}
-            workers = tuple(agent for agent in self.config.worker_agent_ids if agent in slots)
             questions = await self.storage.list_questions(parent_id)
             if reconcile:
                 await self._reconcile_inputs(parent_id, questions)
@@ -928,6 +926,7 @@ class AOERuntime:
                     self._recovering.discard(question.id)
             occupied = {a["agent_id"] for q in questions for a in active_attempts(q)}
             slots = {run.agent_id: run for run in await self.storage.list_agents(parent_id)}
+            workers = tuple(agent for agent in self.config.worker_agent_ids if agent in slots)
             available = [
                 agent_id
                 for agent_id in workers
