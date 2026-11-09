@@ -6,6 +6,7 @@ import { activityRoute, labelPlacement, phaseRoute, type GraphBox, type GraphPoi
 import { agentStateLabel, formatTime, sdkLabel, stateLabel } from "../tga3-view";
 import { useRuntimeActivities } from "../use-runtime-activities";
 import { ExperienceCards } from "./ExperienceCards";
+import { workerBus } from "../worker-bus";
 
 const ORDER = ["scout", "worker-openai", "worker-claude", "worker-opencode", "worker-qwen", "reporter"];
 export function TGA3RuntimeGraph({ snapshot, selectedAgentId, onSelectAgent }: { snapshot: TGA3RuntimeSnapshot; selectedAgentId?: string | null; onSelectAgent?: (id: string) => void }) {
@@ -19,6 +20,8 @@ export function TGA3RuntimeGraph({ snapshot, selectedAgentId, onSelectAgent }: {
   const counts = { intel: snapshot.blackboard.filter(e => e.kind === "intel").length, finding: snapshot.blackboard.filter(e => e.kind === "finding").length, final: snapshot.blackboard.filter(e => e.kind === "final_candidate").length };
   const agents = [...snapshot.agents].sort((a, b) => ORDER.indexOf(a.agent_id) - ORDER.indexOf(b.agent_id));
   const workers = agents.filter(item => item.role === "worker");
+  const bus = workerBus(boxes);
+  const wiresVisible = size.width >= 530 && (workers.length <= 2 || !!bus);
   const detail = selected ? [...events].reverse().find(event => event.activity && [event.activity.from, event.activity.to].includes(selected))?.activity : null;
   const selectedAgent = agents.find(agent => agentNode(agent.agent_id) === selected);
   useLayoutEffect(() => {
@@ -49,17 +52,24 @@ export function TGA3RuntimeGraph({ snapshot, selectedAgentId, onSelectAgent }: {
     </button>;
   }
   const labels: Array<{ key: string; activity: RuntimeActivity; point: GraphPoint }> = [];
-  for (const activity of activities) { const route = activityRoute(activity, boxes); if (!route) continue; const point = labelPlacement(route.label, activity.shortLabel, boxes, size, labels.map(item => ({ point: item.point, text: item.activity.shortLabel }))); if (point) labels.push({ key: activity.id, activity, point }); }
+  const sharedLabels = new Set<string>();
+  for (const activity of activities) {
+    const shared = bus && !activity.from.includes(':') ? `${activity.from}:${activity.shortLabel}` : null;
+    if (shared && sharedLabels.has(shared)) continue;
+    const route = activityRoute(activity, boxes); if (!route) continue;
+    const point = labelPlacement(route.label, activity.shortLabel, boxes, size, labels.map(item => ({ point: item.point, text: item.activity.shortLabel })));
+    if (point) { labels.push({ key: activity.id, activity, point }); if (shared) sharedLabels.add(shared); }
+  }
   return <section className="collab-graph" aria-label="实时运行图">
     <header className="collab-head"><div><h2>实时运行图</h2><small>{terminal ? "运行已结束" : "实时交互"}</small></div><div><label><input type="checkbox" checked={models} onChange={event => setModels(event.target.checked)} />模型信息</label><button type="button" aria-expanded={!collapsed} onClick={() => setCollapsed(value => !value)}>{collapsed ? <ChevronDown size={14} /> : <ChevronUp size={14} />}{collapsed ? "展开运行图" : "收起运行图"}</button></div></header>
     {!collapsed ? <><div className="collab-stage" ref={stage}>
       <svg className="collab-wires" viewBox={`0 0 ${size.width} ${size.height}`} aria-hidden="true"><defs><marker id={marker} viewBox="0 0 8 8" markerWidth="6" markerHeight="6" refX="7" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8" fill="none" stroke="currentColor" /></marker></defs>
-        {size.width >= 530 ? workers.flatMap(worker => [["scout", worker.agent_id], [worker.agent_id, "reporter"]]).map(([a, b]) => boxes[agentNode(a)] && boxes[agentNode(b)] ? <path key={`${a}-${b}`} className="collab-passive" d={phaseRoute(boxes[agentNode(a)], boxes[agentNode(b)], boxes)} /> : null) : null}
-        {size.width >= 530 ? workers.map(worker => worker.agent_id).map(id => {
+        {bus ? <g data-worker-bus="true" className="collab-passive"><path d={bus.trunk} /><path d={bus.branches} /><path d={bus.phases} /><path data-knowledge-link="workers" d={bus.knowledgeLink} /></g> : size.width >= 530 && workers.length <= 2 ? workers.flatMap(worker => [["scout", worker.agent_id], [worker.agent_id, "reporter"]]).map(([a, b]) => boxes[agentNode(a)] && boxes[agentNode(b)] ? <path key={`${a}-${b}`} className="collab-passive" d={phaseRoute(boxes[agentNode(a)], boxes[agentNode(b)], boxes)} /> : null) : null}
+        {!bus && size.width >= 530 && workers.length <= 2 ? workers.map(worker => worker.agent_id).map(id => {
           const route = activityRoute({ id, owner: agentNode(id), from: "knowledge", to: agentNode(id), label: "", shortLabel: "", detail: "", at: 0 }, boxes);
           return route ? <path key={`knowledge-${id}`} data-knowledge-link={id} className="collab-passive" markerEnd={`url(#${marker})`} d={route.d} /> : null;
         }) : null}
-        {activities.map(activity => { const route = activityRoute(activity, boxes); return route ? <path key={activity.id} className="collab-route" markerEnd={`url(#${marker})`} d={route.d} /> : null; })}
+        {wiresVisible ? activities.map(activity => { const route = activityRoute(activity, boxes); return route ? <path key={activity.id} className="collab-route" markerEnd={`url(#${marker})`} d={route.d} /> : null; }) : null}
       </svg>
       <div className="collab-grid" data-workers={workers.length}>
         {resource("input", "任务输入", <Files size={15} />, questions ? `${questions.length} 道题目，各自题面与附件` : `题目描述与 ${snapshot.blackboard.filter(item => item.kind === "user_file").length} 个附件`)}

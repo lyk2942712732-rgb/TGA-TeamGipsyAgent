@@ -109,4 +109,16 @@ with TemporaryDirectory(prefix="tga-workbench-") as directory:
                               metadata={"scout_phase": phase})
         return {"ok": True}
 
+    @app.post('/fixture/connections/{source}')
+    async def fixture_connections(source: str):
+        assert source in {'knowledge', 'blackboard', 'experience', 'skills'}
+        for agent_id in config.worker_agent_ids:
+            tool, inputs = ('mcp__ctf42__search_challenges', {'query': 'fixture'}) if source == 'knowledge' else (
+                ('mcp__blackboard__blackboard_sync', {'after_seq': 2}) if source == 'blackboard' else
+                ('Read', {'file_path': '/experience/cards/example.json' if source == 'experience' else '/skills/ctf-web/SKILL.md'}))
+            actor = Actor(agent_id=agent_id, display_name=config.agents.agents[agent_id].display_name, role='worker')
+            await db.append_event(TASK_ID, actor, EventKind.ACTION_STARTED, tool, channel_agent_id=agent_id,
+                                  payload={'tool': tool, 'input': inputs, 'tool_use_id': f'route-{time.time_ns()}'})
+        return {'ok': True}
+
     uvicorn.run(app, host="127.0.0.1", port=int(os.environ.get("TGA_WORKBENCH_API_PORT", "18084")))

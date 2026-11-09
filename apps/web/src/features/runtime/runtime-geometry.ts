@@ -1,5 +1,6 @@
 import { agentNode, type RuntimeActivity } from "./runtime-activity";
 import { orthogonalRoute } from "./orthogonal-route";
+import { workerBusActivity } from "./worker-bus";
 export type GraphBox = { x: number; y: number; width: number; height: number };
 export type GraphPoint = { x: number; y: number };
 export type GraphRoute = { d: string; label: GraphPoint };
@@ -8,6 +9,8 @@ export function phaseRoute(a: GraphBox, b: GraphBox, boxes?: Record<string, Grap
 export function activityRoute(activity: RuntimeActivity, boxes: Record<string, GraphBox>): GraphRoute | null {
   if (!activity.to) return null;
   const a = boxes[activity.from], b = boxes[activity.to]; if (!a || !b || !a.width || !b.width) return null;
+  const busRoute = workerBusActivity(activity.from, activity.to, boxes);
+  if (busRoute) return busRoute;
   if (Object.keys(boxes).filter(id => id.startsWith("agent:worker-")).length > 2) {
     const horizontal = a.x+a.width <= b.x || b.x+b.width <= a.x;
     return orthogonalRoute(a,b,boxes,horizontal ? a.x < b.x ? "right" : "left" : a.y < b.y ? "bottom" : "top",

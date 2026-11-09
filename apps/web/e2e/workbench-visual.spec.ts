@@ -1,4 +1,21 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Locator } from "@playwright/test";
+
+async function expectClearWires(graph: Locator) {
+  const collisions = await graph.evaluate(root => {
+    const stage = root.querySelector('.collab-stage')!.getBoundingClientRect();
+    const boxes = [...root.querySelectorAll<HTMLElement>('[data-graph-node]')].map(node => ({ id: node.dataset.graphNode, rect: node.getBoundingClientRect() }));
+    return [...root.querySelectorAll<SVGPathElement>('.collab-passive path, path.collab-passive, .collab-route')].flatMap(wire => {
+      const length = wire.getTotalLength();
+      for (let distance = 1; distance < length; distance += 2) {
+        const point = wire.getPointAtLength(distance), x = point.x + stage.left, y = point.y + stage.top;
+        const hit = boxes.find(({ rect }) => x > rect.left + 2 && x < rect.right - 2 && y > rect.top + 2 && y < rect.bottom - 2);
+        if (hit) return [{ node: hit.id, path: wire.getAttribute('d') }];
+      }
+      return [];
+    });
+  });
+  expect(collisions).toEqual([]);
+}
 
 test("four Worker nodes form staggered columns and remain usable on narrow screens", async ({ page }, testInfo) => {
   const errors: string[] = []; page.on("pageerror", error => errors.push(error.message));
@@ -14,14 +31,27 @@ test("four Worker nodes form staggered columns and remain usable on narrow scree
   expect(d.y).toBeGreaterThan(b.y+20);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth+1)).toBe(true);
   await graph.screenshot({ path: testInfo.outputPath('four-workers-desktop.png') });
+  await expect(graph.locator('[data-worker-bus]')).toHaveCount(1);
+  await expect(graph.locator('[data-knowledge-link]')).toHaveCount(1);
+  await expectClearWires(graph);
   await graph.getByRole('button', { name: '查看 Qwen Code Worker', exact: true }).click();
   await expect(page.locator('.workbench-inspector').getByRole('heading', { name: 'Qwen Code Worker', exact: true })).toBeVisible();
   await graph.getByRole('checkbox', { name: '模型信息' }).check();
   await expect(graph.locator('.collab-model')).toHaveCount(6);
   await graph.screenshot({ path: testInfo.outputPath('four-workers-models.png') });
+  await expectClearWires(graph);
+  for (const source of ['knowledge', 'blackboard', 'experience', 'skills']) {
+    expect((await page.request.post(`http://127.0.0.1:18084/fixture/connections/${source}`)).ok()).toBe(true);
+    await expect(graph.locator('.collab-route')).toHaveCount(4);
+    await expectClearWires(graph);
+    if (source === 'knowledge') await graph.screenshot({ path: testInfo.outputPath('four-workers-active.png') });
+  }
+  await page.setViewportSize({ width: 1100, height: 1100 });
+  await expectClearWires(graph);
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(graph.getByRole('button', { name: '查看 OpenCode Worker' })).toBeVisible();
   await graph.screenshot({ path: testInfo.outputPath('four-workers-mobile.png') });
+  await expect(graph.locator('.collab-route, [data-worker-bus]')).toHaveCount(0);
   const overflow = await page.evaluate(() => [...document.querySelectorAll('*')].filter(e => e.getBoundingClientRect().right > innerWidth+1).slice(0,16).map(e => ({ tag:e.tagName, cls:e.className, width:e.getBoundingClientRect().width })));
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth+1), JSON.stringify(overflow)).toBe(true);
   expect(errors).toEqual([]);
