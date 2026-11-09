@@ -48,6 +48,9 @@ class CliAdapter(AgentAdapter):
         self.api_key = os.environ["TGA3_API_KEY"]
         self.base_url = os.environ.get("TGA3_BASE_URL") or ""
         self.timeout = int(os.environ.get("TGA3_CLI_TIMEOUT_SECONDS", "1800"))
+        if os.environ.get('TGA3_AOE_PARENT_ID') and os.environ.get('TGA3_AGENT_ROLE') == 'worker':
+            # The runtime's first-action deadline is authoritative, including completion holds.
+            self.timeout = None
         self.reporter = os.environ.get("TGA3_AGENT_ROLE") == "reporter"
         self.protocol = os.environ["TGA3_PROVIDER_PROTOCOL"]
         self.hook_service = None

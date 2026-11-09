@@ -95,6 +95,7 @@ class WorkerSession:
                 elif message.method == 'session.deadline':
                     if params.get('attempt_id') == os.environ.get('TGA3_ATTEMPT_ID'):
                         self.attempt_deadline = float(params['deadline'])
+                        os.environ['TGA3_ATTEMPT_DEADLINE'] = str(self.attempt_deadline)
                         self.deadline_changed.set()
                 elif message.method == "blackboard.changed":
                     self.pending_blackboard_seq = max(self.pending_blackboard_seq, int(params["latest_seq"]))

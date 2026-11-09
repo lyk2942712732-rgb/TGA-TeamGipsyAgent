@@ -110,6 +110,8 @@ class FinalCandidateBody(BaseModel):
         min_length=1,
         description="Existing blackboard entry UUIDs whose kind is finding; never use Artifact UUIDs here.",
     )
+    submission_action_id: str | None = Field(default=None, min_length=1, max_length=200,
+        description="AOE: action ID containing the actual platform acceptance receipt for this exact flag.")
 
 
 class WorkerActor(Actor):

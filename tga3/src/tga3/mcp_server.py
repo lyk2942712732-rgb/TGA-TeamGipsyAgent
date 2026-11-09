@@ -93,6 +93,8 @@ def build_scout_mcp(config: TGA3Config, store: ScoutIntelStore, *, aoe=None) -> 
             attachments are existing local /inputs/... or /workspace/... files, not remote URLs.
             If an attachment entry point is unknown, leave attachments empty and note it in connection_info.
             Register without waiting; never guess attachment URLs, API endpoints or parameters.
+            When documented, submission declares request(method,url,headers,params,body) with literal
+            {flag} placeholder plus success_path and duplicate_code; include actual platform credentials.
             Multiple batches allowed; identical retries are deduplicated. Record known download failures.
             """
             task_id, _ = bound_identity(ctx, scout=True)

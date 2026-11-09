@@ -4,13 +4,13 @@ import asyncio
 import hashlib
 import json
 from collections import defaultdict
-from pathlib import Path
 from uuid import uuid4
 
 from .action_findings import ActionFindingInput, ActionFindingPublisher
 from .domain import FinalCandidateBody
 from .errors import ContractError
 from .final_candidates import FinalCandidatePublisher
+from .submissions import SubmissionMissing, SubmissionRejected
 
 
 class FilePublications:
@@ -111,5 +111,11 @@ class FilePublications:
                 self._save(receipt_path, receipt)
                 return [receipt]
             except Exception as exc:
+                if isinstance(exc, SubmissionMissing):
+                    question = await self.board.storage.get_task(task_id)
+                    context = self.finals.submissions.write_context(question, agent_id)
+                    return [{'path': label, 'status': 'submission_required', 'error': str(exc), **context}]
+                if isinstance(exc, SubmissionRejected):
+                    return [{'path': label, 'status': 'submission_rejected', 'error': str(exc)}]
                 waiting = isinstance(exc, ContractError) and 'Unread blackboard updates' in str(exc)
                 return [{'path': label, 'status': 'waiting_for_blackboard' if waiting else 'error', 'error': str(exc)}]

@@ -182,6 +182,16 @@ def worker_instructions() -> str:
             "Attachment path values in question.json are relative to the question root (inputs/filename); "
             "read them at /inputs/filename inside this container. "
             "The runtime assigns questions; do not claim other questions yourself."
+            " Before publishing final-candidate.json, submit the exact flag and obtain the actual platform "
+            "acceptance receipt. Read /workspace/.tga3/submission.json for the documented endpoint, headers "
+            "and credentials; substitute the exact flag for the {flag} placeholder. Keep the exact flag "
+            "and original question ID in the native HTTP command and retain the raw JSON response in its "
+            "output. Cite that execution's action_id as submission_action_id in final-candidate.json. "
+            "Local flag extraction alone cannot complete an AOE platform question. If the import receipt "
+            "says submission_required, read the refreshed submission file and submit; submission_rejected "
+            "means fix the answer rather than retrying credentials. Never fabricate acceptance. "
+            "A completion hold keeps the same attempt running after a recent flag signal until publication "
+            "succeeds or the task is stopped; it does not make that flag correct."
         )
         target_mode = os.environ.get("TGA3_TARGET_MODE", "unknown")
         if target_mode == "managed":

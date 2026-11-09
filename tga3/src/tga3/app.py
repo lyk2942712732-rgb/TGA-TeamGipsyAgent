@@ -667,6 +667,8 @@ def create_app(
     @app.post("/internal/blackboard/{task_id}/{agent_id}/checkpoint")
     async def blackboard_checkpoint(task_id: UUID, agent_id: str, body: dict) -> dict:
         worker = config.agents.agents[agent_id].role == 'worker'
+        if worker and (body.get('completion_hint') or publications.final_pending(task_id, agent_id)):
+            await coordinator.aoe.protect_completion(task_id)
         file_sync = worker and bool(body.get('file_sync'))
         receipts = await publications.sync_findings(task_id, agent_id) if file_sync else []
         pending_final = file_sync and publications.final_pending(task_id, agent_id)

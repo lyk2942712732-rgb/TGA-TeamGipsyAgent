@@ -62,6 +62,11 @@ Worker 的最终候选提交文件写到 `/workspace/final-candidate.json`：
 
 系统先导入 Finding，再检查黑板未读信息，最后导入最终候选。
 系统将首先接受的候选正文保存到题目根目录 `final-candidate.json`，与 `question.json` 并列。
+
+AOE 平台题另需实际提交成功回执，可填写 `submission_action_id` 关联本题、本 flag 的执行正文。
+缺回执返回 `submission_required` 并定向重发 `/workspace/.tga3/submission.json`；平台判错返回
+`submission_rejected`。最后 30 秒发现当前尝试的新 flag 时，系统延长同一尝试直到候选发布成功。
+详见 [平台提交与收尾保护](docs/platform-submissions.md)。
 两位 Worker 的私有提交文件隔离，避免共同攻坚互相覆盖。`result/` 不再保存候选 JSON。
 `waiting_for_blackboard` 表示先阅读系统注入的新消息，下一次原生工具调用或周期结束确认后自动重试同一文件。
 只有 `status=imported` 表示成功，`status=error` 需要修正。

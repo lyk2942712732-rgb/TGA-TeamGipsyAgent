@@ -31,6 +31,7 @@ from .docker_runtime import LaunchSpec
 from .domain import SYSTEM_ACTOR, AgentRun, AgentState, EventKind, InputFile, PublishRequest, RunState, TaskRun
 from .errors import ConflictError, ContractError
 from .evidence import evidence_files
+from .submissions import Submissions
 from .target_instances import TargetInstances
 
 if TYPE_CHECKING:
@@ -60,6 +61,7 @@ class AOERuntime:
         self.reconcile_seconds = reconcile_seconds
         self._unsubscribe = self.storage.subscribe_changes(self._storage_changed)
         self.targets = TargetInstances(self.config, clock=lambda: self.clock(), on_change=self.wake)
+        self.submissions = Submissions(self.config)
         self._recovering: set[UUID] = set()
         self._target_jobs: dict[UUID, asyncio.Task] = {}
         self._target_claims: dict[UUID, tuple[str, ...]] = {}
@@ -205,6 +207,8 @@ class AOERuntime:
             return
         value = await self.question_view(question)
         value["target"] = self.targets.spec(question).model_dump(mode="json")
+        submission = self.submissions.spec(question)
+        value["submission"] = submission.model_dump(mode="json") if submission else None
         value["target_runtime"] = self.targets.state(question.id)
         digest = hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
         if self._manifest_digests.get(question.id) != digest:
@@ -354,7 +358,7 @@ class AOERuntime:
                     parent_task_id=parent_id,
                     metadata={
                         **{key: value for key, value in payload.items()
-                           if key not in {"title", "attachments", "target"}},
+                           if key not in {"title", "attachments", "target", "submission"}},
                         "registration_digest": fingerprint,
                         "ordinal": len(existing),
                         "status": "preparing",
@@ -364,6 +368,8 @@ class AOERuntime:
                     },
                 )
                 self.targets.register(question.id, spec.target)
+                self.submissions.register(question.id, spec.submission or
+                    self.submissions.legacy_spec(question, spec.target.model_dump(mode="json")))
                 registered_agents = {run.agent_id for run in await self.storage.list_agents(question.id)}
                 for run in await self.storage.list_agents(parent_id):
                     if run.agent_id not in registered_agents:
@@ -655,6 +661,7 @@ class AOERuntime:
 
     async def _launch_attempt(self, parent_id: UUID, question: TaskRun, attempt: dict, *, fresh: bool) -> None:
         agent_id = attempt["agent_id"]
+        self.submissions.write_context(question, agent_id)
         slot = await self.storage.get_agent(parent_id, agent_id)
         binding = self.config.resolve_agent(agent_id, slot.provider_id, slot.model_id, slot.protocol)
         pointer = (
@@ -780,6 +787,39 @@ class AOERuntime:
         self._checked_sequences[question.id] = cursor
         return None
 
+    async def protect_completion(self, question_id):
+        question = await self.storage.get_task(question_id)
+        if question.parent_task_id is not None:
+            async with self.locks[question.parent_task_id]:
+                return await self._protect_completion(await self.storage.get_task(question_id))
+        return question
+
+    async def _protect_completion(self, question):
+        attempts = active_attempts(question)
+        closing = [a for a in attempts if a.get('deadline') is not None
+                   and a['deadline'] - self.clock() <= 30]
+        if not closing:
+            return question
+        held = next((a.get('completion_hold_action') for a in closing if a.get('completion_hold_action')), None)
+        evidence = held or next((found for a in closing
+                                if (found := self.submissions.recent_flag(question, a))), None)
+        if not evidence:
+            return question
+        now = self.clock()
+        protected_ids = {a['id'] for a in attempts}
+        question = await self.storage.mutate_task_metadata(question.id, lambda metadata: {
+            **metadata, 'attempts': [{**a, 'deadline': now + 120, 'completion_hold_action': evidence}
+                                   if a['id'] in protected_ids else a for a in metadata['attempts']]})
+        await self._save_question(question)
+        for attempt in active_attempts(question):
+            await self.coordinator.gateway.notify(question.id, attempt['agent_id'], 'session.deadline',
+                {'attempt_id': attempt['id'], 'deadline': attempt['deadline']})
+        if not held:
+            await self.events.emit(question.parent_task_id, actor=SYSTEM_ACTOR, kind=EventKind.SYSTEM,
+                text=f"检测到 flag，延长提交收尾直到最终候选发布成功：{question.title}",
+                payload={'question_id': str(question.id), 'action_id': evidence})
+        return question
+
     async def _settle(self, question: TaskRun, *, status: str, flag: str | None = None) -> TaskRun:
         agents = {attempt["agent_id"] for attempt in active_attempts(question)}
         if agents:
@@ -849,6 +889,8 @@ class AOERuntime:
                 if candidate is not None:
                     replace(await self._settle(question, status="solved", flag=candidate.body["conclusion"]))
                     continue
+                question = await self._protect_completion(question)
+                replace(question)
                 active = active_attempts(question)
                 expired = {attempt["agent_id"] for attempt in active
                            if attempt.get("deadline") is not None and attempt["deadline"] <= self.clock()}
@@ -930,8 +972,8 @@ class AOERuntime:
             for question in questions:
                 await self._save_question(question)
             await self._sync_slots(parent_id, questions, slots)
-            due = [a["deadline"] for q in questions for a in active_attempts(q)
-                   if a.get("deadline") is not None]
+            due = [a["deadline"] - (30 if a["deadline"] - self.clock() > 30 else 0)
+                   for q in questions for a in active_attempts(q) if a.get("deadline") is not None]
             due.extend(record["retry_at"] for record in self.targets.records.values()
                        if record["parent_id"] == str(parent_id) and record.get("retry_at", 0) > self.clock()
                        and record.get("state") != "ready")
@@ -1009,6 +1051,7 @@ class AOERuntime:
 
     async def _recover_attempts(self, parent_id: UUID) -> None:
         for question in await self.storage.list_questions(parent_id):
+            question = await self._protect_completion(question)
             active = active_attempts(question)
             if active and not await self.targets.prepare(question):
                 # A managed lease that cannot be restored must not run a CLI against stale addresses.

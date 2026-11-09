@@ -5,10 +5,12 @@ from __future__ import annotations
 import json
 import os
 import sys
+import time
 from pathlib import Path
 
 import httpx
 
+from ..flag_signals import FLAG
 from .action_hook import record_tool, result_context
 
 _publication_versions = {}
@@ -35,7 +37,11 @@ def checkpoint(event: dict, *, client=None, record_action=None) -> dict:
     post_tool = event_name in {"PostToolUse", "PostToolUseFailure"}
     record_action = record_action or record_tool
     record = record_action(event) if post_tool else None
-    if post_tool and not publications_changed():
+    deadline = os.environ.get('TGA3_ATTEMPT_DEADLINE')
+    completion_hint = bool(post_tool and record and deadline and float(deadline) - time.time() <= 30
+                           and os.environ.get('TGA3_AOE_PARENT_ID')
+                           and FLAG.search(str(event.get('tool_response', ''))))
+    if post_tool and not publications_changed() and not completion_hint:
         return ({"hookSpecificOutput": {"hookEventName": event_name, "additionalContext": result_context(record)}}
                 if record else {})
     state_dir = Path(os.environ.get("TGA3_WORKSPACE", "/workspace")) / ".tga3"
@@ -91,6 +97,7 @@ def checkpoint(event: dict, *, client=None, record_action=None) -> dict:
             "action_start": (os.environ.get("TGA3_ATTEMPT_ID", "")
                              if event_name == "PreToolUse" and event.get("tool_use_id") else ""),
             "force_start": force_start,
+            "completion_hint": completion_hint,
             "experience_generation": experience_generation,
             "experience_ack": (experience_previous.get("delivery_id", "")
                                if experience_previous.get("generation") == experience_generation else ""),
