@@ -18,7 +18,7 @@ export const MODE_PROFILES: Record<TaskMode, { label: string; description: strin
   security_misc: { label: "Misc安全杂项", description: "分析隐写、编码、取证、流量、媒体和综合型安全题。", defaultGoal: "识别题目机制并提取、验证 Flag。" },
   cryptography: { label: "Crypto密码学问题", description: "分析密码原语、协议缺陷和错误实现。", defaultGoal: "恢复明文或密钥并提取、验证 Flag。" },
   ai_security: { label: "AI安全", description: "分析模型、提示词、RAG 与智能体应用的安全题。", defaultGoal: "验证题目中的 AI 安全缺陷，取得并验证答案或 Flag。" },
-  aoe: { label: "AOE多题", description: "收集整批题目，按题共享情报、分配两个 Worker 并逐题生成报告。", defaultGoal: "逐题验证答案，保存独立黑板、执行记录和解题报告。" },
+  aoe: { label: "AOE多题", description: "收集整批题目，按题共享情报、分配四个 Worker 并逐题生成报告。", defaultGoal: "逐题验证答案，保存独立黑板、执行记录和解题报告。" },
 };
 
 // Historical tasks keep their original category; these are not new-task choices.

@@ -73,7 +73,7 @@ export function RealtimePrompt({ taskId, accepting, onChanged }: { taskId: strin
   return <form className="tga3-realtime-prompt" onSubmit={event => { event.preventDefault(); void send(); }}>
     <label htmlFor="realtime-prompt">实时提示</label>
     <textarea id="realtime-prompt" value={text} disabled={!accepting || busy} maxLength={20000} rows={2} onChange={event => { setText(event.target.value); key.current = ""; setNotice(""); setError(""); }} placeholder={accepting ? "补充线索或调整任务方向" : "任务已结束或正在收尾，无法追加提示"} />
-    <div><small>{accepting ? "对 Scout 和两个 Worker 共享，已写入的提示会保留在黑板。" : "当前任务不接收实时提示。"}</small><button className="ref-primary-button" type="submit" disabled={!accepting || busy || !text.trim()}>{busy ? "正在写入…" : "写入黑板"}</button></div>
+    <div><small>{accepting ? "对本任务的 Scout 和 Worker 共享，已写入的提示会保留在黑板。" : "当前任务不接收实时提示。"}</small><button className="ref-primary-button" type="submit" disabled={!accepting || busy || !text.trim()}>{busy ? "正在写入…" : "写入黑板"}</button></div>
     {notice ? <p role="status">{notice}</p> : null}{error ? <p role="alert">{error}</p> : null}
   </form>;
 }
