@@ -59,6 +59,12 @@ test("all workbench pages, native task interactions, saved Solver settings and d
   await expect(page.locator(".collab-route")).toHaveCount(2);
   await page.screenshot({ path: testInfo.outputPath("runtime-interactions.png"), fullPage: true });
   await page.goto("/settings/solvers");
+  for (const name of ['OpenCode Worker', 'Qwen Code Worker']) {
+    await page.getByRole('button', { name: `配置 ${name}`, exact: true }).click();
+    await expect(page.getByLabel(`${name} Solver 配置`, { exact: true })).toBeVisible();
+    await expect(page.getByLabel(`${name} Solver 配置`, { exact: true }).getByLabel('供应商 / 已启用模型')).toBeEnabled();
+  }
+  await page.getByRole('button', { name: '配置 OpenAI Worker', exact: true }).click();
   const panel = page.getByLabel("OpenAI Worker Solver 配置", { exact: true });
   const interval = panel.getByRole("spinbutton", { name: "黑板同步间隔（秒）" });
   const previous = await interval.inputValue(); await interval.fill("75");

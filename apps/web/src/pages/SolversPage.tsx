@@ -5,7 +5,7 @@ import { enabledModelOptions } from "../api/model-options";
 import { ErrorState } from "../components/ui/ErrorState";
 import { LoadingSkeleton } from "../components/ui/LoadingSkeleton";
 
-const AGENT_ORDER = ["scout", "worker-openai", "worker-claude", "reporter"];
+const AGENT_ORDER = ["scout", "worker-openai", "worker-claude", "worker-opencode", "worker-qwen", "reporter"];
 type ConfigTab = "model" | "prompt" | "tools";
 export function SolversPage() {
   const [agents, setAgents] = useState<AgentsConfig | null>(null), [models, setModels] = useState<ModelsConfig | null>(null);
@@ -24,7 +24,7 @@ export function SolversPage() {
   function patch(value: Partial<AgentConfig>) { if (!agents || !selected) return; setAgents({ ...agents, agents: { ...agents.agents, [selectedId]: { ...selected, ...value } } }); setDirty(true); setMessage(""); }
   async function save() { if (!agents) return; if (scoutTimeDirty && (!Number.isInteger(scoutSeconds) || scoutSeconds < 60 || scoutSeconds > 600)) { setError("Scout 第一轮时长应为 60–600 秒的整数。"); return; } setBusy(true); setMessage(""); setError(""); try { if (scoutTimeDirty) { await tga3ConfigApi.saveScoutSettings(scoutSeconds); setScoutTimeDirty(false); } setAgents(await tga3ConfigApi.saveAgents(agents)); setDirty(false); setMessage("Solver 配置已保存。"); } catch (reason) { setError(reason instanceof Error ? reason.message : "保存失败"); } finally { setBusy(false); } }
   return <div className="ref-page solvers-page">
-    <header className="ref-page-head"><div><h1>Solver 配置</h1><p>先侦察，两个 Worker 并行执行，最后生成报告。</p></div><div className="solver-head-actions"><button className="ref-secondary-button" disabled={busy} onClick={() => { if (!dirty || window.confirm("刷新将放弃尚未保存的配置，继续吗？")) void load(); }}><RefreshCw size={15} />刷新状态</button><button className="ref-primary-button" disabled={!agents || busy} onClick={() => void save()}><Save size={15} />{busy ? "保存中…" : "保存"}</button></div></header>
+    <header className="ref-page-head"><div><h1>Solver 配置</h1><p>Scout 收集信息，四个 Worker 并行执行，Reporter 生成报告。</p></div><div className="solver-head-actions"><button className="ref-secondary-button" disabled={busy} onClick={() => { if (!dirty || window.confirm("刷新将放弃尚未保存的配置，继续吗？")) void load(); }}><RefreshCw size={15} />刷新状态</button><button className="ref-primary-button" disabled={!agents || busy} onClick={() => void save()}><Save size={15} />{busy ? "保存中…" : "保存"}</button></div></header>
     {error ? <ErrorState description={error} actionLabel="重试" onAction={() => void load()} /> : null}
     {message ? <p className="settings-message" role="status">{message}</p> : null}
     {!agents && !error ? <LoadingSkeleton label="正在读取 Solver" rows={6} /> : null}
@@ -42,7 +42,7 @@ export function SolversPage() {
             <p className="workbench-execution-note">{selected.role === "scout" ? "三轮复用同一容器和 CLI 会话。第一轮执行并汇总 action 日志；第二轮覆盖全部 action，保存原始 Intel JSON；第三轮统一合并，另存合并 Intel JSON，系统仅将合并版本导入黑板。第二、三轮不设总时间预算，完整覆盖后结束。" : selected.role === "reporter" ? "最终候选确定后，读取最终黑板与证据并生成报告。" : "持续推进 · 不限制轮数。异常恢复继续使用原 CLI 会话。"}</p>
             {selected.role === "scout" ? <label>第一轮侦察时长（秒）<input aria-label="第一轮侦察时长（秒）" type="number" min={60} max={600} step={1} value={scoutSeconds} onChange={event => { setScoutSeconds(Number(event.target.value)); setScoutTimeDirty(true); setDirty(true); setMessage(""); }} /><small className="field-help">默认 300 秒，范围 60–600 秒，仅用于单题场景。AOE Scout 只收集题面与附件，不执行后续侦察轮次，不使用此预算。保存后用于新任务。</small></label> : null}
             {selected.role === "worker" ? <label>黑板同步间隔（秒）<input aria-label="黑板同步间隔（秒）" type="number" min={1} max={3600} value={selected.blackboard_interval_seconds ?? 60} onChange={event => patch({ blackboard_interval_seconds: Number(event.target.value) })} /><small className="field-help">有更新且达到间隔时，在下一次工具调用机会同步；提交最终候选前额外检查。</small></label> : null}
-            <div className="workbench-definition"><span>角色<strong>{roleName(selected.role)}</strong></span><span>执行后端<strong>{sdkName(selected.runtime)}</strong></span><span>协议<strong>{selected.protocol === "anthropic" ? "Anthropic Messages" : "OpenAI Responses"}</strong></span></div>
+            <div className="workbench-definition"><span>角色<strong>{roleName(selected.role)}</strong></span><span>执行后端<strong>{sdkName(selected.runtime)}</strong></span><span>协议<strong>{selected.protocol === "anthropic" ? "Anthropic Messages" : selected.protocol === "openai_chat_completions" ? "OpenAI Chat Completions" : "OpenAI Responses"}</strong></span></div>
           </> : tab === "prompt" ? <><h3>System Prompt</h3><textarea className="solver-prompt-editor" aria-label={`${selected.display_name} System Prompt`} rows={15} value={selected.system_prompt} onChange={event => patch({ system_prompt: event.target.value })} /><p className="field-help">用于后续启动的 Agent。</p></> : <><h3>任务工具</h3><div className="solver-tool-grid">{(definition?.tools ?? []).map(tool => <span key={tool}><Wrench size={13} />{tool}</span>)}</div>{definition?.image ? <ImageHealth definition={definition} /> : <p className="field-help">执行镜像尚未提供。</p>}</>}
         </div><footer><span role="status">{dirty ? "有未保存的更改" : "配置已保存"}</span><button className="ref-primary-button" disabled={busy} onClick={() => void save()}><Save size={15} />{busy ? "保存中…" : "保存配置"}</button></footer>
       </section> : null}

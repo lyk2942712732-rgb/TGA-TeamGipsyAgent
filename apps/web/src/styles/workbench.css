@@ -75,7 +75,7 @@
 .workbench-new-task .task-agent-models label { background: var(--c-surface); border: 0; border-bottom: 1px solid var(--c-border); padding: 10px 0; }
 .workbench-solver-layout { display: grid; gap: 18px; min-width: 0; }
 .workbench-team { border: 1px solid var(--c-border); border-radius: var(--r-lg); background: var(--c-surface); overflow: hidden; }
-.workbench-team-nodes { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); }
+.workbench-team-nodes { display: grid; grid-template-columns: repeat(auto-fit,minmax(145px,1fr)); }
 .workbench-team-node { display: grid; align-content: start; gap: 7px; padding: 16px; border-right: 1px solid var(--c-border); border-bottom: 2px solid transparent; text-align: left; background: transparent; color: var(--c-text); min-width: 0; }
 .workbench-team-node:last-child { border-right: 0; }
 .workbench-team-node[aria-pressed="true"] { border-bottom-color: var(--c-text); background: var(--c-surface-muted); }
