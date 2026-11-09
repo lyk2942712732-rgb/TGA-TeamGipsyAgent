@@ -29,6 +29,7 @@ class LaunchSpec:
     scout_question_id: UUID | None = None
     target_mode: str = "unknown"
     target_addresses: tuple[str, ...] = ()
+    evidence_agents: tuple[str, ...] = ()
 
 
 class ContainerRuntime(Protocol):
@@ -124,6 +125,25 @@ class DockerContainerRuntime:
                             if path.is_file():
                                 volumes[str(path)] = {"bind": f"/evidence-files/{agent_id}/{relative}", "mode": "ro"}
             volumes[str(workspace / "report-input.json")] = {"bind": "/workspace/report-input.json", "mode": "ro"}
+        if spec.evidence_agents:
+            if binding.role != 'worker' or not self.config.question_scope(spec.task_id):
+                raise RuntimeUnavailableError('Prior-attempt evidence is scoped to an assigned AOE question')
+            for agent_id in spec.evidence_agents:
+                if agent_id not in self.config.worker_agent_ids or agent_id == binding.agent_id:
+                    raise RuntimeUnavailableError('Invalid prior-attempt Worker')
+                root = self.config.task_path(spec.task_id, 'workspaces', agent_id)
+                self._ensure_worker_directory(root / 'result')
+                volumes[str(root / 'result')] = {'bind': f'/evidence-files/{agent_id}/result', 'mode': 'ro'}
+                log = self.config.task_path(spec.task_id, 'logs', agent_id) / f'{agent_id}-actions.json'
+                if log.is_file():
+                    volumes[str(log)] = {'bind': f'/evidence-logs/{agent_id}-actions.json', 'mode': 'ro'}
+                for action in read_action_log(log.parent)['actions']:
+                    for relative in action.get('artifact', {}).get('attachments', []):
+                        path = (root / relative).resolve()
+                        if not path.is_relative_to(root.resolve()):
+                            raise RuntimeUnavailableError('Prior-attempt attachment escapes its workspace')
+                        if path.is_file():
+                            volumes[str(path)] = {'bind': f'/evidence-files/{agent_id}/{relative}', 'mode': 'ro'}
         image = runtime.worker_images[binding.agent_id]
         blackboard_mcp_url = f"{runtime.blackboard_mcp_url.rstrip('/')}/"
         environment = {
@@ -186,6 +206,8 @@ class DockerContainerRuntime:
             if spec.task_id != spec.aoe_parent_id:
                 environment["TGA3_QUESTION_ID"] = str(spec.task_id)
             if binding.role == "worker":
+                if spec.evidence_agents:
+                    environment['TGA3_PEER_EVIDENCE'] = json.dumps(spec.evidence_agents)
                 source = self.config.task_path(spec.task_id) / 'source.json'
                 if source.is_file():
                     volumes[str(source)] = {'bind': '/question-source.json', 'mode': 'ro'}

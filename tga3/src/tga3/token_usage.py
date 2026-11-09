@@ -51,6 +51,9 @@ class TokenUsageTracker:
         paths = list((workspace / ".codex" / "sessions").rglob("*.jsonl"))
         paths += list((workspace / ".codex-extract" / "sessions").rglob("*.jsonl"))
         paths += list((workspace / ".claude" / "projects").rglob("*.jsonl"))
+        native_usage = workspace / '.tga3/native-usage.jsonl'
+        if native_usage.is_file():
+            paths.append(native_usage)
         for path in paths:
             journal_source = "codex-extract" if ".codex-extract" in path.parts else "codex"
             if path.is_symlink() or not path.resolve().is_relative_to(workspace.resolve()):
@@ -76,7 +79,9 @@ class TokenUsageTracker:
                         if not isinstance(payload, dict):
                             continue
                         usage, source = None, ""
-                        if record.get("type") == "token_usage_record":
+                        if record.get('type') == 'native_usage':
+                            usage, source = record.get('usage'), record.get('source', '')
+                        elif record.get("type") == "token_usage_record":
                             usage = payload.get("thread_token_usage")
                             source = f"{journal_source}:{path.name}"
                         elif record.get("type") == "event_msg" and payload.get("type") == "token_count":

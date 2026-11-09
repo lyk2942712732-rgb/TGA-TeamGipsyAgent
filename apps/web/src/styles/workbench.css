@@ -189,4 +189,8 @@
   .workbench-inspector { position: static; }
   .dashboard-columns { grid-template-columns: 1fr; }
 }
+@media (max-width: 760px) {
+  .workbench-inspector > .tga3-agent-inspector { display: block; overflow-wrap: anywhere; }
+  .workbench-inspector .tga3-inspector-tabs { flex-wrap: wrap; }
+}
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; } }

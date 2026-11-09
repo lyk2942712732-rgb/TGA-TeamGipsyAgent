@@ -1,6 +1,6 @@
 # ctf42 在线知识库接入
 
-上游：`https://ctf42.online/mcp`。Streamable HTTP，无需 API Key。仅两个 Worker 配置名为 `ctf42` 的原生 MCP，Scout/Reporter 不配置。
+上游：`https://ctf42.online/mcp`。Streamable HTTP，无需 API Key。仅四个 Worker 配置名为 `ctf42` 的原生 MCP，Scout/Reporter 不配置。
 
 ## 请求路径
 

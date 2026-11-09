@@ -29,6 +29,11 @@
 .collab-reporter { grid-column: 3; grid-row: 2; min-width: 0; }
 .collab-phase { font-size: 11px; display: block; color: var(--c-text-muted); margin-bottom: 8px; }
 .collab-workers > .collab-phase { margin: 0 0 -6px; }
+.collab-worker-grid { display: grid; gap: 14px; min-width: 0; }
+.collab-worker-slot { min-width: 0; }
+.collab-grid[data-workers="4"] { grid-template-columns: minmax(150px,.75fr) minmax(0,2fr) minmax(150px,.75fr); column-gap: 38px; }
+.collab-worker-grid[data-count="4"] { grid-template-columns: repeat(2,minmax(0,1fr)); grid-template-rows: repeat(2,auto); grid-auto-flow: column; gap: 18px 26px; padding-bottom: 32px; }
+.collab-worker-grid[data-count="4"] > :nth-child(n+3) { transform: translateY(32px); }
 .collab-agent { min-height: 91px; }
 .collab-agent-state { font-size: 11px; color: var(--c-text-muted); display: flex; align-items: center; gap: 5px; margin-top: 5px; }
 .collab-agent-action { border-top: 1px solid var(--c-border); padding-top: 7px; margin-top: 8px; font-size: 11px; display: flex; align-items: flex-start; gap: 5px; line-height: 1.6; overflow-wrap: anywhere; }
@@ -72,6 +77,11 @@
 .collab-foot i.passive { border-color: var(--c-border); margin-left: 10px; }
 @media (max-width: 1050px) { .collab-grid { column-gap: 46px; grid-template-columns: minmax(0,1fr) minmax(0,1.25fr) minmax(0,1fr); } .collab-stage { padding: 16px 13px; } .collab-node { padding: 10px; } }
 @media (max-width: 650px) {
+  .collab-grid[data-workers="4"] { grid-template-columns: minmax(0,1fr); row-gap: 22px; }
+  .collab-grid[data-workers="4"] > * { grid-column: 1; grid-row: auto; }
+  .collab-grid[data-workers="4"] .collab-capabilities { grid-template-columns: minmax(0,1fr); }
+  .collab-grid[data-workers="4"] .collab-worker-grid { grid-template-columns: minmax(0,1fr); grid-template-rows: none; grid-auto-flow: row; padding-bottom: 0; }
+  .collab-worker-grid[data-count="4"] > :nth-child(n+3) { transform: none; }
   .collab-capabilities { grid-template-columns: minmax(0,1fr); }
   .collab-detail { grid-template-columns: minmax(0,1fr) 20px; }
   .collab-detail > div:nth-child(2) { grid-column: 1 / -1; grid-row: 2; }

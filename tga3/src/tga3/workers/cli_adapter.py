@@ -83,7 +83,7 @@ class CliAdapter(AgentAdapter):
         if (os.environ.get("TGA3_AGENT_ROLE") == "worker"
                 or os.environ.get("TGA3_AGENT_ROLE") == "scout" and os.environ.get('TGA3_AOE_PARENT_ID')):
             events.append("PostToolUse")
-            if self.runtime == "claude_cli":
+            if self.runtime in {"claude_cli", "qwen_cli"}:
                 events.append("PostToolUseFailure")
         return {"hooks": {event: [{"hooks": [{"type": "command", "command": command, "timeout": 15}]}]
                           for event in events}}
@@ -111,9 +111,12 @@ class CliAdapter(AgentAdapter):
         temporary.replace(self.pointer)
 
     async def set_model(self, params: dict[str, Any]) -> None:
-        expected = "openai_responses" if self.runtime == "codex_cli" else "anthropic"
-        if params["protocol"] != expected:
+        expected = {'codex_cli': 'openai_responses', 'claude_cli': 'anthropic',
+                    'opencode_cli': 'openai_chat_completions', 'qwen_cli': 'openai_chat_completions'}[self.runtime]
+        if self.runtime not in {'opencode_cli', 'qwen_cli'} and params["protocol"] != expected:
             raise ValueError(f"{self.runtime} requires {expected}")
+        self.protocol = params['protocol']
+        os.environ['TGA3_PROVIDER_PROTOCOL'] = self.protocol
         self.model_name = str(params["model_name"])
         self.api_key = str(params["api_key"])
         self.base_url = str(params.get("base_url") or "")
@@ -255,7 +258,12 @@ class CliAdapter(AgentAdapter):
         if self.hook_config():
             if self.hook_service is None:
                 from .hook_service import HookService
-                self.hook_service = HookService()
+                loop = asyncio.get_running_loop()
+                def started(event):
+                    asyncio.run_coroutine_threadsafe(emit('agent.action.started', {
+                        'summary': event.get('tool_name'), 'tool': event.get('tool_name'),
+                        'tool_use_id': event.get('tool_use_id'), 'input': event.get('tool_input', {})}), loop)
+                self.hook_service = HookService(on_tool_start=started if self.runtime == 'opencode_cli' else None)
             env['TGA3_HOOK_PORT'] = str(self.hook_service.port)
             self.hook_service.actions.start(env["TGA3_CLI_GENERATION"])
         try:

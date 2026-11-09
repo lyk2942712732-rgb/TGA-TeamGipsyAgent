@@ -1,5 +1,32 @@
 import { expect, test } from "@playwright/test";
 
+test("four Worker nodes form staggered columns and remain usable on narrow screens", async ({ page }, testInfo) => {
+  const errors: string[] = []; page.on("pageerror", error => errors.push(error.message));
+  await page.setViewportSize({ width: 1600, height: 1100 });
+  await page.goto('/tasks/00000000-0000-4000-8000-000000001042/runtime');
+  const graph = page.getByRole('region', { name: '实时运行图' });
+  await expect(graph.locator('.collab-worker-slot')).toHaveCount(4);
+  const ids = ['worker-openai','worker-claude','worker-opencode','worker-qwen'];
+  const boxes = await Promise.all(ids.map(id => graph.locator(`[data-graph-node="agent:${id}"]`).boundingBox()));
+  const [a,b,c,d] = boxes.map(box => { expect(box).not.toBeNull(); return box!; });
+  expect(Math.abs(a.x-b.x)).toBeLessThan(2); expect(Math.abs(c.x-d.x)).toBeLessThan(2);
+  expect(c.x).toBeGreaterThan(a.x+a.width); expect(c.y).toBeGreaterThan(a.y+20);
+  expect(d.y).toBeGreaterThan(b.y+20);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth+1)).toBe(true);
+  await graph.screenshot({ path: testInfo.outputPath('four-workers-desktop.png') });
+  await graph.getByRole('button', { name: '查看 Qwen Code Worker', exact: true }).click();
+  await expect(page.locator('.workbench-inspector').getByRole('heading', { name: 'Qwen Code Worker', exact: true })).toBeVisible();
+  await graph.getByRole('checkbox', { name: '模型信息' }).check();
+  await expect(graph.locator('.collab-model')).toHaveCount(6);
+  await graph.screenshot({ path: testInfo.outputPath('four-workers-models.png') });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(graph.getByRole('button', { name: '查看 OpenCode Worker' })).toBeVisible();
+  await graph.screenshot({ path: testInfo.outputPath('four-workers-mobile.png') });
+  const overflow = await page.evaluate(() => [...document.querySelectorAll('*')].filter(e => e.getBoundingClientRect().right > innerWidth+1).slice(0,16).map(e => ({ tag:e.tagName, cls:e.className, width:e.getBoundingClientRect().width })));
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth+1), JSON.stringify(overflow)).toBe(true);
+  expect(errors).toEqual([]);
+});
+
 test("all workbench pages, native task interactions, saved Solver settings and desktop layouts", async ({ page }, testInfo) => {
   const errors: string[] = []; page.on("pageerror", error => errors.push(error.message));
   const task = "/tasks/00000000-0000-4000-8000-000000001042/runtime";
@@ -21,7 +48,7 @@ test("all workbench pages, native task interactions, saved Solver settings and d
   await page.getByRole("button", { name: "查看 Claude Worker", exact: true }).click();
   await expect(page.locator(".workbench-inspector").getByRole("heading", { name: "Claude Worker", exact: true })).toBeVisible();
   await page.getByRole("checkbox", { name: "模型信息" }).check();
-  await expect(page.locator(".collab-model")).toHaveCount(4);
+  await expect(page.locator(".collab-model")).toHaveCount(6);
   await page.getByRole("button", { name: "收起运行图" }).click(); await expect(page.locator(".collab-stage")).toHaveCount(0);
   await page.getByRole("button", { name: "展开运行图" }).click();
   await page.getByRole("checkbox", { name: "模型信息" }).uncheck();

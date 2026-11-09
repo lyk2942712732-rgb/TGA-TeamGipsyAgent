@@ -128,5 +128,7 @@ def test_config_separates_secrets_from_agent_bindings():
         "scout",
         "worker-openai",
         "worker-claude",
+        "worker-opencode",
+        "worker-qwen",
         "reporter",
     }

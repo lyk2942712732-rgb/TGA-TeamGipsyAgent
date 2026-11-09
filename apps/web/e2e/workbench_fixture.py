@@ -28,10 +28,11 @@ with TemporaryDirectory(prefix="tga-workbench-") as directory:
     fixture = Path(directory)
     copytree(root / "tga3/config", fixture / "config")
     config = TGA3Config(fixture / "config")
+    config.runtime.task_root = str(fixture / 'tasks')
     for name in ("workspace_root", "input_root", "artifact_root", "writeup_root", "skills_root"):
         setattr(config.runtime, name, str(fixture / name))
     endpoint = {"base_url": "http://127.0.0.1:18084/mock/v1", "models": [{"id": "deepseek-v4.1-flash", "name": "deepseek-v4.1-flash", "enabled": True}, {"id": "qwen3-coder-plus", "name": "qwen3-coder-plus", "enabled": True}]}
-    config.models = ModelsConfig.model_validate({"schema_version": 1, "providers": [{"id": "workbench", "name": "联调示例网关", "endpoints": {"openai_responses": endpoint, "anthropic": endpoint}, "api_keys": [{"id": "primary", "label": "本地测试", "api_key": "fixture-only-key"}], "selected_api_key_id": "primary"}]})
+    config.models = ModelsConfig.model_validate({"schema_version": 1, "providers": [{"id": "workbench", "name": "联调示例网关", "endpoints": {"openai_responses": endpoint, "anthropic": endpoint, "openai_chat_completions": endpoint}, "api_keys": [{"id": "primary", "label": "本地测试", "api_key": "fixture-only-key"}], "selected_api_key_id": "primary"}]})
     for agent in config.agents.agents.values():
         agent.provider_id = "workbench"
         agent.model_id = "deepseek-v4.1-flash"
@@ -46,12 +47,12 @@ with TemporaryDirectory(prefix="tga-workbench-") as directory:
             await db.upsert_agent(AgentRun(task_id=TASK_ID, agent_id=agent_id, sdk=definition.runtime, provider_id="workbench", model_id=definition.model_id, protocol=definition.protocol, actual_state=state, desired_state=state, metadata={"blackboard_cursor": 3, "blackboard_read_at": time.time()} if definition.role == "worker" else {}))
         user = Actor(agent_id="user", display_name="用户", role="user")
         for agent_id, inputs, outputs in [("scout", 1000, 200), ("worker-openai", 2000, 400)]:
-            journal = Path(config.runtime.workspace_root) / str(TASK_ID) / agent_id / ".codex/sessions/usage.jsonl"
+            journal = config.task_path(TASK_ID, 'workspaces', agent_id) / '.codex/sessions/usage.jsonl'
             journal.parent.mkdir(parents=True, exist_ok=True)
             journal.write_text(json.dumps({"type": "event_msg", "payload": {"type": "token_count", "info": {
                 "total_token_usage": {"input_tokens": inputs, "output_tokens": outputs},
             }}}) + "\n")
-        journal = Path(config.runtime.workspace_root) / str(TASK_ID) / "worker-claude/.claude/projects/-workspace/usage.jsonl"
+        journal = config.task_path(TASK_ID, 'workspaces', 'worker-claude') / '.claude/projects/-workspace/usage.jsonl'
         journal.parent.mkdir(parents=True, exist_ok=True)
         journal.write_text(json.dumps({"type": "assistant", "message": {"id": "fixture-1", "usage": {
             "input_tokens": 500, "cache_read_input_tokens": 400, "cache_creation_input_tokens": 100,

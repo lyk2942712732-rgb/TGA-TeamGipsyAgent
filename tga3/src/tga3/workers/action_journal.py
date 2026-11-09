@@ -29,7 +29,7 @@ class ActionJournal:
 
     def _snapshot(self) -> dict:
         result = {}
-        ignored = {".tga3", ".codex", ".codex-extract", ".claude", ".git"}
+        ignored = {".tga3", ".codex", ".codex-extract", ".claude", ".opencode", ".qwen", ".git"}
         for current, directories, names in os.walk(self.output_directory, followlinks=False):
             root = Path(current)
             directories[:] = [name for name in directories if name not in ignored

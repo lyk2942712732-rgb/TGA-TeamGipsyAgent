@@ -7,7 +7,7 @@ import { agentStateLabel, formatTime, sdkLabel, stateLabel } from "../tga3-view"
 import { useRuntimeActivities } from "../use-runtime-activities";
 import { ExperienceCards } from "./ExperienceCards";
 
-const ORDER = ["scout", "worker-openai", "worker-claude", "reporter"];
+const ORDER = ["scout", "worker-openai", "worker-claude", "worker-opencode", "worker-qwen", "reporter"];
 export function TGA3RuntimeGraph({ snapshot, selectedAgentId, onSelectAgent }: { snapshot: TGA3RuntimeSnapshot; selectedAgentId?: string | null; onSelectAgent?: (id: string) => void }) {
   const [collapsed, setCollapsed] = useState(false), [models, setModels] = useState(false), [selected, setSelected] = useState<string | null>(null);
   const stage = useRef<HTMLDivElement>(null), marker = useId().replace(/:/g, "");
@@ -18,6 +18,7 @@ export function TGA3RuntimeGraph({ snapshot, selectedAgentId, onSelectAgent }: {
   const questions = snapshot.aoe?.questions;
   const counts = { intel: snapshot.blackboard.filter(e => e.kind === "intel").length, finding: snapshot.blackboard.filter(e => e.kind === "finding").length, final: snapshot.blackboard.filter(e => e.kind === "final_candidate").length };
   const agents = [...snapshot.agents].sort((a, b) => ORDER.indexOf(a.agent_id) - ORDER.indexOf(b.agent_id));
+  const workers = agents.filter(item => item.role === "worker");
   const detail = selected ? [...events].reverse().find(event => event.activity && [event.activity.from, event.activity.to].includes(selected))?.activity : null;
   const selectedAgent = agents.find(agent => agentNode(agent.agent_id) === selected);
   useLayoutEffect(() => {
@@ -53,14 +54,14 @@ export function TGA3RuntimeGraph({ snapshot, selectedAgentId, onSelectAgent }: {
     <header className="collab-head"><div><h2>实时运行图</h2><small>{terminal ? "运行已结束" : "实时交互"}</small></div><div><label><input type="checkbox" checked={models} onChange={event => setModels(event.target.checked)} />模型信息</label><button type="button" aria-expanded={!collapsed} onClick={() => setCollapsed(value => !value)}>{collapsed ? <ChevronDown size={14} /> : <ChevronUp size={14} />}{collapsed ? "展开运行图" : "收起运行图"}</button></div></header>
     {!collapsed ? <><div className="collab-stage" ref={stage}>
       <svg className="collab-wires" viewBox={`0 0 ${size.width} ${size.height}`} aria-hidden="true"><defs><marker id={marker} viewBox="0 0 8 8" markerWidth="6" markerHeight="6" refX="7" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8" fill="none" stroke="currentColor" /></marker></defs>
-        {size.width >= 530 ? [["scout", "worker-openai"], ["scout", "worker-claude"], ["worker-openai", "reporter"], ["worker-claude", "reporter"]].map(([a, b]) => boxes[agentNode(a)] && boxes[agentNode(b)] ? <path key={`${a}-${b}`} className="collab-passive" d={phaseRoute(boxes[agentNode(a)], boxes[agentNode(b)])} /> : null) : null}
-        {size.width >= 530 ? ["worker-openai", "worker-claude"].map(id => {
+        {size.width >= 530 ? workers.flatMap(worker => [["scout", worker.agent_id], [worker.agent_id, "reporter"]]).map(([a, b]) => boxes[agentNode(a)] && boxes[agentNode(b)] ? <path key={`${a}-${b}`} className="collab-passive" d={phaseRoute(boxes[agentNode(a)], boxes[agentNode(b)], boxes)} /> : null) : null}
+        {size.width >= 530 ? workers.map(worker => worker.agent_id).map(id => {
           const route = activityRoute({ id, owner: agentNode(id), from: "knowledge", to: agentNode(id), label: "", shortLabel: "", detail: "", at: 0 }, boxes);
           return route ? <path key={`knowledge-${id}`} data-knowledge-link={id} className="collab-passive" markerEnd={`url(#${marker})`} d={route.d} /> : null;
         }) : null}
         {activities.map(activity => { const route = activityRoute(activity, boxes); return route ? <path key={activity.id} className="collab-route" markerEnd={`url(#${marker})`} d={route.d} /> : null; })}
       </svg>
-      <div className="collab-grid">
+      <div className="collab-grid" data-workers={workers.length}>
         {resource("input", "任务输入", <Files size={15} />, questions ? `${questions.length} 道题目，各自题面与附件` : `题目描述与 ${snapshot.blackboard.filter(item => item.kind === "user_file").length} 个附件`)}
         <div className="collab-capabilities">
           {resource("skills", "Skills", <Library size={15} />, "按需读取能力包与补充材料")}
@@ -68,7 +69,7 @@ export function TGA3RuntimeGraph({ snapshot, selectedAgentId, onSelectAgent }: {
           {resource("experience", "经验卡", <BookOpen size={15} />, `${snapshot.experience_count ?? 0} 张 · 问题解决经验`)}
         </div>
         {resource("output", "报告", <FileText size={15} />, questions ? `${questions.filter(q => q.report_state === "completed").length} / ${questions.length} 份逐题报告` : snapshot.task.state === "completed" ? "Markdown Writeup 已生成" : snapshot.task.state === "reporting" ? "正在整理步骤与证据" : "等待 Reporter 生成")}
-        <div className="collab-scout"><span className="collab-phase">{snapshot.aoe?.scout_mode === "collection_only" ? "收集题目" : "侦察"}</span>{agent("scout")}</div><div className="collab-workers"><span className="collab-phase">并行执行</span>{agent("worker-openai")}{agent("worker-claude")}</div><div className="collab-reporter"><span className="collab-phase">报告</span>{agent("reporter")}</div>
+        <div className="collab-scout"><span className="collab-phase">{snapshot.aoe?.scout_mode === "collection_only" ? "收集题目" : "侦察"}</span>{agent("scout")}</div><div className="collab-workers"><span className="collab-phase">并行执行</span><div className="collab-worker-grid" data-count={workers.length}>{workers.map(worker => <div className="collab-worker-slot" key={worker.agent_id}>{agent(worker.agent_id)}</div>)}</div></div><div className="collab-reporter"><span className="collab-phase">报告</span>{agent("reporter")}</div>
         <small className="collab-input-note">原始材料共享只读</small>
         <button type="button" className="collab-node collab-blackboard" data-graph-node="blackboard" data-active={active.has("blackboard")} aria-pressed={selected === "blackboard"} onClick={() => selectNode("blackboard")}><span className="collab-node-title"><Database size={15} /><strong>{questions ? "逐题黑板" : "黑板"}</strong>{!questions ? <em>#{snapshot.task.blackboard_seq}</em> : null}</span><span className="collab-board-counts">{questions ? `${questions.length} 道题 / ${questions.reduce((sum, q) => sum + q.blackboard_seq, 0)} 条记录` : <>{counts.intel} Intel <i>/</i> {counts.finding} Findings <i>/</i> {counts.final} 最终候选</>}</span><small>{questions ? "按题隔离，各 Worker 独立记录已读位置" : "各 Worker 独立记录已读位置"}</small></button><small className="collab-output-note">Markdown Writeup</small>
       </div>
@@ -80,4 +81,4 @@ export function TGA3RuntimeGraph({ snapshot, selectedAgentId, onSelectAgent }: {
 }
 function idleAction(agent: TGA3Agent, seq?: number) { if (agent.actual_state === "failed") return "执行失败，查看最近错误"; if (["paused", "pause_requested"].includes(agent.actual_state)) return "保留原 CLI 会话"; if (seq) return `最近写入黑板 #${seq}`; if (["completed", "stopped"].includes(agent.actual_state)) return "本阶段执行结束"; return agent.role === "reporter" ? "等待最终候选" : "等待新的执行事件"; }
 function nodeName(id: string, agents: TGA3Agent[]) { if (id.startsWith("agent:") || id.startsWith("model:")) { const a = agents.find(item => item.agent_id === id.slice(6)); return id.startsWith("model:") ? a?.model_name ?? a?.model_id ?? "模型" : a?.display_name ?? id.slice(6); } return ({ input: "任务输入", blackboard: "黑板", skills: "Skills", knowledge: "CTF 知识库", experience: "经验卡", output: "报告" } as Record<string, string>)[id] ?? id; }
-function resourceDetail(id: string, snapshot: TGA3RuntimeSnapshot) { return id === "knowledge" ? <>两个 Worker 通过在线 MCP 检索 ctf42 的技法、技术栈和历史题目；按需读取题目详情及 WP 链接，外部参考需在当前题目中验证。<a href="https://ctf42.online/about/" target="_blank" rel="noreferrer">查看知识库与接入说明</a></> : id === "blackboard" && snapshot.aoe?.scout_mode === "collection_only" ? "各题题面与附件分别登记到黑板；Workers 在解题过程中发布 Finding 与最终候选，Reporter 按题读取最终快照。" : id === "blackboard" ? `共享事实已写入至 #${snapshot.task.blackboard_seq}。系统导入 Scout 的 Intel JSON，Workers 发布 Findings 与最终候选，Reporter 读取最终快照。` : id === "skills" ? "Agent 根据需要读取 /skills 下的能力包。未发生读取时不显示交互。" : id === "input" ? "题目描述和附件索引进入黑板，原始文件只读提供给各 Agent。" : "Reporter 根据最终黑板与只读证据生成 Markdown Writeup。"; }
+function resourceDetail(id: string, snapshot: TGA3RuntimeSnapshot) { return id === "knowledge" ? <>各 Worker 通过在线 MCP 检索 ctf42 的技法、技术栈和历史题目；按需读取题目详情及 WP 链接，外部参考需在当前题目中验证。<a href="https://ctf42.online/about/" target="_blank" rel="noreferrer">查看知识库与接入说明</a></> : id === "blackboard" && snapshot.aoe?.scout_mode === "collection_only" ? "各题题面与附件分别登记到黑板；Workers 在解题过程中发布 Finding 与最终候选，Reporter 按题读取最终快照。" : id === "blackboard" ? `共享事实已写入至 #${snapshot.task.blackboard_seq}。系统导入 Scout 的 Intel JSON，Workers 发布 Findings 与最终候选，Reporter 读取最终快照。` : id === "skills" ? "Agent 根据需要读取 /skills 下的能力包。未发生读取时不显示交互。" : id === "input" ? "题目描述和附件索引进入黑板，原始文件只读提供给各 Agent。" : "Reporter 根据最终黑板与只读证据生成 Markdown Writeup。"; }

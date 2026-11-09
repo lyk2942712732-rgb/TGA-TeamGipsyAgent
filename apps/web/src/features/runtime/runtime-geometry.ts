@@ -1,12 +1,18 @@
 import { agentNode, type RuntimeActivity } from "./runtime-activity";
+import { orthogonalRoute } from "./orthogonal-route";
 export type GraphBox = { x: number; y: number; width: number; height: number };
 export type GraphPoint = { x: number; y: number };
 export type GraphRoute = { d: string; label: GraphPoint };
 const port = (b: GraphBox, side: "left" | "right" | "top" | "bottom"): GraphPoint => ({ x: side === "left" ? b.x : side === "right" ? b.x + b.width : b.x + b.width / 2, y: side === "top" ? b.y : side === "bottom" ? b.y + b.height : b.y + b.height / 2 });
-export function phaseRoute(a: GraphBox, b: GraphBox) { const p = port(a, "right"), t = port(b, "left"), x = (p.x + t.x) / 2; return `M${p.x} ${p.y} H${x} V${t.y} H${t.x}`; }
+export function phaseRoute(a: GraphBox, b: GraphBox, boxes?: Record<string, GraphBox>) { if (boxes && Object.keys(boxes).filter(id => id.startsWith("agent:worker-")).length > 2) return orthogonalRoute(a,b,boxes,"right","left").d; const p = port(a, "right"), t = port(b, "left"), x = (p.x + t.x) / 2; return `M${p.x} ${p.y} H${x} V${t.y} H${t.x}`; }
 export function activityRoute(activity: RuntimeActivity, boxes: Record<string, GraphBox>): GraphRoute | null {
   if (!activity.to) return null;
   const a = boxes[activity.from], b = boxes[activity.to]; if (!a || !b || !a.width || !b.width) return null;
+  if (Object.keys(boxes).filter(id => id.startsWith("agent:worker-")).length > 2) {
+    const horizontal = a.x+a.width <= b.x || b.x+b.width <= a.x;
+    return orthogonalRoute(a,b,boxes,horizontal ? a.x < b.x ? "right" : "left" : a.y < b.y ? "bottom" : "top",
+      horizontal ? a.x < b.x ? "left" : "right" : a.y < b.y ? "top" : "bottom");
+  }
   if (activity.from.startsWith("model:") || activity.to.startsWith("model:")) { const p = port(a, "bottom"), t = port(b, "bottom"); return { d: `M${p.x} ${p.y} L${t.x} ${t.y}`, label: p }; }
   if (activity.from === "input") { const p = port(a, "left"), t = port(b, "left"), x = Math.max(5, Math.min(a.x, b.x) - 10); return { d: `M${p.x} ${p.y} H${x} V${t.y} H${t.x}`, label: { x: (p.x + t.x) / 2, y: t.y } }; }
   if (activity.from === agentNode("scout") && activity.to === "blackboard") { const p = port(a, "bottom"), t = port(b, "left"); return { d: `M${p.x} ${p.y} V${t.y} H${t.x}`, label: { x: (p.x + t.x) / 2, y: t.y } }; }

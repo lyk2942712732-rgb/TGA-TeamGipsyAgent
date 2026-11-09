@@ -18,7 +18,7 @@ export const EVENT_KIND_LABELS: Record<TGA3TaskEvent["kind"], string> = {
   paused: "暂停", resumed: "恢复", error: "错误", system: "系统",
 };
 export const protocolLabel = (value: string) => ({ openai_responses: "OpenAI Responses", openai_chat_completions: "OpenAI Chat Completions", anthropic: "Anthropic Messages" } as Record<string, string>)[value] ?? value;
-export const sdkLabel = (value: string) => ({ claude_cli: "Claude Code CLI", codex_cli: "Codex CLI" } as Record<string,string>)[value] ?? value;
+export const sdkLabel = (value: string) => ({ claude_cli: "Claude Code CLI", codex_cli: "Codex CLI", opencode_cli: "OpenCode CLI", qwen_cli: "Qwen Code CLI" } as Record<string,string>)[value] ?? value;
 export const roleLabel = (agent: Pick<TGA3Agent, "role">) => ROLE_LABELS[agent.role] ?? agent.role;
 export const stateLabel = (value: string) => AGENT_STATE_LABELS[value] ?? TASK_STATE_LABELS[value] ?? value;
 export function agentStateLabel(agent: TGA3Agent): string {

@@ -21,10 +21,11 @@ def inputs(event):
 def read_paths(event):
     tool = event.get("tool_name", "").lower()
     args = inputs(event)
-    if tool == "read":
+    if tool in {"read", "read_file"}:
         # A partial read does not count as consuming the full overview.
-        return [args.get("file_path", "")] if args.get("offset", 1) in {None, 0, 1} and not args.get("limit") else []
-    if tool not in {"bash", "exec_command", "shell", "shell_command", "command_execution"}:
+        return [args.get("file_path") or args.get('filePath') or args.get('absolute_path', '')] \
+            if args.get("offset", 1) in {None, 0, 1} and not args.get("limit") else []
+    if tool not in {"bash", "exec_command", "shell", "shell_command", "command_execution", "run_shell_command"}:
         return []
     try:
         words = shlex.split(args.get("command") or args.get("cmd") or "")

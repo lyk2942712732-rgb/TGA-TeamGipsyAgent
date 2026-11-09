@@ -150,6 +150,39 @@ def test_workers_get_private_workspaces_and_evidence_reporter_gets_read_only_uni
     assert reporter["/logs"][1] == "rw"
 
 
+def test_joint_handoff_mounts_only_recorded_evidence_from_this_question_read_only(tmp_path):
+    from tga3.workers.action_journal import ActionJournal
+
+    config = TGA3Config(Path(__file__).parents[1] / 'config')
+    config.runtime.task_root = str(tmp_path / 'tasks')
+    for provider in config.models.providers:
+        provider.api_keys[0].api_key = SecretStr('fixture-key')
+    parent, question, unrelated = uuid4(), uuid4(), uuid4()
+    config.register_question_path(parent, question)
+    config.register_question_path(parent, unrelated)
+    overview = config.task_path(parent) / 'overview'; overview.mkdir(parents=True)
+    for name in ['scene.md','task.md']:
+        (overview / name).write_text('original')
+    source = config.task_path(question, 'workspaces', 'worker-openai'); source.mkdir(parents=True)
+    (source / '.codex').mkdir(); (source / '.codex/private-session.json').write_text('private state')
+    journal = ActionJournal(config.task_path(question,'logs','worker-openai'),
+                            identity={'agent_id':'worker-openai'},output_directory=source)
+    journal.record('call','Bash',inputs={'command':'python solve.py'},before_execution=True)
+    (source / 'solve.py').write_text('print("reusable recorded method")')
+    journal.record('call','Bash',result='observed',status='completed')
+    containers = FakeContainers()
+    runtime = DockerContainerRuntime.__new__(DockerContainerRuntime)
+    runtime.config, runtime.client = config, SimpleNamespace(containers=containers)
+    runtime._launch_sync(LaunchSpec(task_id=question,aoe_parent_id=parent,agent=config.resolve_agent('worker-qwen'),
+                                   evidence_agents=('worker-openai',)))
+    mounts = containers.kwargs['volumes']
+    assert mounts[str(source / 'solve.py')] == {'bind':'/evidence-files/worker-openai/solve.py','mode':'ro'}
+    assert mounts[str(source / 'result')] == {'bind':'/evidence-files/worker-openai/result','mode':'ro'}
+    assert str(source) not in mounts and str(source / '.codex') not in mounts
+    assert all(not Path(path).is_relative_to(config.task_path(unrelated)) for path in mounts)
+    assert json.loads(containers.kwargs['environment']['TGA3_PEER_EVIDENCE']) == ['worker-openai']
+
+
 def test_batch_uploads_are_scout_only_and_question_inputs_are_separate(tmp_path):
     config = TGA3Config(Path(__file__).parents[1]/'config')
     config.runtime.task_root = str(tmp_path/'tasks')

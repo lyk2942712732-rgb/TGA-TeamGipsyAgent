@@ -112,7 +112,7 @@ export function NewTaskPage({ onCreated, onCancel = () => history.back() }: { on
             {compatible.map((model) => <option key={`${model.provider_id}::${model.model_id}::${model.protocol}`} value={`${model.provider_id}::${model.model_id}::${model.protocol}`} disabled={!model.ready}>{model.provider_name} / {model.model_name}{model.ready ? "" : "（密钥不可用）"}</option>)}
           </select></label>;
         })}</div></fieldset> : null}
-        <aside className="new-task-config-note"><strong>{sceneId === "aoe" ? "收集题目 → 分题解题 → 逐题报告" : "Scout → Workers → Reporter"}</strong><p>{sceneId === "aoe" ? "两个 Worker 优先领取未尝试的简单题，题目各自保留黑板、文件和报告。" : `${selected?.name ?? "场景"}提示词、题目描述和附件索引将自动进入黑板。`}</p></aside>
+        <aside className="new-task-config-note"><strong>{sceneId === "aoe" ? "收集题目 → 分题解题 → 逐题报告" : "Scout → Workers → Reporter"}</strong><p>{sceneId === "aoe" ? "四个 Worker 优先领取未尝试的简单题，题目各自保留黑板、文件和报告。" : `${selected?.name ?? "场景"}提示词、题目描述和附件索引将自动进入黑板。`}</p></aside>
         {error ? <p className="inline-error" role="alert">{error}</p> : null}
       </div>
       <footer className="new-task-modal-actions"><button type="button" className="ref-secondary-button" disabled={busy} onClick={onCancel}>取消</button><button type="button" className="ref-primary-button" disabled={!ready} onClick={() => void submit()}><Play size={16} />{busy ? "创建中…" : "创建并启动"}</button></footer>
@@ -121,4 +121,4 @@ export function NewTaskPage({ onCreated, onCancel = () => history.back() }: { on
 }
 
 function formatBytes(value: number) { return value < 1024 ? `${value} B` : value < 1024 ** 2 ? `${(value / 1024).toFixed(1)} KB` : `${(value / 1024 ** 2).toFixed(1)} MB`; }
-function modelCompatible(runtime: "codex_cli" | "claude_cli", protocol: "openai_responses" | "openai_chat_completions" | "anthropic") { return runtime === "claude_cli" ? protocol === "anthropic" : protocol === "openai_responses"; }
+function modelCompatible(runtime: "codex_cli" | "claude_cli" | "opencode_cli" | "qwen_cli", protocol: "openai_responses" | "openai_chat_completions" | "anthropic") { return runtime === "claude_cli" ? protocol === "anthropic" : runtime === "codex_cli" ? protocol === "openai_responses" : true; }

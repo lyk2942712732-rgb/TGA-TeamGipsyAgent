@@ -11,7 +11,9 @@
     "worker-openai": "tga3-worker-openai:local",
     "worker-claude": "tga3-worker-claude:local",
     "reporter": "tga3-worker-openai:local",
-    "scout": "tga3-worker-openai:local"
+    "scout": "tga3-worker-openai:local",
+    "worker-opencode": "tga3-worker-opencode:local",
+    "worker-qwen": "tga3-worker-qwen:local"
   },
   "worker_cycle_prompts": {
     "startup": "开始任务：先消费原生 Hook 提供的完整共享黑板，包括 Scout Intel、题目和文件，再自主推进；后续由 Hook 按配置间隔提供有更新时的未读增量。 每次执行得到可复用事实就用 写入 /findings/ 下的独立 JSON 即时共享，直接使用上下文中的结果与钩子给出的 action_id。",

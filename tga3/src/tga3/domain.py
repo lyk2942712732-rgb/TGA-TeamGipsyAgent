@@ -340,7 +340,7 @@ class AgentRun(QuestionScoped):
     model_config = ConfigDict(extra="forbid", frozen=True)
     task_id: UUID
     agent_id: str
-    sdk: Literal["codex_cli", "claude_cli"]
+    sdk: Literal["codex_cli", "claude_cli", "opencode_cli", "qwen_cli"]
     desired_state: AgentState = AgentState.CREATED
     actual_state: AgentState = AgentState.CREATED
     provider_id: str

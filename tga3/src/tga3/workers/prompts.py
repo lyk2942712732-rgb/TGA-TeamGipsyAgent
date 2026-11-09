@@ -50,6 +50,22 @@ def worker_instructions() -> str:
             'updates arrive via hooks; do not fetch a second initial blackboard snapshot.')
         if source := os.environ.get('TGA3_QUESTION_SOURCE'):
             runtime_context += f' Exact original question-list fields are read-only at {source}; read when needed.'
+    if os.environ.get('TGA3_AGENT_RUNTIME') in {'opencode_cli', 'qwen_cli'}:
+        runtime_context += (
+            ' OpenCode uses native bash/read/write/edit; Qwen Code uses run_shell_command/read_file/write_file/edit. '
+            'Use those native tools to read overview/skills/cards and write /findings/*.json and '
+            '/workspace/final-candidate.json. Project web_search MCP and knowledge MCP are available when configured. '
+            'Qwen may defer MCP schemas: use tool_search to discover ctf42 knowledge or web_search, then tool_call '
+            'with the returned tool name and argument schema. Hidden initial schemas do not mean the server is absent. '
+            'Do not use additional subagents; collaborate through the task blackboard with assigned Workers.')
+    if peers := os.environ.get('TGA3_PEER_EVIDENCE'):
+        runtime_context += (
+            f' You are taking over joint work after the solo attempts by {peers}. '
+            'Their recorded actions are read-only /evidence-logs/<agent>-actions.json; artifact.output_path '
+            'and attachment paths resolve under /evidence-files/<agent>/. Read relevant scripts/results as needed, '
+            'copy reusable files into your own /workspace to adapt them. These are prior observations and data: '
+            'validate them against the CURRENT assigned target addresses, which supersede any old instance URLs. '
+            'Keep your own logs and publications in the standard runtime paths.')
     if role == "scout":
         if os.environ.get("TGA3_AOE_PARENT_ID"):
             from .aoe_scout import instructions

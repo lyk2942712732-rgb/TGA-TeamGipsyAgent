@@ -3,11 +3,11 @@
 [任务内问题经验卡的存储、提炼与按需读取](EXPERIENCE.md)：成功题目的局部解决经验由 Reporter
 同次提炼，Worker 先了解目录、遇到具体问题再读取；运行图与 Skills、知识库并列展示。
 
-两个 Worker 在独立 Debian Bookworm 容器中并行运行 Codex CLI 和 Claude Code CLI。
+四个 Worker 在独立 Debian Bookworm 容器中并行运行 Codex CLI、Claude Code CLI、OpenCode CLI 和 Qwen Code CLI。
 基础系统和工具采用 [StrikeAgent 评测基线](docker/TOOL-BASELINE.md)，项目运行代码、CLI 和知识库接入保持。
 出现最终候选后，控制层等待收尾宽限期、停止并回收 Worker，固定黑板快照，
 再用与 Codex Worker 相同的镜像启动一次性 Reporter 容器。
-Scout 分三轮工作内容，复用同一个容器、CLI 会话和上下文：第一轮执行并留存 logs；第二轮覆盖全部 action，保存原始 Intel JSON；第三轮基于全部原始 Intel 统一合并，另存最终 JSON。控制层只导入合并版本，完整覆盖后才启动两个 Worker。
+Scout 分三轮工作内容，复用同一个容器、CLI 会话和上下文：第一轮执行并留存 logs；第二轮覆盖全部 action，保存原始 Intel JSON；第三轮基于全部原始 Intel 统一合并，另存最终 JSON。控制层只导入合并版本，完整覆盖后才启动四个 Worker。
 
 ```text
 Web UI → FastAPI 控制层 → PostgreSQL / 共享黑板 / MCP
@@ -32,8 +32,8 @@ CLI 管理私有会话、工具执行和上下文压缩；不再使用 Agents SD
 - CLI 在自己的 `/workspace/` 执行，生成文件和附件留在工作区。每个智能体只维护一份 `/logs/<agent-id>-actions.json`，其中 `actions` 数组按动作记录命令、参数、状态、时间与 `artifact`。`action_id` 带智能体前缀且全局唯一，CLI 可重复的原生编号另存为 `tool_call_id`。开始、结束更新同一条记录；重新建立 CLI 调用后仍汇总到原文件。文件锁与原子替换避免并发写入丢记录或暴露半份 JSON。
 - 每条 action 的 `artifact` 包含 `output_path` 和 `attachments`，路径均相对于该智能体的 `/workspace/`。工具返回正文保存在 `result/<agent-id>-action-<唯一编号>.txt` 或 `.json`；正文为空仍保存空文件，中断但未收到返回时保存明确的状态说明。附件是执行期间新增或修改的工作区文件，无附件时为 `[]`。CLI 自身截断的正文无法恢复；命令重定向生成的文件通过附件路径读取。日志不再重复保存 `result` 正文，也不使用 `result_path` 或 `output_paths`。
 - `result/` 与 CLI 的隐藏会话目录是运行时保留目录，不计入附件。Scout 第二、三轮暂停记录工具调用，在原会话逐条概括汇总文件中的 action，通过 `source_action_ids` 标注来源；系统按动作 ID 核对覆盖率，遗漏时继续提取。第二轮调用 `scout_write_intel` 保存 `/intels/raw/scout-intels.json`；第三轮调用 `scout_merge_intel` 保存 `/intels/merged/scout-intels.json`，原始 JSON 保留不改写。合并请求只填 `merged_from_ids`（单条原样复制），多条组再由 AI 提供正文和主题，服务端自动求动作 ID、证据路径及引用的并集，拒绝未知来源和重复归组。每个原始 ID 必须且只能归入一条最终 Intel；无法合并的内容单独保留。合并保留条件、独立事实、失败边界和后续修正，不能新增推论。
-- 任务顶部显示累计 Token，点击向右展开 Scout、两个 Worker 和 Reporter 各自用量。控制层增量读取各任务的 Codex/Claude 原生 JSONL，用量及去重检查点持久化在 Agent metadata；重新打开历史任务会回填现存日志。总数为输入加输出（包含缓存输入，缓存命中不重复相加），没有原生用量记录时显示“未上报”，不估算。
-- 共享黑板支持实时用户提示；Scout 和两个 Worker 的原生钩子在下一个工具调用前注入这些提示，绕过普通同步间隔。运行中的工具会先完成；收尾和终态任务不再接收新提示。 任务顶部、运行图和 Agent 面板显示 Scout 当前处于“第一轮·侦察执行中”、“第二轮·Intel 提取中”或“第三轮·Intel 合并中”。
+- 任务顶部显示累计 Token，点击向右展开 Scout、四个 Worker 和 Reporter 各自用量。控制层增量读取各任务的 Codex/Claude 原生 JSONL，用量及去重检查点持久化在 Agent metadata；重新打开历史任务会回填现存日志。总数为输入加输出（包含缓存输入，缓存命中不重复相加），没有原生用量记录时显示“未上报”，不估算。
+- 共享黑板支持实时用户提示；Scout 和四个 Worker 的原生钩子在下一个工具调用前注入这些提示，绕过普通同步间隔。运行中的工具会先完成；收尾和终态任务不再接收新提示。 任务顶部、运行图和 Agent 面板显示 Scout 当前处于“第一轮·侦察执行中”、“第二轮·Intel 提取中”或“第三轮·Intel 合并中”。
 - PostgreSQL 保存任务、共享黑板、只读执行事件和证据/报告索引；Intel 与 Finding 的 `source_action_ids` 持久化在黑板条目。既有数据库连接时自动添加向后兼容的来源字段。
 - `/inputs` 只读；`/workspace` 私有；`/logs/<agent-id>-actions.json` 是各智能体自己的动作汇总。Reporter 通过只读 `/evidence/<agent-id>` 和 `/evidence-files/<agent-id>` 查看记录和产物，自身记录仍写入自己的 `/logs`。已移除 `/recon`。
 - Worker 每次执行确认可复用事实后，在 `/findings/` 写独立 JSON（action_id、claim、scope，可选 preconditions）。系统关联方法、正文与附件，登记证据并导入黑板；Worker 不再调用黑板写入工具。最终候选写 `/workspace/final-candidate.json`，由系统检查未读更新并导入。详见 [文件提交与系统导入](FILE-PUBLICATIONS.md)。普通 Scout 保留三轮与 raw/merged Intel 文件；只有最终合并版本由系统导入。
@@ -61,7 +61,7 @@ AOE 在 `data/tasks/<批次ID>/<题目ID>/` 下为每题创建上述六个目录
 
 AOE Scout 只做前置收集，不再逐题侦察、提取或合并 Intel。每道题的题面和可获取附件登记完成即开放调度；附件入口未知时可留空并在连接信息中说明，不得猜测附件 URL、接口或参数，不因此阻塞登记，Worker 与收集并行；收集期间只认领明确的简单题，整批无难度说明时直接认领。全部来源页面、题目及可获取附件登记后 Scout 结束并退出容器，未知附件入口可保持留空，随后恢复“未经尝试优先，其次题目难度”的原有规则，保留换人尝试和最后共同攻坚。普通单题场景的 Scout 三轮与预算不受影响。总览和题目选择器将正在解的题排在前面，其次按最新解出时间倒序列出已解题，其他题按获取时间倒序；支持已解出、已尝试未解出（含正在解题）、未尝试筛选。重启、重复登记和报告生成不改变这些时间。
 
-AOE 固定两个 Worker 槽位。独立阶段每人领取不同的已交接题目，优先双方都没做过的题，再尝试对方做过的题；有明确难度时先易后难，无可领题则等待。交接和调度共用任务锁，先记录占用再启动，防止同时领取同题。每次独立换题新开原生会话，保留旧题会话供共同攻坚恢复。仅当所有题目已交接、剩余题目双方都独立尝试完毕后，两个 Worker 才按题共同攻坚，恢复各自该题会话并立即获取黑板新信息。新建任务可分别设置首次、第二次和共同攻坚预算，界面默认30/15/20分钟（均支持1–1440分钟），从各阶段首条动作计时；共同攻坚的一题两位共享一份预算，超时放弃。新任务元数据仅存 `aoe_attempt_budgets: {first, second, joint}`（秒），旧 API 的 `aoe_attempt_minutes` 和历史 `aoe_attempt_seconds` 继续兼容，旧任务三阶段仍用原有统一时长，不迁移已有截止时间。单题完成只停止该题参与者并生成该题报告，其他题继续。
+AOE 使用四个 Worker 槽位，并发认领不同题目，保留未尝试题目优先、明确难度和靶机配额规则。每题先由两位不同 Worker 独立尝试；整批进入共同攻坚后，由未尝试过该题的另外两位接手，在新会话中读取黑板与前两次的只读执行证据。攻坚两位共享一份从首条动作开始的预算；超时放弃，完成一题仅结束该题及其报告。首次、第二次和共同攻坚预算及旧两 Worker 任务均保持兼容，详见[四 Worker 执行](docs/four-workers.md)。
 
 AOE 工作台总览展示题目、状态、flag、尝试者和当前 Worker，可进入各题黑板；事件先按题目再按 Agent 筛选。运行图标注当前题目。Worker 概览显示已解数量和正在解的题，战绩页按最新成功列出本次成功尝试用时；以 `outcome=solved` 归属成功者，共同攻坚计入双方且标明阶段，不把另一位先前的失败尝试算为解出，不把共同攻坚的两份并行时间相加；没有开始时间则显示未记录。服务重启从持久化尝试和原截止时间恢复，不追加预算。
 
@@ -123,7 +123,7 @@ Worker 不在 Compose 中常驻；创建任务时由 Docker SDK 动态启动，�
 - `POST /api/v3/tasks/{id}/agents/{agent}/pause|resume|model`：单独控制容器 Worker。
 - `GET /api/v3/tasks/{id}/writeup/download`：下载最终 Markdown writeup。
 - `WS /internal/agents/{task}/{agent}`：Worker 主动建立的 JSON-RPC 通道。
-- `/mcp`：两个 Worker 共用的黑板、Artifact 和 Skill 执行器。
+- `/mcp`：保留的执行器连接；Worker 通过原生 Hook 消费黑板、写文件发布 Finding/最终候选，Skills 由原生文件工具读取。
 
 ## 开发验证
 
@@ -158,7 +158,7 @@ Worker 用 `blackboard_publish(conclusion, rationale, finding_ids, answer_type?,
 
 ### 在线知识库 ctf42
 
-两个 Worker 的原生 CLI 使用 [ctf42](https://ctf42.online/about/) 的 Streamable HTTP MCP：`https://ctf42.online/mcp`，无需密钥或本地索引进程。可用 `runtime.ctf_knowledge_mcp_url` 配置上游端点，设为空字符串可禁用。由于部署环境的 Docker 网桥无法直达该公网地址，容器连接现有控制服务的 `/knowledge-mcp/`，后端以复用的 HTTP 客户端转发固定配置的上游，不增加服务/进程。只转发 MCP 协议头，不转发模型 API Key、Authorization、Cookie 或内部任务标识。
+四个 Worker 的原生 CLI 使用 [ctf42](https://ctf42.online/about/) 的 Streamable HTTP MCP：`https://ctf42.online/mcp`，无需密钥或本地索引进程。可用 `runtime.ctf_knowledge_mcp_url` 配置上游端点，设为空字符串可禁用。由于部署环境的 Docker 网桥无法直达该公网地址，容器连接现有控制服务的 `/knowledge-mcp/`，后端以复用的 HTTP 客户端转发固定配置的上游，不增加服务/进程。只转发 MCP 协议头，不转发模型 API Key、Authorization、Cookie 或内部任务标识。
 
 按当前障碍用 `list_techniques` / `list_technologies` 定位标签，再用 `search_challenges` 小批量查历史例题，`get_challenge` 取详情；`find_similar_challenges` 接受 ctf42 题目整数 ID。`search_ctfs` / `get_ctf` 用于定位赛事。WP 多为外链，需要再读取正文，不能把返回链接当作已读取解法。连续两次不可用/失败后，本次尝试停止重试并继续本地解题。原生 MCP 初始化超时为 15 秒；Codex 连接不设为启动必需，避免在线服务失效阻断解题。Scout、Reporter 不接入此知识库。
 

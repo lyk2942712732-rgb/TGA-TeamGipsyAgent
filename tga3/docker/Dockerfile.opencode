@@ -1,0 +1,23 @@
+ARG CLI_BASE_IMAGE=tga3-cli-base:local
+FROM ${CLI_BASE_IMAGE} AS project-wheel
+USER root
+COPY pyproject.toml README.md /build/project/
+COPY src /build/project/src
+RUN python -m pip wheel --no-deps --no-build-isolation --wheel-dir /project-wheel /build/project
+
+FROM ${CLI_BASE_IMAGE}
+
+USER root
+ARG CLI_VERSION=1.19.5
+RUN npm install -g opencode-ai@${CLI_VERSION} && npm cache clean --force
+
+USER tga3:tga3
+RUN --mount=type=bind,from=project-wheel,source=/project-wheel,target=/project-wheel \
+    python -m pip install --no-cache-dir --no-deps /project-wheel/*.whl && python -m pip check
+
+# The slim base omits stdlib bytecode. Compile the hook import path once at
+# build time; runtime hooks can read it with PYTHONDONTWRITEBYTECODE=1.
+USER root
+RUN python -c 'import sys; sys.dont_write_bytecode = False; import tga3.workers.hook_client'
+USER tga3:tga3
+ENTRYPOINT ["python", "-m", "tga3.workers.opencode_worker"]

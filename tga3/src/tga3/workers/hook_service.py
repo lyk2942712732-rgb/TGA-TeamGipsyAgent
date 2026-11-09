@@ -11,7 +11,7 @@ from .blackboard_hook import checkpoint
 
 
 class HookService:
-    def __init__(self):
+    def __init__(self, *, on_tool_start=None):
         self.client = httpx.Client(timeout=10, trust_env=False, limits=httpx.Limits(keepalive_expiry=120))
         self.actions = HookActionRecorder()
         service = self
@@ -21,6 +21,10 @@ class HookService:
                 try:
                     event = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
                     result = checkpoint(event, client=service.client, record_action=service.actions.record)
+                    if (on_tool_start and event.get('hook_event_name') == 'PreToolUse'
+                            and event.get('_tga_generation') == service.actions.generation
+                            and result.get('hookSpecificOutput', {}).get('permissionDecision') != 'deny'):
+                        on_tool_start(event)
                     status = 200
                 except Exception as exc:
                     result, status = {'error': f'{type(exc).__name__}: {exc}'}, 500

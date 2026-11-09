@@ -1,4 +1,4 @@
-"""AOE-only question collection, isolated boards and two-slot attempt scheduling."""
+"""AOE-only question collection, isolated boards and multi-Worker attempt scheduling."""
 
 from __future__ import annotations
 
@@ -20,6 +20,7 @@ from .aoe_models import (
     attempt_budgets,
     attempted_by,
     joint_ready,
+    joint_workers,
     next_joint_question,
     next_solo_question,
     overview_order,
@@ -167,7 +168,7 @@ class AOERuntime:
             "solved_at": question.metadata.get("solved_at"),
             "scout_ready": scout_ready(question),
             "scout_phase": question.metadata.get("scout_phase", "completed" if scout_ready(question) else "queued"),
-            "attempted_by": sorted(attempted_by(question)),
+            "attempted_by": sorted({a['agent_id'] for a in attempts}),
             "current_agents": [attempt["agent_id"] for attempt in active_attempts(question)],
             "attempts": attempts,
             "flag": question.metadata.get("flag"),
@@ -570,6 +571,8 @@ class AOERuntime:
             await self.containers.stop(parent_id, "scout")
 
     async def _new_attempts(self, parent_id: UUID, question: TaskRun, agents: tuple[str, ...], phase: str) -> TaskRun:
+        pool = tuple(run.agent_id for run in await self.storage.list_agents(parent_id)
+                     if run.agent_id in self.config.worker_agent_ids)
         # Initial shared instructions stay in the overview; only live corrections
         # join the question's incremental blackboard.
         for entry in await self.storage.list_entries(parent_id, limit=10_000):
@@ -599,6 +602,13 @@ class AOERuntime:
         ]
 
         def assign(metadata):
+            tried = {a['agent_id'] for a in metadata.get('attempts', []) if a['phase'] == 'solo'}
+            if len(pool) == 4:
+                expected = set(pool) - tried
+                if phase == 'joint' and (len(tried) != 2 or set(agents) != expected or len(agents) != 2):
+                    raise ConflictError('Joint attempts require exactly the two Workers who have not tried this question')
+                if phase == 'solo' and (len(agents) != 1 or len(tried) >= 2 or set(agents) & tried):
+                    raise ConflictError('A question has at most two solo attempts by distinct Workers')
             if not metadata.get("scout_ready", True):
                 raise ConflictError("Question has not completed Scout handoff")
             if any(a.get("outcome") is None for a in metadata.get("attempts", [])) or metadata.get("status") in {
@@ -623,7 +633,8 @@ class AOERuntime:
         await self._save_question(question)
         # The first actual action starts the budget, shared by joint participants.
         await asyncio.gather(
-            *(self._launch_attempt(parent_id, question, attempt, fresh=phase == "solo") for attempt in additions)
+            *(self._launch_attempt(parent_id, question, attempt, fresh=phase == "solo" or len(pool) == 4)
+              for attempt in additions)
         )
         return question
 
@@ -718,6 +729,8 @@ class AOERuntime:
                     attempt_deadline=attempt["deadline"],
                     target_mode=self.targets.spec(question).mode,
                     target_addresses=tuple(self.targets.state(question.id).get("addresses", [])),
+                    evidence_agents=tuple(sorted(attempted_by(question)-{agent_id}))
+                        if attempt['phase'] == 'joint' and agent_id not in attempted_by(question) else (),
                 )
             )
         )
@@ -869,7 +882,8 @@ class AOERuntime:
             parent = await self.storage.get_task(parent_id)
             if parent.state in TERMINAL:
                 return True
-            workers = self.config.worker_agent_ids
+            slots = {run.agent_id: run for run in await self.storage.list_agents(parent_id)}
+            workers = tuple(agent for agent in self.config.worker_agent_ids if agent in slots)
             questions = await self.storage.list_questions(parent_id)
             if reconcile:
                 await self._reconcile_inputs(parent_id, questions)
@@ -949,8 +963,9 @@ class AOERuntime:
                         eligible = schedulable_questions(questions,
                                      collection_complete=parent.metadata.get("collection_complete", False))
                         break
-            elif phase == "joint" and not occupied and len(available) == len(workers):
-                candidates = list(eligible)
+            elif phase == "joint" and not occupied:
+                candidates = [q for q in eligible if len(joint_workers(q, workers)) == 2
+                              and set(joint_workers(q, workers)) <= set(available)]
                 quota_blocked = self.targets.quota_blocked(eligible)
                 while True:
                     offline = [q for q in candidates if self.targets.spec(q).mode == "none"]
@@ -959,13 +974,14 @@ class AOERuntime:
                     question = question or next_joint_question(candidates)
                     if question is None:
                         break
-                    if not await self._prepare_target(question, workers):
+                    pair = joint_workers(question, workers)
+                    if not await self._prepare_target(question, pair):
                         if question.id in self._target_claims:
                             break
                         quota_blocked |= self.targets.state(question.id).get("reason") == "quota"
                         candidates = [q for q in candidates if q.id != question.id]
                         continue
-                    replace(await self._new_attempts(parent_id, question, workers, "joint"))
+                    replace(await self._new_attempts(parent_id, question, pair, "joint"))
                     break
             for question in questions:
                 await self._save_question(question)
@@ -1007,6 +1023,8 @@ class AOERuntime:
 
     async def _sync_slots(self, parent_id: UUID, questions: list[TaskRun], slots: dict[str, AgentRun]) -> None:
         for agent_id in self.config.worker_agent_ids:
+            if agent_id not in slots:
+                continue
             slot = slots[agent_id]
             current = next(((q, a) for q in questions for a in active_attempts(q) if a["agent_id"] == agent_id), None)
             if current:

@@ -133,7 +133,7 @@ class AgentConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
     display_name: str = Field(min_length=1, max_length=200)
     role: Literal["scout", "worker", "reporter"]
-    runtime: Literal["codex_cli", "claude_cli"]
+    runtime: Literal["codex_cli", "claude_cli", "opencode_cli", "qwen_cli"]
     provider_id: str
     model_id: str
     protocol: ProviderProtocol
@@ -255,7 +255,7 @@ class ResolvedAgent(BaseModel):
     agent_id: str
     display_name: str
     role: Literal["scout", "worker", "reporter"]
-    runtime: Literal["codex_cli", "claude_cli"]
+    runtime: Literal["codex_cli", "claude_cli", "opencode_cli", "qwen_cli"]
     provider: ProviderConfig
     model: ModelConfig
     protocol: ProviderProtocol
@@ -534,8 +534,9 @@ class TGA3Config:
         scenes: ScenesConfig,
         runtime: RuntimeConfig,
     ) -> None:
-        if set(agents.agents) != cls.REQUIRED_AGENTS:
-            raise ValueError("agents.json must contain exactly scout, worker-openai, worker-claude and reporter")
+        optional = {'worker-opencode', 'worker-qwen'}
+        if (set(agents.agents) not in (cls.REQUIRED_AGENTS, cls.REQUIRED_AGENTS | optional)):
+            raise ValueError('agents.json needs Scout, Reporter and either the legacy pair or all four Workers')
         missing = sorted(cls.REQUIRED_AGENTS.difference(agents.agents))
         if missing:
             raise ValueError(f"agents.json is missing: {', '.join(missing)}")
@@ -545,6 +546,7 @@ class TGA3Config:
             "worker-claude": "worker",
             "reporter": "reporter",
         }
+        expected_roles.update({agent_id: 'worker' for agent_id in optional if agent_id in agents.agents})
         for agent_id, expected_role in expected_roles.items():
             if agents.agents[agent_id].role != expected_role:
                 raise ValueError(f"{agent_id} must use role={expected_role}")
@@ -563,6 +565,9 @@ class TGA3Config:
             "worker-claude": "claude_cli",
             "reporter": "codex_cli",
         }
+        expected_runtimes.update({agent_id: runtime for agent_id, runtime in
+                                 [('worker-opencode', 'opencode_cli'), ('worker-qwen', 'qwen_cli')]
+                                 if agent_id in agents.agents})
         for agent_id, expected_runtime in expected_runtimes.items():
             if agents.agents[agent_id].runtime != expected_runtime:
                 raise ValueError(f"{agent_id} must use runtime={expected_runtime}")

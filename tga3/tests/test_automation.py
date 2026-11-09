@@ -130,7 +130,7 @@ async def test_reporter_failure_stops_workers_and_finishes_host_states(tmp_path:
 
 
 @pytest.mark.asyncio
-async def test_cli_reporter_starts_after_both_workers_stop(tmp_path):
+async def test_cli_reporter_starts_after_all_workers_stop(tmp_path):
     from pydantic import SecretStr
 
     from tga3.coordinator import TaskCoordinator
@@ -197,5 +197,5 @@ async def test_cli_reporter_starts_after_both_workers_stop(tmp_path):
     report = await storage.get_agent(task.id, "reporter")
     assert report.metadata["cli_session_id"] == "reporter-session"
     assert report.container_id == "fake-" + str(task.id) + "-reporter"
-    assert len(containers.launched) == 4
-    assert len(containers.stopped) == 4
+    assert len(containers.launched) == 6
+    assert len(containers.stopped) == 6

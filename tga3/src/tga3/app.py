@@ -459,6 +459,11 @@ def create_app(
             ],
             "reporter": ["Read snapshot", "Read evidence", "Read skills", "Markdown Writeup"],
         }
+        for name, native in [('worker-opencode', ['bash', 'read', 'write', 'edit']),
+                             ('worker-qwen', ['run_shell_command', 'read_file', 'write_file', 'edit',
+                                              'tool_search', 'tool_call'])]:
+            tools[name] = [*native, 'web_search', '知识库 MCP', 'Skills', '经验卡', '原生黑板同步 Hook',
+                           '/findings/ 独立 JSON', '系统导入最终候选文件', '按 action 自动关联复现方法和证据']
         result: list[dict[str, Any]] = []
         for agent_id, binding in config.agents.agents.items():
             image = config.runtime.worker_images.get(agent_id)
@@ -677,9 +682,6 @@ def create_app(
             ack_only=bool(body.get("ack_only", False)),
             initial_only=bool(body.get("initial_only", False))
         )
-        denied = result.get('context') and (body.get('final') or body.get('force_start'))
-        if worker and body.get('action_start') and not denied:
-            await coordinator.aoe.action_started(task_id, agent_id, str(body['action_start']))
         if file_sync:
             receipts.extend(await publications.sync_final(task_id, agent_id))
         if receipts:
@@ -694,6 +696,11 @@ def create_app(
                 result = {**result, "experience_context": advice["context"],
                           "experience_fingerprints": advice["fingerprints"],
                           "experience_delivery_id": advice["delivery_id"]}
+        denied = (result.get('context') and (body.get('final') or body.get('force_start'))
+                  or body.get('defer_context') and any(result.get(k) for k in
+                      ['context', 'experience_context']))
+        if worker and body.get('action_start') and not denied:
+            await coordinator.aoe.action_started(task_id, agent_id, str(body['action_start']))
         return result
 
     @app.websocket("/internal/agents/{task_id}/{agent_id}")

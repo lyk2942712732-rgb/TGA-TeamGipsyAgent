@@ -39,7 +39,7 @@ export type AgentModelOptions = {
   agents: Array<{
     id: string;
     role: "scout" | "worker" | "reporter";
-    runtime: "codex_cli" | "claude_cli";
+    runtime: "codex_cli" | "claude_cli" | "opencode_cli" | "qwen_cli";
     display_name: string;
     model: AgentModelChoice;
   }>;

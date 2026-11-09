@@ -30,7 +30,7 @@ class SubmissionRejected(ContractError):
     pass
 
 
-EXECUTION_TOOLS = {"bash", "exec_command", "command_execution", "shell", "shell_command"}
+EXECUTION_TOOLS = {"bash", "exec_command", "command_execution", "shell", "shell_command", "run_shell_command"}
 
 
 def result_text(raw: str) -> str:
@@ -41,7 +41,13 @@ def result_text(raw: str) -> str:
     if isinstance(value, dict) and "stdout" in value:
         return str(value["stdout"]) + "\n" + str(value.get("stderr", ""))
     if isinstance(value, dict) and "content" in value:
-        return result_text(value["content"]) if isinstance(value["content"], str) else raw
+        return result_text(value["content"] if isinstance(value['content'], str) else json.dumps(value['content']))
+    if isinstance(value, dict) and 'llmContent' in value:
+        content = value['llmContent']
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            return '\n'.join(str(part.get('text', '')) if isinstance(part, dict) else str(part) for part in content)
     return raw
 
 
@@ -211,7 +217,8 @@ class Submissions:
             if not started or datetime.fromisoformat(started).timestamp() < attempt["started_at"]:
                 continue
             command = operation.get("command") or operation.get("input", {}).get("command", "")
-            if re.search(r"github|ctftime|writeup|/experience/|/skills/|/logs|/task-overview/|hook_outputs", command, re.I):
+            if re.search(r"github|ctftime|writeup|/experience/|/skills/|/logs|/task-overview/|"
+                         r"/evidence-files/|/evidence-logs/|hook_outputs", command, re.I):
                 continue
             try:
                 text = self._body(question, agent_id, action)

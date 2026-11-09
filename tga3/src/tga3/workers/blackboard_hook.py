@@ -101,6 +101,7 @@ def checkpoint(event: dict, *, client=None, record_action=None) -> dict:
             "action_start": (os.environ.get("TGA3_ATTEMPT_ID", "")
                              if event_name == "PreToolUse" and event.get("tool_use_id") else ""),
             "force_start": force_start,
+            "defer_context": bool(event.get('_tga_defer_context')),
             "completion_hint": completion_hint,
             "experience_generation": experience_generation,
             "experience_ack": (experience_previous.get("delivery_id", "")
@@ -116,7 +117,9 @@ def checkpoint(event: dict, *, client=None, record_action=None) -> dict:
     if force_start:
         start_file.write_text(start_token)
     context = delivery.get("context", "")
-    if event_name == "PreToolUse" and not ((final or force_start) and context):
+    defer_context = (event_name == 'PreToolUse' and event.get('_tga_defer_context')
+                     and any(delivery.get(k) for k in ['context', 'experience_context']))
+    if event_name == "PreToolUse" and not ((final or force_start) and context) and not defer_context:
         record_action(event)
     if context:
         ack_file.write_text(json.dumps({"generation": generation, "delivery_id": delivery["delivery_id"]}))
@@ -142,7 +145,7 @@ def checkpoint(event: dict, *, client=None, record_action=None) -> dict:
             "additionalContext": "\n\n".join(parts),
         }
     }
-    if context and (final or force_start and event_name == "PreToolUse"):
+    if defer_context or context and (final or force_start and event_name == "PreToolUse"):
         result["hookSpecificOutput"].update(
             permissionDecision="deny",
             permissionDecisionReason=(

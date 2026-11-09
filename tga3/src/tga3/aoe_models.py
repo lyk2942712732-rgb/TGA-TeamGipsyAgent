@@ -128,6 +128,7 @@ def next_solo_question(questions: list[TaskRun], agent_id: str) -> TaskRun | Non
         q
         for q in unfinished(questions)
         if scout_ready(q) and not active_attempts(q) and agent_id not in attempted_by(q)
+        and len(attempted_by(q)) < 2
     ]
     # Untouched by either Worker always precedes a peer's previous question, regardless of difficulty.
     return min(eligible, key=lambda q: (bool(attempted_by(q)), *question_order(q))) if eligible else None
@@ -136,10 +137,17 @@ def next_solo_question(questions: list[TaskRun], agent_id: str) -> TaskRun | Non
 def joint_ready(questions: list[TaskRun], worker_ids: tuple[str, ...]) -> bool:
     remaining = unfinished(questions)
     return bool(remaining) and all(
-        scout_ready(q) and not active_attempts(q) and set(worker_ids) <= attempted_by(q) for q in remaining
+        scout_ready(q) and not active_attempts(q) and len(attempted_by(q)) >= 2 for q in remaining
     )
 
 
 def next_joint_question(questions: list[TaskRun]) -> TaskRun | None:
     remaining = unfinished(questions)
     return min(remaining, key=question_order) if remaining else None
+
+
+def joint_workers(question: TaskRun, worker_ids: tuple[str, ...]) -> tuple[str, ...]:
+    # Historical two-Worker batches retain their original collaboration policy.
+    if len(worker_ids) == 2:
+        return worker_ids
+    return tuple(agent for agent in worker_ids if agent not in attempted_by(question))

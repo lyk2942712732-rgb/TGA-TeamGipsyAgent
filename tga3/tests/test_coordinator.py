@@ -18,7 +18,7 @@ def configured() -> TGA3Config:
 
 
 @pytest.mark.asyncio
-async def test_task_start_launches_two_independent_worker_containers():
+async def test_task_start_launches_four_independent_worker_containers():
     storage = InMemoryStorage()
     containers = FakeContainerRuntime()
     coordinator = TaskCoordinator(configured(), storage, containers)
@@ -30,12 +30,16 @@ async def test_task_start_launches_two_independent_worker_containers():
         "scout",
         "worker-openai",
         "worker-claude",
+        "worker-opencode",
+        "worker-qwen",
     ]
     agents = await storage.list_agents(task.id)
     assert {agent.agent_id for agent in agents} == {
         "scout",
         "worker-openai",
         "worker-claude",
+        "worker-opencode",
+        "worker-qwen",
         "reporter",
     }
     entries = await storage.list_entries(task.id)

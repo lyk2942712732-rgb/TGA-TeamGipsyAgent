@@ -27,8 +27,12 @@ class ReportQueue:
             self.questions.append(task_id)
 
 
-async def setup(tmp_path):
+async def setup(tmp_path, *, four_workers=False):
     config = TGA3Config(Path(__file__).parents[1] / "config")
+    if not four_workers:
+        # Preserve explicit coverage of historical two-Worker batches.
+        config.agents.agents.pop('worker-opencode', None)
+        config.agents.agents.pop('worker-qwen', None)
     config.runtime.task_root = str(tmp_path / "tasks")
     for provider in config.models.providers:
         provider.api_keys[0].api_key = SecretStr("fixture-key")

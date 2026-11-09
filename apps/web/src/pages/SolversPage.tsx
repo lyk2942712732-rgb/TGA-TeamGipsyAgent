@@ -20,7 +20,7 @@ export function SolversPage() {
   }
   useEffect(() => { void load(); }, []);
   const selected = agents?.agents[selectedId], definition = definitions.find(item => item.id === selectedId);
-  const options = useMemo(() => enabledModelOptions(models).filter(item => selected?.runtime === "claude_cli" ? item.protocol === "anthropic" : item.protocol === "openai_responses"), [models, selected?.runtime]);
+  const options = useMemo(() => enabledModelOptions(models).filter(item => selected?.runtime === "claude_cli" ? item.protocol === "anthropic" : selected?.runtime === "codex_cli" ? item.protocol === "openai_responses" : true), [models, selected?.runtime]);
   function patch(value: Partial<AgentConfig>) { if (!agents || !selected) return; setAgents({ ...agents, agents: { ...agents.agents, [selectedId]: { ...selected, ...value } } }); setDirty(true); setMessage(""); }
   async function save() { if (!agents) return; if (scoutTimeDirty && (!Number.isInteger(scoutSeconds) || scoutSeconds < 60 || scoutSeconds > 600)) { setError("Scout 第一轮时长应为 60–600 秒的整数。"); return; } setBusy(true); setMessage(""); setError(""); try { if (scoutTimeDirty) { await tga3ConfigApi.saveScoutSettings(scoutSeconds); setScoutTimeDirty(false); } setAgents(await tga3ConfigApi.saveAgents(agents)); setDirty(false); setMessage("Solver 配置已保存。"); } catch (reason) { setError(reason instanceof Error ? reason.message : "保存失败"); } finally { setBusy(false); } }
   return <div className="ref-page solvers-page">
@@ -52,4 +52,4 @@ export function SolversPage() {
 function HealthDot({ status }: { status: string }) { return <span className={`image-health-dot ${status}`}>{status === "healthy" ? <CheckCircle2 size={13} /> : <XCircle size={13} />}{status === "healthy" ? "镜像可用" : status === "missing" ? "镜像缺失" : "镜像不可用"}</span>; }
 function ImageHealth({ definition }: { definition: AgentDefinition }) { const health = definition.image_health; return <section className="worker-image-card"><header><div><Box size={18} /><span><small>执行镜像</small><strong>{definition.image}</strong></span></div>{health ? <HealthDot status={health.status} /> : null}</header><dl><div><dt>状态</dt><dd>{health?.detail ?? "未检查"}</dd></div>{health?.image_id ? <div><dt>镜像 ID</dt><dd>{health.image_id}</dd></div> : null}{health?.size_bytes ? <div><dt>大小</dt><dd>{(health.size_bytes / 1024 ** 3).toFixed(2)} GB</dd></div> : null}</dl></section>; }
 function roleName(value: string) { return ({ scout: "侦察", worker: "执行", reporter: "报告" } as Record<string, string>)[value] ?? value; }
-function sdkName(value: string) { return value === "claude_cli" ? "Claude Code CLI" : "Codex CLI"; }
+function sdkName(value: string) { return ({claude_cli:"Claude Code CLI",codex_cli:"Codex CLI",opencode_cli:"OpenCode CLI",qwen_cli:"Qwen Code CLI"} as Record<string,string>)[value] ?? value; }

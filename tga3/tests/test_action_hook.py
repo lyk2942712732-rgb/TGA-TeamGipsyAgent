@@ -1,5 +1,6 @@
 import json
 import os
+from types import SimpleNamespace
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
@@ -10,6 +11,24 @@ from tga3.workers.action_journal import ActionJournal
 from tga3.workers.blackboard_hook import checkpoint
 from tga3.workers.cli_adapter import ClaudeAdapter, CodexAdapter
 from tga3.workers.hook_service import HookService
+
+
+def test_opencode_defers_new_context_without_logging_a_phantom_action_and_allows_receipt_retry(hook_env, monkeypatch):
+    monkeypatch.setenv('TGA3_BLACKBOARD_MCP_URL', 'http://fixture/mcp/')
+    body = {'publication_receipts': [{'status':'submission_required','path':'final-candidate.json'}]}
+    class Client:
+        def post(self,*args,**kwargs):
+            return SimpleNamespace(raise_for_status=lambda: None, json=lambda: dict(body))
+    recorded = []
+    event = tool_event(_tga_defer_context=True)
+    result = checkpoint(event, client=Client(), record_action=recorded.append)
+    assert len(recorded) == 1
+    assert result['hookSpecificOutput'].get('permissionDecision') != 'deny'
+    recorded.clear()
+    body.update(context='New shared context',delivery_id='context-1')
+    result = checkpoint(event, client=Client(), record_action=recorded.append)
+    assert result['hookSpecificOutput']['permissionDecision'] == 'deny'
+    assert not recorded
 
 
 @pytest.fixture

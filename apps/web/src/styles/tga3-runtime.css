@@ -1083,10 +1083,14 @@
 }
 
 /* Shared blackboard entries support both dense detail cards and scannable square tiles. */
+.tga3-board-toolbar { flex-wrap: wrap; }
 .tga3-board-toolbar-actions {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+  max-width: 100%;
 }
 .tga3-board-tile-grid {
   display: grid;

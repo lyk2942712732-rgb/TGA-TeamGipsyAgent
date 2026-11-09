@@ -110,7 +110,7 @@ async def test_three_phases_preserve_raw_and_keep_json_private_until_merging_fin
     assert len(list(coordinator.scout_intel.directory(task.id, merged=True).glob("*.json"))) == 1
     runtime.finish_merging.set()
     await coordinator._startup_jobs[task.id]
-    assert [spec.agent.agent_id for spec in runtime.launched] == ["scout", "worker-openai", "worker-claude"]
+    assert [spec.agent.agent_id for spec in runtime.launched] == ["scout", "worker-openai", "worker-claude", "worker-opencode", "worker-qwen"]
     assert (await storage.get_task(task.id)).state == RunState.RUNNING
     assert (await storage.get_agent(task.id, "scout")).metadata["intel_imported_count"] == 1
 
