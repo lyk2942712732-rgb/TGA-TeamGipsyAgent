@@ -8,7 +8,7 @@ import type { TaskMode } from "../../../modes";
 import type { TGA3Agent, TGA3RuntimeSnapshot } from "../../../runtime/tga3-runtime";
 import { BOARD_KIND_LABELS, bodyText, formatTime, protocolLabel, roleLabel, sdkLabel, agentStateLabel, stateLabel, stateTone } from "../tga3-view";
 import { EventCard } from "./TGA3Workspace";
-import { attemptLabel, formatElapsed, workerDifficultyAverages, workerRecords, workerWins } from "../aoe-view";
+import { attemptLabel, formatElapsed, workerDifficultyAverages, workerRecords } from "../aoe-view";
 
 type InspectorTab = "overview" | "activity" | "control" | "record";
 const TABS: Array<[InspectorTab, string]> = [["overview", "概览"], ["activity", "活动"], ["control", "模型与控制"]];
@@ -37,8 +37,8 @@ function Overview({ snapshot, agent }: { snapshot: TGA3RuntimeSnapshot; agent: T
   const averages = workerDifficultyAverages(snapshot.aoe?.questions ?? [], agent.agent_id);
   return <div className="tga3-agent-overview">
     {snapshot.aoe && agent.role === "worker" ? <Info title="解题进度">
-      <Row label="已解出" value={`${workerWins(snapshot.aoe.questions, agent.agent_id).length} 道`} />
-      <Row label="未成功解出" value={`${records.filter(record => !record.successful).length} 道`} />
+      <Row label="已解出" value={`${records.filter(record => record.successful || record.assisted).length} 道`} />
+      <Row label="未成功解出" value={`${records.filter(record => !record.successful && !record.assisted).length} 道`} />
       <Row label="正在解题" value={snapshot.aoe.questions.filter(q => q.status === "running" && q.current_agents.includes(agent.agent_id)).map(q => q.title).join("、") || "暂无"} />
     </Info> : null}
     {snapshot.aoe && agent.role === "worker" ? <Info title="各难度解题平均耗时">
@@ -58,13 +58,14 @@ function Overview({ snapshot, agent }: { snapshot: TGA3RuntimeSnapshot; agent: T
 function Record({ snapshot, agent }: { snapshot: TGA3RuntimeSnapshot; agent: TGA3Agent }) {
   const now = useElapsedNow();
   const records = workerRecords(snapshot.aoe?.questions ?? [], agent.agent_id, now);
-  const wins = records.filter(record => record.successful), unsuccessful = records.filter(record => !record.successful);
+  const wins = records.filter(record => record.successful || record.assisted);
+  const unsuccessful = records.filter(record => !record.successful && !record.assisted);
   const link = (id: string) => `/tasks/${encodeURIComponent(snapshot.task.id)}/runtime?question=${encodeURIComponent(id)}&tab=blackboard`;
   return <section className="aoe-worker-record" aria-label={`${agent.display_name} 战绩`}>
     <section aria-label="已解出题目">
     <header><h3>已解出 {wins.length} 道题</h3></header>
-    {wins.length ? <ol>{wins.map(({ question, attempt, seconds }) => <li key={question.question_id}>
-      <div><Link to={link(question.question_id)}>{question.title}</Link><strong>{formatElapsed(seconds)}</strong></div>
+    {wins.length ? <ol>{wins.map(({ question, attempt, seconds, assisted }) => <li key={question.question_id}>
+      <div><Link to={link(question.question_id)}>{question.title}</Link><strong>{assisted ? "增援" : formatElapsed(seconds)}</strong></div>
       <small>{attemptLabel(question, attempt)}</small>
     </li>)}</ol> : <p className="tga3-muted">暂无已解出题目。</p>}
     </section>

@@ -79,8 +79,11 @@ export function workerRecords(questions: AOEQuestion[], agentId: string, now = D
     const success = question.status === "solved" ? [...attempts].reverse().find(a =>
       a.success_credit ?? (a.phase === "reinforcement" ? question.solver_agent_id === a.agent_id : a.outcome === "solved")) : undefined;
     const attempt = success ?? attempts[attempts.length - 1];
+    const assisted = !success && question.status === "solved" && attempts.some(a =>
+      a.phase === "reinforcement" && a.outcome === "solved");
     const stage = attemptIntervals(question, attempt, now, true);
-    return [{ question, attempt, successful: Boolean(success), seconds: workerElapsed(question, agentId, now),
+    return [{ question, attempt, successful: Boolean(success), assisted,
+      seconds: assisted ? null : workerElapsed(question, agentId, now),
       stageSeconds: stage === null ? null : union(stage).reduce((total, [s, e]) => total + e - s, 0) }];
   });
 }

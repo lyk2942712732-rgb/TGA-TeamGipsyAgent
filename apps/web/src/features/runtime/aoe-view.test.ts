@@ -46,6 +46,7 @@ describe("Worker cumulative contribution", () => {
     expect(workerWins([q], "b")).toEqual([]);
     expect(workerDifficultyAverages([q], "b")).toEqual([]);
     expect(workerRecords([q], "b")[0].successful).toBe(false);
+    expect(workerRecords([q], "b")[0]).toMatchObject({ assisted: true, seconds: null });
     const helperSolved = question("helper solved", [owner, { ...helper, success_credit: true }], { solver_agent_id: "b" });
     expect(workerWins([helperSolved], "a")[0].seconds).toBe(900);
     expect(workerWins([helperSolved], "b")[0].seconds).toBe(240);
@@ -100,6 +101,7 @@ describe("Worker cumulative contribution", () => {
       attempt(200, 250, { outcome: "error" }), attempt(300, 500, { agent_id: "a" })]);
     const [record] = workerRecords([peer], "b");
     expect(record.successful).toBe(false);
+    expect(record.assisted).toBe(false);
     expect(record.seconds).toBe(150);
     expect(workerRecords([peer], "never-tried")).toEqual([]);
   });

@@ -24,6 +24,28 @@ const snapshot: TGA3RuntimeSnapshot = {
 };
 
 describe("AOE Worker progress and record", () => {
+  it("lists a successful reinforcement under solved with a reinforcement label and no credited time", async () => {
+    const user = userEvent.setup();
+    const helped = question("Assisted win", [
+      { ...attempt("owner", "worker-claude", "solo", 100, 1000), success_credit: true },
+      { ...attempt("helper", agent.agent_id, "solo", 700, 1000), phase: "reinforcement",
+        first_attempt_id: "owner", success_credit: false },
+    ]);
+    helped.solver_agent_id = "worker-claude";
+    const data = { ...snapshot, aoe: { ...snapshot.aoe!, questions: [helped] } };
+    render(<MemoryRouter><TGA3AgentInspector snapshot={data} agent={agent} onChanged={() => {}} /></MemoryRouter>);
+    const progress = screen.getByRole("heading", { name: "解题进度" }).closest("section")!;
+    expect(progress).toHaveTextContent("已解出1 道");
+    expect(progress).toHaveTextContent("未成功解出0 道");
+    const averages = screen.getByRole("heading", { name: "各难度解题平均耗时" }).closest("section")!;
+    expect(averages).toHaveTextContent("暂无耗时完整的已解出题目");
+    await user.click(screen.getByRole("tab", { name: "战绩" }));
+    const wins = screen.getByRole("region", { name: "已解出题目" });
+    expect(wins).toHaveTextContent("Assisted win");
+    expect(within(wins).getByText("增援", { exact: true })).toBeInTheDocument();
+    expect(wins).not.toHaveTextContent("5分00秒");
+    expect(screen.getByRole("region", { name: "未成功解出题目" })).not.toHaveTextContent("Assisted win");
+  });
   it("shows the current question and solved count, then lists only this Worker's wins and actual attempt duration", async () => {
     const user = userEvent.setup();
     render(<MemoryRouter><TGA3AgentInspector snapshot={snapshot} agent={agent} onChanged={() => {}} /></MemoryRouter>);
