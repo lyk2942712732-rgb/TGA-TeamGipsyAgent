@@ -12,6 +12,8 @@ from pathlib import Path, PurePosixPath
 from uuid import uuid4
 from zipfile import BadZipFile, ZipFile
 
+import yaml
+
 from .errors import ConflictError, NotFoundError
 
 MAX_ARCHIVE_BYTES = 20 * 1024 * 1024
@@ -91,8 +93,21 @@ class SkillCatalog:
     @staticmethod
     def _description(name: str, files: tuple[SkillFile, ...]) -> str:
         primary = next((item for item in files if item.path.lower() == "skill.md"), files[0])
+        text = primary.content.lstrip("\ufeff")
+        lines = text.splitlines()
+        if lines and lines[0].strip() == "---":
+            end = next((i for i, line in enumerate(lines[1:], 1) if line.strip() == "---"), None)
+            if end is not None:
+                try:
+                    metadata = yaml.safe_load("\n".join(lines[1:end]))
+                except yaml.YAMLError:
+                    metadata = None
+                if isinstance(metadata, dict) and isinstance(metadata.get("description"), str):
+                    if description := metadata["description"].strip():
+                        return description
+                lines = lines[end + 1:]
         return next(
-            (line.strip().lstrip("# ").strip() for line in primary.content.splitlines() if line.strip()),
+            (line.strip().lstrip("# ").strip() for line in lines if line.strip() and line.strip() != "---"),
             name,
         )
 
