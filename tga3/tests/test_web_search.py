@@ -86,23 +86,22 @@ async def test_search_mcp_is_read_only_and_has_no_publication_tools(tmp_path):
 
 
 @pytest.mark.parametrize('kind', ['codex','claude'])
-def test_worker_tool_catalog_native_file_publication_and_enabled_search(monkeypatch, tmp_path, kind):
+def test_hosted_worker_tool_catalog_keeps_file_publication_without_public_research(monkeypatch, tmp_path, kind):
     environment(monkeypatch, tmp_path, claude=kind=='claude')
-    monkeypatch.setenv('TGA3_WEB_SEARCH_MCP_URL','http://fixture/web-mcp/')
-    monkeypatch.setenv('TGA3_CTF_KNOWLEDGE_MCP_URL','https://ctf42.online/mcp')
+    monkeypatch.setenv('TGA3_HOSTED','1')
+    monkeypatch.setenv('TGA3_WEB_SEARCH_MCP_URL','')
+    monkeypatch.setenv('TGA3_CTF_KNOWLEDGE_MCP_URL','')
     adapter = ClaudeAdapter() if kind=='claude' else CodexAdapter()
     args, _ = adapter.command()
     if kind=='codex':
         config = tomllib.loads((tmp_path/'.codex/config.toml').read_text())
-        assert config['web_search'] == 'live' and config['mcp_servers']['web']['required']
-        assert config['mcp_servers']['web']['url'] == 'http://fixture/web-mcp/'
+        assert config['web_search'] == 'disabled'
+        assert 'web' not in config.get('mcp_servers',{})
     else:
-        assert 'WebSearch' in args[args.index('--tools')+1] and 'WebFetch' in args[args.index('--tools')+1]
-        assert 'mcp__web__web_search' in args[args.index('--allowedTools')+1]
+        assert 'WebSearch' not in args[args.index('--tools')+1]
+        assert 'mcp__web__web_search' not in args[args.index('--allowedTools')+1]
     prompt = worker_instructions()
-    for tool in ['list_techniques','list_technologies','search_challenges','get_challenge',
-                 'find_similar_challenges','search_ctfs','get_ctf','web_search']:
-        assert tool in prompt
+    assert 'No public knowledge base' in prompt
+    assert 'search_challenges' not in prompt
     assert 'Codex exec_command/apply_patch; Claude Write/Bash' in prompt
-    assert 'After two consecutive unsuccessful searches, STOP' in prompt
     assert '/workspace/final-candidate.json' in prompt and '/workspace/result/final-candidate.json' not in prompt

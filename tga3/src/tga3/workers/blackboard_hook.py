@@ -13,6 +13,7 @@ import httpx
 from ..flag_signals import FLAG
 from .action_hook import record_tool, result_context
 from .aoe_access import overview_policy
+from .local_paths import local_paths
 
 _publication_versions = {}
 
@@ -32,6 +33,10 @@ def publications_changed():
 
 
 def checkpoint(event: dict, *, client=None, record_action=None) -> dict:
+    return local_paths(_checkpoint(event, client=client, record_action=record_action))
+
+
+def _checkpoint(event: dict, *, client=None, record_action=None) -> dict:
     if os.environ.get("TGA3_AGENT_ROLE") not in {"scout", "worker"}:
         return {}
     event_name = event.get("hook_event_name", "PreToolUse")

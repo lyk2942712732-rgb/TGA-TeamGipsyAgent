@@ -96,7 +96,8 @@ def _overview_policy(event):
         if manifest.is_file() and json.loads(manifest.read_text()).get("collection_complete"):
             return "AOE question collection is complete. Stop immediately; no further tools or exploration."
     safe_paths = bool(paths) and all(
-        ".." not in PurePosixPath(p).parts and (p in required or role == "scout" and p.startswith("/inputs/"))
+        ".." not in PurePosixPath(p).parts and (p in required or role == "scout"
+        and p.startswith(os.environ.get("TGA3_INPUTS", "/inputs") + "/"))
         for p in paths
     )
     if role == "scout":

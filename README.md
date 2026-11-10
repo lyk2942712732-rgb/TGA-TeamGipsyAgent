@@ -1,5 +1,9 @@
 # TGA — Team Gipsy Agent
 
+本分支是 **TSec 托管镜像版本**：启动、环境变量、镜像 `.tar` 包及离线验收说明见
+[tga3/HOSTED.md](tga3/HOSTED.md)。日常 Ubuntu 主版本继续使用 `codex/scout-two-stage`。
+下文保留项目原有部署说明；托管入口使用单容器内的独立 CLI 进程，不需要嵌套 Docker，且不含知识库。
+
 TGA3 使用独立 Debian Bookworm 容器中的 Codex CLI 和 Claude Code CLI 并行执行任务，
 通过共享黑板协作。两个 Worker 停止后，再启动 Codex CLI Reporter 生成报告。
 项目控制层管理任务、PostgreSQL、文件、MCP 和容器；执行顺序为 Scout → 两个 Worker 并行 → Reporter。

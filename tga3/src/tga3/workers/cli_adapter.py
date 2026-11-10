@@ -15,6 +15,7 @@ from uuid import uuid4
 
 from ..knowledge import SERVER_NAME, worker_knowledge_server
 from .action_journal import ActionJournal
+from .local_paths import local_paths
 from .prompts import worker_instructions
 from .runtime import AgentAdapter, Emit
 
@@ -243,6 +244,7 @@ class CliAdapter(AgentAdapter):
 
         emit = tracked_emit
         command, env = self.command()
+        command = local_paths(command)
         if os.environ.get("TGA3_TARGET_MODE") == "managed":
             assignment = {"attempt_id": os.environ.get("TGA3_ATTEMPT_ID"),
                           "addresses": json.loads(os.environ.get("TGA3_TARGET_ADDRESSES", "[]"))}
@@ -255,6 +257,7 @@ class CliAdapter(AgentAdapter):
             if catalog := initial_catalog():
                 prompt = catalog + "\n\n" + prompt
         env["TGA3_CLI_GENERATION"] = str(uuid4())
+        prompt = local_paths(prompt)
         if self.hook_config():
             if self.hook_service is None:
                 from .hook_service import HookService
@@ -394,6 +397,7 @@ class CodexAdapter(CliAdapter):
             if self.reporter
             else worker_instructions()
         )
+        instructions = local_paths(instructions)
         # JSON strings are valid TOML basic strings; credentials stay in the environment.
         config = [
             f"model = {json.dumps(self.model_name)}",
@@ -401,7 +405,9 @@ class CodexAdapter(CliAdapter):
             'approval_policy = "never"',
             f"developer_instructions = {json.dumps(instructions)}",
         ]
-        if os.environ.get('TGA3_AGENT_ROLE') == 'worker':
+        if os.environ.get('TGA3_HOSTED') == '1':
+            config += ['web_search = "disabled"']
+        elif os.environ.get('TGA3_AGENT_ROLE') == 'worker':
             config += ['web_search = "live"']
         elif os.environ.get('TGA3_AOE_PARENT_ID') and os.environ.get('TGA3_AGENT_ROLE') == 'scout':
             config += ['web_search = "disabled"']
@@ -519,9 +525,11 @@ class ClaudeAdapter(CliAdapter):
             "--system-prompt",
             worker_instructions(),
             "--tools",
-            "Bash,Read,Write,Edit,Glob,Grep,WebSearch,WebFetch",
+            ("Bash,Read,Write,Edit,Glob,Grep" if os.environ.get('TGA3_HOSTED') == '1'
+             else "Bash,Read,Write,Edit,Glob,Grep,WebSearch,WebFetch"),
             "--allowedTools",
-            f"Bash,Read,Write,Edit,Glob,Grep,WebSearch,WebFetch,mcp__web__web_search,mcp__{SERVER_NAME}__*",
+            ("Bash,Read,Write,Edit,Glob,Grep" if os.environ.get('TGA3_HOSTED') == '1'
+             else f"Bash,Read,Write,Edit,Glob,Grep,WebSearch,WebFetch,mcp__web__web_search,mcp__{SERVER_NAME}__*"),
             "--disallowedTools",
             "AskUserQuestion",
             "--strict-mcp-config",

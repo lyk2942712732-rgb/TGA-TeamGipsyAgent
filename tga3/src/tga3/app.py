@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager
 from typing import Annotated, Any
 from uuid import UUID
 
-from fastapi import APIRouter, FastAPI, File, Form, Request, UploadFile, WebSocket
+from fastapi import APIRouter, FastAPI, File, Form, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -20,7 +20,6 @@ from .domain import USER_ACTOR, AgentState, PublishRequest, RunState
 from .errors import TGA3Error
 from .file_publications import FilePublications
 from .host_agents import Automation, CliHostModel, HostModel
-from .knowledge_relay import KnowledgeRelay
 from .mcp_server import build_scout_mcp, build_web_mcp
 from .model_discovery import discover_provider_models
 from .provider_profiles import PROVIDER_PROFILES, ProviderProtocol
@@ -82,7 +81,6 @@ def create_app(
     scout_mcp = build_scout_mcp(config, coordinator.scout_intel)
     aoe_scout_mcp = build_scout_mcp(config, coordinator.scout_intel, aoe=coordinator.aoe)
     web_search = WebSearchService(config, storage)
-    knowledge_relay = KnowledgeRelay(config)
     web_mcp = build_web_mcp(config, web_search)
     delivery = BlackboardDelivery(config, storage, coordinator.blackboard)
     usage = TokenUsageTracker(config, storage)
@@ -114,7 +112,6 @@ def create_app(
                 await asyncio.gather(target_cleanup, return_exceptions=True)
                 await coordinator.close()
                 await web_search.close()
-                await knowledge_relay.close()
 
     app = FastAPI(title="TGA3 Control Plane", version="0.1.0", lifespan=lifespan)
     app.state.config = config
@@ -123,14 +120,9 @@ def create_app(
     app.state.automation = automation
     app.state.publications = publications
     app.state.web_search = web_search
-    app.state.knowledge_relay = knowledge_relay
     app.state.experience = automation.experience
     api = APIRouter(prefix="/api/v3")
     config_lock = asyncio.Lock()
-
-    @app.api_route("/knowledge-mcp/", methods=["GET", "POST", "DELETE"])
-    async def knowledge_mcp(request: Request):
-        return await knowledge_relay.forward(request)
 
     @app.exception_handler(TGA3Error)
     async def tga3_error(_request: Request, exc: TGA3Error) -> JSONResponse:
@@ -705,7 +697,10 @@ def create_app(
 
     @app.websocket("/internal/agents/{task_id}/{agent_id}")
     async def agent_socket(websocket: WebSocket, task_id: UUID, agent_id: str) -> None:
-        await coordinator.gateway.attach(task_id, agent_id, websocket)
+        try:
+            await coordinator.gateway.attach(task_id, agent_id, websocket)
+        except WebSocketDisconnect:
+            pass
 
     app.include_router(api)
     app.mount("/scout-mcp", scout_mcp.streamable_http_app())

@@ -10,6 +10,7 @@ from ..action_logs import read_action_log
 from ..action_materials import action_materials
 from ..scout_intel import read_intels
 from .cli_adapter import CodexAdapter
+from .local_paths import local_paths
 from .prompts import worker_instructions
 from .runtime import WorkerSession
 
@@ -28,7 +29,7 @@ async def report() -> None:
 
         # Correct a missing/malformed file in the existing CLI session, not a new review agent.
         try:
-            check_report_file(Path("/workspace"), Path("/evidence"))
+            check_report_file(Path(local_paths("/workspace")), Path(local_paths("/evidence")))
         except (OSError, ValueError, TypeError, ContractError) as exc:
             repaired = await adapter.run_cycle(
                 f"The required experience-cards.json has a file/citation error: {exc}. "
@@ -39,7 +40,7 @@ async def report() -> None:
                 output = repaired
     if not output.strip():
         raise RuntimeError("Reporter returned an empty report")
-    Path("/workspace/result/writeup.md").write_text(output, encoding="utf-8")
+    Path(local_paths("/workspace/result/writeup.md")).write_text(output, encoding="utf-8")
 
 
 async def scout() -> None:

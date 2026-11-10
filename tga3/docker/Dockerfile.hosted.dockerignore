@@ -1,0 +1,16 @@
+**
+!docker/
+!docker/Dockerfile.hosted
+!docker/Dockerfile.hosted.dockerignore
+!docker/hosted-opencode-deps/
+!docker/hosted-opencode-deps/package.json
+!docker/hosted-opencode-deps/package-lock.json
+!src/
+!src/**
+!config/
+!config/agents.json
+!config/scenes.json
+!config/runtime.json
+!pyproject.toml
+!README.md
+!schema.sql

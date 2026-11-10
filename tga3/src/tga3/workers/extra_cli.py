@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 from pathlib import Path
 
 from ..knowledge import SERVER_NAME, worker_knowledge_server
@@ -149,6 +150,17 @@ class OpenCodeAdapter(CliAdapter):
             base_url += "/v1"
         root = self.workspace / ".opencode"
         root.mkdir(exist_ok=True)
+        if os.environ.get("TGA3_HOSTED") == "1":
+            dependencies = Path("/opt/tga3-hosted/opencode-deps")
+            if not (dependencies / "node_modules/@opencode-ai/plugin/package.json").is_file():
+                raise RuntimeError("Hosted image is missing its offline OpenCode plugin dependencies")
+            for directory in [root, root / "config/opencode"]:
+                directory.mkdir(parents=True, exist_ok=True)
+                for name in ["package.json", "package-lock.json"]:
+                    if not (directory / name).exists():
+                        shutil.copyfile(dependencies / name, directory / name)
+                if not (directory / "node_modules").exists():
+                    (directory / "node_modules").symlink_to(dependencies / "node_modules", target_is_directory=True)
         prompt = root / "worker.md"
         prompt.write_text(worker_instructions(), encoding="utf8")
         config = {
@@ -183,6 +195,8 @@ class OpenCodeAdapter(CliAdapter):
             "autoupdate": False,
         }
         path = root / "opencode.json"
+        if os.environ.get("TGA3_HOSTED") == "1":
+            config["permission"].update(websearch="deny")
         path.write_text(json.dumps(config), encoding="utf8")
         args = [self.binary, "run", "--format", "json", "--model", "tga/" + self.model_name]
         if self.session_id:

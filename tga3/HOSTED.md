@@ -1,0 +1,75 @@
+# TSec 托管镜像
+
+此分支为 `codex/tsecbench-hosted`，独立于日常 Ubuntu 部署分支。
+
+镜像启动后读取平台注入的 `BENCHMARK_TOKEN`、`BENCHMARK_BASE_URL`，自动启动私有
+PostgreSQL、控制服务及 AOE 任务。保留 Codex、Claude Code、OpenCode、Qwen Code 四个
+Worker，以及 Scout、Reporter、逐题黑板、Finding、动作日志、提交回执校验和现有调度。
+
+平台只提供一个容器，本分支用独立进程、工作目录、CLI Home 和会话执行智能体，不依赖
+Docker socket、特权模式、嵌套 Docker 或额外网络服务。平台容器是隔离边界，Worker
+之间没有各自的内核容器隔离；资料视图和证据路径是本地文件视图。
+
+镜像不包含在线/本地知识库、ctf42 MCP 连接或知识库路由，不提供公网搜索。
+构建上下文采用允许列表，只打包项目运行代码、干净配置模板及原有通用工具；不打包
+`data/`、历史题目、答案、报告、经验卡、CLI 对话、模型密钥或个人 Skills。
+本次运行中新生成的黑板、报告和任务内卡片保存在一次性运行目录中，不读取其他任务的资料。
+
+## 获取镜像
+
+源码在本分支，`docker save` 导出的 Docker 镜像 `.tar` 包放在对应 GitHub Release 的附件中。
+大型镜像不提交普通 Git 文件；校验信息随 Release 提供。
+
+## 平台环境变量
+
+参考 [`hosted.env.example`](hosted.env.example)。平台自动注入两项 `BENCHMARK_*`，无需将值写入程序。
+
+| CLI | 必填环境变量 | 供应商必须支持的协议 |
+|---|---|---|
+| Codex（含 Scout、Reporter） | `CODEX_BASE_URL`、`CODEX_MODEL`、`CODEX_API_KEY` | OpenAI Responses |
+| Claude Code | `CLAUDE_BASE_URL`、`CLAUDE_MODEL`、`CLAUDE_API_KEY` | Anthropic Messages |
+| OpenCode、Qwen Code | 默认共用 `CLAUDE_*`，可分别用 `OPENCODE_*` / `QWEN_*` 覆盖 | 默认 Anthropic Messages，与当前 Ubuntu 配置一致 |
+
+OpenCode/Qwen 可分别通过 `OPENCODE_PROTOCOL` / `QWEN_PROTOCOL` 选择 `anthropic`、
+`openai_responses` 或 `openai_chat_completions`。选择 Chat Completions 时，默认值来自
+`CHAT_BASE_URL` / `CHAT_MODEL` / `CHAT_API_KEY`；选择 Responses 时来自 `CODEX_*`。
+填写平台白名单内供应商实际支持的模型和协议。启动时自动把模型域名加 `.tsecbench.gw`、
+把 HTTPS 改为 HTTP，保留 API 路径；已转换的域名不会重复追加。题单、靶机和提交接口不会
+进行模型网关转换。供应商仍须在平台白名单内；网关转换不会使不受支持的供应商变得可用。
+
+首次/第二次/共同攻坚预算由 `AOE_FIRST_MINUTES` / `AOE_SECOND_MINUTES` /
+`AOE_JOINT_MINUTES` 设置，默认 30/15/20 分钟；`BENCHMARK_INSTANCE_QUOTA` 默认 3。
+
+可先用 `--check-config` 验证环境变量、协议配置和网关地址，不联网、不调用模型：
+
+```sh
+docker run --rm --network none --env-file hosted.env \
+  -e BENCHMARK_TOKEN=configuration-check-only \
+  -e BENCHMARK_BASE_URL=http://platform.internal \
+  tga3-hosted:20261110 --check-config
+```
+
+正式运行直接使用镜像默认入口。运行结束时等待逐题报告/卡片收尾后退出；收到停止信号时
+停止任务、回收 CLI/工具子进程并关闭私有数据库。`tini` 负责回收孤儿进程。
+
+## 构建与导出
+
+先按项目原构建流程准备共享工具基础镜像和四种固定版本 CLI 镜像，然后：
+
+```sh
+cd tga3
+bash scripts/build-hosted.sh tga3-hosted:20261110
+docker save -o tga3-hosted-20261110.tar tga3-hosted:20261110
+sha256sum tga3-hosted-20261110.tar
+```
+
+Dockerfile 使用专用 `.dockerignore`，不继承本地 `data` 或配置密钥。只从各 CLI 镜像复制
+CLI 安装目录，共用原有 Python/Node/安全工具环境；没有新建 Python 虚拟环境。
+新增系统依赖只有私有数据库所需的 PostgreSQL Server 及其系统依赖，以及进程回收器 `tini`；
+额外预装 OpenCode 自带插件入口所需的 `@opencode-ai/plugin@1.19.5` 及其依赖、锁文件，
+各 OpenCode 会话共用只读安装目录，避免在断网环境启动时等待 npm 下载。
+控制服务所需的 FastAPI、asyncpg、uvicorn 等安装进同一个 Python 环境。
+
+上传前以实际导出文件大小核对平台 3GB 上限。平台截图规定的资源为 8 核、16GB 内存、
+20GB 总存储。正式托管评测仍需要在平台配置真实的模型参数和密钥；离线验收不代表已经
+在平台提交过一次正式评测。

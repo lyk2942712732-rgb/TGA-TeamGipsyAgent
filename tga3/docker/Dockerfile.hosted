@@ -1,0 +1,42 @@
+# Build only from the verified tool/CLI layers. No task data, secrets, writeups,
+# experience cards, knowledge corpus, CLI histories or host configuration enter.
+ARG CLI_BASE_IMAGE=tga3-cli-base:local
+ARG CODEX_IMAGE=tga3-worker-openai:local
+ARG CLAUDE_IMAGE=tga3-worker-claude:local
+ARG OPENCODE_IMAGE=tga3-worker-opencode:local
+ARG QWEN_IMAGE=tga3-worker-qwen:local
+FROM ${CODEX_IMAGE} AS codex
+FROM ${CLAUDE_IMAGE} AS claude
+FROM ${OPENCODE_IMAGE} AS opencode
+FROM ${QWEN_IMAGE} AS qwen
+FROM ${CLI_BASE_IMAGE}
+USER root
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends postgresql-15 \
+    && apt-get clean && rm -rf /var/lib/apt/lists/* /var/lib/postgresql/15/main \
+    && install -d -o tga3 -g tga3 /app /opt/tga3-hosted/templates
+RUN apt-get update && apt-get install -y --no-install-recommends tini \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+COPY --from=codex /usr/local/lib/node_modules/@openai /usr/local/lib/node_modules/@openai
+COPY --from=claude /usr/local/lib/node_modules/@anthropic-ai /usr/local/lib/node_modules/@anthropic-ai
+COPY --from=opencode /usr/local/lib/node_modules/opencode-ai /usr/local/lib/node_modules/opencode-ai
+COPY --from=qwen /usr/local/lib/node_modules/@qwen-code /usr/local/lib/node_modules/@qwen-code
+RUN ln -s ../lib/node_modules/@openai/codex/bin/codex.js /usr/local/bin/codex \
+    && ln -s ../lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe /usr/local/bin/claude \
+    && ln -s ../lib/node_modules/opencode-ai/bin/opencode.exe /usr/local/bin/opencode \
+    && ln -s ../lib/node_modules/@qwen-code/qwen-code/cli-entry.js /usr/local/bin/qwen
+COPY docker/hosted-opencode-deps/ /opt/tga3-hosted/opencode-deps/
+RUN npm ci --prefix /opt/tga3-hosted/opencode-deps --ignore-scripts --no-audit --no-fund \
+    && npm cache clean --force
+COPY pyproject.toml README.md /build/project/
+COPY src /build/project/src
+RUN python -m pip install --no-cache-dir '/build/project[control]' \
+    && python -m pip check && rm -rf /build/project
+COPY config/agents.json config/scenes.json config/runtime.json schema.sql /opt/tga3-hosted/templates/
+RUN python -c 'import json,pathlib; r=pathlib.Path("/opt/tga3-hosted/templates"); p=r/"scenes.json"; d=json.loads(p.read_text()); [(s.update(system_prompt=s["system_prompt"].replace("按已观察到的信号查询知识库技法与案例，验证适用条件后使用。", "依据本次证据与本地工具求解。"))) for s in d["scenes"]]; p.write_text(json.dumps(d,ensure_ascii=False)); p=r/"runtime.json"; d=json.loads(p.read_text()); d["ctf_knowledge_mcp_url"]=""; p.write_text(json.dumps(d,ensure_ascii=False))' \
+    && python -c 'import importlib.metadata as m; print("\n".join(sorted(d.metadata["Name"]+"=="+d.version for d in m.distributions())))' > /opt/tga3-hosted/python-packages.lock \
+    && codex --version && claude --version && opencode --version && qwen --version
+ENV TGA3_HOSTED=1 HOME=/home/tga3 PYTHONUNBUFFERED=1
+USER tga3:tga3
+WORKDIR /app
+ENTRYPOINT ["/usr/bin/tini", "-g", "--", "python", "-m", "tga3.hosted"]
