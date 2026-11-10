@@ -65,6 +65,7 @@ class Provider(BaseHTTPRequestHandler):
             assert body["flag"] == "HTB{hosted_synthetic_fixture}"
             accepted.add(body["unique_code"])
             return self.output_json({"correct": True, "awarded": 100, "correct_flag_count": 1, "total_flag_count": 1})
+        assert self.path.split("?", 1)[0] in {"/v1/responses", "/v1/chat/completions", "/v1/messages"}, self.path
         raw = json.dumps(body)
         if "opencode" in body.get("model", ""):
             Path("/audit/hosted-opencode-request.json").write_text(json.dumps(body, indent=2))
@@ -359,8 +360,8 @@ async def main():
     # Test-only synthetic endpoint override. Production gateway conversion was
     # validated above and is never bypassed by the image's normal entry point.
     for provider in config.models.providers:
-        for endpoint in provider.endpoints.values():
-            endpoint.base_url = BASE + "/v1"
+        for protocol, endpoint in provider.endpoints.items():
+            endpoint.base_url = BASE if protocol == "anthropic" else BASE + "/v1"
     hosted.start_postgres(ROOT)
     original_create = hosted.create_app
 

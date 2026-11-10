@@ -14,3 +14,6 @@
 !pyproject.toml
 !README.md
 !schema.sql
+**/__pycache__
+**/*.pyc
+**/*.pyo
