@@ -20,6 +20,29 @@ Docker socket、特权模式、嵌套 Docker 或额外网络服务。平台容�
 源码在本分支，`docker save` 导出的 Docker 镜像 `.tar` 包放在对应 GitHub Release 的附件中。
 大型镜像不提交普通 Git 文件；校验信息随 Release 提供。
 
+- [下载 Docker 镜像 `.tar` 包](https://github.com/lyk2942712732-rgb/TGA-TeamGipsyAgent/releases/download/hosted-20261110/tga3-hosted-20261110-linux-amd64.tar)
+- [下载 SHA-256 校验文件](https://github.com/lyk2942712732-rgb/TGA-TeamGipsyAgent/releases/download/hosted-20261110/tga3-hosted-20261110-linux-amd64.tar.sha256)
+- [Release 与验证说明](https://github.com/lyk2942712732-rgb/TGA-TeamGipsyAgent/releases/tag/hosted-20261110)
+
+文件大小为 **1,188,388,864 字节（约 1.19 GB）**，平台为 `linux/amd64`，镜像标签为
+`tga3-hosted:20261110`。这是 `docker save` 生成的原始 `.tar` 文件，可以直接上传平台，
+也可用 `docker load -i tga3-hosted-20261110-linux-amd64.tar` 导入。
+SHA-256：`79da0909d067ccc4c6ecefdbcbedfd3a69b23302c8101dc662f045eefa673513`。
+
+普通主版本安装的九类 CTF Skill 包包含历史题解与具体示例，本托管镜像也不包含这些包。
+保留 Skill 的读取能力与空目录，不把历史资料以 Skill 名义带入评测。
+
+## 已完成验证
+
+- 在 `--network none` 下运行镜像中实际安装的四种 CLI，无源码或依赖覆盖挂载。
+- 合成模型和靶场仅监听容器本地回环地址；Scout 收集四道合成题，四种 Worker 分别执行
+  原生工具、发布 Finding、提交答案，收到四份 `correct:true`，生成四份报告并正常退出。
+- 共 45 次合成模型调用，知识库工具调用为零；验证了 Responses、Messages、Chat 三种基础协议路径。
+- Linux 下的进程隔离目录、环境变量白名单、独立会话子进程清理等 13 项测试通过。
+
+此验证证明断网启动与本地执行链路可用；不代表已经验证平台的真实网关、模型能力或完成正式托管评测。
+OpenCode 所需插件依赖已经预装，启动无需访问 npm；模型推理仍需要平台允许的模型网关。
+
 ## 平台环境变量
 
 参考 [`hosted.env.example`](hosted.env.example)。平台自动注入两项 `BENCHMARK_*`，无需将值写入程序。
