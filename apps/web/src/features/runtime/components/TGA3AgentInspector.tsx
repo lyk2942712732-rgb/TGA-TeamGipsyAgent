@@ -8,7 +8,7 @@ import type { TaskMode } from "../../../modes";
 import type { TGA3Agent, TGA3RuntimeSnapshot } from "../../../runtime/tga3-runtime";
 import { BOARD_KIND_LABELS, bodyText, formatTime, protocolLabel, roleLabel, sdkLabel, agentStateLabel, stateLabel, stateTone } from "../tga3-view";
 import { EventCard } from "./TGA3Workspace";
-import { attemptLabel, formatElapsed, workerWins } from "../aoe-view";
+import { attemptLabel, formatElapsed, workerDifficultyAverages, workerRecords, workerWins } from "../aoe-view";
 
 type InspectorTab = "overview" | "activity" | "control" | "record";
 const TABS: Array<[InspectorTab, string]> = [["overview", "概览"], ["activity", "活动"], ["control", "模型与控制"]];
@@ -32,10 +32,19 @@ export function TGA3AgentInspector({ snapshot, agent, onChanged }: { snapshot: T
 
 function Overview({ snapshot, agent }: { snapshot: TGA3RuntimeSnapshot; agent: TGA3Agent }) {
   const tools = agentTools(agent);
+  const now = useElapsedNow();
+  const records = workerRecords(snapshot.aoe?.questions ?? [], agent.agent_id, now);
+  const averages = workerDifficultyAverages(snapshot.aoe?.questions ?? [], agent.agent_id);
   return <div className="tga3-agent-overview">
     {snapshot.aoe && agent.role === "worker" ? <Info title="解题进度">
       <Row label="已解出" value={`${workerWins(snapshot.aoe.questions, agent.agent_id).length} 道`} />
+      <Row label="未成功解出" value={`${records.filter(record => !record.successful).length} 道`} />
       <Row label="正在解题" value={snapshot.aoe.questions.filter(q => q.status === "running" && q.current_agents.includes(agent.agent_id)).map(q => q.title).join("、") || "暂无"} />
+    </Info> : null}
+    {snapshot.aoe && agent.role === "worker" ? <Info title="各难度解题平均耗时">
+      {averages.length ? averages.map(row => <Row key={row.difficulty} label={`难度：${row.difficulty}`}
+        value={`${formatElapsed(row.averageSeconds)} · ${row.count} 道`} />)
+        : <Row label="有效样本" value="暂无耗时完整的已解出题目" />}
     </Info> : null}
     <Info title="运行身份"><Row label="角色" value={roleLabel(agent)} /><Row label="运行位置" value={agent.runtime_location === "container" ? "隔离容器" : "主服务"} /><Row label="执行后端" value={sdkLabel(agent.sdk)} /><Row label="期望状态" value={stateLabel(agent.desired_state)} /><Row label="实际状态" value={agentStateLabel(agent)} /></Info>
     <Info title="模型"><Row label="供应商" value={agent.provider_id} /><Row label="模型" value={agent.model_id} /><Row label="协议" value={protocolLabel(agent.protocol)} /></Info>
@@ -47,14 +56,33 @@ function Overview({ snapshot, agent }: { snapshot: TGA3RuntimeSnapshot; agent: T
 }
 
 function Record({ snapshot, agent }: { snapshot: TGA3RuntimeSnapshot; agent: TGA3Agent }) {
-  const wins = workerWins(snapshot.aoe?.questions ?? [], agent.agent_id);
+  const now = useElapsedNow();
+  const records = workerRecords(snapshot.aoe?.questions ?? [], agent.agent_id, now);
+  const wins = records.filter(record => record.successful), unsuccessful = records.filter(record => !record.successful);
+  const link = (id: string) => `/tasks/${encodeURIComponent(snapshot.task.id)}/runtime?question=${encodeURIComponent(id)}&tab=blackboard`;
   return <section className="aoe-worker-record" aria-label={`${agent.display_name} 战绩`}>
-    <header><h3>已解出 {wins.length} 道题</h3><p>按解出时间倒序。耗时为本次成功尝试从首条动作到结束的时间；共同攻坚计入参与者战绩。</p></header>
+    <section aria-label="已解出题目">
+    <header><h3>已解出 {wins.length} 道题</h3></header>
     {wins.length ? <ol>{wins.map(({ question, attempt, seconds }) => <li key={question.question_id}>
-      <div><Link to={`/tasks/${encodeURIComponent(snapshot.task.id)}/runtime?question=${encodeURIComponent(question.question_id)}&tab=blackboard`}>{question.title}</Link><strong>{formatElapsed(seconds)}</strong></div>
-      <small>{attemptLabel(question, attempt)}{attempt.finished_at != null ? ` · ${formatTime(new Date(attempt.finished_at * 1000).toISOString())}` : ""}</small>
+      <div><Link to={link(question.question_id)}>{question.title}</Link><strong>{formatElapsed(seconds)}</strong></div>
+      <small>{attemptLabel(question, attempt)}</small>
     </li>)}</ol> : <p className="tga3-muted">暂无已解出题目。</p>}
+    </section>
+    <section aria-label="未成功解出题目">
+      <header><h3>未成功解出 {unsuccessful.length} 道题</h3></header>
+      {unsuccessful.length ? <ol>{unsuccessful.map(({ question, attempt }) => <li key={question.question_id}>
+        <div><Link to={link(question.question_id)}>{question.title}</Link></div>
+        <small>{question.status === "solved" ? "其他 Worker 已解出" : attempt.outcome === null ? "进行中" : question.status === "abandoned" ? "已放弃" : question.status === "cancelled" ? "已取消" : "尝试结束，尚未解出"} · {attemptLabel(question, attempt)}</small>
+      </li>)}</ol> : <p className="tga3-muted">暂无未成功解出的题目。</p>}
+    </section>
   </section>;
+}
+
+function useElapsedNow() {
+  const [now, setNow] = useState(Date.now() / 1000);
+  useEffect(() => { const timer = window.setInterval(() => setNow(Date.now() / 1000), 1000);
+    return () => window.clearInterval(timer); }, []);
+  return now;
 }
 
 function Activity({ snapshot, agent }: { snapshot: TGA3RuntimeSnapshot; agent: TGA3Agent }) {

@@ -99,7 +99,7 @@ export function NewTaskPage({ onCreated, onCancel = () => history.back() }: { on
           ] as const).map(([key, label]) => <label key={key}>{label}
             <input type="number" min={1} max={1440} step={1} value={aoeMinutes[key]} onChange={event => setAoeMinutes(current => ({ ...current, [key]: event.target.value }))} />
           </label>)}</div>
-          <p>每题分别计时：首次由一位 Worker 尝试，第二次换另一位；共同攻坚由两位共享一份预算。均从该阶段首条动作开始，准备时间不计入。</p>
+          <p>每题分别计时：首次由一位 Worker 尝试，第二次换另一位；共同攻坚由两位共享一份预算。四 Worker 任务只剩一道题时，自动进入围殴，共享共同攻坚预算；正在解题者继续，尝试过的 Worker 恢复原会话。准备时间不计入。</p>
         </fieldset> : null}
         <label className="wide task-description-field">描述<span>用户初始提示词</span><textarea rows={7} value={description} onChange={(event) => setDescription(event.target.value)} onPaste={onPaste} placeholder="粘贴题目描述、授权目标、已知信息和期望结果；也可以直接粘贴图片。" /></label>
         <div className="task-attachment-zone" onDragOver={(event) => event.preventDefault()} onDrop={onDrop}><input ref={inputRef} type="file" multiple hidden onChange={onFiles} /><button type="button" className="ref-secondary-button" onClick={() => inputRef.current?.click()}><Paperclip size={16} />添加文件或图片</button><span>支持拖放、文件选择以及在描述框粘贴图片</span></div>

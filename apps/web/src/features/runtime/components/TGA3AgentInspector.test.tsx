@@ -32,10 +32,40 @@ describe("AOE Worker progress and record", () => {
     expect(screen.getAllByRole("tab").map(x => x.textContent)).toEqual(["概览", "活动", "模型与控制", "战绩"]);
     await user.click(screen.getByRole("tab", { name: "战绩" }));
     const record = screen.getByRole("region", { name: "OpenAI Worker 战绩" });
-    expect(within(record).getAllByRole("link").map(x => x.textContent)).toEqual(["Joint win", "Solo win"]);
+    const wins = within(record).getByRole("region", { name: "已解出题目" });
+    const failed = within(record).getByRole("region", { name: "未成功解出题目" });
+    expect(within(wins).getAllByRole("link").map(x => x.textContent)).toEqual(["Joint win", "Solo win"]);
     expect(record).toHaveTextContent("1分05秒"); expect(record).toHaveTextContent("2分00秒");
-    expect(record).toHaveTextContent("共同攻坚"); expect(record).not.toHaveTextContent("Peer win");
+    expect(wins).toHaveTextContent("共同攻坚"); expect(wins).not.toHaveTextContent("Peer win");
+    expect(failed).toHaveTextContent("Peer win"); expect(failed).not.toHaveTextContent("30秒");
+    expect(failed.querySelector("strong")).toBeNull();
+    expect(failed).toHaveTextContent("其他 Worker 已解出");
+    expect(wins.compareDocumentPosition(failed) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(within(record).getByRole("link", { name: "Solo win" })).toHaveAttribute("href", "/tasks/batch/runtime?question=Solo%20win&tab=blackboard");
+  });
+  it("shows per-difficulty averages from cumulative wins and separates unsuccessful records below them", async () => {
+    const user = userEvent.setup();
+    const resumed = question("Resumed win", [
+      { ...attempt("first", agent.agent_id, "solo", 0, 100), outcome: "timeout" },
+      attempt("joint", agent.agent_id, "joint", 200, 400),
+    ]);
+    resumed.difficulty = "easy";
+    const solo = question("Solo", [attempt("solo", agent.agent_id, "solo", 0, 100)]);
+    solo.difficulty = "easy";
+    const loss = { ...question("Failed", [{ ...attempt("loss", agent.agent_id, "solo", 0, 1000), outcome: "timeout" as const }]), status: "abandoned", difficulty: "easy" };
+    const data = { ...snapshot, aoe: { ...snapshot.aoe!, questions: [resumed, solo, loss] } };
+    render(<MemoryRouter><TGA3AgentInspector snapshot={data} agent={agent} onChanged={() => {}} /></MemoryRouter>);
+    const averages = screen.getByRole("heading", { name: "各难度解题平均耗时" }).closest("section")!;
+    expect(averages).toHaveTextContent("3分20秒 · 2 道"); // (300 + 100) / 2, not last-stage mean.
+    await user.click(screen.getByRole("tab", { name: "战绩" }));
+    const solved = screen.getByRole("region", { name: "已解出题目" });
+    expect(within(solved).getByText("5分00秒", { exact: true })).toBeInTheDocument();
+    expect(solved).not.toHaveTextContent("累计投入");
+    expect(solved).not.toHaveTextContent("成功阶段");
+    const failed = screen.getByRole("region", { name: "未成功解出题目" });
+    expect(failed).toHaveTextContent("未成功解出 1 道题");
+    expect(failed).not.toHaveTextContent("16分40秒");
+    expect(failed).toHaveTextContent("已放弃");
   });
   it("does not invent elapsed time for missing starts or expose a Worker's record for Scout", async () => {
     const user = userEvent.setup();

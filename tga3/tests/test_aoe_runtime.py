@@ -10,7 +10,16 @@ from tga3.aoe_models import AOEQuestionInput, active_attempts
 from tga3.config import TGA3Config
 from tga3.coordinator import TaskCoordinator
 from tga3.docker_runtime import FakeContainerRuntime
-from tga3.domain import SYSTEM_ACTOR, AgentRun, Artifact, ArtifactRef, FinalCandidateBody, PublishRequest, RunState
+from tga3.domain import (
+    SYSTEM_ACTOR,
+    Actor,
+    AgentRun,
+    Artifact,
+    ArtifactRef,
+    FinalCandidateBody,
+    PublishRequest,
+    RunState,
+)
 from tga3.errors import ConflictError, ContractError
 from tga3.final_candidates import FinalCandidatePublisher
 from tga3.scout_intel import ScoutIntelMergeInput
@@ -78,7 +87,7 @@ async def prepare(tmp_path):
     return cfg, storage, containers, coordinator, parent, clock, questions
 
 
-async def final(storage, question_id):
+async def final(storage, question_id, *, agent_id=None):
     artifact = await storage.register_artifact(
         Artifact(
             task_id=question_id,
@@ -102,7 +111,7 @@ async def final(storage, question_id):
     )
     return await storage.publish(
         question_id,
-        SYSTEM_ACTOR,
+        Actor(agent_id=agent_id, display_name=agent_id, role='worker') if agent_id else SYSTEM_ACTOR,
         PublishRequest(
             kind="final_candidate",
             body={"conclusion": "flag{verified}", "rationale": "observed", "finding_ids": [str(finding.id)]},

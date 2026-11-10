@@ -29,7 +29,7 @@ export type TGA3TaskEvent = {
   text: string; payload: Record<string, unknown>; created_at: string;
   question_id?: string;
 };
-export type AOEAttempt = { id: string; agent_id: string; phase: "solo" | "joint"; claimed_at?: number; started_at: number | null; deadline: number | null; outcome: "solved" | "timeout" | "interrupted" | "error" | null; finished_at?: number; cli_session_id?: string | null };
+export type AOEAttempt = { id: string; agent_id: string; phase: "solo" | "joint" | "swarm" | "reinforcement"; success_credit?: boolean; first_attempt_id?: string; previous_started_at?: number | null; previous_phase?: string; pauses?: Array<{ start: number; end: number | null }>; claimed_at?: number; started_at: number | null; deadline: number | null; outcome: "solved" | "timeout" | "interrupted" | "error" | null; finished_at?: number; cli_session_id?: string | null };
 export type AOEQuestion = {
   question_id: string; parent_task_id: string; title: string; description: string; source_key: string;
   difficulty: string | number | null; connection_info: string; submission_instructions: string;
@@ -37,6 +37,11 @@ export type AOEQuestion = {
   report_state: "pending" | "generating" | "completed" | "failed"; blackboard_seq: number;
   scout_ready?: boolean; scout_phase?: string;
   registered_at?: number; solved_at?: number | null;
+  rescue?: { state: "seeking" | "reinforced" | "closed"; requested_at: number; threshold_at: number } | null;
+  reinforcement?: { agent_id: string; joined_at: number; first_attempt_id: string } | null;
+  finish_reason?: string | null;
+  solver_agent_id?: string | null;
+  swarm?: { entered_at: number; started_at: number | null; deadline: number | null } | null;
   attachments: Array<{ id: string; name: string; media_type: string; size_bytes: number; sha256: string }>;
 };
 export type AOEOverview = { task_id: string; phase: string; attempt_seconds: number; attempt_budgets?: { first: number; second: number; joint: number }; scout_mode?: string; collection_complete?: boolean; scout_question_seconds?: number; questions: AOEQuestion[] };

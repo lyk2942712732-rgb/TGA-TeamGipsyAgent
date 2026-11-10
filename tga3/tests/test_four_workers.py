@@ -21,11 +21,18 @@ async def test_four_workers_claim_four_distinct_questions_under_concurrent_ticks
 
 async def test_second_failure_hands_joint_to_other_two_with_shared_first_action_budget(tmp_path):
     cfg, storage, runtime, c, parent, clock = await setup(tmp_path, four_workers=True)
-    await c.aoe.register_questions(parent.id, [AOEQuestionInput(source_key='one', title='one', description='original')])
-    await c.aoe.finish_collection(parent.id, 1)
-    question = (await storage.list_questions(parent.id))[0]
+    await c.aoe.register_questions(parent.id, [
+        AOEQuestionInput(source_key='one', title='one', description='original'),
+        AOEQuestionInput(source_key='waiting', title='waiting', description='original')])
+    await c.aoe.finish_collection(parent.id, 2)
+    question, waiting = await storage.list_questions(parent.id)
+    # Keep two unfinished questions: the ordinary two-person joint policy still
+    # applies until only one remains. The other question already exhausted solo.
+    await storage.update_task(waiting.id, metadata={'attempts': [
+        {'id': str(i), 'phase': 'solo', 'agent_id': worker, 'outcome': 'timeout'}
+        for i, worker in enumerate(cfg.worker_agent_ids[:2])]})
     first_two = []
-    for turn in range(2):
+    for _turn in range(2):
         await c.aoe.tick(parent.id)
         spec = runtime.launched[-1]
         first_two.append(spec.agent.agent_id)
@@ -51,10 +58,11 @@ async def test_second_failure_hands_joint_to_other_two_with_shared_first_action_
     clock[0] += 1200
     await c.aoe.tick(parent.id)
     assert (await storage.get_task(question.id)).metadata['status'] == 'abandoned'
-    assert len(runtime.launched) == 4
+    assert len([s for s in runtime.launched if s.task_id == question.id]) == 4
 
 
-@pytest.mark.parametrize('tried', list(combinations(['worker-openai','worker-claude','worker-opencode','worker-qwen'], 2)))
+@pytest.mark.parametrize('tried', list(combinations(
+    ['worker-openai', 'worker-claude', 'worker-opencode', 'worker-qwen'], 2)))
 async def test_joint_pair_is_the_exact_complement_of_any_two_solo_workers(tmp_path, tried):
     cfg, storage, _, c, parent, _ = await setup(tmp_path, four_workers=True)
     await c.aoe.register_questions(parent.id, [AOEQuestionInput(source_key='one', title='one', description='original')])

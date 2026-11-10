@@ -48,6 +48,7 @@
 .aoe-budget-inputs label { display: flex; flex-direction: column; gap: 8px; font-size: 12px; }
 .aoe-budget-field > p { margin: 12px 0 0; color: var(--c-text-muted); font-size: 12px; line-height: 1.7; }
 .aoe-worker-record h3 { margin: 0; font-size: 14px; }
+.aoe-worker-record > section + section { margin-top: 24px; padding-top: 20px; border-top: 1px solid var(--c-border); }
 .aoe-worker-record header p { color: var(--c-text-muted); font-size: 12px; line-height: 1.7; }
 .aoe-worker-record ol { list-style: none; margin: 0; padding: 0; }
 .aoe-worker-record li { padding: 13px 0; border-top: 1px solid var(--c-border); }

@@ -19,13 +19,17 @@ from .aoe_models import (
     attempt_budget_seconds,
     attempt_budgets,
     attempted_by,
+    first_success_statistics,
     joint_ready,
     joint_workers,
     next_joint_question,
     next_solo_question,
     overview_order,
+    question_order,
+    rescue_after,
     schedulable_questions,
     scout_ready,
+    solo_attempts,
     unfinished,
 )
 from .batch_context import BatchContext
@@ -137,7 +141,8 @@ class AOERuntime:
 
     def _question_source(self, question: TaskRun) -> tuple:
         fields = ("description", "source_key", "difficulty", "connection_info", "submission_instructions",
-                  "status", "registered_at", "solved_at", "scout_ready", "scout_phase", "attempts", "flag")
+                  "status", "registered_at", "solved_at", "scout_ready", "scout_phase", "attempts", "flag",
+                  "rescue", "reinforcement", "finish_reason", "swarm", "solver_agent_id")
         return (question.title, question.state, question.created_at, question.blackboard_seq,
                 *(question.metadata.get(k) for k in fields), self.targets.spec(question).model_dump(mode="json"),
                 self.targets.state(question.id))
@@ -172,6 +177,11 @@ class AOERuntime:
             "current_agents": [attempt["agent_id"] for attempt in active_attempts(question)],
             "attempts": attempts,
             "flag": question.metadata.get("flag"),
+            "rescue": question.metadata.get('rescue'),
+            "reinforcement": question.metadata.get('reinforcement'),
+            "finish_reason": question.metadata.get('finish_reason'),
+            "swarm": question.metadata.get('swarm'),
+            "solver_agent_id": question.metadata.get('solver_agent_id'),
             "report_state": (
                 "completed"
                 if question.state == RunState.COMPLETED
@@ -570,9 +580,7 @@ class AOERuntime:
         finally:
             await self.containers.stop(parent_id, "scout")
 
-    async def _new_attempts(self, parent_id: UUID, question: TaskRun, agents: tuple[str, ...], phase: str) -> TaskRun:
-        pool = tuple(run.agent_id for run in await self.storage.list_agents(parent_id)
-                     if run.agent_id in self.config.worker_agent_ids)
+    async def _copy_realtime(self, parent_id: UUID, question: TaskRun) -> None:
         # Initial shared instructions stay in the overview; only live corrections
         # join the question's incremental blackboard.
         for entry in await self.storage.list_entries(parent_id, limit=10_000):
@@ -587,6 +595,25 @@ class AOERuntime:
                         idempotency_key="aoe-" + entry.idempotency_key,
                     ),
                 )
+
+    async def _target_prompt(self, question: TaskRun, token: str) -> None:
+        target = self.targets.spec(question)
+        if target.mode == "unknown":
+            return
+        state = self.targets.state(question.id)
+        text = ("靶场由系统管理，已经就绪。当前地址：" + json.dumps(state.get("addresses", []), ensure_ascii=False)
+                + "。直接使用这些地址，不要自行调用平台的启动或关闭接口。"
+                if target.mode == "managed" else
+                "本题无需靶场实例；使用已收集的附件和题目信息解题，不要申请平台实例。"
+                if target.mode == "none" else
+                "本题使用题面已有的固定目标地址，不需要申请动态实例。")
+        await self.board.publish(question.id, SYSTEM_ACTOR, PublishRequest(kind="user_prompt",
+            topic="target_runtime", body={"text": text}, idempotency_key="target:" + token))
+
+    async def _new_attempts(self, parent_id: UUID, question: TaskRun, agents: tuple[str, ...], phase: str) -> TaskRun:
+        pool = tuple(run.agent_id for run in await self.storage.list_agents(parent_id)
+                     if run.agent_id in self.config.worker_agent_ids)
+        await self._copy_realtime(parent_id, question)
         start = self.clock()
         additions = [
             {
@@ -602,12 +629,16 @@ class AOERuntime:
         ]
 
         def assign(metadata):
-            tried = {a['agent_id'] for a in metadata.get('attempts', []) if a['phase'] == 'solo'}
+            current = question.model_copy(update={'metadata': metadata})
+            tried = attempted_by(current)
+            rounds = solo_attempts(current)
             if len(pool) == 4:
-                expected = set(pool) - tried
-                if phase == 'joint' and (len(tried) != 2 or set(agents) != expected or len(agents) != 2):
-                    raise ConflictError('Joint attempts require exactly the two Workers who have not tried this question')
-                if phase == 'solo' and (len(agents) != 1 or len(tried) >= 2 or set(agents) & tried):
+                expected = set(joint_workers(current, pool))
+                if phase == 'joint' and (len(rounds) != 2 or set(agents) != expected or len(agents) != 2):
+                    raise ConflictError(
+                        'Joint attempts require the assigned pair '
+                        '(two Workers who have not tried, or reinforcement pair)')
+                if phase == 'solo' and (len(agents) != 1 or len(rounds) >= 2 or set(agents) & tried):
                     raise ConflictError('A question has at most two solo attempts by distinct Workers')
             if not metadata.get("scout_ready", True):
                 raise ConflictError("Question has not completed Scout handoff")
@@ -619,21 +650,12 @@ class AOERuntime:
             return {**metadata, "status": "running", "attempts": [*metadata.get("attempts", []), *additions]}
 
         question = await self.storage.mutate_task_metadata(question.id, assign)
-        target = self.targets.spec(question)
-        if target.mode != "unknown":
-            state = self.targets.state(question.id)
-            text = ("靶场由系统管理，已经就绪。当前地址：" + json.dumps(state.get("addresses", []), ensure_ascii=False)
-                    + "。直接使用这些地址，不要自行调用平台的启动或关闭接口。"
-                    if target.mode == "managed" else
-                    "本题无需靶场实例；使用已收集的附件和题目信息解题，不要申请平台实例。"
-                    if target.mode == "none" else
-                    "本题使用题面已有的固定目标地址，不需要申请动态实例。")
-            await self.board.publish(question.id, SYSTEM_ACTOR, PublishRequest(kind="user_prompt",
-                topic="target_runtime", body={"text": text}, idempotency_key="target:" + additions[0]["id"]))
+        await self._target_prompt(question, additions[0]['id'])
         await self._save_question(question)
         # The first actual action starts the budget, shared by joint participants.
         await asyncio.gather(
-            *(self._launch_attempt(parent_id, question, attempt, fresh=phase == "solo" or len(pool) == 4)
+            *(self._launch_attempt(parent_id, question, attempt,
+                fresh=phase == "solo" or len(pool) == 4 and attempt['agent_id'] not in attempted_by(question))
               for attempt in additions)
         )
         return question
@@ -656,9 +678,11 @@ class AOERuntime:
             now = self.clock()
             deadline = now + attempt_budget_seconds(parent.metadata, question.metadata['attempts'], current)
             def start(metadata):
-                return {**metadata, 'attempts': [
+                return {**metadata,
+                    **({'swarm': {**metadata['swarm'], 'started_at': now, 'deadline': deadline}}
+                       if current['phase'] == 'swarm' else {}), 'attempts': [
                     {**a, 'started_at': now, 'deadline': deadline}
-                    if a.get('outcome') is None and (a['id'] == attempt_id or current['phase'] == 'joint')
+                    if a.get('outcome') is None and (a['id'] == attempt_id or current['phase'] in {'joint', 'swarm'})
                     else a for a in metadata['attempts']]}
             question = await self.storage.mutate_task_metadata(question.id, start)
             await self._save_question(question)
@@ -705,11 +729,12 @@ class AOERuntime:
                 "attempt_deadline": attempt["deadline"],
             },
         )
+        label = {'joint': '共同攻坚', 'swarm': '围殴', 'reinforcement': '增援'}.get(attempt['phase'], '领取')
         await self.events.emit(
             parent_id,
             actor=SYSTEM_ACTOR,
             kind=EventKind.SYSTEM,
-            text=f"{slot.agent_id} {'共同攻坚' if attempt['phase'] == 'joint' else '领取'}：{question.title}",
+            text=f"{slot.agent_id} {label}：{question.title}",
             channel_agent_id=agent_id,
             payload={
                 "question_id": str(question.id),
@@ -718,6 +743,13 @@ class AOERuntime:
                 "fresh_session": fresh,
             },
         )
+        evidence = tuple(sorted(attempted_by(question) - {agent_id})) \
+            if attempt['phase'] == 'joint' and agent_id not in attempted_by(question) else ()
+        if attempt['phase'] == 'swarm':
+            evidence = tuple(sorted({a['agent_id'] for a in question.metadata['attempts']
+                if a.get('outcome') is not None or a.get('previous_phase')} - {agent_id}))
+        if attempt['phase'] == 'reinforcement':
+            evidence = tuple(a['agent_id'] for a in active_attempts(question) if a['id'] != attempt['id'])
         launch = asyncio.create_task(
             self.containers.launch(
                 LaunchSpec(
@@ -729,8 +761,7 @@ class AOERuntime:
                     attempt_deadline=attempt["deadline"],
                     target_mode=self.targets.spec(question).mode,
                     target_addresses=tuple(self.targets.state(question.id).get("addresses", [])),
-                    evidence_agents=tuple(sorted(attempted_by(question)-{agent_id}))
-                        if attempt['phase'] == 'joint' and agent_id not in attempted_by(question) else (),
+                    evidence_agents=evidence,
                 )
             )
         )
@@ -741,6 +772,108 @@ class AOERuntime:
             raise
         await self.storage.update_agent(question.id, agent_id, container_id=container_id)
         await self.storage.update_agent(parent_id, agent_id, container_id=container_id)
+
+    async def _ensure_swarm(self, parent: TaskRun, question: TaskRun, workers: tuple[str, ...],
+                            slots: dict[str, AgentRun], occupied: set[str]) -> TaskRun:
+        """Promote in place: retain live attempt IDs and resume each returning Worker.
+
+        The transition grants one joint-sized budget. Once persisted it is never
+        renewed by ticks, late participants, pause/resume, or controller recovery.
+        """
+        if not scout_ready(question):
+            return question
+        active = active_attempts(question)
+        current_agents = {a['agent_id'] for a in active}
+        joining = tuple(agent for agent in workers if agent not in current_agents
+                        and agent not in occupied and not slots[agent].metadata.get('aoe_paused'))
+        swarm = question.metadata.get('swarm')
+        if swarm and swarm.get('deadline') is not None and swarm['deadline'] <= self.clock():
+            return question
+        if swarm and not joining:
+            return question
+        if not await self._prepare_target(question, tuple(a['agent_id'] for a in active) + joining):
+            return question
+        if question.id in self._recovering:
+            for attempt in active:
+                await self._launch_attempt(parent.id, question, attempt, fresh=False)
+            self._recovering.discard(question.id)
+        previous = {a['agent_id'] for a in question.metadata.get('attempts', [])}
+        now = self.clock()
+        if not swarm:
+            started = now if any(a.get('started_at') is not None for a in active) else None
+            swarm = {'entered_at': now, 'started_at': started,
+                     'deadline': started + attempt_budgets(parent.metadata)['joint'] if started is not None else None}
+        additions = [{'id': str(uuid4()), 'agent_id': agent, 'phase': 'swarm', 'claimed_at': now,
+                      'started_at': swarm['started_at'], 'deadline': swarm['deadline'], 'outcome': None}
+                     for agent in joining]
+        entering = 'swarm' not in question.metadata
+        question = await self.storage.mutate_task_metadata(question.id, lambda metadata: {
+            **metadata, 'status': 'running', 'swarm': swarm, 'attempts': [
+                {**a, 'previous_phase': a['phase'], 'previous_started_at': a.get('started_at'),
+                 'previous_deadline': a.get('deadline'), 'phase': 'swarm',
+                 'started_at': swarm['started_at'], 'deadline': swarm['deadline']}
+                if a.get('outcome') is None and a['phase'] != 'swarm' else a
+                for a in metadata.get('attempts', [])] + additions})
+        await self._save_question(question)
+        if entering:
+            await self._copy_realtime(parent.id, question)
+            await self._target_prompt(question, f'swarm:{question.id}')
+            await self.board.publish(question.id, SYSTEM_ACTOR, PublishRequest(kind='user_prompt',
+                topic='swarm', body={'text': '只剩最后一道题，开启围殴模式。四位 Worker 协同攻坚；'
+                    '继续当前思路并读取本题黑板，及时共享可复现证据。共享一份共同攻坚预算。'},
+                idempotency_key=f'swarm:{question.id}'))
+            await self.events.emit(parent.id, actor=SYSTEM_ACTOR, kind=EventKind.SYSTEM,
+                text=f'只剩最后一道题，开启四 Worker 围殴：{question.title}',
+                payload={'question_id': str(question.id), 'phase': 'swarm',
+                         'budget_seconds': attempt_budgets(parent.metadata)['joint']})
+            # Do not stop or relaunch the live CLI. Deadline notifications refer
+            # to its original attempt ID, so it can adopt the new shared budget.
+            for attempt in active:
+                await self.storage.update_agent(question.id, attempt['agent_id'], metadata={'aoe_phase': 'swarm'})
+                if swarm['deadline'] is not None:
+                    await self.coordinator.gateway.notify(question.id, attempt['agent_id'], 'session.deadline',
+                        {'attempt_id': attempt['id'], 'deadline': swarm['deadline']})
+        await asyncio.gather(*(self._launch_attempt(parent.id, question, attempt,
+                                                  fresh=attempt['agent_id'] not in previous)
+                               for attempt in additions))
+        return question
+
+    async def _reinforce(self, parent_id: UUID, question: TaskRun, agent_id: str) -> TaskRun:
+        """Join round one with its existing deadline; never restart its owner."""
+        if not await self._prepare_target(question, (agent_id,)):
+            return question
+        now = self.clock()
+        rounds = solo_attempts(question)
+        if not rounds or rounds[0].get('deadline') is None or rounds[0]['deadline'] <= now:
+            return question
+
+        def join(metadata):
+            current = question.model_copy(update={'metadata': metadata})
+            rounds = solo_attempts(current)
+            if (metadata.get('rescue', {}).get('state') != 'seeking' or metadata.get('reinforcement')
+                    or metadata.get('swarm') or len(rounds) != 1 or len(active_attempts(current)) != 1
+                    or agent_id in attempted_by(current)):
+                raise ConflictError('Question is not awaiting first-attempt reinforcement')
+            first = rounds[0]
+            if first.get('deadline') is None or first['deadline'] <= now:
+                raise ConflictError('First attempt has no remaining reinforcement budget')
+            addition = {'id': str(uuid4()), 'agent_id': agent_id, 'phase': 'reinforcement',
+                        'first_attempt_id': first['id'], 'claimed_at': now, 'started_at': now,
+                        'deadline': first['deadline'], 'outcome': None}
+            return {**metadata, 'rescue': {**metadata['rescue'], 'state': 'reinforced'},
+                    'reinforcement': {'agent_id': agent_id, 'joined_at': now, 'first_attempt_id': first['id']},
+                    'attempts': [*metadata['attempts'], addition]}
+
+        question = await self.storage.mutate_task_metadata(question.id, join)
+        await self._copy_realtime(parent_id, question)
+        await self._save_question(question)
+        addition = question.metadata['attempts'][-1]
+        await self.board.publish(question.id, SYSTEM_ACTOR, PublishRequest(kind='user_prompt',
+            topic='reinforcement', body={'text': f'{agent_id} 加入首次尝试增援。原 Worker 继续，'
+                '首次尝试的起算时间和截止时间保持不变；共享本题黑板并协作，增援不另领预算。'},
+            idempotency_key=f'reinforcement:{addition["id"]}'))
+        await self._launch_attempt(parent_id, question, addition, fresh=True)
+        return question
 
     async def _stop_worker(self, question_id: UUID, agent_id: str) -> None:
         await self.storage.update_agent(question_id, agent_id, desired_state=AgentState.STOPPING)
@@ -755,7 +888,33 @@ class AOERuntime:
             question_id, agent_id, desired_state=AgentState.STOPPED, actual_state=AgentState.STOPPED, container_id=None
         )
 
+    async def record_pause(self, question_id: UUID, agent_id: str, *, paused: bool) -> None:
+        """Record acknowledged pause intervals without touching stage budgets."""
+        question = await self.storage.get_task(question_id)
+        active = [a for a in active_attempts(question) if a['agent_id'] == agent_id]
+        needs_change = any(paused != bool(a.get('pauses') and a['pauses'][-1].get('end') is None) for a in active)
+        if not question.parent_task_id or not needs_change:
+            return
+        now = self.clock()
+
+        def record(metadata):
+            attempts = []
+            for attempt in metadata.get('attempts', []):
+                if attempt['agent_id'] == agent_id and attempt.get('outcome') is None:
+                    pauses = [dict(p) for p in attempt.get('pauses', [])]
+                    if paused and (not pauses or pauses[-1].get('end') is not None):
+                        pauses.append({'start': now, 'end': None})
+                    elif not paused and pauses and pauses[-1].get('end') is None:
+                        pauses[-1]['end'] = now
+                    attempt = {**attempt, 'pauses': pauses}
+                attempts.append(attempt)
+            return {**metadata, 'attempts': attempts}
+
+        question = await self.storage.mutate_task_metadata(question_id, record)
+        await self._save_question(question)
+
     async def _finish_attempts(self, question: TaskRun, agents: set[str], outcome: str) -> TaskRun:
+        finished_at = self.clock()
         await asyncio.gather(*(self._stop_worker(question.id, agent_id) for agent_id in agents))
         sessions = {}
         for agent_id in agents:
@@ -768,12 +927,16 @@ class AOERuntime:
 
         def finish(metadata):
             attempts = [
-                {**a, "outcome": outcome, "finished_at": self.clock(), "cli_session_id": sessions.get(a["agent_id"])}
+                {**a, "outcome": outcome, "finished_at": finished_at, "cli_session_id": sessions.get(a["agent_id"])}
                 if a.get("outcome") is None and a["agent_id"] in agents
                 else a
                 for a in metadata.get("attempts", [])
             ]
-            return {**metadata, "attempts": attempts}
+            rescue = metadata.get('rescue')
+            first = next((a for a in attempts if a['phase'] == 'solo'), None)
+            if rescue and rescue['state'] == 'seeking' and first and first.get('outcome') is not None:
+                rescue = {**rescue, 'state': 'closed'}
+            return {**metadata, "attempts": attempts, **({'rescue': rescue} if rescue else {})}
 
         question = await self.storage.mutate_task_metadata(question.id, finish)
         if not active_attempts(question) and self.targets.spec(question).mode == "managed":
@@ -819,7 +982,9 @@ class AOERuntime:
         now = self.clock()
         protected_ids = {a['id'] for a in attempts}
         question = await self.storage.mutate_task_metadata(question.id, lambda metadata: {
-            **metadata, 'attempts': [{**a, 'deadline': now + 120, 'completion_hold_action': evidence}
+            **metadata,
+            **({'swarm': {**metadata['swarm'], 'deadline': now + 120}} if metadata.get('swarm') else {}),
+            'attempts': [{**a, 'deadline': now + 120, 'completion_hold_action': evidence}
                                    if a['id'] in protected_ids else a for a in metadata['attempts']]})
         await self._save_question(question)
         for attempt in active_attempts(question):
@@ -831,11 +996,26 @@ class AOERuntime:
                 payload={'question_id': str(question.id), 'action_id': evidence})
         return question
 
-    async def _settle(self, question: TaskRun, *, status: str, flag: str | None = None) -> TaskRun:
-        agents = {attempt["agent_id"] for attempt in active_attempts(question)}
+    async def _settle(self, question: TaskRun, *, status: str, flag: str | None = None,
+                      solver_agent_id: str | None = None) -> TaskRun:
+        active = active_attempts(question)
+        agents = {attempt["agent_id"] for attempt in active}
+        credits = {attempt['id']: True for attempt in active}
+        helper = next((a for a in active if a['phase'] == 'reinforcement'), None)
+        if status == 'solved' and helper and not any(a['phase'] in {'joint', 'swarm'} for a in active):
+            first_id = helper['first_attempt_id']
+            credits[first_id] = True
+            credits[helper['id']] = helper['agent_id'] == solver_agent_id
         if agents:
             question = await self._finish_attempts(question, agents, "solved" if status == "solved" else "timeout")
         question = await self.storage.update_task(question.id, metadata={"status": status, "flag": flag,
+                                               **({'solver_agent_id': solver_agent_id,
+                                                   'attempts': [{**a, 'success_credit': credits[a['id']]}
+                                                       if a['id'] in credits else a
+                                                       for a in question.metadata.get('attempts', [])]}
+                                                  if status == 'solved' else {}),
+                                               **({'finish_reason': 'joint_failed'} if status == 'abandoned'
+                                                  and question.metadata.get('swarm') else {}),
                                                **({"solved_at": self.clock()} if status == "solved" else {})})
         await self._save_question(question)
         if self.automation is not None:
@@ -894,18 +1074,32 @@ class AOERuntime:
                         questions[index] = question
                         break
 
+            # Settle all published solutions first, irrespective of source order,
+            # then decide whether the entire batch has one question remaining.
             for question in unfinished(questions):
                 candidate = await self._candidate(question)
                 if candidate is not None:
-                    replace(await self._settle(question, status="solved", flag=candidate.body["conclusion"]))
-                    continue
+                    replace(await self._settle(question, status="solved", flag=candidate.body["conclusion"],
+                        solver_agent_id=candidate.actor.agent_id if candidate.actor.role == 'worker' else None))
+            slots = {run.agent_id: run for run in await self.storage.list_agents(parent_id)}
+            workers = tuple(agent for agent in self.config.worker_agent_ids if agent in slots)
+            remaining = unfinished(questions)
+            swarm_question = next((q for q in remaining if q.metadata.get('swarm')), None)
+            if len(workers) == 4 and len(remaining) == 1:
+                swarm_question = remaining[0]
+            for question in remaining:
                 question = await self._protect_completion(question)
+                if swarm_question is not None and question.id == swarm_question.id:
+                    occupied_elsewhere = {a['agent_id'] for q in questions if q.id != question.id
+                                          for a in active_attempts(q)}
+                    question = await self._ensure_swarm(parent, question, workers, slots, occupied_elsewhere)
                 replace(question)
                 active = active_attempts(question)
                 expired = {attempt["agent_id"] for attempt in active
                            if attempt.get("deadline") is not None and attempt["deadline"] <= self.clock()}
-                if expired:
-                    if any(a["phase"] == "joint" for a in active):
+                swarm_deadline = question.metadata.get('swarm', {}).get('deadline')
+                if expired or swarm_deadline is not None and swarm_deadline <= self.clock():
+                    if question.metadata.get('swarm') or any(a["phase"] == "joint" for a in active):
                         # Both participants share this exact deadline; never grant each an extra budget.
                         replace(await self._settle(question, status="abandoned"))
                     else:
@@ -925,8 +1119,6 @@ class AOERuntime:
                         await self._launch_attempt(parent_id, question, attempt, fresh=False)
                     self._recovering.discard(question.id)
             occupied = {a["agent_id"] for q in questions for a in active_attempts(q)}
-            slots = {run.agent_id: run for run in await self.storage.list_agents(parent_id)}
-            workers = tuple(agent for agent in self.config.worker_agent_ids if agent in slots)
             available = [
                 agent_id
                 for agent_id in workers
@@ -934,14 +1126,30 @@ class AOERuntime:
             ]
             eligible = schedulable_questions(questions,
                          collection_complete=parent.metadata.get("collection_complete", False))
+            statistics = first_success_statistics(questions)
+            if len(workers) == 4:
+                for question in eligible:
+                    threshold = rescue_after(question, statistics)
+                    if threshold is not None and self.clock() > threshold and not question.metadata.get('rescue'):
+                        question = await self.storage.update_task(question.id, metadata={
+                            'rescue': {'state': 'seeking', 'requested_at': self.clock(), 'threshold_at': threshold}})
+                        replace(question)
+                        await self.events.emit(parent_id, actor=SYSTEM_ACTOR, kind=EventKind.SYSTEM,
+                            text=f'首次尝试耗时超过个人同难度均值，正在求援：{question.title}',
+                            payload={'question_id': str(question.id), 'mode': 'rescue'})
+                eligible = schedulable_questions(questions,
+                    collection_complete=parent.metadata.get('collection_complete', False))
             phase = "joint" if parent.metadata.get("collection_complete") and joint_ready(eligible, workers) else "solo"
             if any(a["phase"] == "joint" for q in questions for a in active_attempts(q)):
                 phase = "joint"
+            if swarm_question is not None and unfinished(questions):
+                phase = 'swarm'
             if parent.metadata.get("collection_complete") and questions and not unfinished(questions):
                 phase = "reporting"
             parent = await self._update_parent(parent, metadata={"aoe_phase": phase})
             if phase == "solo":
                 for agent_id in available:
+                    assigned = False
                     candidates = [q for q in eligible if q.id not in self._target_claims
                                   or agent_id in self._target_claims[q.id]]
                     quota_blocked = self.targets.quota_blocked(eligible)
@@ -959,9 +1167,19 @@ class AOERuntime:
                             candidates = [q for q in candidates if q.id != question.id]
                             continue
                         replace(await self._new_attempts(parent_id, question, (agent_id,), "solo"))
+                        assigned = True
                         eligible = schedulable_questions(questions,
                                      collection_complete=parent.metadata.get("collection_complete", False))
                         break
+                    # A Worker reserved for target preparation is not idle.
+                    reserved = any(agent_id in self._target_claims.get(q.id, ()) for q in questions)
+                    if not assigned and not reserved and len(workers) == 4:
+                        requests = [q for q in questions if q.metadata.get('rescue', {}).get('state') == 'seeking'
+                            and not q.metadata.get('swarm') and not q.metadata.get('reinforcement')
+                            and len(active_attempts(q)) == 1 and agent_id not in attempted_by(q)
+                            and len(solo_attempts(q)) == 1 and solo_attempts(q)[0].get('outcome') is None]
+                        if requests:
+                            replace(await self._reinforce(parent_id, min(requests, key=question_order), agent_id))
             elif phase == "joint" and not occupied:
                 candidates = [q for q in eligible if len(joint_workers(q, workers)) == 2
                               and set(joint_workers(q, workers)) <= set(available)]
@@ -987,6 +1205,9 @@ class AOERuntime:
             await self._sync_slots(parent_id, questions, slots)
             due = [a["deadline"] - (30 if a["deadline"] - self.clock() > 30 else 0)
                    for q in questions for a in active_attempts(q) if a.get("deadline") is not None]
+            if len(workers) == 4:
+                due.extend(threshold + 0.001 for q in unfinished(questions)
+                           if (threshold := rescue_after(q, statistics)) is not None and threshold >= self.clock())
             due.extend(record["retry_at"] for record in self.targets.records.values()
                        if record["parent_id"] == str(parent_id) and record.get("retry_at", 0) > self.clock()
                        and record.get("state") != "ready")

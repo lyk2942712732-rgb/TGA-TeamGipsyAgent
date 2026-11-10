@@ -74,7 +74,63 @@ def active_attempts(question: TaskRun) -> list[dict]:
 
 
 def attempted_by(question: TaskRun) -> set[str]:
-    return {attempt["agent_id"] for attempt in question.metadata.get("attempts", []) if attempt["phase"] == "solo"}
+    return {attempt["agent_id"] for attempt in question.metadata.get("attempts", [])
+            if attempt["phase"] in {"solo", "reinforcement"}}
+
+
+def solo_attempts(question: TaskRun) -> list[dict]:
+    """Reinforcement counts as participation in round one, not a second round."""
+    return [a for a in question.metadata.get('attempts', []) if a['phase'] == 'solo']
+
+
+def difficulty_key(value: Any) -> str | None:
+    if value is None or value == '':
+        return None
+    rank = difficulty_order(value)
+    return f'level:{rank}' if math.isfinite(rank) else f'label:{str(value).strip().lower()}'
+
+
+def first_success_statistics(questions: list[TaskRun]) -> list[dict]:
+    groups = {}
+    for question in questions:
+        rounds = solo_attempts(question)
+        difficulty = question.metadata.get('difficulty')
+        key = difficulty_key(difficulty)
+        if question.metadata.get('status') != 'solved' or not rounds or key is None:
+            continue
+        first = rounds[0]
+        for attempt in question.metadata.get('attempts', []):
+            if not (attempt['id'] == first['id'] or attempt.get('first_attempt_id') == first['id']):
+                continue
+            start, finish = attempt.get('started_at'), attempt.get('finished_at')
+            default_credit = (question.metadata.get('solver_agent_id') == attempt['agent_id']
+                              if attempt['phase'] == 'reinforcement' else attempt.get('outcome') == 'solved')
+            credited = attempt.get('success_credit', default_credit)
+            if not credited or start is None or finish is None or finish < start:
+                continue
+            if not math.isfinite(start) or not math.isfinite(finish):
+                continue
+            group = groups.setdefault((attempt['agent_id'], key), {
+                'agent_id': attempt['agent_id'], 'difficulty': difficulty, 'difficulty_key': key,
+                'solved_count': 0, 'total_seconds': 0})
+            group['solved_count'] += 1
+            group['total_seconds'] += finish - start
+    return [{**group, 'average_seconds': group['total_seconds'] / group['solved_count']}
+            for _, group in sorted(groups.items())]
+
+
+def rescue_after(question: TaskRun, statistics: list[dict]) -> float | None:
+    rounds = solo_attempts(question)
+    if len(rounds) != 1 or question.metadata.get('swarm') or question.metadata.get('reinforcement'):
+        return None
+    first = rounds[0]
+    if first.get('outcome') is not None or first.get('started_at') is None:
+        return None
+    baseline = next((row for row in statistics if row['agent_id'] == first['agent_id']
+                     and row['difficulty_key'] == difficulty_key(question.metadata.get('difficulty'))), None)
+    if baseline is None:
+        return None
+    return first['started_at'] + max(600, baseline['average_seconds'] + 180)
 
 
 def unfinished(questions: list[TaskRun]) -> list[TaskRun]:
@@ -115,8 +171,10 @@ def attempt_budgets(metadata: dict) -> dict[str, int]:
 
 
 def attempt_budget_seconds(metadata: dict, attempts: list[dict], current: dict) -> int:
-    if current["phase"] == "joint":
+    if current["phase"] in {"joint", "swarm"}:
         stage = "joint"
+    elif current['phase'] == 'reinforcement':
+        stage = 'first'
     else:
         solo = [attempt for attempt in attempts if attempt["phase"] == "solo"]
         stage = "first" if solo[0]["id"] == current["id"] else "second"
@@ -128,16 +186,16 @@ def next_solo_question(questions: list[TaskRun], agent_id: str) -> TaskRun | Non
         q
         for q in unfinished(questions)
         if scout_ready(q) and not active_attempts(q) and agent_id not in attempted_by(q)
-        and len(attempted_by(q)) < 2
+        and len(solo_attempts(q)) < 2
     ]
     # Untouched by either Worker always precedes a peer's previous question, regardless of difficulty.
-    return min(eligible, key=lambda q: (bool(attempted_by(q)), *question_order(q))) if eligible else None
+    return min(eligible, key=lambda q: (len(attempted_by(q)), *question_order(q))) if eligible else None
 
 
 def joint_ready(questions: list[TaskRun], worker_ids: tuple[str, ...]) -> bool:
     remaining = unfinished(questions)
     return bool(remaining) and all(
-        scout_ready(q) and not active_attempts(q) and len(attempted_by(q)) >= 2 for q in remaining
+        scout_ready(q) and not active_attempts(q) and len(solo_attempts(q)) >= 2 for q in remaining
     )
 
 
@@ -150,4 +208,7 @@ def joint_workers(question: TaskRun, worker_ids: tuple[str, ...]) -> tuple[str, 
     # Historical two-Worker batches retain their original collaboration policy.
     if len(worker_ids) == 2:
         return worker_ids
+    reinforcement = question.metadata.get('reinforcement')
+    if reinforcement:
+        return (reinforcement['agent_id'], *(agent for agent in worker_ids if agent not in attempted_by(question)))
     return tuple(agent for agent in worker_ids if agent not in attempted_by(question))

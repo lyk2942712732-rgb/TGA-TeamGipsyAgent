@@ -218,7 +218,8 @@ class TaskCoordinator:
             )
             await self.events.emit(
                 task_id, actor=SYSTEM_ACTOR, kind=EventKind.SYSTEM,
-                text=f"Scout 三轮结束，系统已导入 {intel_count} 条合并 Intel，开始启动 {len(await self._worker_runs(task_id))} 位 Worker。",
+                text=(f"Scout 三轮结束，系统已导入 {intel_count} 条合并 Intel，"
+                      f"开始启动 {len(await self._worker_runs(task_id))} 位 Worker。"),
                 payload={"intel_count": intel_count, "scout_phases": outcomes},
             )
             await self.storage.update_task(task_id, state=RunState.RUNNING)
@@ -342,6 +343,8 @@ class TaskCoordinator:
                         {'attempt_id': active['id'], 'deadline': active['deadline']})
         elif method == "agent.status":
             state = AgentState(str(params["state"]))
+            if run.metadata.get('aoe_attempt_id') and state in {AgentState.PAUSED, AgentState.RUNNING}:
+                await self.aoe.record_pause(task_id, agent_id, paused=state == AgentState.PAUSED)
             changes = {"actual_state": state}
             if state in {AgentState.RUNNING, AgentState.IDLE}:
                 changes["last_error"] = None

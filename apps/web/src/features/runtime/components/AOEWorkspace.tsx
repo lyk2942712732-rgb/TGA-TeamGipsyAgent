@@ -4,12 +4,12 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { apiBase, requestJson } from "../../../api/client";
 import type { AOEQuestion, TGA3RuntimeSnapshot, TGA3TaskEvent } from "../../../runtime/tga3-runtime";
 import { formatTime } from "../tga3-view";
-import { aoeBudgets, attemptLabel, matchesQuestionFilter, QUESTION_FILTERS, sortQuestions, type QuestionFilter } from "../aoe-view";
+import { aoeBudgets, attemptGroups, attemptLabel, matchesQuestionFilter, QUESTION_FILTERS, sortQuestions, type QuestionFilter } from "../aoe-view";
 import { useTGA3Runtime } from "../use-tga3-runtime";
 import { EventCard, RealtimePrompt, TGA3Workspace, type TGA3WorkspaceTab } from "./TGA3Workspace";
 
 const STATUS: Record<string, string> = { queued: "待解题", running: "解题中", solved: "已解出", abandoned: "已放弃", cancelled: "已取消" };
-const PHASE: Record<string, string> = { collecting: "收集题目", executing: "基础侦察", extracting: "提取情报", merging: "按题合并", solo: "独立解题", joint: "共同攻坚", reporting: "生成逐题报告", completed: "已结束", failed: "运行失败", cancelled: "已取消" };
+const PHASE: Record<string, string> = { collecting: "收集题目", executing: "基础侦察", extracting: "提取情报", merging: "按题合并", solo: "独立解题", joint: "共同攻坚", swarm: "共同攻坚（群殴）", reporting: "生成逐题报告", completed: "已结束", failed: "运行失败", cancelled: "已取消" };
 const REPORT: Record<string, string> = { pending: "等待解题结束", generating: "生成中", completed: "已生成", failed: "生成失败" };
 
 export function AOEWorkspace({ snapshot, tab, selectedAgentId, onTab, onChanged }: {
@@ -72,7 +72,7 @@ export function AOEWorkspace({ snapshot, tab, selectedAgentId, onTab, onChanged 
       <label>状态<select aria-label="解题状态筛选" value={filter} onChange={event => chooseFilter(event.target.value as QuestionFilter)}>
         {QUESTION_FILTERS.map(([value, label]) => <option key={value} value={value}>{label}（{overview.questions.filter(q => matchesQuestionFilter(q, value)).length}）</option>)}
       </select></label>
-      <span>{overview.scout_mode === "collection_only" && !overview.collection_complete ? "收集题目与解题并行" : PHASE[overview.phase] ?? overview.phase} · 首次 {budgets.first / 60} 分钟 · 第二次 {budgets.second / 60} 分钟 · 共同攻坚 {budgets.joint / 60} 分钟{overview.scout_mode === "collection_only" ? " · Scout 仅收集题面与附件" : ""}</span>
+      <span>{overview.phase === "swarm" ? PHASE.swarm : overview.scout_mode === "collection_only" && !overview.collection_complete ? "收集题目与解题并行" : PHASE[overview.phase] ?? overview.phase} · 首次 {budgets.first / 60} 分钟 · 第二次 {budgets.second / 60} 分钟 · 共同攻坚 {budgets.joint / 60} 分钟{overview.scout_mode === "collection_only" ? " · Scout 仅收集题面与附件" : ""}</span>
     </div>
     {requested && !question ? <p role="alert">该题目不属于当前任务，或尚未完成登记。</p> : null}
     {question ? <section className="aoe-question-context">
@@ -102,6 +102,7 @@ function AOEOverviewPanel({ snapshot, questions, onOpen, name }: { snapshot: TGA
     {!questions.length ? <p className="tga3-muted">当前筛选下暂无题目。</p> : null}
     <div className="aoe-question-roster">{questions.map(question => {
       const active = question.attempts.filter(attempt => attempt.outcome === null);
+      const stages = attemptGroups(question);
       const deadline = active[0]?.deadline;
       const seconds = deadline == null ? null : Math.max(0, Math.ceil(deadline - now));
       return <article key={question.question_id} className="aoe-question-row" data-status={question.status}>
@@ -114,10 +115,10 @@ function AOEOverviewPanel({ snapshot, questions, onOpen, name }: { snapshot: TGA
         {question.flag ? <div className="aoe-question-answer"><Flag size={14} /><code className="aoe-flag">{question.flag}</code></div> : null}
         <QuestionMaterials question={question} />
         <footer><button className="ref-secondary-button" onClick={() => onOpen(question.question_id)}><BookOpen size={14} />进入黑板详情 <small>{question.blackboard_seq}</small></button>
-          <details className="aoe-attempt-history"><summary>尝试记录（{question.attempts.length}）</summary>
-            {question.attempts.length ? <ol>{question.attempts.map(attempt => <li key={attempt.id}>
-              <strong>{name(attempt.agent_id)}</strong> · {attempt.phase === "joint" ? "共同攻坚" : "独立尝试"} · {attempt.outcome === null ? "进行中" : ({ solved: "已解出", timeout: "预算已到", interrupted: "已中断", error: "执行失败" })[attempt.outcome]}
-              <small>{attempt.started_at == null ? "准备执行，尚未开始计时" : formatTime(new Date(attempt.started_at * 1000).toISOString())}{attempt.finished_at ? ` — ${formatTime(new Date(attempt.finished_at * 1000).toISOString())}` : ""}</small>
+          <details className="aoe-attempt-history"><summary>尝试记录（{stages.length}）</summary>
+            {stages.length ? <ol>{stages.map(stage => <li key={stage.id}>
+              <strong>{stage.agents.map(name).join("＋")}</strong> · {stage.label} · {stage.outcome}
+              <small>{stage.startedAt == null ? "准备执行，尚未开始计时" : formatTime(new Date(stage.startedAt * 1000).toISOString())}{stage.finishedAt != null ? ` — ${formatTime(new Date(stage.finishedAt * 1000).toISOString())}` : ""}</small>
             </li>)}</ol> : <p>尚未分配 Worker。</p>}
           </details>
         </footer>
@@ -131,7 +132,10 @@ function QuestionStatus({ question }: { question: AOEQuestion }) {
     const phases: Record<string, string> = { queued: "待侦察", executing: "第一轮侦察", extracting: "第二轮提取", merging: "第三轮合并" };
     return <span className="aoe-question-status status-preparing">{phases[question.scout_phase ?? "queued"] ?? "准备中"}</span>;
   }
-  return <span className={`aoe-question-status status-${question.status}`}>{question.current_agents.length && question.attempts.some(a => a.phase === "joint" && a.outcome === null) ? "共同攻坚" : STATUS[question.status] ?? question.status}</span>;
+  const collaborative = question.attempts.find(a => a.outcome === null && (a.phase === "swarm" || a.phase === "joint"));
+  const support = question.status === "running" && question.attempts.some(a => a.phase === "reinforcement" && a.outcome === null)
+    ? "增援模式" : question.status === "running" && question.rescue?.state === "seeking" ? "求援中" : null;
+  return <span className={`aoe-question-status status-${question.status}`}>{collaborative ? attemptLabel(question, collaborative) : support ?? (question.finish_reason === "joint_failed" ? "共同攻坚失败，已放弃" : STATUS[question.status] ?? question.status)}</span>;
 }
 
 function QuestionMaterials({ question }: { question: AOEQuestion }) {

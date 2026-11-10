@@ -38,6 +38,36 @@ describe("AOE question workspace", () => {
     mocks.runtime.mockImplementation((id: string | null) => ({ snapshot: id === "q1" ? child : null, error: null, refresh: vi.fn() }));
     mocks.request.mockResolvedValue({ events: [], has_more: false });
   });
+  it.each(["seeking", "reinforced"] as const)("shows %s without adding an average-time panel", state => {
+    const active: AOEQuestion = { ...question("help", "Needs help"),
+      rescue: { state, requested_at: 701, threshold_at: 700 }, attempts: [
+        { id: "original", agent_id: "worker-openai", phase: "solo", outcome: null, started_at: 100, deadline: 1300 },
+        ...(state === "reinforced" ? [{ id: "helper", agent_id: "worker-claude", phase: "reinforcement" as const,
+          outcome: null, started_at: 701, deadline: 1300, first_attempt_id: "original" }] : []),
+      ] };
+    const data = { ...parent, aoe: { ...parent.aoe!, questions: [active] } };
+    render(<MemoryRouter><AOEWorkspace snapshot={data} tab="blackboard" onTab={vi.fn()} selectedAgentId={null} onChanged={vi.fn()} /></MemoryRouter>);
+    expect(screen.getByText(state === "seeking" ? "求援中" : "增援模式")).toBeInTheDocument();
+    expect(screen.queryByText("首次解题平均耗时")).not.toBeInTheDocument();
+    if (state === "reinforced") expect(screen.getByRole("region", { name: "题目总览" })).toHaveTextContent("首次尝试（增援）");
+  });
+  it("shows four-person swarm status, shared countdown and attempt history during collection", () => {
+    const workers = ["worker-openai", "worker-claude", "worker-opencode", "worker-qwen"];
+    const active: AOEQuestion = { ...question("last", "Last question"), current_agents: workers, attempted_by: workers,
+      attempts: workers.map((agent_id, i) => ({ id: `swarm-${i}`, agent_id, phase: "swarm", outcome: null,
+        started_at: Date.now() / 1000, deadline: Date.now() / 1000 + 600 })) };
+    const data = { ...parent, aoe: { ...parent.aoe!, phase: "swarm", scout_mode: "collection_only",
+      collection_complete: false, questions: [active] } };
+    render(<MemoryRouter><AOEWorkspace snapshot={data} tab="blackboard" onTab={vi.fn()} selectedAgentId={null} onChanged={vi.fn()} /></MemoryRouter>);
+    expect(screen.getByText(/共同攻坚（群殴）.*首次/)).toBeInTheDocument();
+    const panel = screen.getByRole("region", { name: "题目总览" });
+    expect(within(panel).getByText("共同攻坚（群殴）")).toBeInTheDocument();
+    expect(panel).toHaveTextContent("共同攻坚（群殴）剩余");
+    expect(panel).toHaveTextContent("尝试记录（1）");
+    expect(panel.querySelectorAll(".aoe-attempt-history ol > li")).toHaveLength(1);
+    for (const worker of workers.slice(1)) expect(panel).toHaveTextContent(worker);
+    expect(screen.queryByText(/收集题目与解题并行/)).not.toBeInTheDocument();
+  });
   it("shows per-question ownership, answer and scoped attachment links, and opens the matching board", async () => {
     const user = userEvent.setup();
     render(<MemoryRouter><Harness /></MemoryRouter>);
