@@ -2,8 +2,7 @@
 """TGA3 的唯一部署编排实现。
 
 完整部署支持具备 systemd 或其他服务管理器的通用 Linux。发行版的软件
-安装方式可以不同，但项目构建和初始化步骤统一由本脚本执行。源码目录
-中的旧 bootstrap 入口只负责转交到这里。
+安装方式可以不同，但项目构建和初始化步骤统一由本脚本执行。旧 bootstrap 入口只负责转交到这里。
 """
 
 from __future__ import annotations
@@ -30,7 +29,7 @@ def find_source(explicit: str | None) -> Path:
         candidates.append(Path(explicit).expanduser())
     candidates.extend(
         [
-            script_dir.parent,
+            script_dir.parent.parent,
             script_dir.parent / "TGA-TeamGipsyAgent",
             Path.cwd() / "TGA-TeamGipsyAgent",
             Path.cwd(),
@@ -38,9 +37,7 @@ def find_source(explicit: str | None) -> Path:
     )
     for candidate in candidates:
         resolved = candidate.resolve()
-        if (resolved / "tga3" / "pyproject.toml").is_file() and (
-            resolved / "apps" / "web" / "package.json"
-        ).is_file():
+        if (resolved / "tga3" / "pyproject.toml").is_file() and (resolved / "apps" / "web" / "package.json").is_file():
             return resolved
     raise SystemExit("未找到源码目录。请使用 --source-dir 指向 TGA-TeamGipsyAgent。")
 
@@ -51,7 +48,7 @@ def run(command: list[str], *, cwd: Path | None = None, env: dict[str, str] | No
 
 
 def run_preflight(source: Path) -> int:
-    validator = Path(__file__).resolve().parent / "部署验证脚本.py"
+    validator = Path(__file__).resolve().parent / "verify-deployment.py"
     return subprocess.run(
         [
             sys.executable,
@@ -77,10 +74,7 @@ def deploy(
     build_network: str | None,
 ) -> None:
     if platform.system() != "Linux":
-        raise SystemExit(
-            "完整部署仅支持 Linux。Windows 和 macOS 可使用 --check-only；"
-            "生产构建请在 Linux 服务器执行。"
-        )
+        raise SystemExit("完整部署仅支持 Linux。Windows 和 macOS 可使用 --check-only；生产构建请在 Linux 服务器执行。")
 
     project_dir = source / "tga3"
     web_dir = source / "apps" / "web"
@@ -88,7 +82,7 @@ def deploy(
 
     print("TGA3 统一 Linux 部署")
     print(f"源码目录: {source}")
-    print("部署编排来源: 部署手册/deploy.py")
+    print("部署编排来源: tga3/scripts/deploy.py")
 
     print("\n[1/4] 启动并等待 PostgreSQL")
     run(["docker", "compose", "up", "-d", "--wait", "postgres"], cwd=project_dir)
@@ -123,7 +117,7 @@ def deploy(
     print("\nDeployment complete")
     print("启动控制面后，请在前端配置中心填写 Provider、模型、API 密钥和 Agent 绑定。")
     print(f"控制面命令: {python_bin} -m tga3.cli --config-dir {project_dir / 'config'} serve")
-    print("生产服务安装、账户权限和 Nginx 配置请继续按生产环境部署.md执行。")
+    print("生产服务安装、账户权限和 Nginx 配置请继续按仓库根 README.md执行。")
 
 
 def main() -> int:
@@ -161,7 +155,7 @@ if __name__ == "__main__":
         raise SystemExit(main())
     except KeyboardInterrupt:
         print("\n部署已由用户中止。", file=sys.stderr)
-        raise SystemExit(130)
+        raise SystemExit(130) from None
     except subprocess.CalledProcessError as exc:
         print(f"\n命令执行失败，退出码 {exc.returncode}。", file=sys.stderr)
-        raise SystemExit(exc.returncode or 1)
+        raise SystemExit(exc.returncode or 1) from exc
