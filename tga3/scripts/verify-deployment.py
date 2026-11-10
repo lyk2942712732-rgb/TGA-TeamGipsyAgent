@@ -57,7 +57,7 @@ def find_source(explicit: str | None) -> Path:
         candidates.append(Path(explicit).expanduser())
     candidates.extend(
         [
-            script_dir.parent,
+            script_dir.parent.parent,
             script_dir.parent / "TGA-TeamGipsyAgent",
             Path.cwd() / "TGA-TeamGipsyAgent",
             Path.cwd(),
@@ -65,9 +65,7 @@ def find_source(explicit: str | None) -> Path:
     )
     for candidate in candidates:
         resolved = candidate.resolve()
-        if (resolved / "tga3" / "pyproject.toml").is_file() and (
-            resolved / "apps" / "web" / "package.json"
-        ).is_file():
+        if (resolved / "tga3" / "pyproject.toml").is_file() and (resolved / "apps" / "web" / "package.json").is_file():
             return resolved
     raise SystemExit("未找到源码目录。请使用 --source-dir 指向 TGA-TeamGipsyAgent。")
 
@@ -118,105 +116,65 @@ def check_config(configs: dict[str, dict[str, Any] | None], require_api_key: boo
     if any(value is None for value in (models, agents, scenes, runtime)):
         return
 
-    providers = {item.get("id"): item for item in models.get("providers", []) if isinstance(item, dict)}
     bindings = agents.get("agents", {})
-    required_agents = {"supervisor", "worker-openai", "worker-claude", "reporter"}
+    required_agents = {"scout", "worker-openai", "worker-claude", "worker-opencode", "worker-qwen", "reporter"}
     missing_agents = sorted(required_agents - set(bindings)) if isinstance(bindings, dict) else sorted(required_agents)
-    if missing_agents:
-        record("FAIL", "Agent 配置", "缺少 " + ", ".join(missing_agents))
-    else:
-        record("PASS", "Agent 配置", "四个必需 Agent 均存在")
+    record(
+        "FAIL" if missing_agents else "PASS",
+        "Agent 配置",
+        "缺少 " + ", ".join(missing_agents) if missing_agents else "Scout、四个 Worker、Reporter 均存在",
+    )
 
     required_scenes = {
         "penetration_test",
-        "incident_response",
-        "vulnerability_research",
         "reverse_engineering",
         "pwn",
         "security_misc",
         "cryptography",
-        "forensics",
+        "ai_security",
+        "aoe",
     }
     scene_ids = {item.get("id") for item in scenes.get("scenes", []) if isinstance(item, dict)}
     missing_scenes = sorted(required_scenes - scene_ids)
-    if missing_scenes:
-        record("FAIL", "场景配置", "缺少 " + ", ".join(missing_scenes))
-    else:
-        record("PASS", "场景配置", "八个必需场景均存在")
+    record(
+        "FAIL" if missing_scenes else "PASS",
+        "场景配置",
+        "缺少 " + ", ".join(missing_scenes) if missing_scenes else "当前七类场景均存在",
+    )
 
-    config_errors: list[str] = []
-    used_providers: set[str] = set()
-    if isinstance(bindings, dict):
-        for agent_id, binding in bindings.items():
-            if not isinstance(binding, dict):
-                config_errors.append(f"{agent_id} 配置不是对象")
-                continue
-            provider_id = binding.get("provider_id")
-            model_id = binding.get("model_id")
-            protocol = binding.get("protocol")
-            provider = providers.get(provider_id)
-            if not provider:
-                config_errors.append(f"{agent_id} 引用不存在的 Provider {provider_id}")
-                continue
-            if binding.get("role") != "supervisor" or runtime.get("supervisor_enabled", False):
-                used_providers.add(str(provider_id))
-            model_ids = {item.get("id") for item in provider.get("models", []) if isinstance(item, dict)}
-            if model_id not in model_ids:
-                config_errors.append(f"{agent_id} 引用不存在的模型 {provider_id}/{model_id}")
-            if protocol not in provider.get("protocols", []):
-                config_errors.append(f"{agent_id} 的协议 {protocol} 未由 Provider {provider_id} 声明")
-            if binding.get("runtime") in {"claude_agent", "claude_cli"} and protocol != "anthropic":
-                config_errors.append(f"{agent_id} 的 Claude Code 必须使用 anthropic")
-            if binding.get("runtime") == "codex_cli" and protocol != "openai_responses":
-                config_errors.append(f"{agent_id} 的 Codex CLI 必须使用 openai_responses")
-            if binding.get("runtime") == "openai_agents" and protocol == "anthropic":
-                config_errors.append(f"{agent_id} 的 OpenAI Agents SDK 不能使用 anthropic")
-    if config_errors:
-        record("FAIL", "模型绑定", "; ".join(config_errors))
+    # Reuse production validation rather than maintaining another provider schema.
+    sys.path.insert(0, str(source / "tga3" / "src"))
+    try:
+        from tga3.config import TGA3Config
+    except ImportError:
+        record("WARN", "配置结构", "完整校验需要安装控制依赖；当前仅检查 JSON、角色和场景")
     else:
-        record("PASS", "模型绑定", "Provider、模型和协议引用一致")
+        try:
+            TGA3Config(source / "tga3" / "config")
+        except Exception as exc:
+            record("FAIL", "配置结构", f"当前运行时拒绝配置（{type(exc).__name__}）；请在配置中心检查绑定")
+        else:
+            record("PASS", "配置结构", "已通过项目实际配置校验")
 
-    missing_keys: list[str] = []
-    for provider_id in sorted(used_providers):
-        provider = providers[provider_id]
+    providers = {item.get("id"): item for item in models.get("providers", []) if isinstance(item, dict)}
+    used = {b.get("provider_id") for b in bindings.values() if isinstance(b, dict) and b.get("role") != "supervisor"}
+    missing_keys = []
+    for provider_id in sorted(used - {None}):
+        provider = providers.get(provider_id, {})
         selected = provider.get("selected_api_key_id")
-        configured = any(
-            item.get("id") == selected and bool(str(item.get("api_key", "")).strip())
-            for item in provider.get("api_keys", [])
-            if isinstance(item, dict)
-        )
-        if not configured:
+        if not any(
+            k.get("id") == selected and bool(str(k.get("api_key", "")).strip())
+            for k in provider.get("api_keys", [])
+            if isinstance(k, dict)
+        ):
             missing_keys.append(provider_id)
-    if missing_keys:
-        record(
-            "FAIL" if require_api_key else "WARN",
-            "API 密钥",
-            "实际绑定的 Provider 尚未配置密钥: " + ", ".join(missing_keys),
-        )
-    else:
-        record("PASS", "API 密钥", "实际绑定的 Provider 均已配置密钥（未显示密钥内容）")
-
-    required_runtime = {
-        "postgres_dsn",
-        "control_ws_url",
-        "blackboard_mcp_url",
-        "listen_host",
-        "listen_port",
-        "workspace_root",
-        "input_root",
-        "artifact_root",
-        "writeup_root",
-        "skills_root",
-        "worker_images",
-        "worker_cycle_prompts",
-        "docker",
-        "cadence",
-    }
-    missing_runtime = sorted(required_runtime - set(runtime))
-    if missing_runtime:
-        record("FAIL", "运行时配置", "缺少 " + ", ".join(missing_runtime))
-    else:
-        record("PASS", "运行时配置", f"监听 {runtime.get('listen_host')}:{runtime.get('listen_port')}")
+    record(
+        "FAIL" if require_api_key and missing_keys else "WARN" if missing_keys else "PASS",
+        "API 密钥",
+        "实际绑定 Provider 尚未配置密钥: " + ", ".join(missing_keys)
+        if missing_keys
+        else "实际绑定 Provider 均已配置密钥（不显示内容）",
+    )
 
     models_path = source / "tga3" / "config" / "models.json"
     if os.name != "nt" and models_path.exists():
@@ -292,7 +250,13 @@ def check_build_and_runtime(source: Path, configs: dict[str, dict[str, Any] | No
         return
 
     code, health = command_output(
-        ["docker", "inspect", "--format", "{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}", "tga3-postgres"]
+        [
+            "docker",
+            "inspect",
+            "--format",
+            "{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}",
+            "tga3-postgres",
+        ]
     )
     record(
         "PASS" if code == 0 and health.strip() == "healthy" else "FAIL",
@@ -348,7 +312,7 @@ def summary() -> int:
     print("\n验证汇总")
     print(f"通过 {counts['PASS']} 项，警告 {counts['WARN']} 项，失败 {counts['FAIL']} 项。")
     if counts["FAIL"]:
-        print("部署验证未通过。请按故障排除指南处理失败项。")
+        print("部署验证未通过。请按仓库根 README.md 检查失败项。")
         return 1
     if counts["WARN"]:
         print("未发现阻断性错误，但上线前应处理警告项。")
