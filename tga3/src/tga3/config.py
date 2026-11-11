@@ -214,6 +214,8 @@ class RuntimeConfig(BaseModel):
     writeup_root: str = "data/writeups"
     skills_root: str
     ctf_knowledge_mcp_url: str = DEFAULT_MCP_URL
+    ctf_wiki_root: str = "knowledge/ctf-wiki"
+    ctf_wiki_index: str = "knowledge/ctf-wiki.sqlite3"
     # Read legacy settings without mounting or starting the retired local server.
     ctf_knowledge_root: str | None = Field(default=None, exclude=True)
     mcp_instructions: str = Field(min_length=1)

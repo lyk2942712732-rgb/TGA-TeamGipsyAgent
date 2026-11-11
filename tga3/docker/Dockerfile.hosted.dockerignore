@@ -17,3 +17,5 @@
 **/__pycache__
 **/*.pyc
 **/*.pyo
+
+!docker/build_hosted_knowledge.py

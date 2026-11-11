@@ -124,7 +124,8 @@ def test_prepare_config_uses_runtime_credentials_gateway_urls_and_private_fresh_
 
 
 @pytest.mark.skipif(sys.platform != "linux", reason="Hosted container runtime is Linux")
-def test_process_pool_has_separate_workspaces_homes_and_never_inherits_controller_secrets(tmp_path, monkeypatch):
+@pytest.mark.parametrize("source", ["none", "local"])
+def test_process_pool_has_separate_workspaces_homes_and_never_inherits_controller_secrets(tmp_path, monkeypatch, source):
     fake = tmp_path / "fake/tga3/workers"
     fake.mkdir(parents=True)
     (fake.parent / "__init__.py").touch()
@@ -145,7 +146,10 @@ def test_process_pool_has_separate_workspaces_homes_and_never_inherits_controlle
             root.mkdir()
         processes.append(
             pool.run(
-                environment={"TGA3_AGENT_RUNTIME": "codex_cli"},
+                environment={"TGA3_AGENT_RUNTIME": "codex_cli", "TGA3_AGENT_ROLE": "worker",
+                             "TGA3_KNOWLEDGE_SOURCE": source,
+                             "TGA3_CTF_KNOWLEDGE_MCP_URL": "https://not-allowed.example/mcp",
+                             "TGA3_WEB_SEARCH_MCP_URL": "https://not-allowed.example/search"},
                 volumes={
                     str(workspace): {"bind": "/workspace"},
                     str(logs): {"bind": "/logs"},
@@ -160,7 +164,9 @@ def test_process_pool_has_separate_workspaces_homes_and_never_inherits_controlle
     assert observed[0]["HOME"] != observed[1]["HOME"]
     assert observed[0]["TGA3_WORKSPACE"] != observed[1]["TGA3_WORKSPACE"]
     assert all("BENCHMARK_TOKEN" not in env for env in observed)
-    assert all(env["TGA3_CTF_KNOWLEDGE_MCP_URL"] == "" for env in observed)
+    expected = "http://127.0.0.1:8083/local-knowledge-mcp/" if source == "local" else ""
+    assert all(env["TGA3_CTF_KNOWLEDGE_MCP_URL"] == expected for env in observed)
+    assert all(env["TGA3_WEB_SEARCH_MCP_URL"] == "" for env in observed)
 
 
 @pytest.mark.skipif(sys.platform != "linux", reason="Process descendants are read from /proc")

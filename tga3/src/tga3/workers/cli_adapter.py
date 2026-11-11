@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from ..knowledge import SERVER_NAME, worker_knowledge_server
+from ..knowledge import worker_knowledge_name, worker_knowledge_server
 from .action_journal import ActionJournal
 from .local_paths import local_paths
 from .prompts import worker_instructions
@@ -437,7 +437,7 @@ class CodexAdapter(CliAdapter):
                        'http_headers = {'+', '.join(f'{json.dumps(k)} = {json.dumps(v)}'
                                                    for k,v in self.mcp_headers().items())+'}', 'required = true']
         if knowledge := worker_knowledge_server():
-            config += [f"[mcp_servers.{SERVER_NAME}]", f"url = {json.dumps(knowledge['url'])}",
+            config += [f"[mcp_servers.{worker_knowledge_name()}]", f"url = {json.dumps(knowledge['url'])}",
                        "startup_timeout_sec = 15", "tool_timeout_sec = 30", "required = false"]
         if self.hook_config():
             (cli_home / "hooks.json").write_text(json.dumps(self.hook_config()), encoding="utf-8")
@@ -506,7 +506,7 @@ class ClaudeAdapter(CliAdapter):
         if web_url := os.environ.get('TGA3_WEB_SEARCH_MCP_URL'):
             servers['web'] = {'type':'http', 'url':web_url, 'headers':self.mcp_headers()}
         if knowledge := worker_knowledge_server():
-            servers[SERVER_NAME] = {"type": "http", **knowledge}
+            servers[worker_knowledge_name()] = {"type": "http", **knowledge}
         mcp_file.write_text(
             json.dumps({"mcpServers": servers}),
             encoding="utf-8",
@@ -533,8 +533,7 @@ class ClaudeAdapter(CliAdapter):
             ("Bash,Read,Write,Edit,Glob,Grep" if os.environ.get('TGA3_HOSTED') == '1'
              else "Bash,Read,Write,Edit,Glob,Grep,WebSearch,WebFetch"),
             "--allowedTools",
-            ("Bash,Read,Write,Edit,Glob,Grep" if os.environ.get('TGA3_HOSTED') == '1'
-             else f"Bash,Read,Write,Edit,Glob,Grep,WebSearch,WebFetch,mcp__web__web_search,mcp__{SERVER_NAME}__*"),
+            "Bash,Read,Write,Edit,Glob,Grep,mcp__ctf_wiki__*",
             "--disallowedTools",
             "AskUserQuestion",
             "--strict-mcp-config",

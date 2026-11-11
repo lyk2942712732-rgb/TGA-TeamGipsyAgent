@@ -111,9 +111,14 @@ class ProcessPool:
             TGA3_WORKSPACE=str(workspace),
             TGA3_LOGS=mapping["/logs"],
             TGA3_INPUTS=mapping["/inputs"],
-            TGA3_CTF_KNOWLEDGE_MCP_URL="",
+
             TGA3_WEB_SEARCH_MCP_URL="",
             TGA3_HOSTED="1",
+        )
+        environment["TGA3_CTF_KNOWLEDGE_MCP_URL"] = (
+            "http://127.0.0.1:8083/local-knowledge-mcp/"
+            if environment.get("TGA3_AGENT_ROLE") == "worker" and environment.get("TGA3_KNOWLEDGE_SOURCE") == "local"
+            else ""
         )
         if "/findings" in mapping:
             environment["TGA3_FINDINGS"] = mapping["/findings"]

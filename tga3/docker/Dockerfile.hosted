@@ -1,5 +1,5 @@
 # Build only from the verified tool/CLI layers. No task data, secrets, writeups,
-# experience cards, knowledge corpus, CLI histories or host configuration enter.
+# experience cards, CLI histories or host configuration enter. CTF Wiki is pinned below.
 ARG CLI_BASE_IMAGE=tga3-cli-base:local
 ARG CODEX_IMAGE=tga3-worker-openai:local
 ARG CLAUDE_IMAGE=tga3-worker-claude:local
@@ -32,6 +32,9 @@ COPY pyproject.toml README.md /build/project/
 COPY src /build/project/src
 RUN python -m pip install --no-cache-dir '/build/project[control]' \
     && python -m pip check && rm -rf /build/project
+COPY docker/build_hosted_knowledge.py /tmp/build_hosted_knowledge.py
+RUN python /tmp/build_hosted_knowledge.py && rm /tmp/build_hosted_knowledge.py \
+    && chmod -R a-w /opt/tga3-hosted/knowledge
 COPY config/agents.json config/scenes.json config/runtime.json schema.sql /opt/tga3-hosted/templates/
 RUN python -c 'import json,pathlib; r=pathlib.Path("/opt/tga3-hosted/templates"); p=r/"scenes.json"; d=json.loads(p.read_text()); [(s.update(system_prompt=s["system_prompt"].replace("按已观察到的信号查询知识库技法与案例，验证适用条件后使用。", "依据本次证据与本地工具求解。"))) for s in d["scenes"]]; p.write_text(json.dumps(d,ensure_ascii=False)); p=r/"runtime.json"; d=json.loads(p.read_text()); d["ctf_knowledge_mcp_url"]=""; p.write_text(json.dumps(d,ensure_ascii=False))' \
     && python -c 'import importlib.metadata as m; print("\n".join(sorted(d.metadata["Name"]+"=="+d.version for d in m.distributions())))' > /opt/tga3-hosted/python-packages.lock \
