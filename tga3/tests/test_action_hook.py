@@ -47,6 +47,35 @@ def tool_event(event="PreToolUse", **extra):
             "tool_input": {"command": "fixture > response.txt"}, "cwd": "/workspace", **extra}
 
 
+@pytest.mark.parametrize('tool', ['Bash', 'exec_command', 'shell', 'run_shell_command'])
+@pytest.mark.parametrize('structured', [True, False])
+def test_wrong_submission_forces_checkpoint_and_delivers_system_receipt(hook_env, monkeypatch, tool, structured):
+    import httpx
+
+    monkeypatch.setenv('TGA3_AOE_PARENT_ID', 'parent')
+    monkeypatch.setenv('TGA3_BLACKBOARD_MCP_URL', 'http://fixture/mcp')
+    path = hook_env / '.tga3/submission.json'
+    path.parent.mkdir(exist_ok=True)
+    url = 'http://platform.invalid/submit'
+    path.write_text(json.dumps({'submission': {'request': {'method': 'POST', 'url': url}}}))
+    response = {'stdout': '{"correct": false}', 'stderr': ''} if structured else '{"correct": false}'
+    event = tool_event('PostToolUse', tool_name=tool, tool_input={'command': f'curl {url}'}, tool_response=response)
+    record_tool(tool_event(tool_name=tool, tool_input=event['tool_input']))
+    calls = []
+
+    def request(req):
+        calls.append(json.loads(req.content))
+        return httpx.Response(200, json={'submission_protection': {
+            'status': 'accepted', 'flag': 'flag{exact_output}', 'response': {'correct': True}}})
+
+    with httpx.Client(transport=httpx.MockTransport(request)) as client:
+        result = checkpoint(event, client=client)
+    saved = read_action_log(hook_env / 'logs')['actions'][0]
+    assert calls[0]['submission_failure_action'] == saved['action_id']
+    context = result['hookSpecificOutput']['additionalContext']
+    assert 'flag{exact_output}' in context and '"correct": true' in context
+
+
 def test_synchronous_hooks_supply_id_and_body_before_model_without_blackboard_read(hook_env, monkeypatch):
     def forbidden(*args, **kwargs):
         raise AssertionError("PostToolUse must not poll the blackboard")
