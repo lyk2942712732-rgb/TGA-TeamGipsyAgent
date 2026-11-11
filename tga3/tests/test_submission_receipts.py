@@ -17,8 +17,10 @@ URL = "https://benchmark.invalid/openapi/v1/challenges/submit"
 FLAG = "HTB{verified-output}"
 
 
-async def fixture(tmp_path):
+async def fixture(tmp_path, *, auto_submit=True):
     cfg, storage, runtime, coordinator, parent, clock = await setup(tmp_path)
+    if not auto_submit:
+        await storage.update_task(parent.id, metadata={"aoe_auto_submit_flag": False})
     clock[0] = time.time()
     spec = SubmissionSpec(request=TargetRequest(method="POST", url=URL,
         headers={"BENCHMARK_TOKEN": "fixture-token"}, body={"unique_code": "q-1", "flag": "{flag}"}))
@@ -53,6 +55,7 @@ def action(cfg, q, *, reply, command=None, agent="worker-openai", tool="Bash"):
 
 async def publish_file(cfg, storage, q, body):
     workspace = cfg.task_path(q.id, "workspaces", "worker-openai")
+    workspace.mkdir(parents=True, exist_ok=True)
     (workspace / "final-candidate.json").write_text(body.model_dump_json())
     from tga3.blackboard import Blackboard
 
@@ -71,6 +74,24 @@ async def test_missing_receipt_blocks_success_and_resends_stable_credentials(tmp
     assert receipt["submission_path"] == "/workspace/.tga3/submission.json"
     assert not any(e.kind == "final_candidate" for e in await storage.list_entries(q.id))
     assert not (cfg.task_path(q.id) / "final-candidate.json").exists()
+
+
+async def test_manual_submission_publishes_flag_without_platform_receipt(tmp_path):
+    cfg, storage, coordinator, parent, _, q, body = await fixture(tmp_path, auto_submit=False)
+    assert q.metadata["aoe_auto_submit_flag"] is False
+    worker_launch = next(spec for spec in coordinator.containers.launched if spec.task_id == q.id)
+    assert worker_launch.aoe_auto_submit_flag is False
+    workspace = cfg.task_path(q.id, "workspaces", "worker-openai")
+    assert not (workspace / ".tga3/submission.json").exists()
+    assert json.loads((cfg.task_path(q.id) / "question.json").read_text())["submission"] is None
+
+    _, receipt = await publish_file(cfg, storage, q, body)
+    assert receipt["status"] == "imported"
+    canonical = json.loads((cfg.task_path(q.id) / "final-candidate.json").read_text())
+    assert canonical["conclusion"] == FLAG
+    assert canonical["submission_action_id"] is None
+    await coordinator.aoe.tick(parent.id)
+    assert (await storage.get_task(q.id)).metadata["flag"] == FLAG
 
 
 async def test_real_matching_acceptance_imports_and_binds_action(tmp_path):

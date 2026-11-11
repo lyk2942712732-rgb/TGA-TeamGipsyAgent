@@ -46,12 +46,16 @@ describe("NewTaskPage", () => {
     }));
     expect(onCreated).toHaveBeenCalledWith("task-created");
   });
-  it("only exposes the three AOE stage budgets for AOE and submits their chosen minutes", async () => {
+  it("shows AOE settings only for AOE and sends the selected submission mode", async () => {
     const user = userEvent.setup();
     render(<NewTaskPage onCreated={vi.fn()} />);
     await screen.findByText("Web渗透测试");
     expect(screen.queryByRole("spinbutton")).not.toBeInTheDocument();
+    expect(screen.queryByRole("checkbox", { name: "自动提交 Flag" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /AOE多题/ }));
+    const autoSubmit = screen.getByRole("checkbox", { name: "自动提交 Flag" });
+    expect(autoSubmit).toBeChecked();
+    await user.click(autoSubmit);
     const first = screen.getByRole("spinbutton", { name: /第一次尝试/ });
     const second = screen.getByRole("spinbutton", { name: /第二次尝试/ });
     const joint = screen.getByRole("spinbutton", { name: /共同攻坚/ });
@@ -63,6 +67,6 @@ describe("NewTaskPage", () => {
     await user.type(screen.getByLabelText(/描述/), "Enumerate and solve the supplied questions");
     await user.click(screen.getByRole("button", { name: "创建并启动" }));
     await waitFor(() => expect(mocks.createTask).toHaveBeenCalledWith(expect.objectContaining({ sceneId: "aoe",
-      aoeFirstAttemptMinutes: 5, aoeSecondAttemptMinutes: 10, aoeJointMinutes: 25 })));
+      aoeFirstAttemptMinutes: 5, aoeSecondAttemptMinutes: 10, aoeJointMinutes: 25, aoeAutoSubmitFlag: false })));
   });
 });

@@ -69,6 +69,7 @@ class TaskCoordinator:
         aoe_first_attempt_minutes: int | None = None,
         aoe_second_attempt_minutes: int | None = None,
         aoe_joint_minutes: int | None = None,
+        aoe_auto_submit_flag: bool = True,
     ):
         scene = self.config.scene(scene_id)
         model_overrides = model_overrides or {}
@@ -93,6 +94,7 @@ class TaskCoordinator:
             {"aoe_attempt_seconds": aoe_attempt_minutes * 60})
         task = await self.storage.create_task(title, scene.id, task_id, metadata={
             **budget_metadata, "aoe_phase": "collecting",
+            "aoe_auto_submit_flag": aoe_auto_submit_flag,
             "aoe_scout_mode": "collection_only", "scout_complete": False,
         } if scene_id == "aoe" else None)
         self.config.ensure_task_directories(task.id)

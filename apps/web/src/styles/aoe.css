@@ -47,6 +47,10 @@
 .aoe-budget-inputs { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 14px; }
 .aoe-budget-inputs label { display: flex; flex-direction: column; gap: 8px; font-size: 12px; }
 .aoe-budget-field > p { margin: 12px 0 0; color: var(--c-text-muted); font-size: 12px; line-height: 1.7; }
+.aoe-submission-option { display: grid; gap: 6px; }
+.aoe-submission-option label { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.aoe-submission-option input { width: 16px; height: 16px; min-height: 0; margin: 0; padding: 0; accent-color: var(--c-accent); }
+.aoe-submission-option small { color: var(--c-text-muted); font-size: 12px; }
 .aoe-worker-record h3 { margin: 0; font-size: 14px; }
 .aoe-worker-record > section + section { margin-top: 24px; padding-top: 20px; border-top: 1px solid var(--c-border); }
 .aoe-worker-record header p { color: var(--c-text-muted); font-size: 12px; line-height: 1.7; }

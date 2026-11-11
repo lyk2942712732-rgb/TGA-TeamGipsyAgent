@@ -339,7 +339,8 @@ class AOERuntime:
 
     async def register_questions(self, parent_id: UUID, specifications: list[AOEQuestionInput]) -> dict:
         async with self.locks[parent_id]:
-            await self._collecting_parent(parent_id)
+            parent = await self._collecting_parent(parent_id)
+            auto_submit_flag = parent.metadata.get("aoe_auto_submit_flag", True)
             existing = {q.metadata["source_key"]: q for q in await self.storage.list_questions(parent_id)}
             if not specifications or len({spec.source_key for spec in specifications}) != len(specifications):
                 raise ContractError("Supply a nonempty batch with distinct original source keys")
@@ -380,6 +381,7 @@ class AOERuntime:
                         **{key: value for key, value in payload.items()
                            if key not in {"title", "attachments", "target", "submission"}},
                         "registration_digest": fingerprint,
+                        "aoe_auto_submit_flag": auto_submit_flag,
                         "ordinal": len(existing),
                         "status": "preparing",
                         "scout_ready": False,
@@ -388,8 +390,9 @@ class AOERuntime:
                     },
                 )
                 self.targets.register(question.id, spec.target)
-                self.submissions.register(question.id, spec.submission or
-                    self.submissions.legacy_spec(question, spec.target.model_dump(mode="json")))
+                if auto_submit_flag:
+                    self.submissions.register(question.id, spec.submission or
+                        self.submissions.legacy_spec(question, spec.target.model_dump(mode="json")))
                 registered_agents = {run.agent_id for run in await self.storage.list_agents(question.id)}
                 for run in await self.storage.list_agents(parent_id):
                     if run.agent_id not in registered_agents:
@@ -408,8 +411,10 @@ class AOERuntime:
                 text = (
                     f"题目：{spec.title}\n原始题目 ID（source_key）：{spec.source_key}"
                     f"\n内部题目 ID：{question_id}\n\n{spec.description}"
-                    f"\n\n连接信息：{spec.connection_info}\n提交要求：{spec.submission_instructions}"
+                    f"\n\n连接信息：{spec.connection_info}"
                 )
+                if auto_submit_flag:
+                    text += f"\n提交要求：{spec.submission_instructions}"
                 await self.board.publish(
                     question.id,
                     SYSTEM_ACTOR,
@@ -694,7 +699,9 @@ class AOERuntime:
     async def _launch_attempt(self, parent_id: UUID, question: TaskRun, attempt: dict, *, fresh: bool) -> None:
         await self.overview.prepare(parent_id)
         agent_id = attempt["agent_id"]
-        self.submissions.write_context(question, agent_id)
+        auto_submit_flag = question.metadata.get("aoe_auto_submit_flag", True)
+        if auto_submit_flag:
+            self.submissions.write_context(question, agent_id)
         slot = await self.storage.get_agent(parent_id, agent_id)
         binding = self.config.resolve_agent(agent_id, slot.provider_id, slot.model_id, slot.protocol)
         pointer = (
@@ -756,6 +763,7 @@ class AOERuntime:
                     task_id=question.id,
                     agent=binding,
                     aoe_parent_id=parent_id,
+                    aoe_auto_submit_flag=auto_submit_flag,
                     fresh_session=fresh,
                     attempt_id=attempt["id"],
                     attempt_deadline=attempt["deadline"],

@@ -90,6 +90,8 @@ class Submissions:
         return None
 
     def spec(self, question):
+        if not question.metadata.get("aoe_auto_submit_flag", True):
+            return None
         if question.id in self.specs:
             return self.specs[question.id]
         path = self.config.task_path(question.id) / "question.json"

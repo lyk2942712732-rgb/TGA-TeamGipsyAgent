@@ -30,6 +30,7 @@ class LaunchSpec:
     target_mode: str = "unknown"
     target_addresses: tuple[str, ...] = ()
     evidence_agents: tuple[str, ...] = ()
+    aoe_auto_submit_flag: bool = True
 
 
 class ContainerRuntime(Protocol):
@@ -220,6 +221,7 @@ class DockerContainerRuntime:
                     'Then solve only the assigned question from the initial question blackboard. '
                     'Do not reread the blackboard or overview each turn; hooks deliver subsequent question updates.')
                 environment.update(TGA3_FORCE_NEW_SESSION="1" if spec.fresh_session else "0",
+                    TGA3_AOE_AUTO_SUBMIT_FLAG="1" if spec.aoe_auto_submit_flag else "0",
                     TGA3_TARGET_MODE=spec.target_mode,
                     TGA3_TARGET_ADDRESSES=json.dumps(spec.target_addresses),
                     TGA3_ATTEMPT_ID=spec.attempt_id or "", TGA3_ATTEMPT_DEADLINE=str(spec.attempt_deadline or ""),
