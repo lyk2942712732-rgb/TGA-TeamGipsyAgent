@@ -47,6 +47,11 @@ export type AgentModelOptions = {
 };
 
 const pendingFiles = new Map<string, File>();
+export type KnowledgeSource = "online" | "local";
+export type KnowledgeSources = { online: { available: boolean }; local: { available: boolean; documents: number; reason?: string; revision?: string } };
+export async function fetchKnowledgeSources(): Promise<KnowledgeSources> {
+  return requestJson<KnowledgeSources>("/api/v3/knowledge-sources");
+}
 
 export function takeStagedFile(assetId: string): File | undefined {
   const file = pendingFiles.get(assetId);
@@ -95,12 +100,14 @@ export async function createTask(input: {
   aoeSecondAttemptMinutes?: number;
   aoeJointMinutes?: number;
   aoeAutoSubmitFlag?: boolean;
+  knowledgeSource?: KnowledgeSource;
 }): Promise<TGA3TaskListItem> {
   const form = new FormData();
   form.set("title", input.title);
   form.set("scene_id", input.sceneId);
   form.set("prompt", input.prompt);
   form.set("agent_models", JSON.stringify(input.agentModels));
+  form.set("knowledge_source", input.knowledgeSource ?? "online");
   if (input.sceneId === "aoe") {
     form.set("aoe_auto_submit_flag", String(input.aoeAutoSubmitFlag ?? true));
     if ([input.aoeFirstAttemptMinutes, input.aoeSecondAttemptMinutes, input.aoeJointMinutes].some(value => value !== undefined)) {

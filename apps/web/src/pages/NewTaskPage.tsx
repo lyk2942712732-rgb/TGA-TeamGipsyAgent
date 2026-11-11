@@ -1,8 +1,8 @@
 import { type ChangeEvent, type ClipboardEvent, type DragEvent, useEffect, useMemo, useRef, useState } from "react";
 import { Check, FileText, Image, Paperclip, Play, X } from "lucide-react";
 import {
-  createTask, deleteStagedInput, fetchAgentModelOptions, listScenes, stageInput,
-  type AgentModelOptions, type StagedAsset,
+  createTask, deleteStagedInput, fetchAgentModelOptions, fetchKnowledgeSources, listScenes, stageInput,
+  type AgentModelOptions, type StagedAsset, type KnowledgeSource, type KnowledgeSources,
 } from "../api/tga3-tasks";
 import type { ProviderProtocol, SceneConfig } from "../api/tga3-config";
 import { TASK_MODES, type TaskMode } from "../modes";
@@ -18,6 +18,9 @@ export function NewTaskPage({ onCreated, onCancel = () => history.back() }: { on
   const [sceneId, setSceneId] = useState<TaskMode>("penetration_test");
   const [aoeMinutes, setAoeMinutes] = useState({ first: "30", second: "15", joint: "20" });
   const [aoeAutoSubmitFlag, setAoeAutoSubmitFlag] = useState(true);
+  const [knowledgeSource, setKnowledgeSource] = useState<KnowledgeSource>("online");
+  const [knowledgeSources, setKnowledgeSources] = useState<KnowledgeSources | null>(null);
+  const [knowledgeError, setKnowledgeError] = useState("");
   const [scenes, setScenes] = useState<SceneConfig[]>([]);
   const [assets, setAssets] = useState<StagedAsset[]>([]);
   const [agentOptions, setAgentOptions] = useState<AgentModelOptions | null>(null);
@@ -28,6 +31,7 @@ export function NewTaskPage({ onCreated, onCancel = () => history.back() }: { on
   const assetsRef = useRef<StagedAsset[]>([]);
 
   useEffect(() => { void listScenes().then((value) => setScenes(value.scenes)).catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "无法读取场景")); }, []);
+  useEffect(() => { void fetchKnowledgeSources().then(setKnowledgeSources).catch(() => setKnowledgeError("无法读取知识库状态，请刷新后重试。")); }, []);
   useEffect(() => {
     void fetchAgentModelOptions(sceneId).then((value) => {
       setAgentOptions(value);
@@ -69,7 +73,7 @@ export function NewTaskPage({ onCreated, onCancel = () => history.back() }: { on
     setBusy(true); setError("");
     try {
       const task = await createTask({
-        title: name.trim(), sceneId, prompt: description.trim(),
+        title: name.trim(), sceneId, prompt: description.trim(), knowledgeSource,
         fileIds: assets.map((asset) => asset.id), agentModels,
         ...(sceneId === "aoe" ? { aoeAutoSubmitFlag, aoeFirstAttemptMinutes: Number(aoeMinutes.first),
           aoeSecondAttemptMinutes: Number(aoeMinutes.second), aoeJointMinutes: Number(aoeMinutes.joint) } : {}),
@@ -90,6 +94,17 @@ export function NewTaskPage({ onCreated, onCancel = () => history.back() }: { on
     <section className="new-task-modal" aria-labelledby="new-task-title">
       <header className="new-task-modal-head"><div><h1 id="new-task-title">创建任务</h1><p>选择场景并提供初始提示，也可以为本任务覆盖 Solver 默认模型。</p></div><button className="icon-button" aria-label="关闭" onClick={onCancel}><X size={20} /></button></header>
       <div className="new-task-modal-body">
+        <label className="wide knowledge-source-field">Worker 知识库
+          <select aria-label="Worker 知识库" value={knowledgeSource} onChange={event => setKnowledgeSource(event.target.value as KnowledgeSource)}>
+            <option value="online" disabled={knowledgeSources?.online.available === false}>在线知识库 · ctf42</option>
+            <option value="local" disabled={!knowledgeSources?.local.available}>本地知识库 · CTF Wiki{knowledgeSources && !knowledgeSources.local.available ? "（未就绪）" : ""}</option>
+          </select>
+          <small>{knowledgeError || (!knowledgeSources ? "正在检查知识库…" : knowledgeSource === "local"
+            ? `本地已索引 ${knowledgeSources.local.documents} 篇文档，检索与正文读取无需联网。`
+            : "在线检索技法、历史题目及 Writeup 链接，需要网络连接。")}</small>
+          {knowledgeSources && !knowledgeSources.local.available ? <small>本地 CTF Wiki 尚未就绪，请先运行 tga3 sync-knowledge。</small> : null}
+          {knowledgeSources && !knowledgeSources.online.available && knowledgeSource === "online" ? <small role="alert">在线知识库已禁用，请选择已就绪的本地知识库。</small> : null}
+        </label>
         <label className="wide">任务名称<input autoFocus maxLength={100} value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：JWT 密钥泄露" /></label>
         <fieldset className="scene-picker"><legend>题目类型：场景</legend><div className="scene-card-grid">
           {scenes.filter((scene): scene is SceneConfig & { id: TaskMode } => TASK_MODES.includes(scene.id as TaskMode)).map((scene) => <button type="button" key={scene.id} className={sceneId === scene.id ? "selected" : ""} onClick={() => setSceneId(scene.id)}><span className="scene-code">{SCENE_ICONS[scene.id]}</span><strong>{scene.name}</strong><small>{scene.description}</small>{sceneId === scene.id ? <Check size={17} /> : null}</button>)}
@@ -124,7 +139,7 @@ export function NewTaskPage({ onCreated, onCancel = () => history.back() }: { on
         <aside className="new-task-config-note"><strong>{sceneId === "aoe" ? "收集题目 → 分题解题 → 逐题报告" : "Scout → Workers → Reporter"}</strong><p>{sceneId === "aoe" ? "四个 Worker 优先领取未尝试的简单题，题目各自保留黑板、文件和报告。" : `${selected?.name ?? "场景"}提示词、题目描述和附件索引将自动进入黑板。`}</p></aside>
         {error ? <p className="inline-error" role="alert">{error}</p> : null}
       </div>
-      <footer className="new-task-modal-actions"><button type="button" className="ref-secondary-button" disabled={busy} onClick={onCancel}>取消</button><button type="button" className="ref-primary-button" disabled={!ready} onClick={() => void submit()}><Play size={16} />{busy ? "创建中…" : "创建并启动"}</button></footer>
+      <footer className="new-task-modal-actions"><button type="button" className="ref-secondary-button" disabled={busy} onClick={onCancel}>取消</button><button type="button" className="ref-primary-button" disabled={!ready || !knowledgeSources?.[knowledgeSource].available} onClick={() => void submit()}><Play size={16} />{busy ? "创建中…" : "创建并启动"}</button></footer>
     </section>
   </div>;
 }

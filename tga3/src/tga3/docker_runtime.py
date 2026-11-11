@@ -13,6 +13,7 @@ from uuid import UUID, uuid4
 from .action_logs import read_action_log
 from .config import ResolvedAgent, TGA3Config
 from .errors import RuntimeUnavailableError
+from .knowledge import KnowledgeSource
 
 
 @dataclass(frozen=True)
@@ -31,6 +32,7 @@ class LaunchSpec:
     target_addresses: tuple[str, ...] = ()
     evidence_agents: tuple[str, ...] = ()
     aoe_auto_submit_flag: bool = True
+    knowledge_source: KnowledgeSource = "online"
 
 
 class ContainerRuntime(Protocol):
@@ -184,9 +186,11 @@ class DockerContainerRuntime:
             findings = self.config.task_path(spec.task_id, 'findings', binding.agent_id)
             self._ensure_worker_directory(findings)
             volumes[str(findings)] = {'bind': '/findings', 'mode': 'rw'}
+            environment["TGA3_KNOWLEDGE_SOURCE"] = spec.knowledge_source
+            base = runtime.blackboard_mcp_url.rstrip("/").removesuffix("/mcp")
             environment["TGA3_CTF_KNOWLEDGE_MCP_URL"] = (
-                runtime.blackboard_mcp_url.rstrip('/').removesuffix('/mcp') + '/knowledge-mcp/'
-                if runtime.ctf_knowledge_mcp_url.strip() else '')
+                base + "/local-knowledge-mcp/" if spec.knowledge_source == "local" else
+                base + "/knowledge-mcp/" if runtime.ctf_knowledge_mcp_url.strip() else "")
         if question_scope := self.config.question_scope(spec.task_id):
             # Reporter also launches through the ordinary report path. Its
             # journal must retain question provenance even without attempt args.

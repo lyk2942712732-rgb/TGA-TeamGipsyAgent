@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   createTask: vi.fn(async () => ({ id: "task-created" })),
   stageInput: vi.fn(async (file: File) => ({ id: `asset-${file.name}`, originalName: file.name, mimeType: file.type, mediaKind: "image", size: file.size, status: "uploaded" as const })),
   deleteStagedInput: vi.fn(),
+  fetchKnowledgeSources: vi.fn(async () => ({ online: { available: true }, local: { available: true, documents: 773 } })),
   listScenes: vi.fn(async () => ({ schema_version: 1, scenes: [{ id: "penetration_test", name: "渗透测试", description: "Web target", system_prompt: "Test safely" }] })),
   fetchAgentModelOptions: vi.fn(async () => ({ scene_id: "penetration_test", agents: [{ id: "worker-openai", display_name: "OpenAI Worker", role: "worker", runtime: "codex_cli", model: { provider_id: "openai", provider_name: "OpenAI", model_id: "gpt-test", model_name: "gpt-test", protocol: "openai_responses", ready: true } }], models: [{ provider_id: "openai", provider_name: "OpenAI", model_id: "gpt-test", model_name: "gpt-test", protocol: "openai_responses", ready: true }] })),
 }));
@@ -16,7 +17,7 @@ vi.stubGlobal("URL", { createObjectURL: vi.fn(() => "blob:image"), revokeObjectU
 import { NewTaskPage } from "./NewTaskPage";
 
 describe("NewTaskPage", () => {
-  beforeEach(() => { vi.clearAllMocks(); mocks.listScenes.mockResolvedValue(sceneConfig); });
+  beforeEach(() => { vi.clearAllMocks(); mocks.listScenes.mockResolvedValue(sceneConfig); mocks.fetchKnowledgeSources.mockResolvedValue({ online: { available: true }, local: { available: true, documents: 773 } }); });
 
   it("loads TGA3 scenes and task-level agent models", async () => {
     render(<NewTaskPage onCreated={vi.fn()} />);
@@ -40,7 +41,7 @@ describe("NewTaskPage", () => {
     await user.upload(document.querySelector<HTMLInputElement>('input[type="file"]')!, new File(["png"], "challenge.png", { type: "image/png" }));
     await user.click(await screen.findByRole("button", { name: "创建并启动" }));
     await waitFor(() => expect(mocks.createTask).toHaveBeenCalledWith({
-      title: "Web challenge", sceneId: "ai_security", prompt: "Find the flag",
+      title: "Web challenge", sceneId: "ai_security", prompt: "Find the flag", knowledgeSource: "online",
       fileIds: ["asset-challenge.png"],
       agentModels: { "worker-openai": { provider_id: "openai", model_id: "gpt-test", protocol: "openai_responses" } },
     }));
@@ -53,6 +54,8 @@ describe("NewTaskPage", () => {
     expect(screen.queryByRole("spinbutton")).not.toBeInTheDocument();
     expect(screen.queryByRole("checkbox", { name: "自动提交 Flag" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /AOE多题/ }));
+    await user.selectOptions(screen.getByRole("combobox", { name: "Worker 知识库" }), "local");
+    expect(screen.getByText(/本地已索引 773 篇文档/)).toBeInTheDocument();
     const autoSubmit = screen.getByRole("checkbox", { name: "自动提交 Flag" });
     expect(autoSubmit).toBeChecked();
     await user.click(autoSubmit);
@@ -66,7 +69,13 @@ describe("NewTaskPage", () => {
     await user.type(screen.getByLabelText("任务名称"), "Batch");
     await user.type(screen.getByLabelText(/描述/), "Enumerate and solve the supplied questions");
     await user.click(screen.getByRole("button", { name: "创建并启动" }));
-    await waitFor(() => expect(mocks.createTask).toHaveBeenCalledWith(expect.objectContaining({ sceneId: "aoe",
+    await waitFor(() => expect(mocks.createTask).toHaveBeenCalledWith(expect.objectContaining({ sceneId: "aoe", knowledgeSource: "local",
       aoeFirstAttemptMinutes: 5, aoeSecondAttemptMinutes: 10, aoeJointMinutes: 25, aoeAutoSubmitFlag: false })));
+  });
+  it("disables local selection until an index is available", async () => {
+    mocks.fetchKnowledgeSources.mockResolvedValueOnce({ online: { available: true }, local: { available: false, documents: 0 } });
+    render(<NewTaskPage onCreated={vi.fn()} />);
+    expect(await screen.findByRole("option", { name: /本地知识库.*未就绪/ })).toBeDisabled();
+    expect(screen.getByText(/请先运行 tga3 sync-knowledge/)).toBeInTheDocument();
   });
 });

@@ -21,6 +21,8 @@ from .errors import TGA3Error
 from .file_publications import FilePublications
 from .host_agents import Automation, CliHostModel, HostModel
 from .knowledge_relay import KnowledgeRelay
+from .knowledge import KnowledgeSource
+from .local_knowledge import LocalKnowledge, build_local_knowledge_mcp
 from .mcp_server import build_scout_mcp, build_web_mcp
 from .model_discovery import discover_provider_models
 from .provider_profiles import PROVIDER_PROFILES, ProviderProtocol
@@ -83,6 +85,8 @@ def create_app(
     aoe_scout_mcp = build_scout_mcp(config, coordinator.scout_intel, aoe=coordinator.aoe)
     web_search = WebSearchService(config, storage)
     knowledge_relay = KnowledgeRelay(config)
+    local_knowledge = LocalKnowledge(config)
+    local_knowledge_mcp = build_local_knowledge_mcp(config, local_knowledge)
     web_mcp = build_web_mcp(config, web_search)
     delivery = BlackboardDelivery(config, storage, coordinator.blackboard)
     usage = TokenUsageTracker(config, storage)
@@ -90,7 +94,8 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
-        async with scout_mcp.session_manager.run(), aoe_scout_mcp.session_manager.run(), web_mcp.session_manager.run():
+        async with (scout_mcp.session_manager.run(), aoe_scout_mcp.session_manager.run(),
+                    web_mcp.session_manager.run(), local_knowledge_mcp.session_manager.run()):
             await coordinator.restore_aoe()
             async def clean_target_leases():
                 while True:
@@ -190,6 +195,7 @@ def create_app(
         aoe_second_attempt_minutes: Annotated[int | None, Form(ge=1, le=1440)] = None,
         aoe_joint_minutes: Annotated[int | None, Form(ge=1, le=1440)] = None,
         aoe_auto_submit_flag: Annotated[bool, Form()] = True,
+        knowledge_source: Annotated[KnowledgeSource, Form()] = "online",
         files: Annotated[list[UploadFile] | None, File()] = None,
     ) -> dict[str, Any]:
         raw_overrides = json.loads(agent_models)
@@ -221,6 +227,7 @@ def create_app(
             aoe_second_attempt_minutes=aoe_second_attempt_minutes,
             aoe_joint_minutes=aoe_joint_minutes,
             aoe_auto_submit_flag=aoe_auto_submit_flag,
+            knowledge_source=knowledge_source,
         )
         return task.model_dump(mode="json")
 
@@ -709,7 +716,13 @@ def create_app(
     async def agent_socket(websocket: WebSocket, task_id: UUID, agent_id: str) -> None:
         await coordinator.gateway.attach(task_id, agent_id, websocket)
 
+    @api.get("/knowledge-sources")
+    async def knowledge_sources():
+        return {"online": {"available": bool(config.runtime.ctf_knowledge_mcp_url.strip())},
+                "local": await asyncio.to_thread(local_knowledge.status)}
+
     app.include_router(api)
+    app.mount("/local-knowledge-mcp", local_knowledge_mcp.streamable_http_app())
     app.mount("/scout-mcp", scout_mcp.streamable_http_app())
     app.mount("/aoe-scout-mcp", aoe_scout_mcp.streamable_http_app())
     app.mount('/web-mcp', web_mcp.streamable_http_app())

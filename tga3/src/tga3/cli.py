@@ -12,6 +12,7 @@ from .app import create_app
 from .config import TGA3Config
 from .docker_runtime import DockerContainerRuntime
 from .storage import PostgresStorage
+from .local_knowledge import LocalKnowledge
 
 
 def parser() -> argparse.ArgumentParser:
@@ -20,6 +21,8 @@ def parser() -> argparse.ArgumentParser:
     sub = result.add_subparsers(dest="command", required=True)
     sub.add_parser("init-db", help="Apply schema.sql to an empty PostgreSQL database")
     sub.add_parser("serve", help="Run the long-lived control plane")
+    sync = sub.add_parser("sync-knowledge", help="Download and index local CTF Wiki Markdown")
+    sync.add_argument("--update", action="store_true", help="Fast-forward the existing checkout before indexing")
     return result
 
 
@@ -45,7 +48,10 @@ async def _serve(config: TGA3Config) -> None:
 def main() -> None:
     args = parser().parse_args()
     config = TGA3Config(args.config_dir)
-    if args.command == "init-db":
+    if args.command == "sync-knowledge":
+        import json
+        print(json.dumps(LocalKnowledge(config).sync(update=args.update), ensure_ascii=False))
+    elif args.command == "init-db":
         asyncio.run(_init_db(config))
     else:
         asyncio.run(_serve(config))

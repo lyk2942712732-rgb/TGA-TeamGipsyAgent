@@ -65,6 +65,16 @@ describe("live collaboration graph", () => {
     expect(toolActivity(event("ctf42-claude", "worker-claude", { payload: { tool: "mcp__ctf42__list_techniques", input: { query: "heap" } } }))).toMatchObject({ from: "knowledge", to: "agent:worker-claude" });
     expect(toolActivity(event("ctf42-codex", "worker-openai", { payload: { tool: "mcp_tool_call", server: "ctf42" } }))).toMatchObject({ from: "knowledge", to: "agent:worker-openai" });
   });
+  it("shows local knowledge details and routes local chapter calls to knowledge", () => {
+    const base = snapshot();
+    base.task.metadata = { knowledge_source: "local" };
+    render(<TGA3RuntimeGraph snapshot={base} />);
+    expect(screen.getByText("CTF Wiki · 本地章节 / 全文检索")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /CTF 知识库/ }));
+    expect(screen.getByRole("link", { name: "查看 CTF Wiki 来源" })).toHaveAttribute("href", "https://github.com/ctf-wiki/ctf-wiki");
+    expect(toolActivity(event("wiki-claude", "worker-claude", { payload: { tool: "mcp__ctf_wiki__read_document" } }))).toMatchObject({ from: "knowledge", to: "agent:worker-claude" });
+    expect(toolActivity(event("wiki-codex", "worker-openai", { payload: { tool: "mcp_tool_call", server: "ctf_wiki" } }))).toMatchObject({ from: "knowledge", to: "agent:worker-openai" });
+  });
   it("opens knowledge details and highlights only actual retrieval events", () => {
     const base = snapshot(), view = render(<TGA3RuntimeGraph snapshot={base} />);
     const node = screen.getByRole("button", { name: /CTF 知识库/ });

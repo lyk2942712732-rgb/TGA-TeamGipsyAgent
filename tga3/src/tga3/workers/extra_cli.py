@@ -7,7 +7,7 @@ import json
 import os
 from pathlib import Path
 
-from ..knowledge import SERVER_NAME, worker_knowledge_server
+from ..knowledge import worker_knowledge_name, worker_knowledge_server
 from .cli_adapter import CliAdapter
 from .prompts import worker_instructions
 
@@ -17,7 +17,7 @@ def servers(adapter):
     if url := os.environ.get("TGA3_WEB_SEARCH_MCP_URL"):
         result["web"] = {"url": url, "headers": adapter.mcp_headers()}
     if knowledge := worker_knowledge_server():
-        result[SERVER_NAME] = knowledge
+        result[worker_knowledge_name()] = knowledge
     return result
 
 

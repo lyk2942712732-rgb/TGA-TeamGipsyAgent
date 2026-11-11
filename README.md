@@ -88,6 +88,16 @@ docker exec tga3-postgres pg_dump -U tga3 tga3 > tga3-backup.sql
 
 只读预检/验收入口：`python3 tga3/scripts/verify-deployment.py --source-dir .`。服务排障先看 `journalctl -u tga3`、数据库健康状态、容器日志以及挂载权限，不重复创建任务试错。
 
+### 本地浏览 CTF Wiki
+
+启动 Docker 后运行以下命令，将 CTF Wiki 作为独立文档站部署在本机：
+
+```bash
+docker run -d --name tga-ctf-wiki -p 127.0.0.1:4100:80 ctfwiki/ctf-wiki
+```
+
+在浏览器打开 [本地 CTF Wiki](http://127.0.0.1:4100/)，也可以访问 [在线 CTF Wiki](https://ctf-wiki.org/)。首次运行需要拉取镜像。之后可用 `docker stop tga-ctf-wiki` 停止站点，用 `docker start tga-ctf-wiki` 恢复。其他部署方式见 [CTF Wiki 官方说明](https://github.com/ctf-wiki/ctf-wiki/blob/master/README-zh_CN.md#how-to-build)。
+
 ## 配置与数据
 
 `models.json` 保存供应商端点、模型和密钥；`agents.json` 保存角色、CLI 与提示词；`scenes.json` 保存场景；`runtime.json` 保存目录、资源和通信配置。新任务读取保存后的配置，已有任务保留自己的运行状态。

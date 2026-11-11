@@ -29,6 +29,8 @@ from .domain import (
 )
 from .events import TaskEvents
 from .gateway import AgentGateway
+from .knowledge import KnowledgeSource
+from .local_knowledge import LocalKnowledge
 from .provider_profiles import ProviderProtocol
 from .scout_intel import ScoutIntelStore
 from .storage import Storage
@@ -70,7 +72,14 @@ class TaskCoordinator:
         aoe_second_attempt_minutes: int | None = None,
         aoe_joint_minutes: int | None = None,
         aoe_auto_submit_flag: bool = True,
+        knowledge_source: KnowledgeSource = "online",
     ):
+        if knowledge_source not in {"online", "local"}:
+            raise ValueError("knowledge_source must be online or local")
+        if knowledge_source == "local":
+            status = await asyncio.to_thread(LocalKnowledge(self.config).status)
+            if not status["available"]:
+                raise ValueError("本地 CTF Wiki 尚未建立索引，请先运行 tga3 sync-knowledge")
         scene = self.config.scene(scene_id)
         model_overrides = model_overrides or {}
         unknown_agents = sorted(set(model_overrides).difference(self.config.agents.agents))
@@ -92,11 +101,12 @@ class TaskCoordinator:
             for stage, minutes in stage_minutes.items()
         }} if any(value is not None for value in stage_minutes.values()) else
             {"aoe_attempt_seconds": aoe_attempt_minutes * 60})
-        task = await self.storage.create_task(title, scene.id, task_id, metadata={
-            **budget_metadata, "aoe_phase": "collecting",
-            "aoe_auto_submit_flag": aoe_auto_submit_flag,
-            "aoe_scout_mode": "collection_only", "scout_complete": False,
-        } if scene_id == "aoe" else None)
+        metadata = {"knowledge_source": knowledge_source}
+        if scene_id == "aoe":
+            metadata.update({**budget_metadata, "aoe_phase": "collecting",
+                             "aoe_auto_submit_flag": aoe_auto_submit_flag,
+                             "aoe_scout_mode": "collection_only", "scout_complete": False})
+        task = await self.storage.create_task(title, scene.id, task_id, metadata=metadata)
         self.config.ensure_task_directories(task.id)
         await self.storage.update_task(task.id, state=RunState.STARTING)
         for agent_id, configured in self.config.agents.agents.items():
@@ -224,13 +234,15 @@ class TaskCoordinator:
                       f"开始启动 {len(await self._worker_runs(task_id))} 位 Worker。"),
                 payload={"intel_count": intel_count, "scout_phases": outcomes},
             )
-            await self.storage.update_task(task_id, state=RunState.RUNNING)
+            task = await self.storage.update_task(task_id, state=RunState.RUNNING)
             for agent_id in self.config.worker_agent_ids:
                 run = await self.storage.update_agent(
                     task_id, agent_id, desired_state=AgentState.RUNNING, actual_state=AgentState.STARTING
                 )
                 launch = asyncio.create_task(
-                    self.containers.launch(LaunchSpec(task_id=task_id, agent=bindings[agent_id]))
+                    self.containers.launch(LaunchSpec(
+                        task_id=task_id, agent=bindings[agent_id],
+                        knowledge_source=task.metadata.get("knowledge_source", "online")))
                 )
                 try:
                     container_id = await asyncio.shield(launch)

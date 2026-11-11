@@ -7,13 +7,14 @@ describe("task model options", () => {
   it("sends independent AOE budgets in the actual multipart request", async () => {
     mocks.requestJson.mockResolvedValueOnce({ id: "batch" });
     await createTask({ title: "batch", sceneId: "aoe", prompt: "q", fileIds: [], agentModels: {},
-      aoeFirstAttemptMinutes: 30, aoeSecondAttemptMinutes: 15, aoeJointMinutes: 20, aoeAutoSubmitFlag: false });
+      aoeFirstAttemptMinutes: 30, aoeSecondAttemptMinutes: 15, aoeJointMinutes: 20, aoeAutoSubmitFlag: false, knowledgeSource: "local" });
     const calls = mocks.requestJson.mock.calls;
     const form = calls[calls.length - 1][1].body as FormData;
     expect(form.get("aoe_first_attempt_minutes")).toBe("30");
     expect(form.get("aoe_second_attempt_minutes")).toBe("15");
     expect(form.get("aoe_joint_minutes")).toBe("20");
     expect(form.get("aoe_auto_submit_flag")).toBe("false");
+    expect(form.get("knowledge_source")).toBe("local");
     expect(form.has("aoe_attempt_minutes")).toBe(false);
   });
   it("keeps enabled choices scoped to their endpoint and rejects disabled defaults", async () => {

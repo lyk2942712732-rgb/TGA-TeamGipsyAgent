@@ -3,9 +3,15 @@
 from __future__ import annotations
 
 import os
+from typing import Literal
 
 DEFAULT_MCP_URL = "https://ctf42.online/mcp"
 SERVER_NAME = "ctf42"
+KnowledgeSource = Literal["online", "local"]
+
+
+def worker_knowledge_name() -> str:
+    return "ctf_wiki" if os.environ.get("TGA3_KNOWLEDGE_SOURCE") == "local" else SERVER_NAME
 
 
 def worker_knowledge_server() -> dict | None:
