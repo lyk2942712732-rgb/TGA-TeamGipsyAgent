@@ -43,8 +43,14 @@ class FinalCandidatePublisher:
                                if attempt["agent_id"] == agent_id and attempt.get("outcome") is None), None)
                 if active is None or active.get("deadline") is None or active["deadline"] <= time.time():
                     raise ContractError("AOE attempt has ended; a late candidate cannot mark this question solved")
-                action_id = self.submissions.validate(task, body)
-                body = body.model_copy(update={"submission_action_id": action_id})
+                if task.metadata.get("aoe_auto_submit_flag", True):
+                    action_id = self.submissions.validate(task, body)
+                    body = body.model_copy(update={"submission_action_id": action_id})
+                else:
+                    flag = body.conclusion.strip()
+                    if not flag or len(flag) > 4096:
+                        raise ContractError("Final conclusion must contain the exact flag, at most 4096 characters")
+                    body = body.model_copy(update={"conclusion": flag, "submission_action_id": None})
             run = await self.board.storage.get_agent(task_id, agent_id)
             if run.metadata.get("blackboard_cursor", -1) < task.blackboard_seq:
                 raise ContractError("Unread blackboard updates: consume the native checkpoint before resubmitting")

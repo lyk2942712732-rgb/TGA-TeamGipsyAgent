@@ -39,10 +39,14 @@ async def test_create_aoe_with_separate_stage_budgets_and_reject_invalid_values(
                        "aoe_first_attempt_minutes": "30", "aoe_second_attempt_minutes": "15", "aoe_joint_minutes": "20"}
             response = await client.post("/api/v3/tasks", data=payload)
             assert response.status_code == 200
+            assert response.json()["metadata"]["aoe_auto_submit_flag"] is True
             assert response.json()["metadata"]["aoe_attempt_budgets"] == {"first": 1800, "second": 900, "joint": 1200}
             assert "aoe_attempt_seconds" not in response.json()["metadata"]
             overview = await client.get(f'/api/v3/tasks/{response.json()["id"]}/questions')
             assert overview.json()["attempt_budgets"] == {"first": 1800, "second": 900, "joint": 1200}
+            manual = await client.post("/api/v3/tasks", data={**payload, "aoe_auto_submit_flag": "false"})
+            assert manual.status_code == 200
+            assert manual.json()["metadata"]["aoe_auto_submit_flag"] is False
             for field in ("aoe_first_attempt_minutes", "aoe_second_attempt_minutes", "aoe_joint_minutes"):
                 for value in ("0", "1441", "1.5"):
                     assert (await client.post("/api/v3/tasks", data={**payload, field: value})).status_code == 422
