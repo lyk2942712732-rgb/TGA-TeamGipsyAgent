@@ -1,4 +1,4 @@
-"""File-backed submission contracts and receipt checks; never submits on an agent's behalf."""
+"""File-backed submission contracts, flag signals and platform receipt checks."""
 
 from __future__ import annotations
 
@@ -63,6 +63,22 @@ def response_objects(text):
         position = start + consumed
         if isinstance(value, dict):
             yield value
+
+
+def receipt_value(receipt, path):
+    value = receipt
+    for part in path.split('.'):
+        value = value.get(part) if isinstance(value, dict) else None
+    return value
+
+
+def accepted_receipt(spec, receipt, status=200):
+    duplicate = bool(spec.duplicate_code and receipt.get('code') == spec.duplicate_code)
+    return (200 <= status < 300 or duplicate) and (
+        duplicate or receipt_value(receipt, spec.success_path) is True
+        and receipt.get('code') in (None, 0, 200, 'ok', 'success')
+    ) and ('total_flag_count' not in receipt or
+           receipt.get('correct_flag_count') == receipt['total_flag_count'])
 
 
 class Submissions:
@@ -146,6 +162,11 @@ class Submissions:
         flag = body.conclusion.strip()
         if not flag or len(flag) > 4096:
             raise SubmissionRejected("Final conclusion must contain the exact flag, at most 4096 characters")
+        # Protection receipts live outside all Worker mounts, and are bound to an exact flag.
+        from .submission_guard import protected_acceptance
+
+        if action_id := protected_acceptance(self.config, question, body, spec):
+            return action_id
         rejected = False
         for agent_id in self.config.worker_agent_ids:
             for action in reversed(self._actions(question, agent_id)):
@@ -205,7 +226,16 @@ class Submissions:
         if self._progress.get(key, (None, None))[0] == signature:
             return self._progress[key][1]
         found = None
-        for action in reversed(self._actions(question, agent_id)[-20:]):
+        for action, flag in self.flag_outputs(question, attempt, self._actions(question, agent_id)[-20:]):
+            found = action['action_id']
+            break
+        self._progress[key] = (signature, found)
+        return found
+
+    def flag_outputs(self, question, attempt, actions):
+        """Yield exact flags from current-attempt output, newest first; never from command literals."""
+        agent_id = attempt['agent_id']
+        for action in reversed(actions):
             operation = action.get("action", {})
             native_read = (operation.get('tool', '').lower() == 'read'
                            and operation.get('input', {}).get('file_path', '').startswith('/workspace/')
@@ -229,9 +259,4 @@ class Submissions:
             for match in FLAG.finditer(text):
                 flag = match[0]
                 if flag not in command and not re.search(r"\.\.\.|<|>|example|local_test", flag, re.I):
-                    found = action["action_id"]
-                    break
-            if found:
-                break
-        self._progress[key] = (signature, found)
-        return found
+                    yield action, flag

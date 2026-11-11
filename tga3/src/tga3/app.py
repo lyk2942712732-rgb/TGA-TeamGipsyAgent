@@ -85,6 +85,9 @@ def create_app(
     delivery = BlackboardDelivery(config, storage, coordinator.blackboard)
     usage = TokenUsageTracker(config, storage)
     publications = FilePublications(config, coordinator.blackboard)
+    from .submission_guard import SubmissionGuard
+
+    submission_guard = SubmissionGuard(config, storage)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
@@ -119,6 +122,7 @@ def create_app(
     app.state.coordinator = coordinator
     app.state.automation = automation
     app.state.publications = publications
+    app.state.submission_guard = submission_guard
     app.state.web_search = web_search
     app.state.experience = automation.experience
     api = APIRouter(prefix="/api/v3")
@@ -666,8 +670,13 @@ def create_app(
     @app.post("/internal/blackboard/{task_id}/{agent_id}/checkpoint")
     async def blackboard_checkpoint(task_id: UUID, agent_id: str, body: dict) -> dict:
         worker = config.agents.agents[agent_id].role == 'worker'
-        if worker and (body.get('completion_hint') or publications.final_pending(task_id, agent_id)):
+        if worker and (body.get('completion_hint') or body.get('submission_failure_action')
+                       or publications.final_pending(task_id, agent_id)):
             await coordinator.aoe.protect_completion(task_id)
+        protection = (await submission_guard.check(task_id, agent_id, str(body['submission_failure_action']))
+                      if worker and body.get('submission_failure_action') else None)
+        if worker and protection is None:
+            protection = await submission_guard.recover(task_id, agent_id)
         file_sync = worker and bool(body.get('file_sync'))
         receipts = await publications.sync_findings(task_id, agent_id) if file_sync else []
         pending_final = file_sync and publications.final_pending(task_id, agent_id)
@@ -680,6 +689,8 @@ def create_app(
             receipts.extend(await publications.sync_final(task_id, agent_id))
         if receipts:
             result = {**result, 'publication_receipts': receipts}
+        if protection:
+            result = {**result, 'submission_protection': protection}
         if worker and not body.get("ack_only"):
             advice = await asyncio.to_thread(
                 automation.experience.deliver, task_id, agent_id,

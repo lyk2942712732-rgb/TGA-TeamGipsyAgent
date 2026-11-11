@@ -211,7 +211,12 @@ def worker_instructions() -> str:
             )
         runtime_context += (
             " A completion hold keeps the same attempt running after a recent flag signal until publication "
-            "succeeds or the task is stopped; it does not make that flag correct."
+            "succeeds or the task is stopped; it does not make that flag correct. "
+            "If a submission returns an explicit wrong-answer receipt, system submission protection may "
+            "retry once using the exact flag detected in your execution output. Read its actual platform "
+            "receipt delivered by the native hook. If accepted, use the returned exact flag and action_id "
+            "as submission_action_id in final-candidate.json; publish your final candidate with Findings. "
+            "A failed protection request is not success and is not automatically retried."
         )
         target_mode = os.environ.get("TGA3_TARGET_MODE", "unknown")
         if target_mode == "managed":

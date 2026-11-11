@@ -18,6 +18,29 @@ from .local_paths import local_paths
 _publication_versions = {}
 
 
+def submission_failure(event, record):
+    if not record or not os.environ.get('TGA3_AOE_PARENT_ID') or os.environ.get('TGA3_AOE_AUTO_SUBMIT_FLAG') == '0':
+        return False
+    from ..submissions import SubmissionSpec, receipt_value, response_objects, result_text
+
+    path = Path(os.environ.get('TGA3_WORKSPACE', '/workspace')) / '.tga3/submission.json'
+    if not path.is_file():
+        return False
+    try:
+        value = json.loads(path.read_text(encoding='utf-8')).get('submission')
+        if not value:
+            return False
+        spec = SubmissionSpec.model_validate(value)
+    except (OSError, ValueError):
+        return False
+    command = record.get('action', {}).get('command', '')
+    if spec.request.url not in command:
+        return False
+    response = event.get('tool_response', '')
+    text = result_text(response if isinstance(response, str) else json.dumps(response))
+    return any(receipt_value(r, spec.success_path) is False for r in response_objects(text))
+
+
 def publications_changed():
     workspace = Path(os.environ.get('TGA3_WORKSPACE', '/workspace'))
     root = Path(os.environ.get('TGA3_FINDINGS', '/findings'))
@@ -46,11 +69,12 @@ def _checkpoint(event: dict, *, client=None, record_action=None) -> dict:
     post_tool = event_name in {"PostToolUse", "PostToolUseFailure"}
     record_action = record_action or record_tool
     record = record_action(event) if post_tool else None
+    failed_submission = submission_failure(event, record) if post_tool else False
     deadline = os.environ.get('TGA3_ATTEMPT_DEADLINE')
     completion_hint = bool(post_tool and record and deadline and float(deadline) - time.time() <= 30
                            and os.environ.get('TGA3_AOE_PARENT_ID')
                            and FLAG.search(str(event.get('tool_response', ''))))
-    if post_tool and not publications_changed() and not completion_hint:
+    if post_tool and not publications_changed() and not completion_hint and not failed_submission:
         return ({"hookSpecificOutput": {"hookEventName": event_name, "additionalContext": result_context(record)}}
                 if record else {})
     state_dir = Path(os.environ.get("TGA3_WORKSPACE", "/workspace")) / ".tga3"
@@ -108,6 +132,7 @@ def _checkpoint(event: dict, *, client=None, record_action=None) -> dict:
             "force_start": force_start,
             "defer_context": bool(event.get('_tga_defer_context')),
             "completion_hint": completion_hint,
+            **({'submission_failure_action': record['action_id']} if failed_submission else {}),
             "experience_generation": experience_generation,
             "experience_ack": (experience_previous.get("delivery_id", "")
                                if experience_previous.get("generation") == experience_generation else ""),
@@ -142,6 +167,8 @@ def _checkpoint(event: dict, *, client=None, record_action=None) -> dict:
         parts.append(context)
     if receipts := delivery.get("publication_receipts"):
         parts.append("TGA system file-import receipts: " + json.dumps(receipts, ensure_ascii=False))
+    if protection := delivery.get('submission_protection'):
+        parts.append('TGA system submission protection: ' + json.dumps(protection, ensure_ascii=False))
     if not parts:
         return {}
     result = {
