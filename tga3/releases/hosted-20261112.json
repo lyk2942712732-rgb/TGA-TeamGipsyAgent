@@ -1,0 +1,44 @@
+{
+  "release": "hosted-20261112",
+  "branch": "codex/tsecbench-hosted",
+  "source_commit": "a13236c2a1227f17fdb517e48154e08cbb448ec8",
+  "image": "tga3-hosted:20261112",
+  "filename": "tga3-hosted-20261112-linux-amd64.tar",
+  "bytes": 1188392448,
+  "sha256": "fbfa69af70add54ef5460ff5d434528ed7b43cbfff39d71446b2e181c3808a75",
+  "verification": {
+    "cli_versions": {
+      "codex": "codex-cli 0.158.0",
+      "claude": "2.1.123 (Claude Code)",
+      "opencode": "1.19.5",
+      "qwen": "0.27.0"
+    },
+    "smoke": {
+      "passed": true,
+      "network": "none",
+      "real_cli_workers": [
+        "messages-model",
+        "opencode-model",
+        "qwen-model",
+        "responses-model"
+      ],
+      "submitted": 4,
+      "reports": 0,
+      "model_calls": 46,
+      "knowledge_tools": 0,
+      "runtime": "one container, no Docker socket"
+    },
+    "image_id": "sha256:42d27090233781b2ed3f5c5c4dc7a088dab8b09e0a60ad027157a1e66dd71fd0",
+    "image_bytes": 1188366286,
+    "platform": "linux/amd64",
+    "source_verified": true,
+    "frontend_absent": true,
+    "configuration_check": true
+  },
+  "download_url": "https://github.com/lyk2942712732-rgb/TGA-TeamGipsyAgent/releases/download/hosted-20261112/tga3-hosted-20261112-linux-amd64.tar",
+  "env_url": "https://github.com/lyk2942712732-rgb/TGA-TeamGipsyAgent/releases/download/hosted-20261112/hosted.env.example",
+  "source_tests": {
+    "hosted_and_submission_guard": 33,
+    "experience": 9
+  }
+}
