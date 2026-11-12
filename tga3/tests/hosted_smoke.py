@@ -387,7 +387,8 @@ async def main():
         worker_models = {r["model"] for r in records if r["role"] == "worker" and r["tool"]}
         assert {"responses-model", "messages-model", "opencode-model", "qwen-model"} <= worker_models, worker_models
         reports = list((ROOT / "data/tasks").glob("*/*/writeups/*.md"))
-        assert len(reports) == 4, reports
+        expected_reports = 4 if os.environ.get("PRODUCE_REPORT", "false").lower() == "true" else 0
+        assert len(reports) == expected_reports, reports
         summary = {
             "passed": True,
             "network": "none",

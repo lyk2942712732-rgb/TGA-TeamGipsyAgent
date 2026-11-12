@@ -1,3 +1,5 @@
+> 本文为普通主版本的历史迁移说明。托管分支无前端，不使用其中的前端构建部署步骤，以根 README.md 为准。
+
 > 当前版本已改为 Worker 写 Finding/最终候选文件、系统导入黑板；旧版写入 MCP 已移除。以 [FILE-PUBLICATIONS.md](FILE-PUBLICATIONS.md) 为当前规范，下文保留早期迁移记录。
 
 # CLI 执行层
