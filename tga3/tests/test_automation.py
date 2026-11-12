@@ -130,7 +130,8 @@ async def test_reporter_failure_stops_workers_and_finishes_host_states(tmp_path:
 
 
 @pytest.mark.asyncio
-async def test_cli_reporter_starts_after_all_workers_stop(tmp_path):
+@pytest.mark.parametrize("produce_report", [True, False])
+async def test_cli_reporter_starts_after_all_workers_stop(tmp_path, produce_report):
     from pydantic import SecretStr
 
     from tga3.coordinator import TaskCoordinator
@@ -145,6 +146,7 @@ async def test_cli_reporter_starts_after_all_workers_stop(tmp_path):
 
     class Containers(FakeContainerRuntime):
         async def report(self, spec, emit):
+            assert spec.produce_report is produce_report
             assert set(self.stopped) == {(spec.task_id, name) for name in (*config.worker_agent_ids, "scout")}
             assert json.loads(spec.report_input)[-1]["kind"] == "final_candidate"
             await emit("agent.session", {"cli_session_id": "reporter-session", "runtime": "codex_cli"})
@@ -156,7 +158,7 @@ async def test_cli_reporter_starts_after_all_workers_stop(tmp_path):
     automation = Automation(
         config, storage, coordinator.blackboard, coordinator.events, model, coordinator.finish_task_workers
     )
-    task = await coordinator.create_and_start("CLI report", "analyze", "cryptography")
+    task = await coordinator.create_and_start("CLI report", "analyze", "cryptography", produce_report=produce_report)
     await coordinator._startup_jobs[task.id]
     actor = coordinator.actor_for(await storage.get_agent(task.id, "worker-openai"))
     artifact = await storage.register_artifact(

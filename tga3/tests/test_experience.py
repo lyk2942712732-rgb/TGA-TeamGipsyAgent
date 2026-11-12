@@ -229,7 +229,8 @@ async def test_http_card_and_resource_isolation(config):
         assert "experience" not in json.dumps(storage.tasks[parent.id].metadata)
 
 
-async def test_reporter_extracts_in_same_call_only_for_solved_questions(config):
+@pytest.mark.parametrize("produce_report", [True, False])
+async def test_reporter_extracts_in_same_call_only_for_solved_questions(config, produce_report):
     from tga3.blackboard import Blackboard
     from tga3.domain import Actor, Artifact, ArtifactRef, PublishRequest
     from tga3.events import TaskEvents
@@ -237,9 +238,10 @@ async def test_reporter_extracts_in_same_call_only_for_solved_questions(config):
 
     storage = InMemoryStorage()
     parent = await storage.create_task("batch", "aoe")
-    successful = await storage.create_task("solved", "aoe", parent_task_id=parent.id, metadata={"status": "solved"})
+    successful = await storage.create_task("solved", "aoe", parent_task_id=parent.id,
+                                          metadata={"status": "solved", "produce_report": produce_report})
     abandoned = await storage.create_task("abandoned", "aoe", parent_task_id=parent.id,
-                                          metadata={"status": "abandoned"})
+                                          metadata={"status": "abandoned", "produce_report": produce_report})
     board = Blackboard(storage)
     calls = []
     for task in (successful, abandoned):
@@ -258,14 +260,17 @@ async def test_reporter_extracts_in_same_call_only_for_solved_questions(config):
     class Reporter:
         async def report(self, snapshot, binding):
             calls.append(binding.system_prompt)
-            if REPORT_INSTRUCTIONS in binding.system_prompt:
+            if "SUCCESSFULLY SOLVED" in binding.system_prompt:
                 draft(config, successful.id)
             return "# Report\n\nverified"
 
     automation = Automation(config, storage, board, TaskEvents(storage), Reporter())
     await automation._report(successful.id)
     await automation._report(abandoned.id)
-    assert len(calls) == 2 and REPORT_INSTRUCTIONS in calls[0] and REPORT_INSTRUCTIONS not in calls[1]
+    assert len(calls) == 2 and "SUCCESSFULLY SOLVED" in calls[0] and "SUCCESSFULLY SOLVED" not in calls[1]
+    assert (REPORT_INSTRUCTIONS in calls[0]) == produce_report
+    assert (config.task_path(successful.id, "writeups") / "writeup.md").exists() == produce_report
+    assert bool(storage.writeups) == produce_report
     assert len(automation.experience.cards(parent.id)) == 1
     assert (await storage.get_task(successful.id)).state == RunState.COMPLETED
     assert (await storage.get_task(abandoned.id)).metadata["status"] == "abandoned"

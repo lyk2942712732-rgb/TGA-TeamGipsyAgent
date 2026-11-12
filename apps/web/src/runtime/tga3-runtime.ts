@@ -34,7 +34,7 @@ export type AOEQuestion = {
   question_id: string; parent_task_id: string; title: string; description: string; source_key: string;
   difficulty: string | number | null; connection_info: string; submission_instructions: string;
   status: string; attempted_by: string[]; current_agents: string[]; attempts: AOEAttempt[]; flag: string | null;
-  report_state: "pending" | "generating" | "completed" | "failed"; blackboard_seq: number;
+  report_state: "pending" | "generating" | "completed" | "failed" | "disabled"; blackboard_seq: number;
   scout_ready?: boolean; scout_phase?: string;
   registered_at?: number; solved_at?: number | null;
   rescue?: { state: "seeking" | "reinforced" | "closed"; requested_at: number; threshold_at: number } | null;

@@ -70,6 +70,16 @@ async def setup(tmp_path, *, four_workers=False):
     return config, storage, containers, coordinator, parent, clock
 
 
+async def test_questions_inherit_disabled_report_preference(tmp_path):
+    cfg, storage, containers, coordinator, parent, clock = await setup(tmp_path)
+    await storage.update_task(parent.id, metadata={"produce_report": False})
+    await coordinator.aoe.register_questions(parent.id, [
+        AOEQuestionInput(source_key="one", title="One", description="question")])
+    question = (await storage.list_questions(parent.id))[0]
+    assert question.metadata["produce_report"] is False
+    assert (await coordinator.aoe.question_view(question))["report_state"] == "disabled"
+
+
 async def prepare(tmp_path):
     cfg, storage, containers, coordinator, parent, clock = await setup(tmp_path)
     await coordinator.aoe.register_questions(

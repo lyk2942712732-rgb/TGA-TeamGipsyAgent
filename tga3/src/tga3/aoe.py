@@ -183,6 +183,9 @@ class AOERuntime:
             "swarm": question.metadata.get('swarm'),
             "solver_agent_id": question.metadata.get('solver_agent_id'),
             "report_state": (
+                "disabled"
+                if not question.metadata.get("produce_report", True)
+                else
                 "completed"
                 if question.state == RunState.COMPLETED
                 else "failed"
@@ -383,6 +386,7 @@ class AOERuntime:
                         "registration_digest": fingerprint,
                         "aoe_auto_submit_flag": auto_submit_flag,
                         "knowledge_source": parent.metadata.get("knowledge_source", "online"),
+                        "produce_report": parent.metadata.get("produce_report", True),
                         "ordinal": len(existing),
                         "status": "preparing",
                         "scout_ready": False,

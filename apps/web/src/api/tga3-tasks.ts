@@ -101,6 +101,7 @@ export async function createTask(input: {
   aoeJointMinutes?: number;
   aoeAutoSubmitFlag?: boolean;
   knowledgeSource?: KnowledgeSource;
+  produceReport?: boolean;
 }): Promise<TGA3TaskListItem> {
   const form = new FormData();
   form.set("title", input.title);
@@ -108,6 +109,7 @@ export async function createTask(input: {
   form.set("prompt", input.prompt);
   form.set("agent_models", JSON.stringify(input.agentModels));
   form.set("knowledge_source", input.knowledgeSource ?? "online");
+  form.set("produce_report", String(input.produceReport ?? true));
   if (input.sceneId === "aoe") {
     form.set("aoe_auto_submit_flag", String(input.aoeAutoSubmitFlag ?? true));
     if ([input.aoeFirstAttemptMinutes, input.aoeSecondAttemptMinutes, input.aoeJointMinutes].some(value => value !== undefined)) {

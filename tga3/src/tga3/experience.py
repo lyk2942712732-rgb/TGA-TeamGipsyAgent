@@ -48,6 +48,18 @@ the report using evidence you already read. Final assistant reply remains ONLY t
 """
 
 
+# Reuse the same evidence and card criteria without asking for a report first.
+CARDS_ONLY_INSTRUCTIONS = REPORT_INSTRUCTIONS.replace(
+    "in this SAME report session", "in this session"
+).replace(
+    "Before your final Markdown reply", "Before finishing"
+).replace(
+    "Write cards while preparing\nthe report using evidence you already read. Final assistant reply remains ONLY the Markdown report.",
+    "Read this question's saved records as needed to verify cards. Do not generate or save a Markdown report. "
+    "Finish with a brief completion acknowledgement."
+)
+
+
 def atomic_json(path: Path, value) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.is_symlink():

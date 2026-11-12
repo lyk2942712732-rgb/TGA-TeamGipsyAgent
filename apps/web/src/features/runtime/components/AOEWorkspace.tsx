@@ -10,7 +10,7 @@ import { EventCard, RealtimePrompt, TGA3Workspace, type TGA3WorkspaceTab } from 
 
 const STATUS: Record<string, string> = { queued: "待解题", running: "解题中", solved: "已解出", abandoned: "已放弃", cancelled: "已取消" };
 const PHASE: Record<string, string> = { collecting: "收集题目", executing: "基础侦察", extracting: "提取情报", merging: "按题合并", solo: "独立解题", joint: "共同攻坚", swarm: "共同攻坚（群殴）", reporting: "生成逐题报告", completed: "已结束", failed: "运行失败", cancelled: "已取消" };
-const REPORT: Record<string, string> = { pending: "等待解题结束", generating: "生成中", completed: "已生成", failed: "生成失败" };
+const REPORT: Record<string, string> = { pending: "等待解题结束", generating: "生成中", completed: "已生成", failed: "生成失败", disabled: "未启用报告" };
 
 export function AOEWorkspace({ snapshot, tab, selectedAgentId, onTab, onChanged }: {
   snapshot: TGA3RuntimeSnapshot; tab: TGA3WorkspaceTab; selectedAgentId: string | null;
@@ -57,6 +57,8 @@ export function AOEWorkspace({ snapshot, tab, selectedAgentId, onTab, onChanged 
     </article>) : <p>{overview.questions.length ? "当前筛选下暂无题目。" : "Scout 登记题目后，逐题报告会列在这里。"}</p>}</div>;
   } else if (!child) {
     for (const value of ["blackboard", "findings", "inputs", "report"] as const) panels[value] = waiting;
+  } else if (question.report_state === "disabled") {
+    panels.report = <div className="tga3-empty"><h3>本任务未启用产出报告</h3><p>Reporter 仅整理经验卡，执行记录和 Findings 仍可查看。</p></div>;
   } else if (question.report_state === "failed") {
     panels.report = <div className="tga3-empty"><h3>本题报告生成失败</h3><p>解题状态和已有证据已保留，可在 Reporter 事件中查看失败原因。</p></div>;
   } else if (question.report_state === "pending" && question.status === "abandoned") {

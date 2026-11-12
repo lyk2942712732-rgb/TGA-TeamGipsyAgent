@@ -36,6 +36,46 @@ def cli_env(monkeypatch, tmp_path):
     return tmp_path
 
 
+async def test_cards_only_reporter_uses_evidence_and_never_writes_markdown(cli_env, monkeypatch):
+    from tga3.workers import openai_worker
+    from tga3 import experience
+
+    monkeypatch.setenv("TGA3_AGENT_ROLE", "reporter")
+    monkeypatch.setenv("TGA3_PRODUCE_REPORT", "0")
+    monkeypatch.setenv("TGA3_REPORT_EXPERIENCE", "1")
+    monkeypatch.setenv("TGA3_SYSTEM_PROMPT", experience.CARDS_ONLY_INSTRUCTIONS)
+    adapter = CodexAdapter()
+    adapter.command()
+    config = tomllib.loads((cli_env / ".codex/config.toml").read_text(encoding="utf-8"))
+    instructions = config["developer_instructions"]
+    assert "/evidence" in instructions and "Do not generate or save a Markdown report" in instructions
+    assert "Return only Markdown" not in instructions and "Skills are in /skills" not in instructions
+    prompts = []
+
+    class Adapter:
+        async def run_cycle(self, prompt, emit):
+            prompts.append(prompt)
+            return "Cards completed"
+
+    checks = []
+
+    def check(*args):
+        checks.append(args)
+        if len(checks) == 1:
+            raise ValueError("missing card")
+
+    monkeypatch.setattr(openai_worker, "CodexAdapter", Adapter)
+    monkeypatch.setattr(experience, "check_report_file", check)
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("cards-only reporter must not write a Markdown report")
+
+    monkeypatch.setattr(Path, "write_text", forbidden)
+    await openai_worker.report()
+    assert len(prompts) == 2 and "SAME session" in prompts[1]
+    assert all("Do not generate" in prompt for prompt in prompts)
+
+
 async def noop(*_args):
     pass
 

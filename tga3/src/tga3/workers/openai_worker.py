@@ -19,8 +19,11 @@ async def report() -> None:
         print(json.dumps({"method": method, "params": params}, ensure_ascii=False), flush=True)
 
     adapter = CodexAdapter()
+    produce_report = os.environ.get("TGA3_PRODUCE_REPORT", "1") != "0"
     output = await adapter.run_cycle(
-        "Read /workspace/report-input.json and produce the final Markdown report.", emit
+        "Read /workspace/report-input.json and produce the final Markdown report." if produce_report else
+        "Read /workspace/report-input.json and the recorded evidence. Extract only verified experience cards "
+        "into /workspace/experience-cards.json as instructed. Do not generate or save a Markdown report.", emit
     )
     if os.environ.get("TGA3_REPORT_EXPERIENCE") == "1":
         from ..errors import ContractError
@@ -34,12 +37,14 @@ async def report() -> None:
                 f"The required experience-cards.json has a file/citation error: {exc}. "
                 "In this SAME session, write the required JSON using the success evidence you already read. "
                 "Use {\"cards\":[]} if no transferable method. Do not run new reconnaissance. "
-                "Then return the final Markdown report again.", emit)
+                + ("Then return the final Markdown report again." if produce_report else
+                   "Do not generate a Markdown report. Acknowledge completion."), emit)
             if repaired.strip():
                 output = repaired
     if not output.strip():
         raise RuntimeError("Reporter returned an empty report")
-    Path("/workspace/result/writeup.md").write_text(output, encoding="utf-8")
+    if produce_report:
+        Path("/workspace/result/writeup.md").write_text(output, encoding="utf-8")
 
 
 async def scout() -> None:

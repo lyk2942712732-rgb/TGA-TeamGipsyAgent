@@ -73,6 +73,7 @@ class TaskCoordinator:
         aoe_joint_minutes: int | None = None,
         aoe_auto_submit_flag: bool = True,
         knowledge_source: KnowledgeSource = "online",
+        produce_report: bool = True,
     ):
         if knowledge_source not in {"online", "local"}:
             raise ValueError("knowledge_source must be online or local")
@@ -101,7 +102,7 @@ class TaskCoordinator:
             for stage, minutes in stage_minutes.items()
         }} if any(value is not None for value in stage_minutes.values()) else
             {"aoe_attempt_seconds": aoe_attempt_minutes * 60})
-        metadata = {"knowledge_source": knowledge_source}
+        metadata = {"knowledge_source": knowledge_source, "produce_report": produce_report}
         if scene_id == "aoe":
             metadata.update({**budget_metadata, "aoe_phase": "collecting",
                              "aoe_auto_submit_flag": aoe_auto_submit_flag,

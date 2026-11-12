@@ -15,7 +15,7 @@ from .config import ResolvedAgent, TGA3Config
 from .docker_runtime import ContainerRuntime, LaunchSpec
 from .domain import SYSTEM_ACTOR, Actor, AgentState, EntryKind, EventKind, RunState
 from .events import TaskEvents
-from .experience import REPORT_INSTRUCTIONS, ExperienceStore
+from .experience import CARDS_ONLY_INSTRUCTIONS, REPORT_INSTRUCTIONS, ExperienceStore
 from .storage import Storage
 
 
@@ -63,7 +63,10 @@ class CliHostModel:
                     payload=params,
                 )
 
-        return await self.containers.report(LaunchSpec(task_id=task_id, agent=binding, report_input=snapshot), emit)
+        task = await self.storage.get_task(task_id)
+        return await self.containers.report(LaunchSpec(
+            task_id=task_id, agent=binding, report_input=snapshot,
+            produce_report=task.metadata.get("produce_report", True)), emit)
 
 
 class Automation:
@@ -120,7 +123,9 @@ class Automation:
                 "reporter", run.provider_id, run.model_id, run.protocol, require_api_key=False
             )
             question = await self.storage.get_task(task_id)
-            if question.parent_task_id and question.metadata.get("status") == "abandoned":
+            produce_report = question.metadata.get("produce_report", True)
+            path = None
+            if produce_report and question.parent_task_id and question.metadata.get("status") == "abandoned":
                 binding = binding.model_copy(update={"system_prompt": binding.system_prompt +
                     "\n本题已达到 AOE 共同攻坚预算并放弃，尚未解出。根据实际记录生成本题独立报告，"
                     "说明已验证的方法、结果和失败边界，不得编造答案或声称已成功。"})
@@ -137,18 +142,25 @@ class Automation:
             entries = (await self.blackboard.sync(task_id, up_to_seq=snapshot_seq, limit=10_000)).entries
             successful = (task.metadata.get("status") == "solved" if task.parent_task_id else
                           any(entry.kind == EntryKind.FINAL_CANDIDATE for entry in entries))
-            if successful:
+            if not produce_report:
+                # The report skill/prompt asks for a writeup; replace it only in cards mode.
+                instructions = CARDS_ONLY_INSTRUCTIONS if successful else (
+                    "This question was not solved. Do not extract success experience or generate a report. "
+                    'Save /workspace/experience-cards.json as {"cards":[]} and acknowledge completion.')
+                binding = binding.model_copy(update={"system_prompt": instructions})
+            elif successful:
                 binding = binding.model_copy(update={"system_prompt": binding.system_prompt + REPORT_INSTRUCTIONS})
             snapshot = json.dumps([entry.model_dump(mode="json") for entry in entries], ensure_ascii=False, indent=2)
             markdown = await self.model.report(snapshot, binding)
-            if not markdown.strip():
-                raise ValueError("Reporter returned an empty report")
-            root = self.config.task_path(task_id, "writeups")
-            root.mkdir(parents=True, exist_ok=True)
-            path = root / "writeup.md"
-            path.write_text(markdown, encoding="utf-8")
-            digest = hashlib.sha256(path.read_bytes()).hexdigest()
-            await self.storage.save_writeup(task_id, snapshot_seq, str(path), digest)
+            if produce_report:
+                if not markdown.strip():
+                    raise ValueError("Reporter returned an empty report")
+                root = self.config.task_path(task_id, "writeups")
+                root.mkdir(parents=True, exist_ok=True)
+                path = root / "writeup.md"
+                path.write_text(markdown, encoding="utf-8")
+                digest = hashlib.sha256(path.read_bytes()).hexdigest()
+                await self.storage.save_writeup(task_id, snapshot_seq, str(path), digest)
             # Card failure is file-backed and must never change the solved/report outcome.
             try:
                 await asyncio.to_thread(self.experience.import_report, task_id, successful=successful)
@@ -183,8 +195,8 @@ class Automation:
             task_id,
             actor=SYSTEM_ACTOR,
             kind=EventKind.SYSTEM,
-            text="最终结论已固定，Markdown writeup 已生成。",
-            payload={"snapshot_seq": snapshot_seq, "download_path": str(path)},
+            text="最终结论已固定，Markdown writeup 已生成。" if produce_report else "最终结论已固定，经验卡整理已完成。",
+            payload={"snapshot_seq": snapshot_seq, **({"download_path": str(path)} if path else {})},
         )
 
 
