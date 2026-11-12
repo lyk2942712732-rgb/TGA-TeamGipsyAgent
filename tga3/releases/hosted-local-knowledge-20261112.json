@@ -1,0 +1,50 @@
+{
+  "release": "hosted-local-knowledge-20261112",
+  "branch": "codex/tsecbench-hosted-local-knowledge",
+  "source_commit": "93e209799c09e1ccaf90ea9ca84bf189f070dc46",
+  "image": "tga3-hosted-local-knowledge:20261112",
+  "filename": "tga3-hosted-local-knowledge-20261112-linux-amd64.tar",
+  "bytes": 1197837824,
+  "sha256": "1749a9e7968cdbdb1499800d872df2486d5ca6289104a73a78fbb96d8aff6e5a",
+  "verification": {
+    "cli_versions": {
+      "codex": "codex-cli 0.158.0",
+      "claude": "2.1.123 (Claude Code)",
+      "opencode": "1.19.5",
+      "qwen": "0.27.0"
+    },
+    "knowledge": {
+      "available": true,
+      "documents": 773,
+      "revision": "e225ddfcd420a7f54a5940f47336ebdf8c29b875",
+      "upstream": "https://github.com/ctf-wiki/ctf-wiki.git"
+    },
+    "smoke": {
+      "passed": true,
+      "network": "none",
+      "real_cli_workers": [
+        "messages-model",
+        "opencode-model",
+        "qwen-model",
+        "responses-model"
+      ],
+      "submitted": 4,
+      "reports": 0,
+      "model_calls": 45,
+      "knowledge_tools": 0,
+      "runtime": "one container, no Docker socket"
+    },
+    "image_id": "sha256:ec27b0b08998cac66c5915bf89f44964894e8fdf7edfb8b7090b89902cfd2f25",
+    "image_bytes": 1197810363,
+    "platform": "linux/amd64",
+    "source_verified": true,
+    "frontend_absent": true,
+    "configuration_check": true
+  },
+  "download_url": "https://github.com/lyk2942712732-rgb/TGA-TeamGipsyAgent/releases/download/hosted-local-knowledge-20261112/tga3-hosted-local-knowledge-20261112-linux-amd64.tar",
+  "env_url": "https://github.com/lyk2942712732-rgb/TGA-TeamGipsyAgent/releases/download/hosted-local-knowledge-20261112/hosted.env.example",
+  "source_tests": {
+    "hosted_and_submission_guard_and_local_knowledge": 43,
+    "experience": 9
+  }
+}
