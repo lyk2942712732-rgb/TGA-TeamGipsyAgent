@@ -22,7 +22,6 @@ jobs:
             image_id: sha256:ec27b0b08998cac66c5915bf89f44964894e8fdf7edfb8b7090b89902cfd2f25
     env:
       GH_TOKEN: ${{ github.token }}
-      DOCKER_CONFIG: ${{ runner.temp }}/docker-config
       IMAGE_NAME: ${{ matrix.name }}
       RELEASE_TAG: ${{ matrix.release }}
       EXPECTED_SHA256: ${{ matrix.sha256 }}
@@ -38,6 +37,8 @@ jobs:
           docker load --input "$RUNNER_TEMP/$archive"
           test "$(docker image inspect "$IMAGE_NAME:20261112" --format '{{.Os}}/{{.Architecture}}')" = linux/amd64
       - name: Push to GitHub Container Registry
+        env:
+          DOCKER_CONFIG: ${{ runner.temp }}/docker-config
         shell: bash
         run: |
           set -euo pipefail
@@ -51,5 +52,7 @@ jobs:
       - name: Remove temporary registry credentials
         if: always()
         shell: bash
+        env:
+          DOCKER_CONFIG: ${{ runner.temp }}/docker-config
         run: docker logout ghcr.io
 
