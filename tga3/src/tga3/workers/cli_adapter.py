@@ -397,6 +397,11 @@ class CodexAdapter(CliAdapter):
             if self.reporter
             else worker_instructions()
         )
+        if self.reporter and os.environ.get("TGA3_PRODUCE_REPORT", "1") == "0":
+            instructions = (os.environ["TGA3_SYSTEM_PROMPT"]
+                + "\nRead /workspace/report-input.json and read-only records in /evidence and files in /evidence-files. "
+                "Do not contact targets or modify evidence. Do not generate or save a Markdown report. "
+                "Save experience-cards.json with exact evidence citations; finish with a brief acknowledgement.")
         instructions = local_paths(instructions)
         # JSON strings are valid TOML basic strings; credentials stay in the environment.
         config = [

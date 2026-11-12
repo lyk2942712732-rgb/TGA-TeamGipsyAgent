@@ -186,6 +186,7 @@ def create_app(
         aoe_second_attempt_minutes: Annotated[int | None, Form(ge=1, le=1440)] = None,
         aoe_joint_minutes: Annotated[int | None, Form(ge=1, le=1440)] = None,
         aoe_auto_submit_flag: Annotated[bool, Form()] = True,
+        produce_report: Annotated[bool, Form()] = False,
         files: Annotated[list[UploadFile] | None, File()] = None,
     ) -> dict[str, Any]:
         raw_overrides = json.loads(agent_models)
@@ -217,6 +218,7 @@ def create_app(
             aoe_second_attempt_minutes=aoe_second_attempt_minutes,
             aoe_joint_minutes=aoe_joint_minutes,
             aoe_auto_submit_flag=aoe_auto_submit_flag,
+            produce_report=produce_report,
         )
         return task.model_dump(mode="json")
 

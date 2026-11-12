@@ -40,7 +40,7 @@ describe("NewTaskPage", () => {
     await user.upload(document.querySelector<HTMLInputElement>('input[type="file"]')!, new File(["png"], "challenge.png", { type: "image/png" }));
     await user.click(await screen.findByRole("button", { name: "创建并启动" }));
     await waitFor(() => expect(mocks.createTask).toHaveBeenCalledWith({
-      title: "Web challenge", sceneId: "ai_security", prompt: "Find the flag",
+      title: "Web challenge", sceneId: "ai_security", prompt: "Find the flag", produceReport: false,
       fileIds: ["asset-challenge.png"],
       agentModels: { "worker-openai": { provider_id: "openai", model_id: "gpt-test", protocol: "openai_responses" } },
     }));
@@ -56,6 +56,10 @@ describe("NewTaskPage", () => {
     const autoSubmit = screen.getByRole("checkbox", { name: "自动提交 Flag" });
     expect(autoSubmit).toBeChecked();
     await user.click(autoSubmit);
+    const outputs = screen.getByRole("group", { name: "执行与产出" });
+    const report = within(outputs).getByRole("checkbox", { name: "产出报告" });
+    expect(report).not.toBeChecked();
+
     const first = screen.getByRole("spinbutton", { name: /第一次尝试/ });
     const second = screen.getByRole("spinbutton", { name: /第二次尝试/ });
     const joint = screen.getByRole("spinbutton", { name: /共同攻坚/ });
@@ -67,6 +71,6 @@ describe("NewTaskPage", () => {
     await user.type(screen.getByLabelText(/描述/), "Enumerate and solve the supplied questions");
     await user.click(screen.getByRole("button", { name: "创建并启动" }));
     await waitFor(() => expect(mocks.createTask).toHaveBeenCalledWith(expect.objectContaining({ sceneId: "aoe",
-      aoeFirstAttemptMinutes: 5, aoeSecondAttemptMinutes: 10, aoeJointMinutes: 25, aoeAutoSubmitFlag: false })));
+      aoeFirstAttemptMinutes: 5, aoeSecondAttemptMinutes: 10, aoeJointMinutes: 25, aoeAutoSubmitFlag: false, produceReport: false })));
   });
 });

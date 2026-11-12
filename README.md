@@ -122,3 +122,9 @@ CLI 安装目录，共用原有 Python/Node/安全工具环境；没有新建 Py
 详细的黑板与文件边界见 [运行时说明](tga3/README.md)、[文件发布](tga3/FILE-PUBLICATIONS.md)、[经验卡](tga3/EXPERIENCE.md)。许可证见 [LICENSE](LICENSE)。
 
 待用户决定的旧文件与临时产物见 [文件整理清单](tga3/docs/file-cleanup-review.md)，清单所列候选尚未删除。
+
+## 当前源码更新
+
+此分支不包含知识库，继续禁用外部知识检索。已同步主版本的 Flag 提交保护：每次 Worker 收到明确答案错误回执，最多补交一次当前尝试证据中的精确 Flag，并把补交回执回馈原 Worker。
+
+托管运行默认不产出报告，Reporter 仅整理经证据校验的经验卡。设置 PRODUCE_REPORT=true 可启用原有报告与经验卡流程。前端选项名称为“产出报告”。已有下载的历史 tar 不会随源码更新；需自行重建并导出新镜像。

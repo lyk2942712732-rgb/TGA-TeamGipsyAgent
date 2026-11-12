@@ -261,6 +261,7 @@ async def run(config, prompt):
                     "aoe_first_attempt_minutes": os.environ.get("AOE_FIRST_MINUTES", "30"),
                     "aoe_second_attempt_minutes": os.environ.get("AOE_SECOND_MINUTES", "15"),
                     "aoe_joint_minutes": os.environ.get("AOE_JOINT_MINUTES", "20"),
+                    "produce_report": os.environ.get("PRODUCE_REPORT", "false"),
                 },
             )
             if response.status_code >= 400:

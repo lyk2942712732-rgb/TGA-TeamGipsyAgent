@@ -181,6 +181,7 @@ function InputsPanel({ entries }: { entries: TGA3BoardEntry[] }) {
   return <div className="tga3-inputs-panel"><section><header className="tga3-section-heading"><div><Lightbulb size={17} /><h3>提示词</h3></div><small>{prompts.length}</small></header>{prompts.map((entry) => <BoardCard key={entry.id} entry={entry} />)}</section><section><header className="tga3-section-heading"><div><File size={17} /><h3>用户文件</h3></div><small>{files.length}</small></header>{files.length ? files.map((entry) => <BoardCard key={entry.id} entry={entry} />) : <Empty icon={<File />} title="没有用户文件" detail="任务创建时上传的文件会登记在这里。" />}</section></div>;
 }
 function ReportPanel({ snapshot }: { snapshot: TGA3RuntimeSnapshot }) {
+  if (snapshot.task.metadata?.produce_report === false) return <div className="workbench-report-pending"><FileText size={28} /><h3>本任务未启用产出报告</h3><p>Reporter 仅整理经验卡，执行记录和 Findings 仍可查看。</p></div>;
   const finals = snapshot.blackboard.filter((entry) => entry.kind === "final_candidate"); const ready = snapshot.task.state === "completed";
   if (ready) return <TGA3ReportReader taskId={snapshot.task.id} />;
   return <div className="workbench-report-pending"><FileText size={28} /><h3>{finals.length ? "Reporter 正在生成报告" : "等待最终候选"}</h3><p>最终候选确定后，Reporter 根据固定的黑板快照整理步骤、证据与结论。</p></div>;
@@ -193,4 +194,4 @@ function boardTileTitle(entry: TGA3BoardEntry): string {
   if (entry.kind === "user_file") return String(entry.body.name ?? "用户文件");
   return entryTopic(entry) || "用户提示";
 }
-function tabCount(tab: TGA3WorkspaceTab, snapshot: TGA3RuntimeSnapshot) { if (tab === "blackboard") return snapshot.blackboard.length; if (tab === "events") return snapshot.events.length; if (tab === "findings") return snapshot.blackboard.filter((entry) => ["finding", "final_candidate"].includes(entry.kind)).length; if (tab === "inputs") return snapshot.blackboard.filter((entry) => ["user_prompt", "user_file"].includes(entry.kind)).length; if (tab === "report") return snapshot.task.state === "completed" ? 1 : 0; return 0; }
+function tabCount(tab: TGA3WorkspaceTab, snapshot: TGA3RuntimeSnapshot) { if (tab === "blackboard") return snapshot.blackboard.length; if (tab === "events") return snapshot.events.length; if (tab === "findings") return snapshot.blackboard.filter((entry) => ["finding", "final_candidate"].includes(entry.kind)).length; if (tab === "inputs") return snapshot.blackboard.filter((entry) => ["user_prompt", "user_file"].includes(entry.kind)).length; if (tab === "report") return snapshot.task.metadata?.produce_report !== false && snapshot.task.state === "completed" ? 1 : 0; return 0; }

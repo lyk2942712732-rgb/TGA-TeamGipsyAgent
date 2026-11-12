@@ -70,6 +70,7 @@ class TaskCoordinator:
         aoe_second_attempt_minutes: int | None = None,
         aoe_joint_minutes: int | None = None,
         aoe_auto_submit_flag: bool = True,
+        produce_report: bool = False,
     ):
         scene = self.config.scene(scene_id)
         model_overrides = model_overrides or {}
@@ -92,11 +93,12 @@ class TaskCoordinator:
             for stage, minutes in stage_minutes.items()
         }} if any(value is not None for value in stage_minutes.values()) else
             {"aoe_attempt_seconds": aoe_attempt_minutes * 60})
-        task = await self.storage.create_task(title, scene.id, task_id, metadata={
-            **budget_metadata, "aoe_phase": "collecting",
-            "aoe_auto_submit_flag": aoe_auto_submit_flag,
-            "aoe_scout_mode": "collection_only", "scout_complete": False,
-        } if scene_id == "aoe" else None)
+        metadata = {"produce_report": produce_report}
+        if scene_id == "aoe":
+            metadata.update({**budget_metadata, "aoe_phase": "collecting",
+                             "aoe_auto_submit_flag": aoe_auto_submit_flag,
+                             "aoe_scout_mode": "collection_only", "scout_complete": False})
+        task = await self.storage.create_task(title, scene.id, task_id, metadata=metadata)
         self.config.ensure_task_directories(task.id)
         await self.storage.update_task(task.id, state=RunState.STARTING)
         for agent_id, configured in self.config.agents.agents.items():

@@ -20,6 +20,7 @@ class LaunchSpec:
     task_id: UUID
     agent: ResolvedAgent
     report_input: str | None = None
+    produce_report: bool = True
     scout_phase: Literal["collecting", "executing", "extracting", "merging"] | None = None
     phase_budget_seconds: float | None = None
     aoe_parent_id: UUID | None = None
@@ -161,6 +162,7 @@ class DockerContainerRuntime:
             "TGA3_SCOUT_PHASE": spec.scout_phase or "executing",
             "TGA3_SCOUT_INTEL_MCP_URL": runtime.blackboard_mcp_url.rstrip("/").removesuffix("/mcp") + "/scout-mcp/",
             "TGA3_SYSTEM_PROMPT": binding.system_prompt,
+            "TGA3_PRODUCE_REPORT": "1" if spec.produce_report else "0",
             "TGA3_REPORT_EXPERIENCE": "1" if is_reporter and "experience-cards.json" in binding.system_prompt else "0",
             "TGA3_CONTROL_WS_URL": runtime.control_ws_url,
             "TGA3_BLACKBOARD_MCP_URL": blackboard_mcp_url,
@@ -416,6 +418,8 @@ class DockerContainerRuntime:
                 detail = raw.decode(errors="replace")[-12000:]
                 raise RuntimeUnavailableError(detail.replace(key, "[redacted]") if key else detail)
             workspace, _, _ = self._task_paths(spec.task_id, spec.agent.agent_id)
+            if not spec.produce_report:
+                return "Experience extraction completed"
             path = workspace / "result" / "writeup.md"
             if path.is_symlink():
                 raise RuntimeUnavailableError("Reporter output must be a regular file")

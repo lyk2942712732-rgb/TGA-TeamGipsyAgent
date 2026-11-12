@@ -17,6 +17,7 @@ export function NewTaskPage({ onCreated, onCancel = () => history.back() }: { on
   const [description, setDescription] = useState("");
   const [sceneId, setSceneId] = useState<TaskMode>("penetration_test");
   const [aoeMinutes, setAoeMinutes] = useState({ first: "30", second: "15", joint: "20" });
+  const [produceReport, setProduceReport] = useState(false);
   const [aoeAutoSubmitFlag, setAoeAutoSubmitFlag] = useState(true);
   const [scenes, setScenes] = useState<SceneConfig[]>([]);
   const [assets, setAssets] = useState<StagedAsset[]>([]);
@@ -69,7 +70,7 @@ export function NewTaskPage({ onCreated, onCancel = () => history.back() }: { on
     setBusy(true); setError("");
     try {
       const task = await createTask({
-        title: name.trim(), sceneId, prompt: description.trim(),
+        title: name.trim(), sceneId, prompt: description.trim(), produceReport,
         fileIds: assets.map((asset) => asset.id), agentModels,
         ...(sceneId === "aoe" ? { aoeAutoSubmitFlag, aoeFirstAttemptMinutes: Number(aoeMinutes.first),
           aoeSecondAttemptMinutes: Number(aoeMinutes.second), aoeJointMinutes: Number(aoeMinutes.joint) } : {}),
@@ -113,6 +114,14 @@ export function NewTaskPage({ onCreated, onCancel = () => history.back() }: { on
         <label className="wide task-description-field">描述<span>用户初始提示词</span><textarea rows={7} value={description} onChange={(event) => setDescription(event.target.value)} onPaste={onPaste} placeholder="粘贴题目描述、授权目标、已知信息和期望结果；也可以直接粘贴图片。" /></label>
         <div className="task-attachment-zone" onDragOver={(event) => event.preventDefault()} onDrop={onDrop}><input ref={inputRef} type="file" multiple hidden onChange={onFiles} /><button type="button" className="ref-secondary-button" onClick={() => inputRef.current?.click()}><Paperclip size={16} />添加文件或图片</button><span>支持拖放、文件选择以及在描述框粘贴图片</span></div>
         {assets.length ? <div className="task-attachment-list">{assets.map((asset) => <article key={asset.id}>{asset.previewUrl ? <img src={asset.previewUrl} alt="" /> : asset.mediaKind === "image" ? <Image size={22} /> : <FileText size={22} />}<span><strong>{asset.originalName}</strong><small>{formatBytes(asset.size)}</small></span><button aria-label={`移除 ${asset.originalName}`} onClick={() => void remove(asset)}><X size={15} /></button></article>)}</div> : null}
+        <fieldset className="wide task-output-options"><legend>执行与产出</legend>
+
+          <div className="aoe-submission-option">
+            <label><input type="checkbox" checked={produceReport} aria-describedby="produce-report-help"
+              onChange={event => setProduceReport(event.target.checked)} />产出报告</label>
+            <small id="produce-report-help">勾选后生成报告并整理经验卡；取消勾选后仅整理经验卡。</small>
+          </div>
+        </fieldset>
         {agentOptions ? <fieldset className="task-agent-models"><legend>本任务 Solver 模型</legend><p>默认继承 Solver 配置；这里的选择只影响本任务。</p><div>{agentOptions.agents.map((agent) => {
           const compatible = agentOptions.models.filter((model) => modelCompatible(agent.runtime, model.protocol));
           const current = agentModels[agent.id];
@@ -121,7 +130,7 @@ export function NewTaskPage({ onCreated, onCancel = () => history.back() }: { on
             {compatible.map((model) => <option key={`${model.provider_id}::${model.model_id}::${model.protocol}`} value={`${model.provider_id}::${model.model_id}::${model.protocol}`} disabled={!model.ready}>{model.provider_name} / {model.model_name}{model.ready ? "" : "（密钥不可用）"}</option>)}
           </select></label>;
         })}</div></fieldset> : null}
-        <aside className="new-task-config-note"><strong>{sceneId === "aoe" ? "收集题目 → 分题解题 → 逐题报告" : "Scout → Workers → Reporter"}</strong><p>{sceneId === "aoe" ? "四个 Worker 优先领取未尝试的简单题，题目各自保留黑板、文件和报告。" : `${selected?.name ?? "场景"}提示词、题目描述和附件索引将自动进入黑板。`}</p></aside>
+        <aside className="new-task-config-note"><strong>{sceneId === "aoe" ? produceReport ? "收集题目 → 分题解题 → 逐题报告" : "收集题目 → 分题解题 → 经验卡" : "Scout → Workers → Reporter"}</strong><p>{sceneId === "aoe" ? "四个 Worker 优先领取未尝试的简单题，题目各自保留黑板和文件，按所选选项整理产出。" : `${selected?.name ?? "场景"}提示词、题目描述和附件索引将自动进入黑板。`}</p></aside>
         {error ? <p className="inline-error" role="alert">{error}</p> : null}
       </div>
       <footer className="new-task-modal-actions"><button type="button" className="ref-secondary-button" disabled={busy} onClick={onCancel}>取消</button><button type="button" className="ref-primary-button" disabled={!ready} onClick={() => void submit()}><Play size={16} />{busy ? "创建中…" : "创建并启动"}</button></footer>
