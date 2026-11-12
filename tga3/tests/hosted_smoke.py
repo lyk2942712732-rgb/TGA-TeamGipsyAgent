@@ -76,7 +76,7 @@ class Provider(BaseHTTPRequestHandler):
             for nested in descriptor.get("tools", []):
                 tools.append(nested.get("name"))
                 namespace[nested.get("name")] = descriptor.get("name")
-        assert not any("ctf42" in str(tool) or "knowledge" in str(tool) for tool in tools)
+        assert not any("ctf42" in str(tool) for tool in tools)
         shell = next((tool for tool in tools if tool in {"bash", "Bash", "exec_command", "run_shell_command"}), None)
         collect = next((tool for tool in tools if tool and "scout_collect_questions" in tool), None)
         reporter_match = re.search(r"Read ([^\s\"\\]+)/report-input.json", raw)
@@ -367,7 +367,7 @@ async def main():
 
     def checked_app(*args, **kwargs):
         app = original_create(*args, **kwargs)
-        assert not any("knowledge-mcp" in getattr(route, "path", "") for route in app.routes)
+        assert any("local-knowledge-mcp" in getattr(route, "path", "") for route in app.routes)
         return app
 
     hosted.create_app = checked_app
@@ -387,7 +387,8 @@ async def main():
         worker_models = {r["model"] for r in records if r["role"] == "worker" and r["tool"]}
         assert {"responses-model", "messages-model", "opencode-model", "qwen-model"} <= worker_models, worker_models
         reports = list((ROOT / "data/tasks").glob("*/*/writeups/*.md"))
-        assert len(reports) == 4, reports
+        expected_reports = 4 if os.environ.get("PRODUCE_REPORT", "false").lower() == "true" else 0
+        assert len(reports) == expected_reports, reports
         summary = {
             "passed": True,
             "network": "none",
