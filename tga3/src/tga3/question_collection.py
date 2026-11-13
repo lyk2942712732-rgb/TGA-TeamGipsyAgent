@@ -12,6 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from .aoe_models import AOEQuestionInput
 from .errors import ContractError
+from .flag_signals import declared_format
 from .submissions import SubmissionSpec
 from .target_instances import TargetRequest, TargetSpec
 
@@ -108,8 +109,8 @@ class QuestionCollection:
                 ):
                     supplied += "\n\n" + path.read_text(encoding="utf-8", errors="replace")
             declared = declared_requests(supplied)
-            if not set(plan.fields) <= {"source_key", "title", "description", "difficulty", "attachments"}:
-                raise ContractError("fields maps only original ID/title/description/difficulty/attachments")
+            if not set(plan.fields) <= {"source_key", "title", "description", "difficulty", "attachments", "flag_format"}:
+                raise ContractError("fields maps only original ID/title/description/difficulty/attachments/flag_format")
             allowed = {
                 (method, url)
                 for method, url, paragraph in declared
@@ -156,6 +157,7 @@ class QuestionCollection:
                     if not isinstance(item, dict):
                         raise ContractError("Question-list items must be objects")
                     mapped = {name: field(item, path) for name, path in plan.fields.items()}
+                    mapped["flag_format"] = mapped.get("flag_format") or declared_format(item)
                     if mapped.get("attachments") is None:
                         mapped.pop("attachments", None)
                     if not mapped.get("source_key") or not mapped.get("description"):
