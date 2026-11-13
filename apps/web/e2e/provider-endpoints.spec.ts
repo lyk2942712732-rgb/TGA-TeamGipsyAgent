@@ -67,13 +67,13 @@ test("supplier endpoints, searchable toggles, and protocol-scoped Solver options
   await page.getByRole("button", { name: "配置 OpenCode Worker" }).click();
   const multiPanel = page.getByLabel("OpenCode Worker Solver 配置", { exact: true });
   const multiModel = multiPanel.getByRole("combobox", { name: "供应商 / 已启用模型", exact: true });
+  const multiProtocol = multiPanel.locator(".workbench-definition").getByRole("combobox", { name: "协议", exact: true });
+  await multiProtocol.selectOption("openai_responses");
   await expect(multiModel.getByRole("option", { name: "端点演示网关 / qwen-shared", exact: true })).toHaveCount(1);
   await multiModel.selectOption({ label: "端点演示网关 / qwen-shared" });
-  const reporterProtocol = multiPanel.locator(".workbench-definition").getByRole("combobox", { name: "协议", exact: true });
-  await expect(reporterProtocol.getByRole("option", { name: "OpenAI Responses", exact: true })).toHaveCount(1);
-  await expect(reporterProtocol.getByRole("option", { name: "Anthropic Messages", exact: true })).toHaveCount(1);
   for (const protocol of ["anthropic", "openai_responses"]) {
-    await reporterProtocol.selectOption(protocol);
+    await multiProtocol.selectOption(protocol);
+    await expect(multiModel.getByRole("option", { name: "端点演示网关 / anthropic-only", exact: true })).toHaveCount(protocol === "anthropic" ? 1 : 0);
     await multiPanel.getByRole("button", { name: "保存配置" }).click();
     await expect(page.locator(".settings-message")).toContainText("已保存");
     const config = await (await page.request.get("/api/v3/config/agents")).json();
@@ -89,6 +89,7 @@ test("supplier endpoints, searchable toggles, and protocol-scoped Solver options
   await expect(page.locator(".settings-message")).toContainText("已保存");
   await page.getByRole("button", { name: "配置 Qwen Code Worker" }).click();
   const qwenPanel = page.getByLabel("Qwen Code Worker Solver 配置", { exact: true });
+  await qwenPanel.getByRole("combobox", { name: "协议", exact: true }).selectOption("anthropic");
   await qwenPanel.getByRole("combobox", { name: "供应商 / 已启用模型", exact: true }).selectOption({ label: "端点演示网关 / qwen-shared" });
   await qwenPanel.getByRole("button", { name: "保存配置" }).click();
   await expect(page.locator(".settings-message")).toContainText("已保存");

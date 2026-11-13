@@ -2,7 +2,7 @@ import type { AgentModelChoice } from "../api/tga3-tasks";
 import type { ProviderProtocol } from "../api/tga3-config";
 
 type Selection = { provider_id: string; model_id: string; protocol: ProviderProtocol };
-const PROTOCOL_NAMES: Record<ProviderProtocol, string> = {
+export const PROTOCOL_NAMES: Record<ProviderProtocol, string> = {
   openai_responses: "OpenAI Responses", openai_chat_completions: "OpenAI Chat Completions",
   anthropic: "Anthropic Messages",
 };

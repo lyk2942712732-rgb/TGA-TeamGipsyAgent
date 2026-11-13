@@ -102,14 +102,40 @@ describe("SolversPage", () => {
     expect(model.parentElement).not.toContainElement(within(panel).getByRole("combobox", { name: "协议" }));
     const protocol = within(panel).getByRole("combobox", { name: "协议" });
     expect(protocol.closest(".workbench-definition")).not.toBeNull();
+    expect(model).toHaveValue(JSON.stringify(["deepseek", "deepseek-v4-pro"]));
+    expect(within(model).getByRole("option", { name: "DeepSeek / anthropic-only" })).toBeInTheDocument();
+    expect(within(model).queryByRole("option", { name: /responses-only|chat-only/ })).toBeNull();
+
     await user.selectOptions(protocol, "openai_responses");
+    expect(model).toHaveValue(JSON.stringify(["deepseek", "deepseek-v4-pro"]));
+    expect(within(model).getByRole("option", { name: "DeepSeek / responses-only" })).toBeInTheDocument();
+    expect(within(model).queryByRole("option", { name: /anthropic-only|chat-only|disabled-model/ })).toBeNull();
     await user.click(within(panel).getByRole("button", { name: "保存配置" }));
     await waitFor(() => expect(mocks.saveAgents).toHaveBeenCalledWith(expect.objectContaining({
       agents: expect.objectContaining({ "worker-opencode": expect.objectContaining({ provider_id: "deepseek", model_id: "deepseek-v4-pro", protocol: "openai_responses" }) }),
     })));
-    await user.selectOptions(model, JSON.stringify(["deepseek", "chat-only"]));
+
+    await user.selectOptions(protocol, "openai_chat_completions");
     expect(protocol).toHaveValue("openai_chat_completions");
-    expect(protocol).toBeDisabled();
+    expect(protocol).toBeEnabled();
+    expect(model).toHaveValue("");
+    expect(within(model).queryByRole("option", { name: /responses-only|anthropic-only|deepseek-v4-pro/ })).toBeNull();
+    expect(within(panel).getByRole("button", { name: "保存配置" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "保存" })).toBeDisabled();
+
+    await user.click(screen.getByRole("button", { name: "配置 Claude Worker" }));
+    expect(within(screen.getByLabelText("Claude Worker Solver 配置")).getByRole("combobox", { name: "协议" })).toHaveValue("anthropic");
+    await user.click(screen.getByRole("button", { name: "配置 OpenCode Worker" }));
+    expect(protocol).toHaveValue("openai_chat_completions");
+    await user.selectOptions(protocol, "openai_responses");
+    expect(model).toHaveValue(JSON.stringify(["deepseek", "deepseek-v4-pro"]));
+    expect(within(panel).getByRole("button", { name: "保存配置" })).toBeEnabled();
+    await user.selectOptions(protocol, "openai_chat_completions");
+    await user.selectOptions(model, JSON.stringify(["deepseek", "chat-only"]));
+    await user.click(within(panel).getByRole("button", { name: "保存配置" }));
+    await waitFor(() => expect(mocks.saveAgents).toHaveBeenLastCalledWith(expect.objectContaining({
+      agents: expect.objectContaining({ "worker-opencode": expect.objectContaining({ provider_id: "deepseek", model_id: "chat-only", protocol: "openai_chat_completions" }) }),
+    })));
   });
 
   it("saves each Worker's blackboard interval without a fixed turn limit", async () => {
