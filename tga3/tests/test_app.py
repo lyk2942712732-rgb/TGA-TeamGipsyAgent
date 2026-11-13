@@ -142,14 +142,14 @@ def test_frontend_api_uses_safe_catalog_and_page_owned_config_documents(tmp_path
         assert client.delete("/api/v3/skills/web").status_code == 204
         archive_payload = BytesIO()
         with ZipFile(archive_payload, "w") as archive:
-            archive.writestr("ctf-crypto/SKILL.md", "# Crypto\n\n按需读取 rsa.md。")
-            archive.writestr("ctf-crypto/rsa.md", "# RSA\n\n检查小因数。")
+            archive.writestr("import-fixture-crypto/SKILL.md", "# Crypto\n\n按需读取 rsa.md。")
+            archive.writestr("import-fixture-crypto/rsa.md", "# RSA\n\n检查小因数。")
         imported = client.post(
             "/api/v3/skills/import",
-            files={"file": ("ctf-crypto.zip", archive_payload.getvalue(), "application/zip")},
+            files={"file": ("import-fixture-crypto.zip", archive_payload.getvalue(), "application/zip")},
         )
         assert imported.status_code == 201
-        assert imported.json()["name"] == "ctf-crypto"
+        assert imported.json()["name"] == "import-fixture-crypto"
         assert [item["path"] for item in imported.json()["files"]] == ["SKILL.md", "rsa.md"]
         created = client.post(
             "/api/v3/tasks",

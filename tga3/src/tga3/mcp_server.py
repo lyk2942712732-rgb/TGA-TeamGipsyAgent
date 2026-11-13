@@ -89,7 +89,7 @@ def build_scout_mcp(config: TGA3Config, store: ScoutIntelStore, *, aoe=None) -> 
             """Fetch only the explicitly supplied question-list API, preserve original items and register them.
 
             Read /task-overview/task.md first. request supplies the exact list URL/method/actual credentials.
-            fields maps source_key/title/description/difficulty to original JSON dot paths; items_path is
+            fields maps source_key/title/description/difficulty/flag_format to original JSON dot paths; items_path is
             empty for a root array. next_url_path and total_path map documented pagination URL and total count.
             target and submission are shared documented templates; {unique_code} expands from each item,
             {flag} stays literal. Specify actual supplied credentials in headers. preflight is only for an

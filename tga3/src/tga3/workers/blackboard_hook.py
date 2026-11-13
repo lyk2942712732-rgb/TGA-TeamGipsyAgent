@@ -10,7 +10,7 @@ from pathlib import Path
 
 import httpx
 
-from ..flag_signals import FLAG
+from ..flag_signals import file_flag_format, flag_pattern
 from .action_hook import record_tool, result_context
 from .aoe_access import overview_policy
 
@@ -66,9 +66,14 @@ def checkpoint(event: dict, *, client=None, record_action=None) -> dict:
     record = record_action(event) if post_tool else None
     failed_submission = submission_failure(event, record) if post_tool else False
     deadline = os.environ.get('TGA3_ATTEMPT_DEADLINE')
-    completion_hint = bool(post_tool and record and deadline and float(deadline) - time.time() <= 30
-                           and os.environ.get('TGA3_AOE_PARENT_ID')
-                           and FLAG.search(str(event.get('tool_response', ''))))
+    completion_hint = False
+    if (post_tool and record and deadline and float(deadline) - time.time() <= 30
+            and os.environ.get("TGA3_AOE_PARENT_ID")):
+        workspace = Path(os.environ.get("TGA3_WORKSPACE", "/workspace"))
+        flag_format = file_flag_format(workspace / ".tga3/submission.json")
+        if not flag_format:
+            flag_format = file_flag_format(os.environ.get("TGA3_QUESTION_SOURCE", "/question-source.json"))
+        completion_hint = bool(flag_pattern(flag_format).search(str(event.get("tool_response", ""))))
     if post_tool and not publications_changed() and not completion_hint and not failed_submission:
         return ({"hookSpecificOutput": {"hookEventName": event_name, "additionalContext": result_context(record)}}
                 if record else {})

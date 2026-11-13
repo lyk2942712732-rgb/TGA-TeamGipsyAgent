@@ -20,7 +20,8 @@ async def test_list_maps_original_fields_preserves_source_and_finishes_without_t
     async def request(req):
         calls.append(req)
         return 200, [{'unique_code': str(i), 'description': '完整题面 '+str(i), 'difficulty': 'easy',
-                      'total_score': 100, 'container_addr': '', 'arbitrary_source': {'value': i}}
+                      'total_score': 100, 'container_addr': '', 'arbitrary_source': {'value': i},
+                      'flag_format': 'SEKAI{...}'}
                      for i in range(40)]
     c.aoe.targets._request = request
     plan = CollectionPlan(request={'method': 'GET', 'url': 'https://fixture.example/questions',
@@ -40,6 +41,10 @@ async def test_list_maps_original_fields_preserves_source_and_finishes_without_t
     assert original['arbitrary_source'] == {'value': 7} and 'source' not in q.metadata
     saved = json.loads((cfg.task_path(q.id) / 'question.json').read_text(encoding='utf8'))
     assert saved['source_path'] == 'source.json'
+    assert saved["flag_format"] == q.metadata["flag_format"] == "SEKAI{...}"
+    c.aoe.submissions.write_context(q, "worker-openai")
+    context = cfg.task_path(q.id, "workspaces", "worker-openai") / ".tga3/submission.json"
+    assert json.loads(context.read_text())["flag_format"] == "SEKAI{...}"
     assert saved['submission']['request']['body'] == {'unique_code': '7', 'flag': '{flag}'}
     assert saved['target']['start']['params']['unique_code'] == '7'
     assert not saved['attachments']

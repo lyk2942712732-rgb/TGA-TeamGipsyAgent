@@ -11,7 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from .action_logs import read_action_log
 from .errors import ContractError
 from .evidence import evidence_files
-from .flag_signals import FLAG
+from .flag_signals import flag_pattern, question_flag_format
 from .target_instances import TargetRequest
 
 
@@ -124,6 +124,7 @@ class Submissions:
     def write_context(self, question, agent_id):
         spec = self.spec(question)
         context = {"question_id": str(question.id), "source_key": question.metadata.get("source_key"),
+                   "flag_format": question_flag_format(self.config, question),
                    "submission": spec.model_dump(mode="json") if spec else None,
                    "instructions": question.metadata.get("submission_instructions", ""),
                    "flag_placeholder": "{flag}",
@@ -221,7 +222,7 @@ class Submissions:
         path = self.config.task_path(question.id, "logs", agent_id) / f"{agent_id}-actions.json"
         if not path.is_file():
             return None
-        signature = (path.stat().st_mtime_ns, path.stat().st_size)
+        signature = (path.stat().st_mtime_ns, path.stat().st_size, question_flag_format(self.config, question))
         key = (question.id, attempt["id"])
         if self._progress.get(key, (None, None))[0] == signature:
             return self._progress[key][1]
@@ -235,6 +236,7 @@ class Submissions:
     def flag_outputs(self, question, attempt, actions):
         """Yield exact flags from current-attempt output, newest first; never from command literals."""
         agent_id = attempt['agent_id']
+        pattern = flag_pattern(question_flag_format(self.config, question))
         for action in reversed(actions):
             operation = action.get("action", {})
             native_read = (operation.get('tool', '').lower() == 'read'
@@ -256,7 +258,7 @@ class Submissions:
                 text = self._body(question, agent_id, action)
             except (OSError, ValueError, ContractError):
                 continue
-            for match in FLAG.finditer(text):
+            for match in pattern.finditer(text):
                 flag = match[0]
                 if flag not in command and not re.search(r"\.\.\.|<|>|example|local_test", flag, re.I):
                     yield action, flag
