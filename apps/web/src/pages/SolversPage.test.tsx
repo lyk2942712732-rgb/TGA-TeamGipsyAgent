@@ -74,19 +74,42 @@ describe("SolversPage", () => {
     const user = userEvent.setup();
     render(<SolversPage />);
     await user.click(await screen.findByRole("button", { name: "配置 OpenAI Worker" }));
-    let modelSelect = within(screen.getByLabelText("OpenAI Worker Solver 配置")).getByRole("combobox");
+    let modelSelect = within(screen.getByLabelText("OpenAI Worker Solver 配置")).getByRole("combobox", { name: "供应商 / 已启用模型" });
     expect(within(modelSelect).getByRole("option", { name: "DeepSeek / responses-only" })).toBeInTheDocument();
     expect(within(modelSelect).queryByRole("option", { name: /anthropic-only|disabled-model|chat-only|Responses/ })).toBeNull();
     await user.selectOptions(modelSelect, JSON.stringify(["deepseek", "responses-only"]));
     await user.click(within(screen.getByLabelText("OpenAI Worker Solver 配置")).getByRole("button", { name: "保存配置" }));
     await waitFor(() => expect(mocks.saveAgents).toHaveBeenCalledWith(expect.objectContaining({ agents: expect.objectContaining({ "worker-openai": expect.objectContaining({ model_id: "responses-only", protocol: "openai_responses" }) }) })));
     await user.click(screen.getByRole("button", { name: "配置 Claude Worker" }));
-    modelSelect = within(screen.getByLabelText("Claude Worker Solver 配置")).getByRole("combobox");
+    modelSelect = within(screen.getByLabelText("Claude Worker Solver 配置")).getByRole("combobox", { name: "供应商 / 已启用模型" });
     expect(within(modelSelect).getByRole("option", { name: "DeepSeek / anthropic-only" })).toBeInTheDocument();
     expect(within(modelSelect).queryByRole("option", { name: /responses-only|disabled-model|chat-only|Messages/ })).toBeNull();
     await user.click(screen.getByRole("button", { name: "配置 Reporter" }));
-    modelSelect = within(screen.getByLabelText("Reporter Solver 配置")).getByRole("combobox");
+    modelSelect = within(screen.getByLabelText("Reporter Solver 配置")).getByRole("combobox", { name: "供应商 / 已启用模型" });
     expect(within(modelSelect).getByRole("option", { name: "DeepSeek / responses-only" })).toBeInTheDocument();
+  });
+
+  it("switches and saves protocols only from the bottom definition row", async () => {
+    const worker = { ...agentConfig.agents["worker-claude"], display_name: "OpenCode Worker", runtime: "opencode_cli" };
+    mocks.agents.mockResolvedValue({ ...agentConfig, agents: { ...agentConfig.agents, "worker-opencode": worker } });
+    const user = userEvent.setup();
+    render(<SolversPage />);
+    await user.click(await screen.findByRole("button", { name: "配置 OpenCode Worker" }));
+    const panel = screen.getByLabelText("OpenCode Worker Solver 配置");
+    const model = within(panel).getByRole("combobox", { name: "供应商 / 已启用模型" });
+    expect(within(model).getAllByRole("option", { name: "DeepSeek / deepseek-v4-pro" })).toHaveLength(1);
+    expect(within(panel).getAllByRole("combobox")).toHaveLength(2);
+    expect(model.parentElement).not.toContainElement(within(panel).getByRole("combobox", { name: "协议" }));
+    const protocol = within(panel).getByRole("combobox", { name: "协议" });
+    expect(protocol.closest(".workbench-definition")).not.toBeNull();
+    await user.selectOptions(protocol, "openai_responses");
+    await user.click(within(panel).getByRole("button", { name: "保存配置" }));
+    await waitFor(() => expect(mocks.saveAgents).toHaveBeenCalledWith(expect.objectContaining({
+      agents: expect.objectContaining({ "worker-opencode": expect.objectContaining({ provider_id: "deepseek", model_id: "deepseek-v4-pro", protocol: "openai_responses" }) }),
+    })));
+    await user.selectOptions(model, JSON.stringify(["deepseek", "chat-only"]));
+    expect(protocol).toHaveValue("openai_chat_completions");
+    expect(protocol).toBeDisabled();
   });
 
   it("saves each Worker's blackboard interval without a fixed turn limit", async () => {

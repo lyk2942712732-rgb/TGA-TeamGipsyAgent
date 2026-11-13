@@ -7,9 +7,26 @@ const PROTOCOL_NAMES: Record<ProviderProtocol, string> = {
   anthropic: "Anthropic Messages",
 };
 
-export function ModelPicker({ options, value, onChange, label, disabled = false }: {
+export function ModelProtocolPicker({ options, value, onChange, label, disabled = false }: {
   options: AgentModelChoice[]; value?: Selection; onChange: (value: Selection) => void;
   label: string; disabled?: boolean;
+}) {
+  const current = options.filter((item, index) => item.provider_id === value?.provider_id && item.model_id === value?.model_id
+    && options.findIndex(other => other.provider_id === item.provider_id && other.model_id === item.model_id && other.protocol === item.protocol) === index);
+  return <select aria-label={label} disabled={disabled || current.filter(item => item.ready).length < 2}
+    value={current.some(item => item.protocol === value?.protocol) ? value?.protocol : ""}
+    onChange={event => {
+      const next = current.find(item => item.protocol === event.target.value && item.ready);
+      if (next) onChange({ provider_id: next.provider_id, model_id: next.model_id, protocol: next.protocol });
+    }}>
+    <option value="" disabled>请选择协议</option>
+    {current.map(item => <option key={item.protocol} value={item.protocol} disabled={!item.ready}>{PROTOCOL_NAMES[item.protocol]}</option>)}
+  </select>;
+}
+
+export function ModelPicker({ options, value, onChange, label, disabled = false, showProtocol = true }: {
+  options: AgentModelChoice[]; value?: Selection; onChange: (value: Selection) => void;
+  label: string; disabled?: boolean; showProtocol?: boolean;
 }) {
   const groups = new Map<string, AgentModelChoice[]>();
   const key = (item: { provider_id: string; model_id: string }) => JSON.stringify([item.provider_id, item.model_id]);
@@ -31,14 +48,6 @@ export function ModelPicker({ options, value, onChange, label, disabled = false 
         {choices[0].provider_name} / {choices[0].model_name}{choices.some(item => item.ready) ? "" : "（密钥不可用）"}
       </option>)}
     </select>
-    {current && current.length > 1 ? <select aria-label={`${label} 协议`} disabled={disabled}
-      value={current.some(item => item.protocol === value?.protocol) ? value?.protocol : ""}
-      onChange={event => {
-        const next = current.find(item => item.protocol === event.target.value && item.ready);
-        if (next) onChange({ provider_id: next.provider_id, model_id: next.model_id, protocol: next.protocol });
-      }}>
-      <option value="" disabled>请选择协议</option>
-      {current.map(item => <option key={item.protocol} value={item.protocol} disabled={!item.ready}>{PROTOCOL_NAMES[item.protocol]}</option>)}
-    </select> : null}
+    {showProtocol && current && current.length > 1 ? <ModelProtocolPicker options={current} value={value} onChange={onChange} label={`${label} 协议`} disabled={disabled} /> : null}
   </div>;
 }
