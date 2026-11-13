@@ -5,6 +5,7 @@ import {
   type AgentModelOptions, type StagedAsset, type KnowledgeSource, type KnowledgeSources,
 } from "../api/tga3-tasks";
 import type { ProviderProtocol, SceneConfig } from "../api/tga3-config";
+import { ModelPicker } from "../components/ModelPicker";
 import { TASK_MODES, type TaskMode } from "../modes";
 
 const SCENE_ICONS: Record<TaskMode, string> = {
@@ -107,7 +108,8 @@ export function NewTaskPage({ onCreated, onCancel = () => history.back() }: { on
           </label>)}</div>
           <p>每题分别计时：首次由一位 Worker 尝试，第二次换另一位；共同攻坚由两位共享一份预算。四 Worker 任务只剩一道题时，自动进入围殴，共享共同攻坚预算；正在解题者继续，尝试过的 Worker 恢复原会话。准备时间不计入。</p>
         </fieldset> : null}
-        {sceneId === "aoe" ? <div className="wide aoe-submission-option">
+        <div className="wide task-run-options">
+        {sceneId === "aoe" ? <div className="aoe-submission-option">
           <label>
             <input type="checkbox" checked={aoeAutoSubmitFlag} aria-describedby="aoe-submission-help"
               onChange={event => setAoeAutoSubmitFlag(event.target.checked)} />
@@ -115,10 +117,15 @@ export function NewTaskPage({ onCreated, onCancel = () => history.back() }: { on
           </label>
           <small id="aoe-submission-help">取消勾选后，取得 Flag 即可发布最终候选，无需平台成功回执。</small>
         </div> : null}
+          <div className="aoe-submission-option">
+            <label><input type="checkbox" checked={produceReport} aria-describedby="produce-report-help"
+              onChange={event => setProduceReport(event.target.checked)} />产出报告</label>
+            <small id="produce-report-help">勾选后生成报告并整理经验卡；取消勾选后仅整理经验卡。</small>
+          </div>
+        </div>
         <label className="wide task-description-field">描述<span>用户初始提示词</span><textarea rows={7} value={description} onChange={(event) => setDescription(event.target.value)} onPaste={onPaste} placeholder="粘贴题目描述、授权目标、已知信息和期望结果；也可以直接粘贴图片。" /></label>
         <div className="task-attachment-zone" onDragOver={(event) => event.preventDefault()} onDrop={onDrop}><input ref={inputRef} type="file" multiple hidden onChange={onFiles} /><button type="button" className="ref-secondary-button" onClick={() => inputRef.current?.click()}><Paperclip size={16} />添加文件或图片</button><span>支持拖放、文件选择以及在描述框粘贴图片</span></div>
         {assets.length ? <div className="task-attachment-list">{assets.map((asset) => <article key={asset.id}>{asset.previewUrl ? <img src={asset.previewUrl} alt="" /> : asset.mediaKind === "image" ? <Image size={22} /> : <FileText size={22} />}<span><strong>{asset.originalName}</strong><small>{formatBytes(asset.size)}</small></span><button aria-label={`移除 ${asset.originalName}`} onClick={() => void remove(asset)}><X size={15} /></button></article>)}</div> : null}
-        <fieldset className="wide task-output-options"><legend>执行与产出</legend>
         <label className="wide knowledge-source-field">Worker 知识库
           <select aria-label="Worker 知识库" value={knowledgeSource} onChange={event => setKnowledgeSource(event.target.value as KnowledgeSource)}>
             <option value="online" disabled={knowledgeSources?.online.available === false}>在线知识库 · ctf42</option>
@@ -130,19 +137,13 @@ export function NewTaskPage({ onCreated, onCancel = () => history.back() }: { on
           {knowledgeSources && !knowledgeSources.local.available ? <small>本地 CTF Wiki 尚未就绪，请先运行 tga3 sync-knowledge。</small> : null}
           {knowledgeSources && !knowledgeSources.online.available && knowledgeSource === "online" ? <small role="alert">在线知识库已禁用，请选择已就绪的本地知识库。</small> : null}
         </label>
-          <div className="aoe-submission-option">
-            <label><input type="checkbox" checked={produceReport} aria-describedby="produce-report-help"
-              onChange={event => setProduceReport(event.target.checked)} />产出报告</label>
-            <small id="produce-report-help">勾选后生成报告并整理经验卡；取消勾选后仅整理经验卡。</small>
-          </div>
-        </fieldset>
         {agentOptions ? <fieldset className="task-agent-models"><legend>本任务 Solver 模型</legend><p>默认继承 Solver 配置；这里的选择只影响本任务。</p><div>{agentOptions.agents.map((agent) => {
           const compatible = agentOptions.models.filter((model) => modelCompatible(agent.runtime, model.protocol));
           const current = agentModels[agent.id];
-          return <label key={agent.id}><span><strong>{agent.display_name}</strong><small>{agent.id}</small></span><select aria-label={`${agent.display_name} 模型`} value={current && compatible.some((model) => model.provider_id === current.provider_id && model.model_id === current.model_id && model.protocol === current.protocol) ? `${current.provider_id}::${current.model_id}::${current.protocol}` : ""} onChange={(event) => { const [provider_id, model_id, protocol] = event.target.value.split("::"); setAgentModels((value) => ({ ...value, [agent.id]: { provider_id, model_id, protocol: protocol as ProviderProtocol } })); }}>
-            <option value="" disabled>请选择已启用模型</option>
-            {compatible.map((model) => <option key={`${model.provider_id}::${model.model_id}::${model.protocol}`} value={`${model.provider_id}::${model.model_id}::${model.protocol}`} disabled={!model.ready}>{model.provider_name} / {model.model_name}{model.ready ? "" : "（密钥不可用）"}</option>)}
-          </select></label>;
+          return <div className="task-agent-model-row" key={agent.id}><span><strong>{agent.display_name}</strong><small>{agent.id}</small></span>
+            <ModelPicker label={`${agent.display_name} 模型`} options={compatible} value={current}
+              onChange={model => setAgentModels(value => ({ ...value, [agent.id]: model }))} />
+          </div>;
         })}</div></fieldset> : null}
         <aside className="new-task-config-note"><strong>{sceneId === "aoe" ? produceReport ? "收集题目 → 分题解题 → 逐题报告" : "收集题目 → 分题解题 → 经验卡" : "Scout → Workers → Reporter"}</strong><p>{sceneId === "aoe" ? "四个 Worker 优先领取未尝试的简单题，题目各自保留黑板和文件，按所选选项整理产出。" : `${selected?.name ?? "场景"}提示词、题目描述和附件索引将自动进入黑板。`}</p></aside>
         {error ? <p className="inline-error" role="alert">{error}</p> : null}

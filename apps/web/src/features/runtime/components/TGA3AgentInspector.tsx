@@ -1,3 +1,4 @@
+import { ModelPicker } from "../../../components/ModelPicker";
 import { Bot, Box, CirclePause, CirclePlay, Settings2 } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
@@ -100,7 +101,9 @@ function Controls({ snapshot, agent, onChanged }: { snapshot: TGA3RuntimeSnapsho
   async function change(value: string) { setSelected(value); const [provider, model, protocol] = value.split("::"); if (!provider || !model || !protocol) return; setBusy(true); setNotice(null); try { await tga3RuntimeApi.setWorkerModel(snapshot.task.id, agent.agent_id, provider, model, protocol as ProviderProtocol); setNotice("模型已切换，将用于该 Agent 的后续周期。"); onChanged(); } catch (reason) { setNotice(errorText(reason)); } finally { setBusy(false); } }
   async function control(action: "pause" | "resume") { setBusy(true); setNotice(null); try { await tga3RuntimeApi.setWorkerState(snapshot.task.id, agent.agent_id, action); setNotice(action === "pause" ? "暂停请求已提交，将在下一个周期检查点生效。" : "Agent 已恢复运行。"); onChanged(); } catch (reason) { setNotice(errorText(reason)); } finally { setBusy(false); } }
   const worker = agent.role === "worker" && agent.runtime_location === "container"; const paused = ["paused", "pause_requested"].includes(agent.actual_state);
-  return <div className="tga3-controls"><section><header><Settings2 size={17} /><h3>后续模型</h3></header><label>供应商 / 已启用模型<select value={models.some((model) => `${model.provider_id}::${model.model_id}::${model.protocol}` === selected) ? selected : ""} disabled={busy || !worker || !models.length} onChange={(event) => void change(event.target.value)}><option value="" disabled>{models.length ? "请选择已启用模型" : "没有可用的兼容模型"}</option>{models.map((model) => <option key={`${model.provider_id}::${model.model_id}::${model.protocol}`} value={`${model.provider_id}::${model.model_id}::${model.protocol}`}>{model.provider_name} / {model.model_name}</option>)}</select></label></section>
+  return <div className="tga3-controls"><section><header><Settings2 size={17} /><h3>后续模型</h3></header><div>供应商 / 已启用模型<ModelPicker label="供应商 / 已启用模型" options={models.map(model => ({ ...model, ready: true }))}
+    value={(() => { const [provider_id, model_id, protocol] = selected.split("::"); return { provider_id, model_id, protocol: protocol as ProviderProtocol }; })()}
+    disabled={busy || !worker} onChange={model => void change(`${model.provider_id}::${model.model_id}::${model.protocol}`)} /></div></section>
     <section><header><Box size={17} /><h3>执行控制</h3></header>{worker ? <button type="button" disabled={busy} onClick={() => void control(paused ? "resume" : "pause")}>{paused ? <CirclePlay size={16} /> : <CirclePause size={16} />}{paused ? "恢复 Worker" : "暂停 Worker"}</button> : <p className="tga3-muted">该角色由任务生命周期启动一次性容器，不提供独立暂停或运行中切换模型。</p>}</section>{notice ? <p className="tga3-notice" role="status">{notice}</p> : null}
   </div>;
 }

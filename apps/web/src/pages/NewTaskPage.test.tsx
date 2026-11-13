@@ -27,7 +27,7 @@ describe("NewTaskPage", () => {
       .map((button) => button.querySelector("strong")?.textContent)).toEqual([
         "Web渗透测试", "Pwn", "Re逆向", "Misc安全杂项", "Crypto密码学问题", "AI安全", "AOE多题",
       ]);
-    expect(await screen.findByLabelText("OpenAI Worker 模型")).toHaveValue("openai::gpt-test::openai_responses");
+    expect(await screen.findByLabelText("OpenAI Worker 模型")).toHaveValue(JSON.stringify(["openai", "gpt-test"]));
   });
 
   it("creates a native TGA3 task with staged files", async () => {
@@ -59,9 +59,10 @@ describe("NewTaskPage", () => {
     const autoSubmit = screen.getByRole("checkbox", { name: "自动提交 Flag" });
     expect(autoSubmit).toBeChecked();
     await user.click(autoSubmit);
-    const outputs = screen.getByRole("group", { name: "执行与产出" });
-    expect(within(outputs).getByRole("combobox", { name: "Worker 知识库" })).toHaveValue("local");
-    const report = within(outputs).getByRole("checkbox", { name: "产出报告" });
+    expect(screen.queryByRole("group", { name: "执行与产出" })).not.toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "Worker 知识库" })).toHaveValue("local");
+    const report = screen.getByRole("checkbox", { name: "产出报告" });
+    expect(autoSubmit.closest(".task-run-options")).toContainElement(report);
     expect(report).toBeChecked();
     await user.click(report);
     const first = screen.getByRole("spinbutton", { name: /第一次尝试/ });

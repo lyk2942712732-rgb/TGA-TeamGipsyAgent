@@ -1,3 +1,4 @@
+import { ModelPicker } from "../components/ModelPicker";
 import { Bot, Box, CheckCircle2, Database, RefreshCw, Save, Wrench, XCircle } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { tga3ConfigApi, type AgentConfig, type AgentDefinition, type AgentsConfig, type ModelsConfig } from "../api/tga3-config";
@@ -38,7 +39,9 @@ export function SolversPage() {
         <div className="workbench-tabs" role="tablist" aria-label="Solver 配置内容">{([["model", "运行与模型"], ["prompt", "系统提示词"], ["tools", "工具与镜像"]] as const).map(([value, text]) => <button key={value} id={`solver-tab-${value}`} role="tab" aria-selected={tab === value} aria-controls={`solver-panel-${value}`} onClick={() => setTab(value)}>{text}</button>)}</div>
         <div className="workbench-solver-content" role="tabpanel" id={`solver-panel-${tab}`} aria-labelledby={`solver-tab-${tab}`}>
           {tab === "model" ? <>
-            <label>供应商 / 已启用模型<select aria-label="供应商 / 已启用模型" value={options.some(o => o.provider.id === selected.provider_id && o.model.id === selected.model_id && o.protocol === selected.protocol) ? `${selected.provider_id}::${selected.model_id}::${selected.protocol}` : ""} disabled={!options.length} onChange={event => { const [provider_id, model_id, protocol] = event.target.value.split("::"); patch({ provider_id, model_id, protocol: protocol as AgentConfig["protocol"] }); }}><option value="" disabled>请选择已启用模型</option>{options.map(o => <option key={`${o.provider.id}::${o.model.id}::${o.protocol}`} value={`${o.provider.id}::${o.model.id}::${o.protocol}`}>{o.provider.name} / {o.model.name}</option>)}</select><small className="field-help">仅显示已启用且兼容当前 CLI 的模型。</small></label>
+            <div>供应商 / 已启用模型<ModelPicker label="供应商 / 已启用模型" value={selected}
+              options={options.map(o => ({ provider_id: o.provider.id, provider_name: o.provider.name, model_id: o.model.id, model_name: o.model.name, protocol: o.protocol, ready: true }))}
+              onChange={patch} /><small className="field-help">仅显示已启用且兼容当前 CLI 的模型；同一模型可单独选择协议。</small></div>
             <p className="workbench-execution-note">{selected.role === "scout" ? "三轮复用同一容器和 CLI 会话。第一轮执行并汇总 action 日志；第二轮覆盖全部 action，保存原始 Intel JSON；第三轮统一合并，另存合并 Intel JSON，系统仅将合并版本导入黑板。第二、三轮不设总时间预算，完整覆盖后结束。" : selected.role === "reporter" ? "最终候选确定后，读取最终黑板与证据并生成报告。" : "持续推进 · 不限制轮数。异常恢复继续使用原 CLI 会话。"}</p>
             {selected.role === "scout" ? <label>第一轮侦察时长（秒）<input aria-label="第一轮侦察时长（秒）" type="number" min={60} max={600} step={1} value={scoutSeconds} onChange={event => { setScoutSeconds(Number(event.target.value)); setScoutTimeDirty(true); setDirty(true); setMessage(""); }} /><small className="field-help">默认 300 秒，范围 60–600 秒，仅用于单题场景。AOE Scout 只收集题面与附件，不执行后续侦察轮次，不使用此预算。保存后用于新任务。</small></label> : null}
             {selected.role === "worker" ? <label>黑板同步间隔（秒）<input aria-label="黑板同步间隔（秒）" type="number" min={1} max={3600} value={selected.blackboard_interval_seconds ?? 60} onChange={event => patch({ blackboard_interval_seconds: Number(event.target.value) })} /><small className="field-help">有更新且达到间隔时，在下一次工具调用机会同步；提交最终候选前额外检查。</small></label> : null}

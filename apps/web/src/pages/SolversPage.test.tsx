@@ -77,7 +77,7 @@ describe("SolversPage", () => {
     let modelSelect = within(screen.getByLabelText("OpenAI Worker Solver 配置")).getByRole("combobox");
     expect(within(modelSelect).getByRole("option", { name: "DeepSeek / responses-only" })).toBeInTheDocument();
     expect(within(modelSelect).queryByRole("option", { name: /anthropic-only|disabled-model|chat-only|Responses/ })).toBeNull();
-    await user.selectOptions(modelSelect, "deepseek::responses-only::openai_responses");
+    await user.selectOptions(modelSelect, JSON.stringify(["deepseek", "responses-only"]));
     await user.click(within(screen.getByLabelText("OpenAI Worker Solver 配置")).getByRole("button", { name: "保存配置" }));
     await waitFor(() => expect(mocks.saveAgents).toHaveBeenCalledWith(expect.objectContaining({ agents: expect.objectContaining({ "worker-openai": expect.objectContaining({ model_id: "responses-only", protocol: "openai_responses" }) }) })));
     await user.click(screen.getByRole("button", { name: "配置 Claude Worker" }));

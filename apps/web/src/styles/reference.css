@@ -291,5 +291,10 @@
   .provider-detail-grid { grid-template-columns: 1fr; }
 }
 
-.task-output-options { display: grid; gap: 18px; margin: 0; padding: 18px; border: 1px solid var(--c-border); border-radius: 8px; }
-.task-output-options legend { padding: 0 6px; font-size: 13px; font-weight: 600; }
+/* Keep task controls together while allowing small screens to wrap. */
+.task-run-options { display: flex; align-items: flex-start; gap: 20px 36px; flex-wrap: wrap; }
+.task-run-options > div { flex: 1 1 280px; }
+.model-picker { display: grid; gap: 6px; min-width: 0; }
+.task-agent-model-row { display: grid; grid-template-columns: minmax(120px,.8fr) minmax(180px,1.2fr); align-items: center; gap: 8px; padding: 10px 0; border-bottom: 1px solid var(--c-border); }
+.task-agent-model-row > span { display: grid; }
+@media (max-width: 760px) { .task-agent-model-row { grid-template-columns: 1fr; } }
