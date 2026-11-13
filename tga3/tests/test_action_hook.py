@@ -47,6 +47,31 @@ def tool_event(event="PreToolUse", **extra):
             "tool_input": {"command": "fixture > response.txt"}, "cwd": "/workspace", **extra}
 
 
+@pytest.mark.parametrize("output,expected", [("HTB{wrong_prefix}", 0), ("iteratorSEKAI{exact}", 1)])
+@pytest.mark.parametrize("location", ["context", "source"])
+def test_closing_signal_uses_question_format(hook_env, monkeypatch, output, expected, location):
+    import time
+
+    monkeypatch.setenv("TGA3_AOE_PARENT_ID", "parent")
+    monkeypatch.setenv("TGA3_ATTEMPT_DEADLINE", str(time.time() + 15))
+    monkeypatch.setenv("TGA3_BLACKBOARD_MCP_URL", "http://fixture/mcp")
+    path = hook_env / (".tga3/submission.json" if location == "context" else "source.json")
+    path.parent.mkdir(exist_ok=True)
+    path.write_text(json.dumps({"flag_format": "SEKAI{...}"}))
+    if location == "source":
+        monkeypatch.setenv("TGA3_QUESTION_SOURCE", str(path))
+    calls = []
+
+    class Client:
+        def post(self, *args, **kwargs):
+            calls.append(kwargs)
+            return SimpleNamespace(raise_for_status=lambda: None, json=lambda: {})
+
+    checkpoint(tool_event("PostToolUse", tool_response=output), client=Client(),
+               record_action=lambda event: {"action_id": "test", "action": {"command": "python solve.py"}})
+    assert len(calls) == expected
+
+
 @pytest.mark.parametrize('tool', ['Bash', 'exec_command', 'shell', 'run_shell_command'])
 @pytest.mark.parametrize('structured', [True, False])
 def test_wrong_submission_forces_checkpoint_and_delivers_system_receipt(hook_env, monkeypatch, tool, structured):

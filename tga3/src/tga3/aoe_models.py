@@ -20,6 +20,7 @@ class AOEQuestionInput(BaseModel):
     difficulty: str | float | None = None
     connection_info: str = Field(default="", max_length=20000)
     submission_instructions: str = Field(default="", max_length=20000)
+    flag_format: str = Field(default="", max_length=1000)
     attachments: list[str] = Field(default_factory=list, max_length=100)
     target: TargetSpec = Field(default_factory=lambda: TargetSpec(mode="unknown"))
     submission: SubmissionSpec | None = None

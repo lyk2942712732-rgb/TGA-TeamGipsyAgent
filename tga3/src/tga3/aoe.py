@@ -140,7 +140,7 @@ class AOERuntime:
         return current
 
     def _question_source(self, question: TaskRun) -> tuple:
-        fields = ("description", "source_key", "difficulty", "connection_info", "submission_instructions",
+        fields = ("description", "source_key", "difficulty", "connection_info", "submission_instructions", "flag_format",
                   "status", "registered_at", "solved_at", "scout_ready", "scout_phase", "attempts", "flag",
                   "rescue", "reinforcement", "finish_reason", "swarm", "solver_agent_id")
         return (question.title, question.state, question.created_at, question.blackboard_seq,
@@ -168,6 +168,7 @@ class AOERuntime:
             "difficulty": question.metadata.get("difficulty"),
             "connection_info": question.metadata.get("connection_info", ""),
             "submission_instructions": question.metadata.get("submission_instructions", ""),
+            "flag_format": question.metadata.get("flag_format", ""),
             "status": question.metadata.get("status", "queued"),
             "registered_at": question.metadata.get("registered_at", question.created_at.timestamp()),
             "solved_at": question.metadata.get("solved_at"),
@@ -356,6 +357,8 @@ class AOERuntime:
             }
             for spec in specifications:
                 payload = spec.model_dump(mode="json", exclude={'source'})
+                if not payload.get("flag_format"):
+                    payload.pop("flag_format", None)  # Preserve historical registration digests.
                 fingerprint = hashlib.sha256(
                     json.dumps(payload, ensure_ascii=False, sort_keys=True).encode()
                 ).hexdigest()
@@ -418,6 +421,8 @@ class AOERuntime:
                     f"\n内部题目 ID：{question_id}\n\n{spec.description}"
                     f"\n\n连接信息：{spec.connection_info}"
                 )
+                if spec.flag_format:
+                    text += f"\nFlag 格式：{spec.flag_format}"
                 if auto_submit_flag:
                     text += f"\n提交要求：{spec.submission_instructions}"
                 await self.board.publish(
