@@ -6,15 +6,20 @@ import asyncio
 import hashlib
 import json
 import mimetypes
+import re
 import time
 from collections import defaultdict
 from copy import deepcopy
 from pathlib import Path
 from typing import TYPE_CHECKING
+from urllib.parse import unquote, urlsplit
 from uuid import UUID, uuid4, uuid5
+
+import httpx
 
 from .aoe_models import (
     AOEQuestionInput,
+    AttachmentDownloadSpec,
     active_attempts,
     attempt_budget_seconds,
     attempt_budgets,
@@ -71,6 +76,8 @@ class AOERuntime:
         self.submissions = Submissions(self.config)
         self.overview = BatchContext(self.config, self.storage)
         self.collection = QuestionCollection(self)
+        self.attachment_client: httpx.AsyncClient | None = None
+        self._attachment_locks: defaultdict[UUID, asyncio.Lock] = defaultdict(asyncio.Lock)
         self._recovering: set[UUID] = set()
         self._target_jobs: dict[UUID, asyncio.Task] = {}
         self._target_claims: dict[UUID, tuple[str, ...]] = {}
@@ -141,7 +148,7 @@ class AOERuntime:
 
     def _question_source(self, question: TaskRun) -> tuple:
         fields = ("description", "source_key", "difficulty", "category", "tags", "connection_info",
-                  "submission_instructions", "flag_format", "collection_notes",
+                  "submission_instructions", "flag_format", "collection_notes", "pre_solved",
                   "status", "registered_at", "solved_at", "scout_ready", "scout_phase", "attempts", "flag",
                   "rescue", "reinforcement", "finish_reason", "swarm", "solver_agent_id")
         return (question.title, question.state, question.created_at, question.blackboard_seq,
@@ -173,6 +180,8 @@ class AOERuntime:
             "submission_instructions": question.metadata.get("submission_instructions", ""),
             "flag_format": question.metadata.get("flag_format", ""),
             "collection_notes": question.metadata.get("collection_notes", ""),
+            "pre_solved": bool(question.metadata.get("pre_solved", False)),
+            "remote_attachments_count": len(question.metadata.get("remote_attachments", [])),
             "status": question.metadata.get("status", "queued"),
             "registered_at": question.metadata.get("registered_at", question.created_at.timestamp()),
             "solved_at": question.metadata.get("solved_at"),
@@ -188,7 +197,9 @@ class AOERuntime:
             "swarm": question.metadata.get('swarm'),
             "solver_agent_id": question.metadata.get('solver_agent_id'),
             "report_state": (
-                "disabled"
+                "pre_solved"
+                if question.metadata.get("pre_solved")
+                else "disabled"
                 if not question.metadata.get("produce_report", True)
                 else
                 "completed"
@@ -338,6 +349,130 @@ class AOERuntime:
             ),
         )
 
+    @staticmethod
+    def _remote_filename(spec: AttachmentDownloadSpec, content_disposition: str = "") -> str:
+        candidate = spec.filename.strip()
+        if not candidate and content_disposition:
+            match = re.search(r"filename\*=(?:UTF-8''|utf-8'')([^;\r\n]+)", content_disposition)
+            if match:
+                candidate = unquote(match[1].strip().strip("\"'"))
+            else:
+                match = re.search(r'filename="?([^";\r\n]+)"?', content_disposition)
+                if match:
+                    candidate = match[1].strip()
+        if not candidate:
+            candidate = unquote(Path(urlsplit(spec.url).path).name)
+        candidate = Path(candidate.replace("\\", "/")).name.strip()
+        candidate = re.sub(r"[\x00-\x1f<>:\"|?*]+", "_", candidate)
+        return candidate or "attachment.bin"
+
+    async def _prepare_attachments(self, question: TaskRun) -> None:
+        """Download declared remote attachments on demand when a Worker claims this question."""
+        raw_specs = question.metadata.get("remote_attachments") or []
+        if not raw_specs or question.metadata.get("pre_solved"):
+            return
+        max_bytes = 256 * 1024 * 1024
+        async with self._attachment_locks[question.id]:
+            specs = [AttachmentDownloadSpec.model_validate(item) for item in raw_specs]
+            existing_ids = {file.id for file in await self.storage.list_input_files(question.id)}
+            pending = []
+            for spec in specs:
+                ident = uuid5(question.id, f"remote-attachment:{spec.method}:{spec.url}:{spec.filename}")
+                if ident not in existing_ids:
+                    pending.append((ident, spec))
+            if not pending:
+                return
+            inputs_root = self.config.task_path(question.id, "inputs")
+            inputs_root.mkdir(parents=True, exist_ok=True)
+            client = self.attachment_client
+            owns = client is None
+            if owns:
+                client = httpx.AsyncClient(follow_redirects=True, timeout=60.0)
+            changed = False
+            try:
+                for ident, spec in pending:
+                    last_error = ""
+                    saved_item = None
+                    for _attempt in range(2):
+                        temporary = inputs_root / f".{ident}.{uuid4().hex[:8]}.tmp"
+                        try:
+                            kwargs: dict = {"headers": spec.headers, "params": spec.params}
+                            if isinstance(spec.body, (dict, list)):
+                                kwargs["json"] = spec.body
+                            elif spec.body is not None:
+                                kwargs["content"] = str(spec.body).encode("utf-8")
+                            async with client.stream(spec.method, spec.url, **kwargs) as response:
+                                if response.status_code >= 400:
+                                    last_error = f"HTTP {response.status_code}"
+                                    continue
+                                name = self._remote_filename(spec, response.headers.get("content-disposition", ""))
+                                digest, size = hashlib.sha256(), 0
+                                with temporary.open("wb") as out:
+                                    async for chunk in response.aiter_bytes(1024 * 1024):
+                                        size += len(chunk)
+                                        if size > max_bytes:
+                                            raise ContractError(f"Remote attachment exceeds {max_bytes} bytes")
+                                        out.write(chunk)
+                                        digest.update(chunk)
+                                target = inputs_root / f"{ident}-{name}"
+                                temporary.replace(target)
+                                saved_item = await self.storage.register_input_file(
+                                    InputFile(
+                                        id=ident,
+                                        task_id=question.id,
+                                        name=name,
+                                        storage_path=str(target),
+                                        media_type=mimetypes.guess_type(name)[0] or "application/octet-stream",
+                                        sha256=digest.hexdigest(),
+                                        size_bytes=size,
+                                    )
+                                )
+                                await self.board.publish(
+                                    question.id,
+                                    SYSTEM_ACTOR,
+                                    PublishRequest(
+                                        kind="user_file",
+                                        topic="input",
+                                        idempotency_key="question-file:" + str(ident),
+                                        body={
+                                            "input_file_id": str(saved_item.id),
+                                            "name": saved_item.name,
+                                            "media_type": saved_item.media_type,
+                                            "sha256": saved_item.sha256,
+                                            "description": f"AOE question attachment (auto-downloaded): /inputs/{target.name}",
+                                        },
+                                    ),
+                                )
+                                changed = True
+                                break
+                        except Exception as exc:
+                            last_error = str(exc) or type(exc).__name__
+                        finally:
+                            temporary.unlink(missing_ok=True)
+                    if saved_item is None:
+                        await self.board.publish(
+                            question.id,
+                            SYSTEM_ACTOR,
+                            PublishRequest(
+                                kind="user_prompt",
+                                topic="system",
+                                idempotency_key="remote-attachment-error:" + str(ident),
+                                body={
+                                    "text": (
+                                        f"系统自动下载题目附件失败（{spec.url}）：{last_error}。"
+                                        "请根据题面或动态靶机情况自行确认附件来源。"
+                                    )
+                                },
+                            ),
+                        )
+            finally:
+                if owns:
+                    await client.aclose()
+            if changed:
+                self._input_files.pop(question.id, None)
+                self._manifest_sources.pop(question.id, None)
+                await self._save_question(await self.storage.get_task(question.id))
+
     async def register_questions(self, parent_id: UUID, specifications: list[AOEQuestionInput]) -> dict:
         async with self.locks[parent_id]:
             parent = await self._collecting_parent(parent_id)
@@ -345,15 +480,22 @@ class AOERuntime:
             existing = {q.metadata["source_key"]: q for q in await self.storage.list_questions(parent_id)}
             if not specifications or len({spec.source_key for spec in specifications}) != len(specifications):
                 raise ContractError("Supply a nonempty batch with distinct original source keys")
-            # Validate every path before persisting new questions in this registration call.
+            # Validate every local attachment path before persisting new questions.
+            # Skip attachment handling for questions already solved before this task started.
+            split_map = {spec.source_key: spec.split_attachments() for spec in specifications}
             sources = {
-                spec.source_key: [(path, self._source_file(parent_id, path)) for path in spec.attachments]
+                spec.source_key: (
+                    []
+                    if spec.already_solved
+                    else [(path, self._source_file(parent_id, path)) for path in split_map[spec.source_key][0]]
+                )
                 for spec in specifications
                 if spec.source_key not in existing
                 or not existing[spec.source_key].metadata.get("registration_complete")
             }
             for spec in specifications:
-                payload = spec.model_dump(mode="json", exclude={'source'})
+                local_paths, remote_specs = split_map[spec.source_key]
+                payload = spec.model_dump(mode="json", exclude={"source"})
                 if not payload.get("flag_format"):
                     payload.pop("flag_format", None)  # Preserve historical registration digests.
                 fingerprint = hashlib.sha256(
@@ -375,27 +517,36 @@ class AOERuntime:
                 source_path = self.config.task_path(question_id) / 'source.json'
                 if spec.source is not None and not source_path.is_file():
                     self._atomic_json(source_path, spec.source)
+                pre_solved = bool(spec.already_solved)
+                remote_dump = [] if pre_solved else [item.model_dump(mode="json") for item in remote_specs]
                 question = existing.get(spec.source_key) or await self.storage.create_task(
                     spec.title,
                     "aoe",
                     question_id,
                     parent_task_id=parent_id,
                     metadata={
-                        **{key: value for key, value in payload.items()
-                           if key not in {"title", "attachments"}},
+                        **{
+                            key: value
+                            for key, value in payload.items()
+                            if key not in {"title", "attachments", "already_solved", "solved_flag"}
+                        },
+                        "remote_attachments": remote_dump,
+                        "pre_solved": pre_solved,
                         "registration_digest": fingerprint,
                         "aoe_auto_submit_flag": auto_submit_flag,
                         "knowledge_source": parent.metadata.get("knowledge_source", "online"),
-                        "produce_report": parent.metadata.get("produce_report", True),
+                        "produce_report": False if pre_solved else parent.metadata.get("produce_report", True),
                         "ordinal": len(existing),
-                        "status": "preparing",
+                        "status": "solved" if pre_solved else "preparing",
+                        **({"flag": spec.solved_flag, "finish_reason": "pre_solved", "solved_at": self.clock()}
+                           if pre_solved else {}),
                         "scout_ready": False,
                         "scout_phase": "queued",
                         "attempts": [],
                     },
                 )
                 self.targets.register(question.id, spec.target)
-                if auto_submit_flag:
+                if auto_submit_flag and not pre_solved:
                     self.submissions.register(question.id, spec.submission or
                         self.submissions.legacy_spec(question, spec.target.model_dump(mode="json")))
                 registered_agents = {run.agent_id for run in await self.storage.list_agents(question.id)}
@@ -422,12 +573,20 @@ class AOERuntime:
                     header.append(f"分类：{spec.category}")
                 if spec.tags:
                     header.append(f"标签：{', '.join(spec.tags)}")
-                body_text = spec.description or "（本题无文字题面，请直接分析 /inputs 中的题目附件）"
+                if pre_solved:
+                    header.append("状态：开启本次任务前已在平台解出（跳过求解、附件下载与报告生成）")
+                body_text = spec.description or (
+                    "（本题在开启任务前已解出）"
+                    if pre_solved
+                    else "（本题无文字题面，请直接分析 /inputs 中的题目附件）"
+                )
                 text = "\n".join(header) + f"\n\n{body_text}\n\n连接信息：{spec.connection_info}"
                 if spec.flag_format:
                     text += f"\nFlag 格式：{spec.flag_format}"
-                if auto_submit_flag:
+                if auto_submit_flag and not pre_solved:
                     text += f"\n提交要求：{spec.submission_instructions}"
+                if remote_dump:
+                    text += f"\n远程附件：系统将在领取本题时自动下载至 /inputs/（共 {len(remote_dump)} 个）"
                 if spec.collection_notes:
                     text += f"\n收集备注：{spec.collection_notes}"
                 await self.board.publish(
@@ -454,10 +613,18 @@ class AOERuntime:
                         )
                 for supplied, source in sources[spec.source_key]:
                     await self._copy_input(question, source, supplied)
-                await self.storage.update_task(question.id, state=RunState.RUNNING, metadata={
-                    "registration_complete": True, "registered_at": self.clock(),
-                    "scout_ready": True, "scout_phase": "completed", "status": "queued",
-                })
+                if pre_solved:
+                    await self.storage.update_task(question.id, state=RunState.COMPLETED, metadata={
+                        "registration_complete": True, "registered_at": self.clock(),
+                        "scout_ready": True, "scout_phase": "completed",
+                        "status": "solved", "pre_solved": True, "finish_reason": "pre_solved",
+                        "produce_report": False,
+                    })
+                else:
+                    await self.storage.update_task(question.id, state=RunState.RUNNING, metadata={
+                        "registration_complete": True, "registered_at": self.clock(),
+                        "scout_ready": True, "scout_phase": "completed", "status": "queued",
+                    })
                 await self.storage.update_agent(question.id, "scout", desired_state=AgentState.COMPLETED,
                                                 actual_state=AgentState.COMPLETED,
                                                 metadata={"scout_phase": "completed"})
@@ -764,6 +931,7 @@ class AOERuntime:
             return {**metadata, "status": "running", "attempts": [*metadata.get("attempts", []), *additions]}
 
         question = await self.storage.mutate_task_metadata(question.id, assign)
+        await self._prepare_attachments(question)
         await self._target_prompt(question, additions[0]['id'])
         await self._save_question(question)
         # The first actual action starts the budget, shared by joint participants.
@@ -911,6 +1079,7 @@ class AOERuntime:
             return question
         if not await self._prepare_target(question, tuple(a['agent_id'] for a in active) + joining):
             return question
+        await self._prepare_attachments(question)
         if question.id in self._recovering:
             for attempt in active:
                 await self._launch_attempt(parent.id, question, attempt, fresh=False)
@@ -1203,7 +1372,7 @@ class AOERuntime:
             workers = tuple(agent for agent in self.config.worker_agent_ids if agent in slots)
             remaining = unfinished(questions)
             swarm_question = next((q for q in remaining if q.metadata.get('swarm')), None)
-            if len(workers) == 4 and len(remaining) == 1:
+            if parent.metadata.get("collection_complete") and len(workers) == 4 and len(remaining) == 1:
                 swarm_question = remaining[0]
             for question in remaining:
                 question = await self._protect_completion(question)

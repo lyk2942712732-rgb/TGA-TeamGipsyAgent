@@ -3,13 +3,31 @@
 from __future__ import annotations
 
 import math
-from typing import Any
+from typing import Any, Literal
+from urllib.parse import urlsplit
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .domain import RunState, TaskRun
 from .submissions import SubmissionSpec
 from .target_instances import TargetSpec
+
+
+class AttachmentDownloadSpec(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    url: str = Field(min_length=1, max_length=4000)
+    filename: str = Field(default="", max_length=255)
+    method: Literal["GET", "POST"] = "GET"
+    headers: dict[str, str] = Field(default_factory=dict)
+    params: dict[str, str] = Field(default_factory=dict)
+    body: Any = None
+
+    @model_validator(mode="after")
+    def http_url(self):
+        parsed = urlsplit(self.url)
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+            raise ValueError("Remote attachment must be an HTTP(S) URL")
+        return self
 
 
 class AOEQuestionInput(BaseModel):
@@ -24,7 +42,9 @@ class AOEQuestionInput(BaseModel):
     submission_instructions: str = Field(default="", max_length=20000)
     flag_format: str = Field(default="", max_length=1000)
     collection_notes: str = Field(default="", max_length=20000)
-    attachments: list[str] = Field(default_factory=list, max_length=100)
+    already_solved: bool = False
+    solved_flag: str | None = Field(default=None, max_length=4096)
+    attachments: list[str | AttachmentDownloadSpec] = Field(default_factory=list, max_length=100)
     target: TargetSpec = Field(default_factory=lambda: TargetSpec(mode="unknown"))
     submission: SubmissionSpec | None = None
     # Exact raw source record is file-backed in source.json; never copy a second blob into SQL.
@@ -36,6 +56,31 @@ class AOEQuestionInput(BaseModel):
         if isinstance(value, bool) or isinstance(value, (float, int)) and not math.isfinite(value):
             raise ValueError("Difficulty must be an original label or finite numeric level")
         return value
+
+    @field_validator("attachments", mode="before")
+    @classmethod
+    def normalize_attachments(cls, value):
+        if value is None:
+            return []
+        if not isinstance(value, list):
+            raise ValueError("attachments must be a list of paths, URLs, or download specs")
+        normalized: list[Any] = []
+        for item in value:
+            if isinstance(item, str):
+                text = item.strip()
+                if not text:
+                    continue
+                if text.startswith(("http://", "https://")):
+                    normalized.append(AttachmentDownloadSpec(url=text))
+                else:
+                    normalized.append(text)
+            elif isinstance(item, dict):
+                normalized.append(AttachmentDownloadSpec.model_validate(item))
+            elif isinstance(item, AttachmentDownloadSpec):
+                normalized.append(item)
+            else:
+                raise ValueError("Each attachment must be a local path, HTTP(S) URL, or download spec object")
+        return normalized
 
     @field_validator("tags", mode="before")
     @classmethod
@@ -57,9 +102,19 @@ class AOEQuestionInput(BaseModel):
     def require_content_and_title(self):
         if not self.title:
             self.title = self.source_key
-        if not self.description and not self.attachments:
-            raise ValueError("Each question requires a non-empty description or at least one attachment")
+        if not self.already_solved and not self.description and not self.attachments:
+            raise ValueError("Each unsolved question requires a non-empty description or at least one attachment")
         return self
+
+    def split_attachments(self) -> tuple[list[str], list[AttachmentDownloadSpec]]:
+        local: list[str] = []
+        remote: list[AttachmentDownloadSpec] = []
+        for item in self.attachments:
+            if isinstance(item, AttachmentDownloadSpec):
+                remote.append(item)
+            else:
+                local.append(item)
+        return local, remote
 
 
 def difficulty_order(value: Any) -> float:
@@ -182,12 +237,18 @@ def schedulable_questions(questions: list[TaskRun], *, collection_complete: bool
 
 def overview_order(question: TaskRun) -> tuple[int, float, int, str]:
     solved = question.metadata.get("status") == "solved"
+    pre_solved = bool(question.metadata.get("pre_solved"))
     timestamp = question.metadata.get("solved_at") if solved else None
     if timestamp is None and solved:
         timestamp = max((a.get("finished_at", 0) for a in question.metadata.get("attempts", [])
                          if a.get("outcome") == "solved"), default=question.updated_at.timestamp())
     timestamp = timestamp if solved else question.metadata.get("registered_at", question.created_at.timestamp())
-    priority = 0 if question.metadata.get("status") == "running" else 1 if solved else 2
+    priority = (
+        0 if question.metadata.get("status") == "running"
+        else 2 if (solved and pre_solved)
+        else 1 if solved
+        else 3
+    )
     return (priority, -timestamp, -question.metadata.get("ordinal", 0), str(question.id))
 
 

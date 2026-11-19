@@ -248,6 +248,44 @@ def _update_scout_probe_state(event: dict, output: str) -> None:
         _save_probe_state(state)
 
 
+def _worker_submission_block(event: dict) -> str | None:
+    if os.environ.get("TGA3_AGENT_ROLE") != "worker":
+        return None
+    if os.environ.get("TGA3_AOE_AUTO_SUBMIT_FLAG") == "0":
+        return None
+    sub_path = Path(os.environ.get("TGA3_WORKSPACE", "/workspace")) / ".tga3/submission.json"
+    if not sub_path.is_file():
+        return None
+    try:
+        info = json.loads(sub_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(info, dict) or not info.get("managed_by_system"):
+        return None
+    blocked_url = str(info.get("blocked_url") or "").strip()
+    if not blocked_url:
+        return None
+    from urllib.parse import urlsplit
+
+    parsed = urlsplit(blocked_url)
+    host_path = f"{parsed.netloc}{parsed.path}" if parsed.netloc and parsed.path else ""
+    command = _shell_command(event)
+    args = inputs(event)
+    haystack = command or str(args.get("url") or "")
+    if not haystack:
+        return None
+    if blocked_url in haystack or (
+        host_path and host_path in haystack and NETWORK_HINTS.search(haystack)
+    ):
+        return (
+            "Direct flag submission to the platform is forbidden for Workers. "
+            "Do NOT call the platform submission endpoint yourself; write the exact flag to "
+            "/workspace/final-candidate.json (conclusion, rationale, finding_ids) and TGA3 will "
+            "submit it to the platform automatically and return the real platform receipt."
+        )
+    return None
+
+
 def _overview_policy(event: dict) -> str | None:
     root = os.environ.get("TGA3_TASK_OVERVIEW_ROOT")
     if not root or not os.environ.get("TGA3_AOE_PARENT_ID"):
@@ -331,4 +369,7 @@ def _overview_policy(event: dict) -> str | None:
                     "Write already-collected questions to /workspace/outbox/ (recording missing items in "
                     "collection_notes) and call scout_import_questions / scout_finish_collection."
                 )
+    if role == "worker":
+        if reason := _worker_submission_block(event):
+            return reason
     return None

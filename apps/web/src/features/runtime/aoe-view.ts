@@ -16,7 +16,7 @@ export function solvedAt(question: AOEQuestion) {
 }
 
 export function sortQuestions(questions: AOEQuestion[]) {
-  const priority = (q: AOEQuestion) => q.status === "running" ? 0 : q.status === "solved" ? 1 : 2;
+  const priority = (q: AOEQuestion) => q.status === "running" ? 0 : q.status === "solved" ? (q.pre_solved ? 2 : 1) : 3;
   return [...questions].sort((a, b) => priority(a) - priority(b)
     || (b.status === "solved" ? solvedAt(b) : b.registered_at ?? 0) - (a.status === "solved" ? solvedAt(a) : a.registered_at ?? 0));
 }

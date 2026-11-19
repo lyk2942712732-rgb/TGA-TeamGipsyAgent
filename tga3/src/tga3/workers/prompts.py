@@ -231,23 +231,16 @@ def worker_instructions() -> str:
             )
         else:
             runtime_context += (
-                " Before publishing final-candidate.json, submit the exact flag and obtain the actual platform "
-                "acceptance receipt. Read /workspace/.tga3/submission.json for the documented endpoint, headers "
-                "and credentials; substitute the exact flag for the {flag} placeholder. Keep the exact flag "
-                "and original question ID in the native HTTP command and retain the raw JSON response in its "
-                "output. Cite that execution's action_id as submission_action_id in final-candidate.json. "
-                "Local flag extraction alone cannot complete an AOE platform question. If the import receipt "
-                "says submission_required, read the refreshed submission file and submit; submission_rejected "
-                "means fix the answer rather than retrying credentials. Never fabricate acceptance."
+                " Flag submission is managed exclusively by the TGA3 host. NEVER call the platform submission "
+                "endpoint yourself (hooks block direct Worker submissions). Once you have verified the exact flag, "
+                "write /workspace/final-candidate.json with conclusion (the exact flag), rationale, and finding_ids "
+                "(omit submission_action_id). TGA3 will automatically submit the flag to the platform and return "
+                "the real platform receipt. If the receipt reports submission_rejected, read the platform response, "
+                "fix your answer, and rewrite /workspace/final-candidate.json. Never fabricate acceptance."
             )
         runtime_context += (
             " A completion hold keeps the same attempt running after a recent flag signal until publication "
-            "succeeds or the task is stopped; it does not make that flag correct. "
-            "If a submission returns an explicit wrong-answer receipt, system submission protection may "
-            "retry once using the exact flag detected in your execution output. Read its actual platform "
-            "receipt delivered by the native hook. If accepted, use the returned exact flag and action_id "
-            "as submission_action_id in final-candidate.json; publish your final candidate with Findings. "
-            "A failed protection request is not success and is not automatically retried."
+            "succeeds or the task is stopped; it does not make that flag correct."
         )
         target_mode = os.environ.get("TGA3_TARGET_MODE", "unknown")
         if target_mode == "managed":

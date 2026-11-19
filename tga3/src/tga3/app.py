@@ -90,7 +90,7 @@ def create_app(
     web_mcp = build_web_mcp(config, web_search)
     delivery = BlackboardDelivery(config, storage, coordinator.blackboard)
     usage = TokenUsageTracker(config, storage)
-    publications = FilePublications(config, coordinator.blackboard)
+    publications = FilePublications(config, coordinator.blackboard, submissions=coordinator.aoe.submissions)
     from .submission_guard import SubmissionGuard
 
     submission_guard = SubmissionGuard(config, storage)

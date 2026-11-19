@@ -14,10 +14,10 @@ from .submissions import SubmissionMissing, SubmissionRejected
 
 
 class FilePublications:
-    def __init__(self, config, board):
+    def __init__(self, config, board, *, submissions=None):
         self.config, self.board = config, board
         self.findings = ActionFindingPublisher(config, board)
-        self.finals = FinalCandidatePublisher(config, board)
+        self.finals = FinalCandidatePublisher(config, board, submissions=submissions)
         self.locks = defaultdict(asyncio.Lock)
         self.question_locks = defaultdict(asyncio.Lock)
         self.versions = {}

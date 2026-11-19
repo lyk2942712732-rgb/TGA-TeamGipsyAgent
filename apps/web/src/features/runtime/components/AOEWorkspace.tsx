@@ -10,7 +10,7 @@ import { EventCard, RealtimePrompt, TGA3Workspace, type TGA3WorkspaceTab } from 
 
 const STATUS: Record<string, string> = { queued: "待解题", running: "解题中", solved: "已解出", abandoned: "已放弃", cancelled: "已取消" };
 const PHASE: Record<string, string> = { collecting: "收集题目", executing: "基础侦察", extracting: "提取情报", merging: "按题合并", solo: "独立解题", joint: "共同攻坚", swarm: "共同攻坚（群殴）", reporting: "生成逐题报告", completed: "已结束", failed: "运行失败", cancelled: "已取消" };
-const REPORT: Record<string, string> = { pending: "等待解题结束", generating: "生成中", completed: "已生成", failed: "生成失败", disabled: "未启用报告" };
+const REPORT: Record<string, string> = { pending: "等待解题结束", generating: "生成中", completed: "已生成", failed: "生成失败", disabled: "未启用报告", pre_solved: "任务前已解出，无需报告" };
 
 export function AOEWorkspace({ snapshot, tab, selectedAgentId, onTab, onChanged }: {
   snapshot: TGA3RuntimeSnapshot; tab: TGA3WorkspaceTab; selectedAgentId: string | null;
@@ -52,11 +52,13 @@ export function AOEWorkspace({ snapshot, tab, selectedAgentId, onTab, onChanged 
     </>;
     panels.findings = <div className="tga3-empty"><h3>按题查看 Findings</h3><p>在上方选择题目，查看它的已验证事实与最终候选。</p></div>;
     panels.report = <div className="aoe-report-list">{questions.length ? questions.map(item => <article key={item.question_id}>
-      <div><strong>{item.title}</strong><small>{STATUS[item.status] ?? item.status} · {REPORT[item.report_state]}</small></div>
+      <div><strong>{item.title}</strong><small>{item.pre_solved ? "开启任务前已解出" : STATUS[item.status] ?? item.status} · {REPORT[item.report_state]}</small></div>
       <button className="ref-secondary-button" onClick={() => choose(item.question_id, "report")}>查看本题报告</button>
     </article>) : <p>{overview.questions.length ? "当前筛选下暂无题目。" : "Scout 登记题目后，逐题报告会列在这里。"}</p>}</div>;
   } else if (!child) {
     for (const value of ["blackboard", "findings", "inputs", "report"] as const) panels[value] = waiting;
+  } else if (question.pre_solved || question.report_state === "pre_solved") {
+    panels.report = <div className="tga3-empty"><h3>开启任务前已解出</h3><p>该题在开启本次任务前已在平台解出，跳过求解与报告生成。</p></div>;
   } else if (question.report_state === "disabled") {
     panels.report = <div className="tga3-empty"><h3>本任务未启用产出报告</h3><p>Reporter 仅整理经验卡，执行记录和 Findings 仍可查看。</p></div>;
   } else if (question.report_state === "failed") {
@@ -97,10 +99,11 @@ function AOEOverviewPanel({ snapshot, questions, onOpen, name }: { snapshot: TGA
   useEffect(() => { const timer = window.setInterval(() => setNow(Date.now() / 1000), 1000); return () => window.clearInterval(timer); }, []);
   if (!overview.questions.length) return <div className="tga3-empty"><BookOpen /><h3>Scout 正在收集题目</h3><p>题面与附件登记后即可分配；收集期间先解简单题，无难度说明时直接分配。</p></div>;
   const solved = overview.questions.filter(item => item.status === "solved").length;
+  const preSolved = overview.questions.filter(item => item.pre_solved).length;
   const abandoned = overview.questions.filter(item => item.status === "abandoned").length;
   const preparing = overview.questions.filter(item => item.scout_ready === false).length;
   return <section className="aoe-overview" aria-label="题目总览">
-    <header><h3>{questions.length === overview.questions.length ? overview.questions.length : `${questions.length} / ${overview.questions.length}`} 道题目</h3><span>{solved} 已解出 · {abandoned} 已放弃{preparing ? ` · ${preparing} 待交接` : ""}</span></header>
+    <header><h3>{questions.length === overview.questions.length ? overview.questions.length : `${questions.length} / ${overview.questions.length}`} 道题目</h3><span>{solved} 已解出{preSolved ? `（含开启任务前已解出 ${preSolved}）` : ""} · {abandoned} 已放弃{preparing ? ` · ${preparing} 待交接` : ""}</span></header>
     {!questions.length ? <p className="tga3-muted">当前筛选下暂无题目。</p> : null}
     <div className="aoe-question-roster">{questions.map(question => {
       const active = question.attempts.filter(attempt => attempt.outcome === null);
@@ -130,6 +133,9 @@ function AOEOverviewPanel({ snapshot, questions, onOpen, name }: { snapshot: TGA
 }
 
 function QuestionStatus({ question }: { question: AOEQuestion }) {
+  if (question.pre_solved) {
+    return <span className="aoe-question-status status-solved status-pre-solved">开启任务前已解出</span>;
+  }
   if (question.scout_ready === false && ["preparing", "queued"].includes(question.status)) {
     const phases: Record<string, string> = { queued: "待侦察", executing: "第一轮侦察", extracting: "第二轮提取", merging: "第三轮合并" };
     return <span className="aoe-question-status status-preparing">{phases[question.scout_phase ?? "queued"] ?? "准备中"}</span>;
@@ -145,6 +151,7 @@ function QuestionMaterials({ question }: { question: AOEQuestion }) {
     <p>{question.description}</p>
     {question.connection_info ? <div><strong>连接信息</strong><p>{question.connection_info}</p></div> : null}
     {question.submission_instructions ? <div><strong>提交要求</strong><p>{question.submission_instructions}</p></div> : null}
+    {question.collection_notes ? <div><strong>收集备注</strong><p>{question.collection_notes}</p></div> : null}
     {question.attachments.length ? <ul>{question.attachments.map(file => <li key={file.id}><a href={`${apiBase}/api/v3/tasks/${encodeURIComponent(question.parent_task_id)}/questions/${encodeURIComponent(question.question_id)}/files/${encodeURIComponent(file.id)}`}><Download size={13} />{file.name}</a><small>{file.size_bytes.toLocaleString()} 字节</small></li>)}</ul> : null}
   </details>;
 }

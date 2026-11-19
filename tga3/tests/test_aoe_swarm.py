@@ -21,9 +21,8 @@ async def batch(tmp_path, count=1, *, complete=True):
     return cfg, storage, runtime, c, parent, clock, questions
 
 
-@pytest.mark.parametrize('complete', [True, False])
-async def test_last_question_starts_four_even_during_collection(tmp_path, complete):
-    cfg, storage, runtime, c, parent, clock, (q,) = await batch(tmp_path, complete=complete)
+async def test_last_question_starts_four_only_after_collection_complete(tmp_path):
+    cfg, storage, runtime, c, parent, clock, (q,) = await batch(tmp_path, complete=True)
     await asyncio.gather(*(c.aoe.tick(parent.id) for _ in range(6)))
     assert len(runtime.launched) == 4
     assert {s.agent.agent_id for s in runtime.launched} == set(cfg.worker_agent_ids)
@@ -48,6 +47,26 @@ async def test_last_question_starts_four_even_during_collection(tmp_path, comple
     assert (await storage.get_task(q.id)).metadata['status'] == 'abandoned'
     assert not active_attempts(await storage.get_task(q.id))
     assert {agent for ident, agent in runtime.stopped if ident == q.id} == set(cfg.worker_agent_ids)
+
+
+async def test_swarm_is_forbidden_while_scout_is_still_collecting(tmp_path):
+    cfg, storage, runtime, c, parent, _ = await setup(tmp_path, four_workers=True)
+    await c.aoe.register_questions(parent.id, [
+        AOEQuestionInput(source_key='first', title='First Easy', description='original', difficulty='easy'),
+    ])
+    # Scout is still collecting (collection_complete=False): only 1 solo Worker should claim, never 4-way swarm.
+    await asyncio.gather(*(c.aoe.tick(parent.id) for _ in range(4)))
+    assert len(runtime.launched) == 1
+    assert (await storage.get_task(parent.id)).metadata['aoe_phase'] == 'solo'
+    q = (await storage.list_questions(parent.id))[0]
+    assert not q.metadata.get('swarm')
+    assert [a['phase'] for a in active_attempts(q)] == ['solo']
+
+    # Once Scout finishes collection and this is genuinely the sole remaining question, promote to 4-way swarm.
+    await c.aoe.finish_collection(parent.id, 1)
+    await c.aoe.tick(parent.id)
+    assert (await storage.get_task(parent.id)).metadata['aoe_phase'] == 'swarm'
+    assert len(active_attempts(await storage.get_task(q.id))) == 4
 
 
 @pytest.mark.parametrize('stage', ['solo', 'joint'])

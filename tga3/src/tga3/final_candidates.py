@@ -15,10 +15,10 @@ from .submissions import Submissions
 
 
 class FinalCandidatePublisher:
-    def __init__(self, config: TGA3Config, board: Blackboard):
+    def __init__(self, config: TGA3Config, board: Blackboard, *, submissions: Submissions | None = None):
         self.config, self.board = config, board
         self.locks = defaultdict(asyncio.Lock)
-        self.submissions = Submissions(config)
+        self.submissions = submissions if submissions is not None else Submissions(config)
 
     async def publish(self, task_id: UUID, agent_id: str, body: FinalCandidateBody, topic: str) -> dict:
         configured = self.config.agents.agents.get(agent_id)
@@ -43,17 +43,22 @@ class FinalCandidatePublisher:
                                if attempt["agent_id"] == agent_id and attempt.get("outcome") is None), None)
                 if active is None or active.get("deadline") is None or active["deadline"] <= time.time():
                     raise ContractError("AOE attempt has ended; a late candidate cannot mark this question solved")
-                if task.metadata.get("aoe_auto_submit_flag", True):
-                    action_id = self.submissions.validate(task, body)
-                    body = body.model_copy(update={"submission_action_id": action_id})
-                else:
-                    flag = body.conclusion.strip()
-                    if not flag or len(flag) > 4096:
-                        raise ContractError("Final conclusion must contain the exact flag, at most 4096 characters")
-                    body = body.model_copy(update={"conclusion": flag, "submission_action_id": None})
             run = await self.board.storage.get_agent(task_id, agent_id)
             if run.metadata.get("blackboard_cursor", -1) < task.blackboard_seq:
                 raise ContractError("Unread blackboard updates: consume the native checkpoint before resubmitting")
+            if task.parent_task_id is not None:
+                flag = body.conclusion.strip()
+                if not flag or len(flag) > 4096:
+                    raise ContractError("Final conclusion must contain the exact flag, at most 4096 characters")
+                if task.metadata.get("aoe_auto_submit_flag", True):
+                    spec = self.submissions.spec(task)
+                    if spec is not None:
+                        action_id = await self.submissions.submit(task, body, agent_id=agent_id)
+                        body = body.model_copy(update={"conclusion": flag, "submission_action_id": action_id})
+                    else:
+                        body = body.model_copy(update={"conclusion": flag, "submission_action_id": None})
+                else:
+                    body = body.model_copy(update={"conclusion": flag, "submission_action_id": None})
             entry = await self.board.publish(task_id, actor, PublishRequest(
                 kind="final_candidate", topic=topic, body=body.model_dump(mode="json"), idempotency_key=key,
             ))

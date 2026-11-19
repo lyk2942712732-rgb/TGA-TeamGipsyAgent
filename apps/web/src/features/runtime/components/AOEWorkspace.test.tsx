@@ -149,4 +149,19 @@ describe("AOE question workspace", () => {
     await user.selectOptions(screen.getByLabelText("解题状态筛选"), "unattempted");
     expect(screen.getByLabelText("题目筛选")).toHaveValue(""); expect(titles()).toEqual(["Fresh"]);
   });
+  it("shows combined solved count with pre-solved breakdown and labels pre-solved questions", () => {
+    const data = { ...parent, aoe: { ...parent.aoe!, questions: [
+      question("q1", "Active"),
+      { ...question("q2", "Solved Now"), status: "solved", flag: "flag{now}", current_agents: [], solved_at: 200 },
+      { ...question("q3", "Pre Solved One"), status: "solved", pre_solved: true, report_state: "pre_solved" as const, flag: null, current_agents: [], attempted_by: [], solved_at: 100 },
+      { ...question("q4", "Pre Solved Two"), status: "solved", pre_solved: true, report_state: "pre_solved" as const, flag: null, current_agents: [], attempted_by: [], solved_at: 90 },
+    ] } };
+    render(<MemoryRouter><AOEWorkspace snapshot={data} tab="blackboard" onTab={vi.fn()} selectedAgentId={null} onChanged={vi.fn()} /></MemoryRouter>);
+    const panel = screen.getByRole("region", { name: "题目总览" });
+    expect(panel).toHaveTextContent("3 已解出（含开启任务前已解出 2）");
+    expect(within(panel).getAllByText("开启任务前已解出")).toHaveLength(2);
+    expect([...panel.querySelectorAll(".aoe-question-title")].map(node => node.textContent)).toEqual([
+      "Active", "Solved Now", "Pre Solved One", "Pre Solved Two",
+    ]);
+  });
 });

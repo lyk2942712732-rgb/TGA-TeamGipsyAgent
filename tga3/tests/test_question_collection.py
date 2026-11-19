@@ -561,3 +561,173 @@ async def test_scout_stall_watchdog_warns_then_exits_cleanly_when_questions_alre
     finally:
         job.cancel()
         await asyncio.gather(job, return_exceptions=True)
+
+
+async def test_remote_attachments_downloaded_on_worker_claim_not_during_collection(tmp_path):
+    cfg, storage, containers, c, parent, _ = await setup(tmp_path)
+    downloads: list[str] = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        downloads.append(str(req.url))
+        if req.url.path == "/files/app.zip":
+            assert req.headers.get("Authorization") == "Bearer dl-secret"
+            return httpx.Response(
+                200,
+                content=b"PK\x03\x04remote-zip",
+                headers={"Content-Disposition": 'attachment; filename="challenge-src.zip"'},
+            )
+        return httpx.Response(404, text="missing")
+
+    c.aoe.attachment_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    try:
+        outbox = cfg.task_path(parent.id, "workspaces", "scout") / "outbox"
+        outbox.mkdir(parents=True, exist_ok=True)
+        (outbox / "remote-q.json").write_text(
+            json.dumps(
+                {
+                    "source_key": "remote-q",
+                    "title": "Remote Attachment Challenge",
+                    "description": "Analyze the downloaded zip.",
+                    "difficulty": "easy",
+                    "attachments": [
+                        {
+                            "url": "https://ctf.example/files/app.zip",
+                            "headers": {"Authorization": "Bearer dl-secret"},
+                        },
+                        "https://ctf.example/files/missing.bin",
+                    ],
+                    "target": {"mode": "none"},
+                }
+            ),
+            encoding="utf-8",
+        )
+        await c.aoe.collection.import_outbox(parent.id)
+        await c.aoe.finish_collection(parent.id, expected_count=1)
+        # Zero downloads during Scout collection phase!
+        assert downloads == []
+        q = (await storage.list_questions(parent.id))[0]
+        assert len(await storage.list_input_files(q.id)) == 0
+
+        # Worker claim triggers automatic host download before launching container.
+        await c.aoe.tick(parent.id)
+        assert len(containers.launched) == 1
+        assert "https://ctf.example/files/app.zip" in downloads
+        files = await storage.list_input_files(q.id)
+        assert len(files) == 1
+        assert files[0].name == "challenge-src.zip"
+        saved_zip = cfg.task_path(q.id, "inputs") / f"{files[0].id}-challenge-src.zip"
+        assert saved_zip.read_bytes() == b"PK\x03\x04remote-zip"
+        # Missing attachment publishes a helpful notice without blocking Worker launch.
+        entries = await storage.list_entries(q.id)
+        assert any(e.kind == "user_file" and e.body["name"] == "challenge-src.zip" for e in entries)
+        assert any(e.topic == "system" and "missing.bin" in e.body.get("text", "") for e in entries)
+
+        # Second Worker attempt must NOT redownload already-saved attachment.
+        before_count = downloads.count("https://ctf.example/files/app.zip")
+        await c.aoe._prepare_attachments(await storage.get_task(q.id))
+        assert downloads.count("https://ctf.example/files/app.zip") == before_count
+    finally:
+        await c.aoe.attachment_client.aclose()
+
+
+async def test_already_solved_questions_marked_pre_solved_skip_workers_attachments_and_reporter(tmp_path):
+    cfg, storage, containers, c, parent, _ = await setup(tmp_path)
+    downloads: list[str] = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        downloads.append(str(req.url))
+        return httpx.Response(200, content=b"should-not-download")
+
+    c.aoe.attachment_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    try:
+        outbox = cfg.task_path(parent.id, "workspaces", "scout") / "outbox"
+        outbox.mkdir(parents=True, exist_ok=True)
+        (outbox / "old-solved.json").write_text(
+            json.dumps(
+                {
+                    "source_key": "old-solved",
+                    "title": "Already Solved On Platform",
+                    "description": "",
+                    "already_solved": True,
+                    "attachments": ["https://ctf.example/files/big.iso"],
+                    "collection_notes": "Platform already shows is_solved=true before task start.",
+                }
+            ),
+            encoding="utf-8",
+        )
+        (outbox / "fresh-q.json").write_text(
+            json.dumps(
+                {
+                    "source_key": "fresh-q",
+                    "title": "Unsolved Challenge",
+                    "description": "Please solve me",
+                    "difficulty": "easy",
+                    "target": {"mode": "none"},
+                }
+            ),
+            encoding="utf-8",
+        )
+        await c.aoe.collection.import_outbox(parent.id)
+        await c.aoe.finish_collection(parent.id, expected_count=2)
+        await c.aoe.tick(parent.id)
+
+        questions = {q.metadata["source_key"]: q for q in await storage.list_questions(parent.id)}
+        pre = questions["old-solved"]
+        fresh = questions["fresh-q"]
+
+        assert pre.state == RunState.COMPLETED
+        assert pre.metadata["status"] == "solved"
+        assert pre.metadata["pre_solved"] is True
+        assert pre.metadata["produce_report"] is False
+        assert pre.metadata["attempts"] == []
+        assert not downloads
+        # Only the unsolved question is dispatched to a Worker.
+        assert [spec.task_id for spec in containers.launched] == [fresh.id]
+
+        snapshot = await c.aoe.snapshot(parent.id)
+        pre_view = next(item for item in snapshot["questions"] if item["source_key"] == "old-solved")
+        assert pre_view["pre_solved"] is True
+        assert pre_view["report_state"] == "pre_solved"
+        assert pre_view["status"] == "solved"
+    finally:
+        await c.aoe.attachment_client.aclose()
+
+
+def test_worker_direct_submission_blocked_by_hook(monkeypatch, tmp_path):
+    ws = tmp_path / "ws"
+    (ws / ".tga3").mkdir(parents=True)
+    submit_url = "https://ctf.example/api/v1/submit"
+    (ws / ".tga3" / "submission.json").write_text(
+        json.dumps({"managed_by_system": True, "blocked_url": submit_url, "flag_format": "flag{...}"}),
+        encoding="utf-8",
+    )
+    for k, v in {
+        "TGA3_TASK_OVERVIEW_ROOT": "/task-overview",
+        "TGA3_WORKSPACE": str(ws),
+        "TGA3_AOE_PARENT_ID": "parent",
+        "TGA3_AGENT_ROLE": "worker",
+        "TGA3_AOE_AUTO_SUBMIT_FLAG": "1",
+    }.items():
+        monkeypatch.setenv(k, v)
+
+    def ev(name, command, response="", session="w1"):
+        return {
+            "hook_event_name": name,
+            "tool_name": "exec_command",
+            "session_id": session,
+            "tool_input": {"cmd": command},
+            "tool_response": response,
+        }
+
+    for name in ("scene.md", "task.md"):
+        overview_policy(ev("PostToolUse", "cat /task-overview/" + name, "full content"))
+
+    # Normal target interaction is allowed.
+    assert not overview_policy(ev("PreToolUse", "curl -s http://10.0.0.5:8080/login"))
+    # Direct platform flag submission via curl or python is blocked!
+    reason_curl = overview_policy(ev("PreToolUse", f"curl -X POST {submit_url} -d '{{\"flag\":\"flag{{x}}\"}}'"))
+    assert reason_curl and "final-candidate.json" in reason_curl
+    reason_py = overview_policy(
+        ev("PreToolUse", f"python3 -c \"import requests; requests.post('{submit_url}', json={{'flag':'x'}})\"")
+    )
+    assert reason_py and "forbidden" in reason_py.lower()
