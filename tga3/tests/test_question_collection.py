@@ -1,174 +1,563 @@
+import asyncio
 import json
+from uuid import uuid4
 
+import httpx
 import pytest
 from test_aoe_runtime import setup
 
-from tga3.domain import PublishRequest, USER_ACTOR
+from tga3.domain import AgentState, FinalCandidateBody, RunState
 from tga3.errors import ContractError
-from tga3.question_collection import CollectionPlan, declared_requests
-from tga3.workers.aoe_access import overview_policy
+from tga3.submissions import SubmissionRejected, Submissions, SubmissionSpec, accepted_receipt
+from tga3.target_instances import TargetInstances
+from tga3.workers.aoe_access import overview_policy, scout_post_tool_notice
+from tga3.workers.blackboard_hook import checkpoint
+from tga3.workers.scout_probe_guard import ScoutProbeGuard, build_no_proxy
 
 
-async def test_list_maps_original_fields_preserves_source_and_finishes_without_transcription(tmp_path):
+async def test_outbox_import_preserves_ssot_raw_source_collection_notes_and_archives_files(tmp_path):
     cfg, storage, _, c, parent, _ = await setup(tmp_path)
-    text = ('BENCHMARK_BASE_URL: https://fixture.example\n\n题目列表：\n'
-            'GET {BENCHMARK_BASE_URL}/questions\n\nPOST https://fixture.example/start')
-    await c.blackboard.publish(parent.id, USER_ACTOR, PublishRequest(
-        kind='user_prompt', topic='task', body={'text': text}, idempotency_key='task'))
-    calls = []
+    scout_ws = cfg.task_path(parent.id, "workspaces", "scout")
+    outbox = scout_ws / "outbox"
+    attach_dir = scout_ws / "attachments" / "web-01"
+    outbox.mkdir(parents=True, exist_ok=True)
+    attach_dir.mkdir(parents=True, exist_ok=True)
+    (attach_dir / "app.zip").write_bytes(b"PK\x03\x04fixture")
 
-    async def request(req):
-        calls.append(req)
-        return 200, [{'unique_code': str(i), 'description': '完整题面 '+str(i), 'difficulty': 'easy',
-                      'total_score': 100, 'container_addr': '', 'arbitrary_source': {'value': i},
-                      'flag_format': 'SEKAI{...}'}
-                     for i in range(40)]
-    c.aoe.targets._request = request
-    plan = CollectionPlan(request={'method': 'GET', 'url': 'https://fixture.example/questions',
-                                   'headers': {'BENCHMARK_TOKEN': 'fixture-secret'}},
-                          target={'mode': 'managed', 'start': {'url': 'https://fixture.example/start',
-                                  'params': {'unique_code': '{unique_code}'},
-                                  'headers': {'BENCHMARK_TOKEN': 'fixture-secret'}},
-                                  'stop': {'url': 'https://fixture.example/close',
-                                           'params': {'unique_code': '{unique_code}'}}},
-                          submission={'request': {'url': 'https://fixture.example/submit',
-                                      'body': {'unique_code': '{unique_code}', 'flag': '{flag}'}}})
-    result = await c.aoe.collection.collect(parent.id, plan)
-    assert result['question_count'] == 40 and result['collection_complete']
-    assert len(calls) == 1 and calls[0].headers['BENCHMARK_TOKEN'] == 'fixture-secret'
-    q = next(q for q in await storage.list_questions(parent.id) if q.metadata['source_key'] == '7')
-    original = json.loads((cfg.task_path(q.id) / 'source.json').read_text(encoding='utf8'))
-    assert original['arbitrary_source'] == {'value': 7} and 'source' not in q.metadata
-    saved = json.loads((cfg.task_path(q.id) / 'question.json').read_text(encoding='utf8'))
-    assert saved['source_path'] == 'source.json'
-    assert saved["flag_format"] == q.metadata["flag_format"] == "SEKAI{...}"
-    c.aoe.submissions.write_context(q, "worker-openai")
-    context = cfg.task_path(q.id, "workspaces", "worker-openai") / ".tga3/submission.json"
-    assert json.loads(context.read_text())["flag_format"] == "SEKAI{...}"
-    assert saved['submission']['request']['body'] == {'unique_code': '7', 'flag': '{flag}'}
-    assert saved['target']['start']['params']['unique_code'] == '7'
-    assert not saved['attachments']
-    assert all(e.topic == 'question' for e in await storage.list_entries(q.id))
-    assert text == (cfg.task_path(parent.id) / 'overview/task.md').read_text(encoding='utf8')
-    await c.aoe.collection.collect(parent.id, plan)
-    assert len(calls) == 1
+    payload = {
+        "source_key": "web-01",
+        "title": "Easy Login",
+        "description": "Original challenge description without model rewrite.",
+        "difficulty": "easy",
+        "category": "web",
+        "tags": ["sqli", "login", "sqli"],
+        "flag_format": "SEKAI{...}",
+        "connection_info": "Dynamic target managed by platform",
+        "submission_instructions": "POST /submit with unique_code and flag",
+        "collection_notes": "Only public source zip was listed; runtime DB is inside the dynamic container.",
+        "attachments": ["/workspace/attachments/web-01/app.zip"],
+        "target": {
+            "mode": "managed",
+            "start": {
+                "method": "POST",
+                "url": "https://fixture.example/start",
+                "headers": {"X-Token": "secret"},
+                "params": {"unique_code": "web-01"},
+            },
+            "stop": {
+                "method": "POST",
+                "url": "https://fixture.example/stop",
+                "headers": {"X-Token": "secret"},
+                "params": {"unique_code": "web-01"},
+            },
+        },
+        "submission": {
+            "request": {
+                "method": "POST",
+                "url": "https://fixture.example/submit",
+                "headers": {"X-Token": "secret"},
+                "body": {"unique_code": "web-01", "flag": "{flag}"},
+            },
+            "success_path": "correct",
+            "success_value": True,
+        },
+        "raw_source": {"unique_code": "web-01", "score": 150, "extra": {"author": "alice"}},
+    }
+    (outbox / "web-01.json").write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+    receipt = await c.aoe.collection.import_outbox(parent.id)
+    assert receipt["saved"] is True
+    assert receipt["imported_count"] == 1
+    assert receipt["imported_keys"] == ["web-01"]
+    assert not receipt["errors"]
+    assert not list(outbox.glob("*.json"))
+    assert (scout_ws / "imported" / "web-01.json").is_file()
+
+    q = (await storage.list_questions(parent.id))[0]
+    # SSoT: DB metadata holds target, submission, category, tags, and collection_notes.
+    assert q.metadata["target"]["mode"] == "managed"
+    assert q.metadata["submission"]["request"]["url"] == "https://fixture.example/submit"
+    assert q.metadata["category"] == "web"
+    assert q.metadata["tags"] == ["sqli", "login"]
+    assert q.metadata["collection_notes"] == payload["collection_notes"]
+    assert "source" not in q.metadata
+
+    # Deleting derived question.json must not lose target/submission contracts on restart.
+    (cfg.task_path(q.id) / "question.json").unlink()
+    assert TargetInstances(cfg).spec(q).mode == "managed"
+    assert Submissions(cfg).spec(q).request.url == "https://fixture.example/submit"
+
+    # Raw source preserved verbatim on disk; collection_notes propagated to question blackboard.
+    raw = json.loads((cfg.task_path(q.id) / "source.json").read_text(encoding="utf-8"))
+    assert raw["extra"] == {"author": "alice"}
+    entries = await storage.list_entries(q.id)
+    desc_entry = next(e for e in entries if e.topic == "question")
+    assert "收集备注：" in desc_entry.body["text"]
+    assert "dynamic container" in desc_entry.body["text"]
+
+    # Control-plane signal file replaces redundant questions.json.
+    state_file = cfg.task_path(parent.id) / "collection-state.json"
+    assert state_file.is_file()
+    assert not (cfg.task_path(parent.id) / "questions.json").exists()
+    state = json.loads(state_file.read_text(encoding="utf-8"))
+    assert state["imported_count"] == 1 and state["imported_keys"] == ["web-01"] and not state["collection_complete"]
+    assert "description" not in json.dumps(state)
+
+    finished = await c.aoe.finish_collection(parent.id, expected_count=1)
+    assert finished["collection_complete"] is True and finished["status"] == "complete"
 
 
-async def test_collector_rejects_other_endpoints_before_network_and_follows_only_list_pagination(tmp_path):
-    _, storage, _, c, parent, _ = await setup(tmp_path)
-    await c.blackboard.publish(parent.id, USER_ACTOR, PublishRequest(
-        kind='user_prompt', topic='task', body={'text': 'Question list: GET https://fixture.example/questions'},
-        idempotency_key='task'))
-    calls = []
+async def test_outbox_allows_attachment_only_question_and_isolates_invalid_files(tmp_path):
+    cfg, storage, _, c, parent, _ = await setup(tmp_path)
+    scout_ws = cfg.task_path(parent.id, "workspaces", "scout")
+    outbox = scout_ws / "outbox"
+    attach_dir = scout_ws / "attachments" / "pwn-01"
+    outbox.mkdir(parents=True, exist_ok=True)
+    attach_dir.mkdir(parents=True, exist_ok=True)
+    (attach_dir / "chall").write_bytes(b"\x7fELFfixture")
 
-    async def request(req):
-        calls.append(req.url)
-        return 200, {'items': [{'unique_code': 'one', 'description': 'original'}],
-                     'next': '/frontend.js'}
-    c.aoe.targets._request = request
-    for endpoint in ['frontend.js', 'docs', 'attachment', 'hint', 'questions/1']:
-        with pytest.raises(ContractError, match='question-list API only'):
-            await c.aoe.collection.collect(parent.id, CollectionPlan(
-                request={'method': 'GET', 'url': 'https://fixture.example/'+endpoint}))
-    assert not calls
-    with pytest.raises(ContractError, match='Pagination must stay'):
-        await c.aoe.collection.collect(parent.id, CollectionPlan(
-            request={'method': 'GET', 'url': 'https://fixture.example/questions'},
-            items_path='items', next_url_path='next'))
-    assert calls == ['https://fixture.example/questions']
-    assert not (await storage.get_task(parent.id)).metadata.get('collection_complete')
+    # Valid attachment-only question without description or explicit title.
+    (outbox / "01-valid.json").write_text(json.dumps({
+        "source_key": "pwn-01",
+        "attachments": ["attachments/pwn-01/chall"],
+        "collection_notes": "Archive only contained binary without text prompt.",
+        "target": {"mode": "none"},
+    }), encoding="utf-8")
+    # Invalid: neither description nor attachments.
+    (outbox / "02-empty.json").write_text(json.dumps({"source_key": "bad-empty"}), encoding="utf-8")
+    # Invalid: broken JSON syntax.
+    (outbox / "03-broken.json").write_text("{not-json", encoding="utf-8")
+    # Invalid: attachment escapes workspace.
+    (outbox / "04-escape.json").write_text(json.dumps({
+        "source_key": "bad-path",
+        "description": "attempt escape",
+        "attachments": ["/workspace/../../etc/passwd"],
+    }), encoding="utf-8")
+
+    result = await c.aoe.collection.import_outbox(parent.id)
+    assert result["imported_count"] == 1
+    assert result["imported_keys"] == ["pwn-01"]
+    assert len(result["imported"]) == 1
+    assert len(result["errors"]) == 3
+    assert not list(outbox.glob("*.json"))
+    assert (scout_ws / "imported" / "01-valid.json").is_file()
+    for bad in ("02-empty", "03-broken", "04-escape"):
+        assert (scout_ws / "rejected" / f"{bad}.json").is_file()
+        assert (scout_ws / "rejected" / f"{bad}.error.json").is_file()
+
+    q = (await storage.list_questions(parent.id))[0]
+    assert q.title == "pwn-01"
+    assert len(await storage.list_input_files(q.id)) == 1
 
 
-async def test_preflight_failure_stops_before_list_request(tmp_path):
-    _, _, _, c, parent, _ = await setup(tmp_path)
-    await c.blackboard.publish(parent.id, USER_ACTOR, PublishRequest(
-        kind='user_prompt', topic='task', body={'text': 'VPN check: GET http://vpn.example/\n\n'
-                                                    '题目列表 GET https://fixture.example/questions'},
-        idempotency_key='task'))
-    calls = []
+async def test_submission_spec_supports_custom_body_keys_int_ids_and_string_success_value(tmp_path):
+    cfg, storage, _, c, parent, _ = await setup(tmp_path)
+    outbox = cfg.task_path(parent.id, "workspaces", "scout") / "outbox"
+    outbox.mkdir(parents=True, exist_ok=True)
+    (outbox / "ctfd-42.json").write_text(json.dumps({
+        "source_key": "crypto-rsa",
+        "title": "CTFd RSA",
+        "description": "Solve RSA",
+        "submission": {
+            "request": {
+                "method": "POST",
+                "url": "https://ctfd.example/api/v1/challenges/attempt",
+                "headers": {"Authorization": "Token ctfd-secret"},
+                "body": {"challenge_id": 42, "submission": "{flag}"},
+            },
+            "success_path": "data.status",
+            "success_value": "correct",
+            "duplicate_code": "already_solved",
+        },
+    }), encoding="utf-8")
+    await c.aoe.collection.import_outbox(parent.id)
+    q = (await storage.list_questions(parent.id))[0]
+    spec = Submissions(cfg).spec(q)
+    assert isinstance(spec, SubmissionSpec)
+    assert accepted_receipt(spec, {"success": True, "data": {"status": "correct"}}, 200)
+    assert not accepted_receipt(spec, {"success": True, "data": {"status": "incorrect"}}, 200)
 
-    async def request(req):
-        calls.append(req.url)
-        return 200, {'status': 'not-ready'}
-    c.aoe.targets._request = request
-    with pytest.raises(ContractError, match='connectivity check'):
-        await c.aoe.collection.collect(parent.id, CollectionPlan(
-            request={'method': 'GET', 'url': 'https://fixture.example/questions'},
-            preflight={'method': 'GET', 'url': 'http://vpn.example/'}))
-    assert calls == ['http://vpn.example/']
+    # Simulate a Worker action log with an integer challenge_id and custom field name.
+    log_dir = cfg.task_path(q.id, "logs", "worker-openai")
+    ws_dir = cfg.task_path(q.id, "workspaces", "worker-openai")
+    (ws_dir / "result").mkdir(parents=True, exist_ok=True)
+    log_dir.mkdir(parents=True, exist_ok=True)
+    (ws_dir / "result" / "wrong.txt").write_text('{"success": true, "data": {"status": "incorrect"}}', encoding="utf-8")
+    (ws_dir / "result" / "right.txt").write_text('{"success": true, "data": {"status": "correct"}}', encoding="utf-8")
+    actions = {
+        "schema_version": 2,
+        "task_id": str(q.id),
+        "agent_id": "worker-openai",
+        "actions": [
+            {
+                "action_id": "worker-openai-action-wrong",
+                "tool_call_id": "tc-1",
+                "status": "completed",
+                "action": {
+                    "tool": "exec_command",
+                    "command": (
+                        "curl -s -X POST https://ctfd.example/api/v1/challenges/attempt "
+                        "-d '{\"challenge_id\": 42, \"submission\": \"flag{nope}\"}'"
+                    ),
+                },
+                "artifact": {"output_path": "result/wrong.txt", "attachments": []},
+            },
+            {
+                "action_id": "worker-openai-action-right",
+                "tool_call_id": "tc-2",
+                "status": "completed",
+                "action": {
+                    "tool": "exec_command",
+                    "command": (
+                        "curl -s -X POST https://ctfd.example/api/v1/challenges/attempt "
+                        "-d '{\"challenge_id\": 42, \"submission\": \"flag{real}\"}'"
+                    ),
+                },
+                "artifact": {"output_path": "result/right.txt", "attachments": []},
+            },
+        ],
+    }
+    (log_dir / "worker-openai-actions.json").write_text(json.dumps(actions), encoding="utf-8")
+
+    subs = Submissions(cfg)
+    with pytest.raises(SubmissionRejected):
+        subs.validate(q, FinalCandidateBody(conclusion="flag{nope}", rationale="tried", finding_ids=[uuid4()]))
+    accepted_id = subs.validate(
+        q, FinalCandidateBody(conclusion="flag{real}", rationale="solved", finding_ids=[uuid4()])
+    )
+    assert accepted_id == "worker-openai-action-right"
 
 
-def test_native_overview_reads_gate_worker_once_per_context_and_limit_scout(monkeypatch, tmp_path):
-    for k, v in {'TGA3_TASK_OVERVIEW_ROOT': '/task-overview', 'TGA3_WORKSPACE': str(tmp_path),
-                 'TGA3_AOE_PARENT_ID': 'parent', 'TGA3_AGENT_ROLE': 'worker'}.items():
+def test_scout_access_allows_free_collection_blocks_scanners_and_trips_probe_guard(monkeypatch, tmp_path):
+    aoe_root = tmp_path / "aoe"
+    ws = tmp_path / "ws"
+    aoe_root.mkdir()
+    ws.mkdir()
+    for k, v in {
+        "TGA3_TASK_OVERVIEW_ROOT": "/task-overview",
+        "TGA3_WORKSPACE": str(ws),
+        "TGA3_AOE_ROOT": str(aoe_root),
+        "TGA3_AOE_PARENT_ID": "parent",
+        "TGA3_AGENT_ROLE": "scout",
+        "TGA3_SCOUT_PROBE_MAX_MISSES": "3",
+    }.items():
         monkeypatch.setenv(k, v)
-    def event(name, command, response='', session='one'):
-        return {'hook_event_name': name, 'tool_name': 'exec_command', 'session_id': session,
-                'tool_input': {'cmd': command}, 'tool_response': response}
-    assert overview_policy(event('PreToolUse', 'curl https://target'))
-    for name in ['scene.md', 'task.md']:
-        command = 'cat /task-overview/'+name
-        assert not overview_policy(event('PreToolUse', command))
-        overview_policy(event('PostToolUse', command, 'Output truncated'))
-        assert overview_policy(event('PreToolUse', 'curl https://target'))
-        overview_policy(event('PostToolUse', command, 'Full original text'))
-    assert not overview_policy(event('PreToolUse', 'curl https://target'))
-    assert overview_policy(event('PreToolUse', 'curl https://target', session='new-context'))
-    monkeypatch.setenv('TGA3_AGENT_ROLE', 'scout')
-    for command in ['curl https://fixture.example/docs', 'python -c "print(1)"',
-                    'cat /task-overview/task.md; curl https://fixture.example',
-                    'cat /inputs/../../etc/passwd', 'cat /workspace/script.py']:
-        assert overview_policy(event('PreToolUse', command))
-    assert not overview_policy(event('PreToolUse', 'cat /inputs/api.md'))
-    tool = {'hook_event_name': 'PreToolUse', 'tool_name': 'mcp__intel__scout_collect_questions', 'session_id': 'one'}
-    assert not overview_policy(tool)
-    monkeypatch.setenv('TGA3_AOE_ROOT', str(tmp_path))
-    (tmp_path / 'questions.json').write_text(json.dumps({'collection_complete': True}))
-    assert 'complete' in overview_policy(tool)
-    assert overview_policy(event('PreToolUse', 'cat /inputs/api.md'))
+
+    def ev(name, command, response="", tool="exec_command", session="s1"):
+        return {
+            "hook_event_name": name,
+            "tool_name": tool,
+            "session_id": session,
+            "tool_input": {"cmd": command},
+            "tool_response": response,
+        }
+
+    # Must read overview first, then free shell/python/curl tools are permitted.
+    assert overview_policy(ev("PreToolUse", "curl https://ctf.example/challenges"))
+    for name in ("scene.md", "task.md"):
+        cmd = "cat /task-overview/" + name
+        assert not overview_policy(ev("PreToolUse", cmd))
+        overview_policy(ev("PostToolUse", cmd, "Full content"))
+    assert not overview_policy(ev("PreToolUse", "curl -s https://ctf.example/api/challenges"))
+    assert not overview_policy(ev("PreToolUse", "python3 collect.py"))
+
+    # Directory/vulnerability scanners are blocked.
+    for cmd in ("ffuf -u http://target/FUZZ -w list.txt", "gobuster dir -u http://target", "nmap -sV 10.0.0.1"):
+        reason = overview_policy(ev("PreToolUse", cmd))
+        assert reason and "forbidden" in reason.lower()
+
+    # Simulate 1 imported question followed by repeated 404 misses -> trips probe guard.
+    (aoe_root / "collection-state.json").write_text(
+        json.dumps({"collection_complete": False, "imported_count": 1, "imported_keys": ["q1"]}),
+        encoding="utf-8",
+    )
+    for i in range(3):
+        overview_policy(ev("PostToolUse", f"curl -i https://ctf.example/guess-{i}", "HTTP/1.1 404 Not Found"))
+    notice = scout_post_tool_notice(ev("PostToolUse", "curl -i https://ctf.example/guess-2", "HTTP/1.1 404 Not Found"))
+    assert notice and "collection_notes" in notice
+
+    # Network probing is paused once tripped with imported questions, while local finish tools remain allowed.
+    blocked = overview_policy(ev("PreToolUse", "curl -i https://ctf.example/another-guess"))
+    assert blocked and "paused" in blocked.lower()
+    assert not overview_policy(ev("PreToolUse", "ls /workspace/outbox"))
+    finish_tool = {
+        "hook_event_name": "PreToolUse",
+        "tool_name": "mcp__intel__scout_finish_collection",
+        "session_id": "s1",
+    }
+    assert not overview_policy(finish_tool)
+
+    # New imported question resets miss counter.
+    (aoe_root / "collection-state.json").write_text(
+        json.dumps({"collection_complete": False, "imported_count": 2, "imported_keys": ["q1", "q2"]}),
+        encoding="utf-8",
+    )
+    overview_policy(ev("PostToolUse", "ls /workspace/outbox", "ok"))
+    assert not overview_policy(ev("PreToolUse", "curl -i https://ctf.example/detail/2"))
+
+    # Once collection_complete=True, every tool is denied immediately.
+    (aoe_root / "collection-state.json").write_text(
+        json.dumps({"collection_complete": True, "imported_count": 2, "imported_keys": ["q1", "q2"]}),
+        encoding="utf-8",
+    )
+    assert "complete" in (overview_policy(ev("PreToolUse", "ls /workspace")) or "").lower()
 
 
-def test_bulleted_original_api_instructions_approve_only_list():
-    import re
-    text = ('- BENCHMARK_BASE_URL: https://fixture.example\r\n\r\n'
-            '1. GET  {BENCHMARK_BASE_URL}/questions\r\n   - 获取题目列表及每题作答进度。\r\n'
-            '2. POST {BENCHMARK_BASE_URL}/start?unique_code=<unique_code>\r\n'
-            '   - Start instance\r\n'
-            '3. GET {BENCHMARK_BASE_URL}/hint?unique_code=<unique_code>\r\n   - Fetch hint')
-    urls = [url for _, url, paragraph in declared_requests(text)
-            if re.search(r'题目列表', paragraph)]
-    assert urls == ['https://fixture.example/questions']
+async def test_http_probe_guard_proxy_allows_2xx_and_trips_on_distinct_404_enumeration(tmp_path):
+    async def mock_upstream(request: httpx.Request) -> httpx.Response:
+        if request.url.path in {"/api/list", "/api/detail/1", "/files/chall.zip"}:
+            return httpx.Response(200, json={"ok": True, "path": request.url.path})
+        return httpx.Response(404, text="not found")
 
-
-async def test_pagination_streams_to_workers_and_checks_total_without_refetching_other_endpoints(tmp_path):
-    import asyncio
-    _, storage, runtime, c, parent, _ = await setup(tmp_path)
-    await c.blackboard.publish(parent.id, USER_ACTOR, PublishRequest(
-        kind='user_prompt', topic='task', body={'text': 'Question list: GET https://fixture.example/questions'},
-        idempotency_key='task'))
-    second_page, release = asyncio.Event(), asyncio.Event()
-    calls = []
-    async def request(req):
-        calls.append(req.url)
-        if len(calls) == 1:
-            return 200, {'items': [{'unique_code': 'easy', 'description': 'first', 'difficulty': 'easy'}],
-                         'next': '?page=2', 'total': 2}
-        second_page.set()
-        await release.wait()
-        return 200, {'items': [{'unique_code': 'hard', 'description': 'second', 'difficulty': 'hard'}],
-                     'next': None, 'total': 2}
-    c.aoe.targets._request = request
-    plan = CollectionPlan(request={'method': 'GET', 'url': 'https://fixture.example/questions'},
-                          items_path='items', next_url_path='next', total_path='total')
-    job = asyncio.create_task(c.aoe.collection.collect(parent.id, plan))
+    upstream_client = httpx.AsyncClient(transport=httpx.MockTransport(mock_upstream))
+    guard = ScoutProbeGuard(
+        max_misses=3,
+        bypass_hosts={"localhost", "control.internal"},
+        state_path=tmp_path / "guard.json",
+        client=upstream_client,
+    )
+    proxy_url = await guard.start()
     try:
-        await asyncio.wait_for(second_page.wait(), 2)
+        async with httpx.AsyncClient(proxy=proxy_url) as client:
+            # Repeated 200 traffic is never throttled.
+            for _ in range(10):
+                resp = await client.get("http://ctf.example/api/list")
+                assert resp.status_code == 200
+            assert (await client.get("http://ctf.example/files/chall.zip")).status_code == 200
+
+            # 3 distinct 404 paths trip the guard.
+            for idx in range(3):
+                resp = await client.get(f"http://ctf.example/guess/{idx}")
+                assert resp.status_code == 404
+
+            # Next unknown path is blocked with 429 and explicit guidance.
+            blocked = await client.get("http://ctf.example/guess/extra")
+            assert blocked.status_code == 429
+            body = blocked.json()
+            assert body["error"] == "probe_guard_tripped"
+            assert "collection_notes" in body["message"]
+
+            # Previously confirmed 200 paths remain accessible even after trip.
+            still_good = await client.get("http://ctf.example/api/list")
+            assert still_good.status_code == 200
+
+            # Bypassed control-plane host is never tripped.
+            for idx in range(5):
+                bypass = await client.get(f"http://control.internal/missing/{idx}")
+                assert bypass.status_code == 404
+    finally:
+        await guard.stop()
+        await upstream_client.aclose()
+
+    no_proxy = build_no_proxy("existing.local", {"localhost", "api.openai.com"})
+    assert "existing.local" in no_proxy and "api.openai.com" in no_proxy and "localhost" in no_proxy
+
+
+async def test_scout_partial_failure_preserves_collected_questions_and_keeps_workers_running(tmp_path):
+    cfg, storage, containers, c, parent, _ = await setup(tmp_path)
+    outbox = cfg.task_path(parent.id, "workspaces", "scout") / "outbox"
+    outbox.mkdir(parents=True, exist_ok=True)
+
+    async def crashing_scout(spec, emit):
+        (outbox / "q1.json").write_text(json.dumps({
+            "source_key": "q1",
+            "title": "Collected Before Crash",
+            "description": "Solve me",
+            "difficulty": "easy",
+            "collection_notes": "Attachment missing from list API",
+        }), encoding="utf-8")
+        raise TimeoutError("simulated scout timeout")
+
+    containers.scout = crashing_scout
+    bindings = {
+        run.agent_id: cfg.resolve_agent(run.agent_id, run.provider_id, run.model_id, run.protocol)
+        for run in await storage.list_agents(parent.id)
+    }
+    await c.aoe._scout(parent.id, bindings)
+
+    refreshed = await storage.get_task(parent.id)
+    assert refreshed.state == RunState.RUNNING
+    assert refreshed.metadata["collection_complete"] is True
+    assert refreshed.metadata["collection_status"] == "partial"
+    assert refreshed.metadata["collection_warnings"]
+    assert refreshed.metadata["scout_complete"] is True
+    scout_run = await storage.get_agent(parent.id, "scout")
+    assert scout_run.actual_state == AgentState.COMPLETED
+    questions = await storage.list_questions(parent.id)
+    assert len(questions) == 1 and questions[0].metadata["source_key"] == "q1"
+
+    # Tick should dispatch the collected question to a Worker normally.
+    await c.aoe.tick(parent.id)
+    assert len(containers.launched) == 1 and containers.launched[0].task_id == questions[0].id
+
+
+async def test_scout_failure_with_zero_questions_raises_contract_error(tmp_path):
+    cfg, storage, containers, c, parent, _ = await setup(tmp_path)
+
+    async def empty_failing_scout(spec, emit):
+        raise RuntimeError("platform unreachable")
+
+    containers.scout = empty_failing_scout
+    bindings = {
+        run.agent_id: cfg.resolve_agent(run.agent_id, run.provider_id, run.model_id, run.protocol)
+        for run in await storage.list_agents(parent.id)
+    }
+    with pytest.raises(ContractError, match="platform unreachable"):
+        await c.aoe._scout(parent.id, bindings)
+
+
+def test_outbox_hook_auto_syncs_and_delivers_receipts(monkeypatch, tmp_path):
+    ws = tmp_path / "ws"
+    aoe_root = tmp_path / "aoe"
+    (ws / "outbox").mkdir(parents=True)
+    aoe_root.mkdir()
+    (ws / "outbox" / "q1.json").write_text(json.dumps({"source_key": "q1", "description": "d"}), encoding="utf-8")
+    for k, v in {
+        "TGA3_AGENT_ROLE": "scout",
+        "TGA3_AGENT_ID": "scout",
+        "TGA3_TASK_ID": str(uuid4()),
+        "TGA3_AOE_PARENT_ID": str(uuid4()),
+        "TGA3_WORKSPACE": str(ws),
+        "TGA3_AOE_ROOT": str(aoe_root),
+        "TGA3_TASK_OVERVIEW_ROOT": "/task-overview",
+        "TGA3_BLACKBOARD_MCP_URL": "http://127.0.0.1:8083/mcp",
+    }.items():
+        monkeypatch.setenv(k, v)
+
+    posted = []
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "context": "",
+                "delivery_id": "",
+                "question_import_receipts": {"saved": True, "imported_count": 1, "imported_keys": ["q1"]},
+            }
+
+    class FakeClient:
+        def post(self, url, json, timeout):
+            posted.append((url, json))
+            return FakeResponse()
+
+    result = checkpoint(
+        {
+            "hook_event_name": "PostToolUse",
+            "tool_name": "exec_command",
+            "tool_input": {"cmd": "python3 collect.py"},
+            "tool_response": "wrote /workspace/outbox/q1.json",
+        },
+        client=FakeClient(),
+    )
+    assert len(posted) == 1
+    assert posted[0][1]["outbox_sync"] is True
+    assert "question-import receipts" in result["hookSpecificOutput"]["additionalContext"]
+
+
+async def test_outbox_watcher_streams_questions_to_workers_while_scout_is_still_running(tmp_path):
+    cfg, storage, containers, c, parent, _ = await setup(tmp_path)
+    outbox = cfg.task_path(parent.id, "workspaces", "scout") / "outbox"
+    outbox.mkdir(parents=True, exist_ok=True)
+    release = asyncio.Event()
+    wrote_first = asyncio.Event()
+
+    async def streaming_scout(spec, emit):
+        (outbox / "easy-1.json").write_text(json.dumps({
+            "source_key": "easy-1",
+            "title": "Easy One",
+            "description": "Solve me first",
+            "difficulty": "easy",
+            "target": {"mode": "none"},
+        }), encoding="utf-8")
+        wrote_first.set()
+        await release.wait()
+        (outbox / "hard-2.json").write_text(json.dumps({
+            "source_key": "hard-2",
+            "title": "Hard Two",
+            "description": "Solve me second",
+            "difficulty": "hard",
+            "target": {"mode": "none"},
+        }), encoding="utf-8")
+        await c.aoe.finish_collection(parent.id, expected_count=2)
+
+    containers.scout = streaming_scout
+    bindings = {
+        run.agent_id: cfg.resolve_agent(run.agent_id, run.provider_id, run.model_id, run.protocol)
+        for run in await storage.list_agents(parent.id)
+    }
+    scout_job = asyncio.create_task(c.aoe._scout(parent.id, bindings))
+    try:
+        await asyncio.wait_for(wrote_first.wait(), timeout=2)
+        async with asyncio.timeout(3):
+            while len(await storage.list_questions(parent.id)) < 1:
+                await asyncio.sleep(0.05)
+        assert not (await storage.get_task(parent.id)).metadata.get("collection_complete")
         await c.aoe.tick(parent.id)
-        assert len(runtime.launched) == 1
-        assert not (await storage.get_task(parent.id)).metadata.get('collection_complete')
+        assert len(containers.launched) == 1
         release.set()
-        assert (await job)['question_count'] == 2
-        assert calls == ['https://fixture.example/questions', 'https://fixture.example/questions?page=2']
+        await asyncio.wait_for(scout_job, timeout=3)
+        assert len(await storage.list_questions(parent.id)) == 2
+        assert (await storage.get_task(parent.id)).metadata["collection_complete"] is True
     finally:
         release.set()
-        await job
+        if not scout_job.done():
+            scout_job.cancel()
+        await asyncio.gather(scout_job, return_exceptions=True)
+
+
+async def test_scout_stall_watchdog_warns_then_exits_cleanly_when_questions_already_imported(monkeypatch, tmp_path):
+    from tga3.workers import aoe_scout
+    from tga3.workers.action_journal import ActionJournal
+
+    workspace, batch = tmp_path / "workspace", tmp_path / "batch"
+    workspace.mkdir()
+    batch.mkdir()
+    (batch / "collection-state.json").write_text(json.dumps({
+        "collection_complete": False,
+        "status": "collecting",
+        "imported_count": 2,
+        "imported_keys": ["q1", "q2"],
+    }), encoding="utf-8")
+    for k, v in {
+        "TGA3_AOE_PARENT_ID": str(uuid4()),
+        "TGA3_WORKSPACE": str(workspace),
+        "TGA3_AOE_ROOT": str(batch),
+        "TGA3_SYSTEM_PROMPT": "collect",
+        "TGA3_SCOUT_PHASE": "collecting",
+        "TGA3_DISABLE_SCOUT_PROBE_GUARD": "1",
+    }.items():
+        monkeypatch.setenv(k, v)
+
+    prompts_seen: list[str] = []
+
+    class StallingAdapter:
+        api_key = "secret"
+
+        def __init__(self):
+            self.journal = ActionJournal(tmp_path / "logs", identity={"agent_id": "scout"})
+            self.timeout = None
+
+        async def run_cycle(self, prompt, emit):
+            prompts_seen.append(prompt)
+            return "still thinking without importing"
+
+    monkeypatch.setattr(aoe_scout, "CodexAdapter", StallingAdapter)
+    state = workspace / ".tga3"
+    state.mkdir()
+    ident = uuid4().hex
+    (state / "aoe-scout-request.json").write_text(json.dumps({"id": ident, "phase": "collecting"}))
+    job = asyncio.create_task(aoe_scout.scout())
+    try:
+        result = state / "aoe-scout-results" / (ident + ".json")
+        async with asyncio.timeout(3):
+            while not result.exists():
+                await asyncio.sleep(0.01)
+        payload = json.loads(result.read_text(encoding="utf-8"))
+        assert payload["finish_reason"] == "completed"
+        assert len(prompts_seen) == 2
+        assert "No new questions were imported recently" in prompts_seen[1]
+    finally:
+        job.cancel()
+        await asyncio.gather(job, return_exceptions=True)

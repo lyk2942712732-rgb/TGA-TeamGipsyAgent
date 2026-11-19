@@ -221,6 +221,9 @@ class RuntimeConfig(BaseModel):
     mcp_instructions: str = Field(min_length=1)
     cli_timeout_seconds: int = Field(default=1800, ge=30, le=86400)
     scout_timeout_seconds: int = Field(default=300, ge=60, le=600)
+    aoe_collection_timeout_seconds: int = Field(default=600, ge=30, le=3600)
+    aoe_collection_stall_seconds: int = Field(default=120, ge=10, le=1800)
+    aoe_scout_probe_max_misses: int = Field(default=6, ge=2, le=50)
     # Accepted for existing configurations only; extraction/merging have no total deadline.
     scout_extract_timeout_seconds: int | None = Field(default=None, exclude=True)
     worker_images: dict[str, str]

@@ -66,11 +66,14 @@ async def test_external_quota_dispatches_all_no_target_questions_in_existing_ord
     manifest = json.loads((cfg.task_path(qs["managed"].id) / "question.json").read_text())
     assert manifest["target"]["start"]["params"]["unique_code"] == "q"
     assert manifest["target_runtime"]["reason"] == "quota"
-    assert "target" not in (await storage.get_task(qs["managed"].id)).metadata
+    assert (await storage.get_task(qs["managed"].id)).metadata["target"]["mode"] == "managed"
+    (cfg.task_path(qs["managed"].id) / "question.json").unlink()
     reloaded = TargetInstances(cfg, clock=lambda: clock[0])
     assert reloaded.spec(await storage.get_task(qs["managed"].id)).mode == "managed"
     assert "target" not in (await coord.aoe.snapshot(parent.id))["questions"][0]
-    assert "target" in json.loads((cfg.task_path(parent.id) / "questions.json").read_text())["questions"][0]
+    state_file = json.loads((cfg.task_path(parent.id) / "collection-state.json").read_text())
+    assert state_file["imported_count"] == 4 and "questions" not in state_file
+    assert not (cfg.task_path(parent.id) / "questions.json").exists()
     await coord.close()
 
 

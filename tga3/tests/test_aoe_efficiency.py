@@ -95,7 +95,7 @@ async def test_unchanged_collection_is_not_rewritten_and_missing_manifests_recov
     writes = count(monkeypatch, c.aoe, "_atomic_json", sync=True)
     await c.aoe.finish_collection(parent.id, 2)
     assert writes.call_count == 0
-    batch = cfg.task_path(parent.id) / "questions.json"
+    batch = cfg.task_path(parent.id) / "collection-state.json"
     single = cfg.task_path(questions["Easy"].id) / "question.json"
     batch.unlink()
     single.unlink()
@@ -195,10 +195,12 @@ async def test_managed_contract_survives_view_updates_and_restart(tmp_path):
     await storage.update_task(q.id, metadata={"connection_info": "changed"})
     await c.aoe._save_question(await storage.get_task(q.id))
     fresh = TargetInstances(cfg)
-    assert "target" not in storage.tasks[q.id].metadata
+    assert storage.tasks[q.id].metadata["target"]["mode"] == "managed"
+    (cfg.task_path(q.id) / "question.json").unlink()
     assert fresh.spec(await storage.get_task(q.id)) == TargetSpec.model_validate(contract())
-    manifest = json.loads((cfg.task_path(parent.id) / "questions.json").read_text())
-    assert not manifest["collection_complete"] and len(manifest["questions"]) == 1
+    state = json.loads((cfg.task_path(parent.id) / "collection-state.json").read_text())
+    assert not state["collection_complete"] and state["imported_count"] == 1
+    assert not (cfg.task_path(parent.id) / "questions.json").exists()
     await c.close()
 
 

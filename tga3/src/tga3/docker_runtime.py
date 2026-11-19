@@ -207,9 +207,13 @@ class DockerContainerRuntime:
                 volumes[str(overview)] = {'bind': '/task-overview', 'mode': 'ro'}
                 environment['TGA3_TASK_OVERVIEW_ROOT'] = '/task-overview'
             if binding.role == "scout":
+                for subdir in ("outbox", "attachments", "imported", "rejected"):
+                    self._ensure_worker_directory(workspace / subdir)
                 environment["TGA3_SCOUT_INTEL_MCP_URL"] = (
                     runtime.blackboard_mcp_url.rstrip("/").removesuffix("/mcp") + "/aoe-scout-mcp/"
                 )
+                environment["TGA3_AOE_COLLECTION_STALL_SECONDS"] = str(runtime.aoe_collection_stall_seconds)
+                environment["TGA3_SCOUT_PROBE_MAX_MISSES"] = str(runtime.aoe_scout_probe_max_misses)
             if spec.task_id != spec.aoe_parent_id:
                 environment["TGA3_QUESTION_ID"] = str(spec.task_id)
             if binding.role == "worker":

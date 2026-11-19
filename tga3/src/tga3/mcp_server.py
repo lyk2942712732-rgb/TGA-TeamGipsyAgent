@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import urlsplit
 from uuid import UUID
 
 from mcp.server.fastmcp import Context, FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 
-from .question_collection import CollectionPlan
 from .blackboard import Blackboard
 from .config import TGA3Config
 from .scout_intel import ScoutIntelMergeInput, ScoutIntelStore
@@ -85,32 +84,35 @@ def build_scout_mcp(config: TGA3Config, store: ScoutIntelStore, *, aoe=None) -> 
 
     if aoe is not None:
         @mcp.tool()
-        async def scout_collect_questions(plan: CollectionPlan, ctx: Context) -> dict[str, Any]:
-            """Fetch only the explicitly supplied question-list API, preserve original items and register them.
+        async def scout_import_questions(ctx: Context, path: str | None = None) -> dict[str, Any]:
+            """Validate and import staged question JSON files from /workspace/outbox/ into AOE.
 
-            Read /task-overview/task.md first. request supplies the exact list URL/method/actual credentials.
-            fields maps source_key/title/description/difficulty/flag_format to original JSON dot paths; items_path is
-            empty for a root array. next_url_path and total_path map documented pagination URL and total count.
-            target and submission are shared documented templates; {unique_code} expands from each item,
-            {flag} stays literal. Specify actual supplied credentials in headers. preflight is only for an
-            explicitly supplied GET VPN connectivity check requiring status=ok. Source fields are preserved
-            in source.json; do not reproduce the list through the model. Attachments may map only an explicit
-            source attachments field containing local supplied paths; unknown entry points stay empty.
-            Completes collection automatically after all pages; then stop. No target/API/frontend exploration.
+            Write each complete question atomically to /workspace/outbox/<source_key>.json (and save any
+            downloaded/extracted attachments under /workspace/attachments/<source_key>/). Calling this tool
+            validates each staged JSON file, copies attachments, registers questions for Workers, and archives
+            consumed files to /workspace/imported/ (or /workspace/rejected/ with an error file on failure).
+            Omit path to import all pending files in /workspace/outbox/.
             """
             task_id, _ = bound_identity(ctx, scout=True)
-            return await aoe.collection.collect(task_id, plan)
+            return await aoe.collection.import_outbox(task_id, path)
 
         @mcp.tool()
-        async def scout_finish_collection(expected_count: int, ctx: Context) -> dict[str, Any]:
-            """Close AOE collection after the complete source list and available local files are registered.
+        async def scout_finish_collection(
+            ctx: Context,
+            expected_count: int | None = None,
+            status: Literal["complete", "partial"] = "complete",
+            warnings: list[str] | None = None,
+        ) -> dict[str, Any]:
+            """Close AOE collection after available questions have been written to /workspace/outbox/.
 
-            expected_count must equal the complete list count (including all gateway pages).
-            Unknown attachment entry points may remain empty; never guess them to finish collection.
-            Scout finishes after collection; there are no further AOE Scout rounds.
+            Any remaining files in /workspace/outbox/ are imported automatically before closing.
+            For normal completion use status='complete' (optionally with expected_count).
+            If some items/attachments are unavailable or only obtainable inside dynamic targets,
+            leave them empty with collection_notes and finish with status='complete' (or status='partial'
+            with warnings if whole questions could not be retrieved). Stop immediately after finishing.
             """
             task_id, _ = bound_identity(ctx, scout=True)
-            return await aoe.finish_collection(task_id, expected_count)
+            return await aoe.finish_collection(task_id, expected_count, status=status, warnings=warnings)
 
         return mcp
 

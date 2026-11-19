@@ -16,7 +16,15 @@ import httpx
 
 from .aoe_models import active_attempts
 from .errors import ContractError
-from .submissions import EXECUTION_TOOLS, Submissions, accepted_receipt, receipt_value, response_objects
+from .submissions import (
+    EXECUTION_TOOLS,
+    Submissions,
+    accepted_receipt,
+    is_rejected_value,
+    payload_matches_command,
+    receipt_value,
+    response_objects,
+)
 
 
 def records_root(config, question):
@@ -94,28 +102,9 @@ class SubmissionGuard:
             or not re.search(r"\bcurl\b|urllib\.request|requests\.(?:post|request)|httpx", command)
         ):
             return False
-        # Require the literal original question ID, rather than accepting q-1 inside q-10.
         source = str(question.metadata.get("source_key", ""))
-        if not source or not re.search(r"(?<![\w-])" + re.escape(source) + r"(?![\w-])", command):
+        if not payload_matches_command(command, spec, source):
             return False
-        normalized = command.replace('\\"', '"').replace("\\'", "'")
-        if isinstance(spec.request.body, dict):
-            for key, value in spec.request.body.items():
-                if (
-                    isinstance(value, str)
-                    and "{flag}" not in value
-                    and not re.search(
-                        r"[\"']"
-                        + re.escape(key)
-                        + r"[\"']\s*:\s*(?:"
-                        + re.escape(json.dumps(value, ensure_ascii=False))
-                        + "|"
-                        + re.escape(repr(value))
-                        + ")",
-                        normalized,
-                    )
-                ):
-                    return False
         try:
             text = self.submissions._body(question, action["_agent_id"], action)
         except (OSError, ValueError, ContractError):
@@ -124,7 +113,8 @@ class SubmissionGuard:
         if statuses and int(statuses[-1]) not in (200, 400, 422):
             return False
         return any(
-            receipt_value(r, spec.success_path) is False
+            is_rejected_value(receipt_value(r, spec.success_path), spec.success_value)
+            and not (spec.duplicate_code and r.get("code") == spec.duplicate_code)
             and not r.get("error")
             and r.get("code") in (None, 0, 200, 400, 422, "ok", "success", "wrong_answer", "incorrect")
             for r in response_objects(text)

@@ -177,8 +177,10 @@ async def test_collection_runner_uses_only_one_collecting_session(monkeypatch, t
             self.journal = ActionJournal(tmp_path / "logs", identity={"agent_id": "scout"})
 
         async def run_cycle(self, prompt, emit):
-            assert "collect the supplied question-list API" in prompt and self.timeout is None
-            (batch / "questions.json").write_text(json.dumps({"collection_complete": True, "questions": []}))
+            assert "/workspace/outbox/" in prompt and self.timeout is None
+            (batch / "collection-state.json").write_text(json.dumps({
+                "collection_complete": True, "status": "complete", "imported_count": 0, "imported_keys": [],
+            }))
             return "collected"
 
     monkeypatch.setattr(aoe_scout, "CodexAdapter", Adapter)

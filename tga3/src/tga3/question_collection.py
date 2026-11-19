@@ -1,203 +1,252 @@
-"""Fetch only the supplied list API; map source fields without model transcription."""
+"""File-outbox question importer: Scout collects freely; system validates and imports deterministically."""
 
 from __future__ import annotations
 
 import asyncio
-import re
+import json
+import os
 from collections import defaultdict
+from pathlib import Path
 from typing import Any
-from urllib.parse import urljoin, urlsplit
+from uuid import UUID, uuid4
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import ValidationError
 
 from .aoe_models import AOEQuestionInput
-from .errors import ContractError
+from .errors import ConflictError, ContractError
 from .flag_signals import declared_format
-from .submissions import SubmissionSpec
-from .target_instances import TargetRequest, TargetSpec
+
+OUTBOX_DIR = "outbox"
+ATTACHMENTS_DIR = "attachments"
+IMPORTED_DIR = "imported"
+REJECTED_DIR = "rejected"
+MAX_OUTBOX_FILE_BYTES = 2 * 1024 * 1024
 
 
-class CollectionPlan(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    request: TargetRequest
-    items_path: str = ""
-    next_url_path: str = ""
-    total_path: str = ""
-    fields: dict[str, str] = Field(
-        default_factory=lambda: {"source_key": "unique_code", "description": "description", "difficulty": "difficulty"}
-    )
-    target: TargetSpec = Field(default_factory=lambda: TargetSpec(mode="unknown"))
-    submission: SubmissionSpec | None = None
-    connection_info: str = ""
-    submission_instructions: str = ""
-    preflight: TargetRequest | None = None
+def _archive_path(directory: Path, name: str) -> Path:
+    directory.mkdir(parents=True, exist_ok=True)
+    target = directory / name
+    if not target.exists():
+        return target
+    stem = Path(name).stem
+    suffix = Path(name).suffix
+    return directory / f"{stem}-{uuid4().hex[:8]}{suffix}"
 
 
-def field(value, path):
-    for key in path.split(".") if path else []:
-        if isinstance(value, dict):
-            value = value.get(key)
-        elif isinstance(value, list) and key.isdigit() and int(key) < len(value):
-            value = value[int(key)]
-        else:
-            return None
-    return value
+def _write_json(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(f".{uuid4().hex[:8]}.tmp")
+    try:
+        temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
-def expand(value: Any, item: dict):
-    if isinstance(value, str):
-        # Preserve {flag}, which belongs to the submission runtime, not the list.
-        return re.sub(
-            r"\{([\w.]+)\}",
-            lambda m: str(field(item, m[1])) if m[1] != "flag" and field(item, m[1]) is not None else m[0],
-            value,
+def _normalize_item(item: Any) -> AOEQuestionInput:
+    if not isinstance(item, dict):
+        raise ContractError("Each question entry must be a JSON object")
+    data = dict(item)
+    if data.get("attachments") is None:
+        data.pop("attachments", None)
+    if data.get("tags") is None:
+        data.pop("tags", None)
+    raw = data.get("raw_source") if isinstance(data.get("raw_source"), dict) else data.get("source")
+    if not data.get("flag_format"):
+        detected = declared_format(data) or (declared_format(raw) if isinstance(raw, dict) else "")
+        if detected:
+            data["flag_format"] = detected
+    try:
+        return AOEQuestionInput.model_validate(data)
+    except ValidationError as exc:
+        messages = "; ".join(
+            f"{'.'.join(str(part) for part in err.get('loc', ())) or 'question'}: {err.get('msg', 'invalid')}"
+            for err in exc.errors()
         )
-    if isinstance(value, dict):
-        return {k: expand(v, item) for k, v in value.items()}
-    if isinstance(value, list):
-        return [expand(v, item) for v in value]
-    return value
+        raise ContractError(messages) from exc
 
 
-def declared_requests(text: str) -> list[tuple[str, str, str]]:
-    # Resolve only literal URL variables explicitly present in supplied instructions.
-    text = text.replace("\r\n", "\n")
-    variables = dict(re.findall(r'(?m)^\s*(?:[-*]\s+)?([A-Z][A-Z0-9_]+)\s*[:=]\s*(https?://[^\s`"<>]+)', text))
-    for key, url in variables.items():
-        text = text.replace("{" + key + "}", url.rstrip("/"))
-    results = []
-    declarations = list(re.finditer(r'\b(GET|POST)\s+(https?://[^\s`"<>]+)', text))
-    for index, match in enumerate(declarations):
-        url = match[2].rstrip(".,;，。；)）")
-        # Labels apply to this declaration only, never other APIs in the same list.
-        start = text.rfind("\n", 0, match.start()) + 1
-        previous = text[:start].rstrip("\n").split("\n")[-1]
-        if previous.rstrip().endswith((":", "：")) and not re.search(r"\b(GET|POST)\b", previous):
-            start = max(0, start - len(previous) - 1)
-        end = text.find("\n\n", match.end())
-        end = end if end >= 0 else len(text)
-        if index + 1 < len(declarations):
-            end = min(end, text.rfind("\n", match.end(), declarations[index + 1].start()) + 1 or end)
-        results.append((match[1], url, text[start:end]))
-    for match in re.finditer(r'(?:QUESTION_LIST_URL|题单接口|题目列表接口)\s*[:=：]\s*(https?://[^\s`"<>]+)', text):
-        results.append(("GET", match[1].rstrip(".,;，。；"), "question list"))
-    return results
+def _extract_specs(payload: Any) -> list[AOEQuestionInput]:
+    if isinstance(payload, list):
+        items = payload
+    elif isinstance(payload, dict) and set(payload) == {"questions"} and isinstance(payload["questions"], list):
+        items = payload["questions"]
+    elif isinstance(payload, dict):
+        items = [payload]
+    else:
+        raise ContractError("Outbox file must contain a question JSON object, a list, or {'questions': [...]}")
+    if not items:
+        raise ContractError("Outbox file contains no questions")
+    return [_normalize_item(item) for item in items]
 
 
-class QuestionCollection:
-    def __init__(self, aoe):
+class QuestionImporter:
+    """Consume staged outbox JSON files from Scout's workspace into the single source of truth."""
+
+    def __init__(self, aoe) -> None:
         self.aoe = aoe
-        self.locks = defaultdict(asyncio.Lock)
+        self.locks: defaultdict[UUID, asyncio.Lock] = defaultdict(asyncio.Lock)
 
-    async def collect(self, parent_id, plan: CollectionPlan) -> dict:
+    def workspace(self, parent_id: UUID) -> Path:
+        return self.aoe.config.task_path(parent_id, "workspaces", "scout")
+
+    def outbox_dir(self, parent_id: UUID) -> Path:
+        return self.workspace(parent_id) / OUTBOX_DIR
+
+    def ensure_directories(self, parent_id: UUID) -> None:
+        root = self.workspace(parent_id)
+        for name in (OUTBOX_DIR, ATTACHMENTS_DIR, IMPORTED_DIR, REJECTED_DIR):
+            (root / name).mkdir(parents=True, exist_ok=True)
+
+    def _resolve_targets(self, parent_id: UUID, supplied: str | None) -> list[Path]:
+        root = self.workspace(parent_id).resolve()
+        outbox = (root / OUTBOX_DIR).resolve()
+        if not supplied:
+            if not outbox.is_dir():
+                return []
+            candidates = [
+                p
+                for p in outbox.iterdir()
+                if not p.name.startswith(".") and p.suffix.lower() == ".json" and not p.name.endswith(".tmp")
+            ]
+            return sorted(candidates, key=lambda p: (p.stat().st_mtime_ns if p.exists() else 0, p.name))
+        cleaned = supplied.strip()
+        if cleaned.startswith("/workspace/"):
+            candidate = (root / cleaned.removeprefix("/workspace/")).resolve()
+        elif cleaned.startswith("/"):
+            raise ContractError("Import path must stay inside /workspace (typically /workspace/outbox/)")
+        else:
+            direct = (root / cleaned).resolve()
+            in_outbox = (outbox / cleaned).resolve()
+            candidate = direct if direct.exists() else in_outbox
+        if not candidate.is_relative_to(root):
+            raise ContractError("Import path escapes /workspace")
+        if candidate.is_symlink():
+            raise ContractError("Import path must be a regular file or directory, not a symlink")
+        if candidate.is_dir():
+            files = [
+                p
+                for p in candidate.iterdir()
+                if not p.name.startswith(".") and p.suffix.lower() == ".json" and not p.name.endswith(".tmp")
+            ]
+            return sorted(files, key=lambda p: (p.stat().st_mtime_ns if p.exists() else 0, p.name))
+        if not candidate.is_file():
+            raise ContractError(f"Outbox file not found: {supplied}")
+        return [candidate]
+
+    def has_pending(self, parent_id: UUID) -> bool:
+        outbox = self.outbox_dir(parent_id)
+        if not outbox.is_dir():
+            return False
+        return any(
+            not p.name.startswith(".") and p.suffix.lower() == ".json" and not p.name.endswith(".tmp")
+            for p in outbox.iterdir()
+        )
+
+    async def import_outbox(self, parent_id: UUID, path: str | None = None) -> dict[str, Any]:
         async with self.locks[parent_id]:
             parent = await self.aoe.storage.get_task(parent_id)
             if parent.metadata.get("collection_complete"):
+                questions = await self.aoe.storage.list_questions(parent_id)
+                keys = sorted(q.metadata["source_key"] for q in questions)
                 return {
-                    "saved": True,
+                    "saved": False,
+                    "imported": [],
+                    "errors": [],
+                    "imported_count": len(questions),
+                    "imported_keys": keys,
                     "collection_complete": True,
-                    "question_count": len(await self.aoe.storage.list_questions(parent_id)),
+                    "status": parent.metadata.get("collection_status", "complete"),
                 }
-            overview = await self.aoe.overview.prepare(parent_id)
-            supplied = (overview / "task.md").read_text(encoding="utf-8")
-            # Uploaded API instructions are user-provided too; never scan arbitrary files.
-            for upload in await self.aoe.storage.list_input_files(parent_id):
-                path = self.aoe.config.resolve_path(upload.storage_path)
-                if (
-                    path.suffix.lower() in {".txt", ".md", ".json", ".yaml", ".yml"}
-                    and path.stat().st_size <= 1_000_000
-                ):
-                    supplied += "\n\n" + path.read_text(encoding="utf-8", errors="replace")
-            declared = declared_requests(supplied)
-            if not set(plan.fields) <= {"source_key", "title", "description", "difficulty", "attachments", "flag_format"}:
-                raise ContractError("fields maps only original ID/title/description/difficulty/attachments/flag_format")
-            allowed = {
-                (method, url)
-                for method, url, paragraph in declared
-                if re.search(r"题单|题目列表|question[- ]list|challenge[- ]list|list.{0,20}challenges", paragraph, re.I)
-            }
-            if (plan.request.method, plan.request.url) not in allowed:
-                raise ContractError(
-                    "Use the explicitly supplied question-list API only; missing declarations "
-                    "must be clarified, never probe documentation, attachments or other endpoints"
+            self.ensure_directories(parent_id)
+            workspace_root = self.workspace(parent_id).resolve()
+            outbox_root = (workspace_root / OUTBOX_DIR).resolve()
+            imported_dir = workspace_root / IMPORTED_DIR
+            rejected_dir = workspace_root / REJECTED_DIR
+
+            targets = self._resolve_targets(parent_id, path)
+            imported: list[dict[str, Any]] = []
+            errors: list[dict[str, Any]] = []
+
+            for file_path in targets:
+                in_outbox = file_path.parent.resolve() == outbox_root
+                display = (
+                    "/workspace/" + file_path.resolve().relative_to(workspace_root).as_posix()
+                    if file_path.exists() and not file_path.is_symlink()
+                    else f"/workspace/{OUTBOX_DIR}/{file_path.name}"
                 )
-            required_preflight = {(m, u) for m, u, p in declared if re.search(r"VPN|连通|preflight", p, re.I)}
-            if required_preflight and not plan.preflight:
-                raise ContractError("Supplied connectivity preflight must run before the question-list API")
-            if plan.preflight:
-                approved = {(m, u) for m, u, p in declared if re.search(r"VPN|连通|preflight", p, re.I)}
-                if (plan.preflight.method, plan.preflight.url) not in approved or plan.preflight.method != "GET":
-                    raise ContractError("Preflight must be an explicitly supplied GET connectivity check")
-                status, body = await self.aoe.targets._request(plan.preflight)
-                if status != 200 or not isinstance(body, dict) or body.get("status") != "ok":
-                    raise ContractError("Supplied connectivity check did not return status=ok; collection stopped")
-            request, visited, ids, expected_total = plan.request, set(), set(), None
-            while True:
-                identity = (request.url, tuple(sorted(request.params.items())))
-                if identity in visited:
-                    raise ContractError("Question-list pagination repeated a page; collection remains incomplete")
-                visited.add(identity)
-                status, body = await self.aoe.targets._request(request)
-                if status != 200:
-                    raise ContractError(f"Question-list API returned HTTP {status}; retry the same supplied endpoint")
-                if plan.total_path:
-                    total = field(body, plan.total_path)
-                    if not isinstance(total, int) or isinstance(total, bool) or total < 0:
-                        raise ContractError("total_path must identify the source's integer question count")
-                    if expected_total is not None and total != expected_total:
-                        raise ContractError("Source question count changed during pagination; retry the same API")
-                    expected_total = total
-                items = field(body, plan.items_path)
-                if not isinstance(items, list):
-                    raise ContractError(
-                        "items_path does not identify the question array; no endpoint exploration allowed"
+                try:
+                    if file_path.is_symlink():
+                        raise ContractError("Outbox entry must be a regular file, not a symlink")
+                    if not file_path.is_file():
+                        continue
+                    if file_path.stat().st_size > MAX_OUTBOX_FILE_BYTES:
+                        raise ContractError(
+                            f"Outbox JSON exceeds maximum size ({MAX_OUTBOX_FILE_BYTES} bytes)"
+                        )
+                    raw_text = file_path.read_text(encoding="utf-8")
+                    try:
+                        payload = json.loads(raw_text)
+                    except ValueError as exc:
+                        raise ContractError(f"Invalid JSON syntax: {exc}") from exc
+                    specs = _extract_specs(payload)
+                    receipt = await self.aoe.register_questions(parent_id, specs)
+                    archived_to = None
+                    if in_outbox:
+                        dest = _archive_path(imported_dir, file_path.name)
+                        os.replace(file_path, dest)
+                        archived_to = "/workspace/" + dest.resolve().relative_to(workspace_root).as_posix()
+                    imported.append(
+                        {
+                            "file": display,
+                            "status": "imported",
+                            "archived_to": archived_to,
+                            "questions": receipt["questions"],
+                        }
                     )
-                specs = []
-                for item in items:
-                    if not isinstance(item, dict):
-                        raise ContractError("Question-list items must be objects")
-                    mapped = {name: field(item, path) for name, path in plan.fields.items()}
-                    mapped["flag_format"] = mapped.get("flag_format") or declared_format(item)
-                    if mapped.get("attachments") is None:
-                        mapped.pop("attachments", None)
-                    if not mapped.get("source_key") or not mapped.get("description"):
-                        raise ContractError("Map original question ID and full description before collecting")
-                    key = str(mapped["source_key"])
-                    if key in ids:
-                        raise ContractError("Question-list pagination contains duplicate original IDs")
-                    ids.add(key)
-                    mapped.update(
-                        source_key=key,
-                        title=mapped.get("title") or key,
-                        connection_info=expand(plan.connection_info, item),
-                        submission_instructions=expand(plan.submission_instructions, item),
-                        target=expand(plan.target.model_dump(mode="json"), item),
-                        submission=expand(plan.submission.model_dump(mode="json"), item) if plan.submission else None,
-                        source=item,
+                except (ContractError, ConflictError, ValueError, OSError) as exc:
+                    message = str(exc)
+                    rejected_to = None
+                    error_file = None
+                    if in_outbox and file_path.exists() and not file_path.is_symlink():
+                        dest = _archive_path(rejected_dir, file_path.name)
+                        os.replace(file_path, dest)
+                        rejected_to = "/workspace/" + dest.resolve().relative_to(workspace_root).as_posix()
+                        err_path = dest.with_suffix(".error.json")
+                        _write_json(err_path, {"file": display, "rejected_to": rejected_to, "error": message})
+                        error_file = "/workspace/" + err_path.resolve().relative_to(workspace_root).as_posix()
+                    errors.append(
+                        {
+                            "file": display,
+                            "status": "error",
+                            "error": message,
+                            "rejected_to": rejected_to,
+                            "error_file": error_file,
+                        }
                     )
-                    specs.append(AOEQuestionInput.model_validate(mapped))
-                # Registration wakes the scheduler; the full list is not returned through the model.
-                if specs:
-                    await self.aoe.register_questions(parent_id, specs)
-                next_url = field(body, plan.next_url_path) if plan.next_url_path else None
-                if not next_url:
-                    break
-                next_url = urljoin(request.url, str(next_url))
-                origin, next_parts = urlsplit(plan.request.url), urlsplit(next_url)
-                if (origin.scheme, origin.netloc, origin.path) != (
-                    next_parts.scheme,
-                    next_parts.netloc,
-                    next_parts.path,
-                ):
-                    raise ContractError("Pagination must stay on the supplied list API; other endpoints are forbidden")
-                request = plan.request.model_copy(update={"url": next_url, "params": {}})
-            if expected_total is not None and len(ids) != expected_total:
-                raise ContractError("Registered count does not cover the source total; collection remains incomplete")
-            await self.aoe.finish_collection(parent_id, len(ids))
+
+            questions = await self.aoe.storage.list_questions(parent_id)
+            keys = sorted(q.metadata["source_key"] for q in questions)
+            parent = await self.aoe.storage.get_task(parent_id)
             return {
-                "saved": True,
-                "collection_complete": True,
-                "question_count": len(ids),
-                "manifest": "/aoe/questions.json",
-                "instruction": "Collection complete. Stop now; no further exploration.",
+                "saved": bool(imported),
+                "imported": imported,
+                "errors": errors,
+                "imported_count": len(questions),
+                "imported_keys": keys,
+                "collection_complete": bool(parent.metadata.get("collection_complete", False)),
+                "status": parent.metadata.get("collection_status", "collecting"),
             }
+
+
+QuestionCollection = QuestionImporter
+
+__all__ = [
+    "ATTACHMENTS_DIR",
+    "IMPORTED_DIR",
+    "MAX_OUTBOX_FILE_BYTES",
+    "OUTBOX_DIR",
+    "REJECTED_DIR",
+    "QuestionCollection",
+    "QuestionImporter",
+]

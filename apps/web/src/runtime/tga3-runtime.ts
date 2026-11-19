@@ -32,7 +32,8 @@ export type TGA3TaskEvent = {
 export type AOEAttempt = { id: string; agent_id: string; phase: "solo" | "joint" | "swarm" | "reinforcement"; success_credit?: boolean; first_attempt_id?: string; previous_started_at?: number | null; previous_phase?: string; pauses?: Array<{ start: number; end: number | null }>; claimed_at?: number; started_at: number | null; deadline: number | null; outcome: "solved" | "timeout" | "interrupted" | "error" | null; finished_at?: number; cli_session_id?: string | null };
 export type AOEQuestion = {
   question_id: string; parent_task_id: string; title: string; description: string; source_key: string;
-  difficulty: string | number | null; connection_info: string; submission_instructions: string;
+  difficulty: string | number | null; category?: string; tags?: string[];
+  connection_info: string; submission_instructions: string; flag_format?: string; collection_notes?: string;
   status: string; attempted_by: string[]; current_agents: string[]; attempts: AOEAttempt[]; flag: string | null;
   report_state: "pending" | "generating" | "completed" | "failed" | "disabled"; blackboard_seq: number;
   scout_ready?: boolean; scout_phase?: string;
@@ -44,7 +45,7 @@ export type AOEQuestion = {
   swarm?: { entered_at: number; started_at: number | null; deadline: number | null } | null;
   attachments: Array<{ id: string; name: string; media_type: string; size_bytes: number; sha256: string }>;
 };
-export type AOEOverview = { task_id: string; phase: string; attempt_seconds: number; attempt_budgets?: { first: number; second: number; joint: number }; scout_mode?: string; collection_complete?: boolean; scout_question_seconds?: number; questions: AOEQuestion[] };
+export type AOEOverview = { task_id: string; phase: string; attempt_seconds: number; attempt_budgets?: { first: number; second: number; joint: number }; scout_mode?: string; collection_complete?: boolean; collection_status?: string; collection_warnings?: string[]; scout_question_seconds?: number; questions: AOEQuestion[] };
 export type TGA3RuntimeSnapshot = { task: TGA3Task; agents: TGA3Agent[]; blackboard: TGA3BoardEntry[]; events: TGA3TaskEvent[]; aoe?: AOEOverview; experience_count?: number };
 type TaskDetail = { task: TGA3Task; agents: TGA3Agent[]; experience_count?: number };
 

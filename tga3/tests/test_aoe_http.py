@@ -104,31 +104,44 @@ async def test_aoe_collection_mcp_budget_owned_downloads_and_hierarchical_events
                 )
                 return result.json()["result"]
 
-            async def source(request):
-                assert request.url == 'https://fixture.example/questions'
-                return 200, [
-                    {'unique_code': 'q1', 'title': 'One', 'description': 'Original one', 'difficulty': 'easy',
-                     'attachments': ['/inputs/' + Path(original.storage_path).name]},
-                    {'unique_code': 'q2', 'title': 'Two', 'description': 'Original two', 'difficulty': 'hard'}]
-            coordinator.aoe.targets._request = source
-            args = {'plan': {'request': {'method': 'GET', 'url': 'https://fixture.example/questions'},
-                            'target': {'mode': 'none'},
-                            'fields': {'source_key': 'unique_code', 'title': 'title', 'description': 'description',
-                                       'difficulty': 'difficulty', 'attachments': 'attachments'}}}
-            assert (await call('scout_collect_questions', args, {'accept': headers['accept']}))['isError']
-            assert (await call('scout_collect_questions', args, {**headers, 'x-tga3-agent-id': 'worker-openai'}))['isError']
-            registered = await call('scout_collect_questions', args)
+            outbox = cfg.task_path(parent_id, "workspaces", "scout") / "outbox"
+            outbox.mkdir(parents=True, exist_ok=True)
+            (outbox / "q1.json").write_text(json.dumps({
+                "source_key": "q1",
+                "title": "One",
+                "description": "Original one",
+                "difficulty": "easy",
+                "collection_notes": "Attachment copied from batch uploads",
+                "attachments": ["/inputs/" + Path(original.storage_path).name],
+                "target": {"mode": "none"},
+                "raw_source": {"unique_code": "q1", "points": 100},
+            }, ensure_ascii=False), encoding="utf-8")
+            (outbox / "q2.json").write_text(json.dumps({
+                "source_key": "q2",
+                "title": "Two",
+                "description": "Original two",
+                "difficulty": "hard",
+                "collection_notes": "No static attachment provided; inspect dynamic target if needed",
+                "target": {"mode": "none"},
+            }, ensure_ascii=False), encoding="utf-8")
+            assert (await call("scout_import_questions", {}, {"accept": headers["accept"]}))["isError"]
+            assert (await call("scout_import_questions", {}, {**headers, "x-tga3-agent-id": "worker-openai"}))["isError"]
+            registered = await call("scout_import_questions", {})
             assert not registered.get("isError")
             receipt = json.loads(registered["content"][0]["text"])
-            assert receipt['collection_complete'] and receipt['question_count'] == 2
+            assert not receipt["collection_complete"] and receipt["imported_count"] == 2
+            assert sorted(receipt["imported_keys"]) == ["q1", "q2"]
+            assert not list(outbox.glob("*.json"))
             questions = await storage.list_questions(parent_id)
-            first, second = [q.id for q in sorted(questions, key=lambda q: q.metadata['source_key'])]
+            first, second = [q.id for q in sorted(questions, key=lambda q: q.metadata["source_key"])]
             saved = json.loads((cfg.task_path(first) / "question.json").read_text())
             assert saved["target"]["mode"] == "none"
-            assert "target" not in (await storage.get_task(first)).metadata
+            assert (await storage.get_task(first)).metadata["target"]["mode"] == "none"
+            assert (await storage.get_task(first)).metadata["collection_notes"] == "Attachment copied from batch uploads"
             overview = (await client.get(f"/api/v3/tasks/{parent_id}/questions")).json()
             assert len(overview["questions"]) == 2 and overview["attempt_seconds"] == 420
             first_view = next(q for q in overview["questions"] if q["source_key"] == "q1")
+            assert first_view["collection_notes"] == "Attachment copied from batch uploads"
             file_id = first_view["attachments"][0]["id"]
             assert (
                 await client.get(f"/api/v3/tasks/{parent_id}/questions/{first}/files/{file_id}")
@@ -141,7 +154,7 @@ async def test_aoe_collection_mcp_budget_owned_downloads_and_hierarchical_events
                     break
                 await asyncio.sleep(0.01)
             assert [spec.scout_phase for spec in runtime.launched if spec.agent.agent_id == "scout"] == ["collecting"]
-            assert not (await call("scout_collect_questions", args)).get("isError")
+            assert not (await call("scout_import_questions", {})).get("isError")
             await coordinator.events.emit(
                 first,
                 actor=SYSTEM_ACTOR,

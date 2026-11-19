@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+from typing import Any
 from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -19,6 +20,7 @@ class SubmissionSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
     request: TargetRequest
     success_path: str = Field(default="correct", min_length=1, max_length=200)
+    success_value: Any = True
     duplicate_code: str | None = "duplicate"
 
 
@@ -72,10 +74,69 @@ def receipt_value(receipt, path):
     return value
 
 
+def matches_success(actual: Any, expected: Any) -> bool:
+    if isinstance(expected, bool):
+        return actual is expected
+    return not isinstance(actual, bool) and actual == expected
+
+
+def is_rejected_value(actual: Any, expected: Any) -> bool:
+    if actual is None:
+        return False
+    if isinstance(expected, bool):
+        return actual is (not expected)
+    return not matches_success(actual, expected)
+
+
+def payload_matches_command(command: str, spec: SubmissionSpec, source_key: str, *, flag: str | None = None) -> bool:
+    normalized = command.replace('\\"', '"').replace("\\'", "'")
+    payload = spec.request.body
+    has_bound_field = False
+    if isinstance(payload, dict):
+        for key, value in payload.items():
+            if isinstance(value, str):
+                if "{flag}" in value:
+                    if flag is None:
+                        continue
+                    expected = value.replace("{flag}", flag)
+                else:
+                    expected = value
+                    has_bound_field = True
+                pattern = (
+                    r"[\"']" + re.escape(key) + r"[\"']\s*:\s*(?:"
+                    + re.escape(json.dumps(expected, ensure_ascii=False)) + "|" + re.escape(repr(expected)) + ")"
+                )
+                if not re.search(pattern, normalized):
+                    return False
+            elif isinstance(value, bool):
+                has_bound_field = True
+                expected_lit = "true" if value else "false"
+                py_lit = "True" if value else "False"
+                pattern = (
+                    r"[\"']" + re.escape(key) + r"[\"']\s*:\s*(?:" + expected_lit + "|" + py_lit + r")(?![\w])"
+                )
+                if not re.search(pattern, normalized):
+                    return False
+            elif isinstance(value, int):
+                has_bound_field = True
+                pattern = r"[\"']" + re.escape(key) + r"[\"']\s*:\s*" + re.escape(str(value)) + r"(?![\w])"
+                if not re.search(pattern, normalized):
+                    return False
+    for param_value in spec.request.params.values():
+        if isinstance(param_value, str) and param_value and "{flag}" not in param_value:
+            has_bound_field = True
+            if param_value not in normalized:
+                return False
+    if not has_bound_field:
+        if not source_key or not re.search(r"(?<![\w-])" + re.escape(source_key) + r"(?![\w-])", command):
+            return False
+    return True
+
+
 def accepted_receipt(spec, receipt, status=200):
     duplicate = bool(spec.duplicate_code and receipt.get('code') == spec.duplicate_code)
     return (200 <= status < 300 or duplicate) and (
-        duplicate or receipt_value(receipt, spec.success_path) is True
+        duplicate or matches_success(receipt_value(receipt, spec.success_path), spec.success_value)
         and receipt.get('code') in (None, 0, 200, 'ok', 'success')
     ) and ('total_flag_count' not in receipt or
            receipt.get('correct_flag_count') == receipt['total_flag_count'])
@@ -110,14 +171,23 @@ class Submissions:
             return None
         if question.id in self.specs:
             return self.specs[question.id]
-        path = self.config.task_path(question.id) / "question.json"
-        document = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
-        value = document.get("submission")
+        value = question.metadata.get("submission")
+        document = None
+        if value is None:
+            path = self.config.task_path(question.id) / "question.json"
+            document = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
+            value = document.get("submission")
         spec = SubmissionSpec.model_validate(value) if value else None
         # Legacy TSec records already document the exact endpoint and payload.
         # Never synthesize a path from a hostname, nor borrow credentials across origins.
         if spec is None:
-            spec = self.legacy_spec(question, document.get("target", {}))
+            target = question.metadata.get("target")
+            if target is None:
+                if document is None:
+                    path = self.config.task_path(question.id) / "question.json"
+                    document = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
+                target = document.get("target", {})
+            spec = self.legacy_spec(question, target)
         self.specs[question.id] = spec
         return spec
 
@@ -178,32 +248,22 @@ class Submissions:
                 if (operation.get("tool", "").lower() not in EXECUTION_TOOLS
                         or action.get("status") not in {"completed", "failed"}
                         or spec.request.url not in command or flag not in command
-                        or str(question.metadata.get("source_key", "")) not in command
                         or not re.search(r"\bcurl\b|urllib\.request|requests\.(?:post|request)|httpx", command)):
                     continue
-                # Bind literal JSON request fields, not a substring such as g-1 in g-10.
-                normalized = command.replace('\\"', '"').replace("\\'", "'")
-                payload = spec.request.body
-                if isinstance(payload, dict):
-                    literals = {k: (flag if v == '{flag}' else v) for k, v in payload.items()
-                                if isinstance(v, str)}
-                    if any(not re.search(
-                            r"[\"']" + re.escape(k) + r"[\"']\s*:\s*(?:" +
-                            re.escape(json.dumps(v, ensure_ascii=False)) + '|' + re.escape(repr(v)) + ')', normalized)
-                           for k, v in literals.items()):
-                        continue
+                if not payload_matches_command(
+                    command, spec, str(question.metadata.get("source_key", "")), flag=flag
+                ):
+                    continue
                 try:
                     text = self._body(question, agent_id, action)
                 except (OSError, ValueError, ContractError):
                     continue
                 for receipt in response_objects(text):
-                    value = receipt
-                    for part in spec.success_path.split("."):
-                        value = value.get(part) if isinstance(value, dict) else None
-                    if value is False:
-                        rejected = True
+                    value = receipt_value(receipt, spec.success_path)
                     duplicate = spec.duplicate_code and receipt.get("code") == spec.duplicate_code
-                    if value is True or duplicate:
+                    if not duplicate and is_rejected_value(value, spec.success_value):
+                        rejected = True
+                    if matches_success(value, spec.success_value) or duplicate:
                         statuses = re.findall(r"\bHTTP(?:/\d(?:\.\d)?)?\s*[:= ]\s*(\d{3})", text)
                         if ((statuses and int(statuses[-1]) >= 400 and not duplicate)
                                 or not duplicate and receipt.get('code') not in (None, 0, 200, 'ok', 'success')):

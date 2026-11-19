@@ -687,6 +687,7 @@ def create_app(
     @app.post("/internal/blackboard/{task_id}/{agent_id}/checkpoint")
     async def blackboard_checkpoint(task_id: UUID, agent_id: str, body: dict) -> dict:
         worker = config.agents.agents[agent_id].role == 'worker'
+        scout = config.agents.agents[agent_id].role == 'scout'
         if worker and (body.get('completion_hint') or body.get('submission_failure_action')
                        or publications.final_pending(task_id, agent_id)):
             await coordinator.aoe.protect_completion(task_id)
@@ -696,6 +697,11 @@ def create_app(
             protection = await submission_guard.recover(task_id, agent_id)
         file_sync = worker and bool(body.get('file_sync'))
         receipts = await publications.sync_findings(task_id, agent_id) if file_sync else []
+        outbox_receipts = None
+        if scout and body.get('outbox_sync'):
+            imported = await coordinator.aoe.collection.import_outbox(task_id)
+            if imported.get('imported') or imported.get('errors'):
+                outbox_receipts = imported
         pending_final = file_sync and publications.final_pending(task_id, agent_id)
         result = await delivery.checkpoint(
             task_id, agent_id, ack=str(body.get("ack", "")), final=bool(body.get("final", False)) or pending_final,
@@ -706,6 +712,8 @@ def create_app(
             receipts.extend(await publications.sync_final(task_id, agent_id))
         if receipts:
             result = {**result, 'publication_receipts': receipts}
+        if outbox_receipts:
+            result = {**result, 'question_import_receipts': outbox_receipts}
         if protection:
             result = {**result, 'submission_protection': protection}
         if worker and not body.get("ack_only"):

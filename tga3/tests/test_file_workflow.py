@@ -94,9 +94,10 @@ async def test_registration_receipts_only_include_this_call_and_question_lives_a
     question = next(q for q in await storage.list_questions(parent.id) if q.title == 'New')
     assert (cfg.task_path(question.id)/'question.json').is_file()
     assert not (cfg.task_path(question.id, 'inputs')/'question.json').exists()
-    overview = json.loads((cfg.task_path(parent.id)/'questions.json').read_text())
-    assert len(overview['questions']) == 3
-    assert not (cfg.task_path(parent.id, 'inputs')/'questions.json').exists()
+    overview = json.loads((cfg.task_path(parent.id)/'collection-state.json').read_text())
+    assert overview['imported_count'] == 3 and len(overview['imported_keys']) == 3
+    assert not (cfg.task_path(parent.id)/'questions.json').exists()
+    assert not (cfg.task_path(parent.id, 'inputs')/'collection-state.json').exists()
 
 
 async def test_question_attachment_index_has_relative_collected_path_and_board_has_container_path(tmp_path):

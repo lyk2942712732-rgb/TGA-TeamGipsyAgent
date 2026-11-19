@@ -140,7 +140,8 @@ class AOERuntime:
         return current
 
     def _question_source(self, question: TaskRun) -> tuple:
-        fields = ("description", "source_key", "difficulty", "connection_info", "submission_instructions", "flag_format",
+        fields = ("description", "source_key", "difficulty", "category", "tags", "connection_info",
+                  "submission_instructions", "flag_format", "collection_notes",
                   "status", "registered_at", "solved_at", "scout_ready", "scout_phase", "attempts", "flag",
                   "rescue", "reinforcement", "finish_reason", "swarm", "solver_agent_id")
         return (question.title, question.state, question.created_at, question.blackboard_seq,
@@ -166,9 +167,12 @@ class AOERuntime:
             "description": question.metadata["description"],
             "source_key": question.metadata["source_key"],
             "difficulty": question.metadata.get("difficulty"),
+            "category": question.metadata.get("category", ""),
+            "tags": list(question.metadata.get("tags", [])),
             "connection_info": question.metadata.get("connection_info", ""),
             "submission_instructions": question.metadata.get("submission_instructions", ""),
             "flag_format": question.metadata.get("flag_format", ""),
+            "collection_notes": question.metadata.get("collection_notes", ""),
             "status": question.metadata.get("status", "queued"),
             "registered_at": question.metadata.get("registered_at", question.created_at.timestamp()),
             "solved_at": question.metadata.get("solved_at"),
@@ -216,6 +220,11 @@ class AOERuntime:
             "attempt_budgets": attempt_budgets(parent.metadata),
             "scout_mode": parent.metadata.get("aoe_scout_mode", "legacy_recon"),
             "collection_complete": parent.metadata.get("collection_complete", False),
+            "collection_status": parent.metadata.get(
+                "collection_status",
+                "complete" if parent.metadata.get("collection_complete") else "collecting",
+            ),
+            "collection_warnings": list(parent.metadata.get("collection_warnings", [])),
             "questions": views,
         }
 
@@ -239,32 +248,20 @@ class AOERuntime:
             self._atomic_json(path, value)
         self._manifest_sources[question.id] = deepcopy(source)
 
-    async def _collection_manifest(self, parent_id: UUID, *, parent=None, questions=None) -> dict:
+    async def _collection_state(self, parent_id: UUID, *, parent=None, questions=None) -> dict:
+        """Minimal control-plane signal file for Scout container; carries no question content."""
         parent = parent if parent is not None else await self.storage.get_task(parent_id)
         questions = questions if questions is not None else await self.storage.list_questions(parent_id)
+        complete = bool(parent.metadata.get("collection_complete", False))
         value = {
             "task_id": str(parent_id),
-            "collection_complete": parent.metadata.get("collection_complete", False),
-            "questions": [
-                {
-                    "question_id": str(q.id),
-                    "title": q.title,
-                    "target": self.targets.spec(q).model_dump(mode="json"),
-                    **{
-                        key: q.metadata.get(key)
-                        for key in (
-                            "source_key",
-                            "description",
-                            "difficulty",
-                            "connection_info",
-                            "submission_instructions",
-                        )
-                    },
-                }
-                for q in questions
-            ],
+            "collection_complete": complete,
+            "status": parent.metadata.get("collection_status", "complete" if complete else "collecting"),
+            "imported_count": len(questions),
+            "imported_keys": sorted(q.metadata["source_key"] for q in questions),
+            "warnings": list(parent.metadata.get("collection_warnings", [])),
         }
-        path = self.config.task_path(parent_id) / "questions.json"
+        path = self.config.task_path(parent_id) / "collection-state.json"
         digest = hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
         if self._collection_digests.get(parent_id) != digest or not path.is_file():
             self._atomic_json(path, value)
@@ -385,7 +382,7 @@ class AOERuntime:
                     parent_task_id=parent_id,
                     metadata={
                         **{key: value for key, value in payload.items()
-                           if key not in {"title", "attachments", "target", "submission"}},
+                           if key not in {"title", "attachments"}},
                         "registration_digest": fingerprint,
                         "aoe_auto_submit_flag": auto_submit_flag,
                         "knowledge_source": parent.metadata.get("knowledge_source", "online"),
@@ -416,15 +413,23 @@ class AOERuntime:
                             )
                         )
                 await self.storage.update_task(question.id, state=RunState.SCOUTING)
-                text = (
-                    f"题目：{spec.title}\n原始题目 ID（source_key）：{spec.source_key}"
-                    f"\n内部题目 ID：{question_id}\n\n{spec.description}"
-                    f"\n\n连接信息：{spec.connection_info}"
-                )
+                header = [
+                    f"题目：{spec.title}",
+                    f"原始题目 ID（source_key）：{spec.source_key}",
+                    f"内部题目 ID：{question_id}",
+                ]
+                if spec.category:
+                    header.append(f"分类：{spec.category}")
+                if spec.tags:
+                    header.append(f"标签：{', '.join(spec.tags)}")
+                body_text = spec.description or "（本题无文字题面，请直接分析 /inputs 中的题目附件）"
+                text = "\n".join(header) + f"\n\n{body_text}\n\n连接信息：{spec.connection_info}"
                 if spec.flag_format:
                     text += f"\nFlag 格式：{spec.flag_format}"
                 if auto_submit_flag:
                     text += f"\n提交要求：{spec.submission_instructions}"
+                if spec.collection_notes:
+                    text += f"\n收集备注：{spec.collection_notes}"
                 await self.board.publish(
                     question.id,
                     SYSTEM_ACTOR,
@@ -460,7 +465,7 @@ class AOERuntime:
                 await self._save_question(existing[spec.source_key])
             parent = await self.storage.update_task(parent_id, state=RunState.RUNNING,
                                                     metadata={"aoe_scout_mode": "collection_only"})
-            await self._collection_manifest(parent_id, parent=parent, questions=list(existing.values()))
+            await self._collection_state(parent_id, parent=parent, questions=list(existing.values()))
             await self.events.emit(
                 parent_id,
                 actor=SYSTEM_ACTOR,
@@ -474,21 +479,44 @@ class AOERuntime:
                                    "path": str(existing[spec.source_key].id) + '/question.json'}
                                   for spec in specifications]}
 
-    async def finish_collection(self, parent_id: UUID, expected_count: int) -> dict:
+    async def finish_collection(
+        self,
+        parent_id: UUID,
+        expected_count: int | None = None,
+        *,
+        status: str = "complete",
+        warnings: list[str] | None = None,
+        force: bool = False,
+    ) -> dict:
+        if status not in {"complete", "partial"}:
+            raise ContractError("Collection status must be 'complete' or 'partial'")
+        if self.collection.has_pending(parent_id):
+            parent_check = await self.storage.get_task(parent_id)
+            if not parent_check.metadata.get("collection_complete"):
+                await self.collection.import_outbox(parent_id)
         async with self.locks[parent_id]:
             parent = await self.storage.get_task(parent_id)
             questions = await self.storage.list_questions(parent_id)
-            if (
-                not questions
-                or len(questions) != expected_count
-                or any(not q.metadata.get("registration_complete") for q in questions)
-            ):
-                raise ContractError("Collected question count does not match the complete source list")
+            if not questions or any(not q.metadata.get("registration_complete") for q in questions):
+                raise ContractError("No complete registered questions are available to finish collection")
+            if status == "complete" and expected_count is not None and len(questions) != expected_count:
+                raise ContractError(
+                    f"Collected question count ({len(questions)}) does not match expected_count ({expected_count})"
+                )
+            warnings_list = [str(item).strip() for item in (warnings or []) if str(item).strip()]
             if not parent.metadata.get("collection_complete"):
                 await self.overview.prepare(parent_id)
-                await self._collecting_parent(parent_id)
-                parent = await self.storage.update_task(parent_id, metadata={"collection_complete": True})
-            return {"saved": True, **await self._collection_manifest(parent_id, parent=parent, questions=questions)}
+                if not force:
+                    await self._collecting_parent(parent_id)
+                parent = await self.storage.update_task(
+                    parent_id,
+                    metadata={
+                        "collection_complete": True,
+                        "collection_status": status,
+                        "collection_warnings": warnings_list,
+                    },
+                )
+            return {"saved": True, **await self._collection_state(parent_id, parent=parent, questions=questions)}
 
     async def run(self, parent_id: UUID, bindings: dict) -> None:
         scout_job = None
@@ -553,6 +581,8 @@ class AOERuntime:
     async def _scout(self, parent_id: UUID, bindings: dict) -> None:
         parent = await self.storage.get_task(parent_id)
         await self.overview.prepare(parent_id)
+        self.collection.ensure_directories(parent_id)
+        await self._collection_state(parent_id, parent=parent)
 
         async def emit(method: str, params: dict):
             if method == "container.started":
@@ -561,20 +591,78 @@ class AOERuntime:
             else:
                 await self.coordinator.handle_agent_event(parent_id, "scout", method, params)
 
+        async def watch_outbox() -> None:
+            while True:
+                try:
+                    current = await self.storage.get_task(parent_id)
+                    if current.metadata.get("collection_complete"):
+                        return
+                    if self.collection.has_pending(parent_id):
+                        await self.collection.import_outbox(parent_id)
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    pass
+                await asyncio.sleep(0.5)
+
+        watcher: asyncio.Task | None = None
+        scout_error: str | None = None
         try:
             await self.storage.update_task(parent_id, metadata={"aoe_scout_mode": "collection_only"})
             if not parent.metadata.get("collection_complete"):
+                budget = self.config.runtime.aoe_collection_timeout_seconds
                 await self.storage.update_agent(parent_id, "scout", actual_state=AgentState.RUNNING,
                                                 metadata={"scout_phase": "collecting"})
                 await self.events.emit(parent_id, actor=SYSTEM_ACTOR, kind=EventKind.SYSTEM,
                                        text="Scout 收集题目，Worker 随登记并行认领简单题或无难度题",
                                        channel_agent_id="scout", payload={"scout_phase": "collecting"})
-                await self.containers.scout(LaunchSpec(task_id=parent_id, agent=bindings["scout"],
-                                           scout_phase="collecting", aoe_parent_id=parent_id), emit)
+                watcher = asyncio.create_task(watch_outbox())
+                try:
+                    async with asyncio.timeout(budget + 15):
+                        await self.containers.scout(
+                            LaunchSpec(
+                                task_id=parent_id,
+                                agent=bindings["scout"],
+                                scout_phase="collecting",
+                                phase_budget_seconds=budget,
+                                aoe_parent_id=parent_id,
+                            ),
+                            emit,
+                        )
+                except TimeoutError:
+                    scout_error = f"Scout collection timed out after {budget}s"
+                except Exception as exc:
+                    scout_error = str(exc) or type(exc).__name__
+                finally:
+                    if watcher is not None:
+                        watcher.cancel()
+                        await asyncio.gather(watcher, return_exceptions=True)
+                        watcher = None
+                if self.collection.has_pending(parent_id):
+                    current = await self.storage.get_task(parent_id)
+                    if not current.metadata.get("collection_complete"):
+                        await self.collection.import_outbox(parent_id)
             parent = await self.storage.get_task(parent_id)
             questions = await self.storage.list_questions(parent_id)
-            if not questions or not parent.metadata.get("collection_complete"):
-                raise ContractError("Scout must finish collection of the complete question list")
+            if not parent.metadata.get("collection_complete"):
+                if questions:
+                    warning = (
+                        scout_error
+                        or "Scout ended before calling scout_finish_collection; continuing with collected questions"
+                    )
+                    await self.finish_collection(parent_id, status="partial", warnings=[warning], force=True)
+                    await self.events.emit(
+                        parent_id,
+                        actor=SYSTEM_ACTOR,
+                        kind=EventKind.SYSTEM,
+                        text=f"Scout 部分收集结束（已登记 {len(questions)} 题），继续解题：{warning}",
+                        channel_agent_id="scout",
+                        payload={"scout_phase": "completed", "collection_status": "partial", "warning": warning},
+                    )
+                else:
+                    raise ContractError(scout_error or "Scout finished without registering any questions")
+            parent = await self.storage.get_task(parent_id)
+            questions = await self.storage.list_questions(parent_id)
             # A restored pre-upgrade collection may contain registered but unprepared questions.
             # Registration already populated its board and inputs; no reconnaissance is needed.
             for question in questions:
@@ -589,10 +677,21 @@ class AOERuntime:
                                                       "current_question_title": None})
             await self.storage.update_task(parent_id, state=RunState.RUNNING,
                                            metadata={"scout_complete": True})
+            status_label = (
+                "部分题目信息已收集"
+                if parent.metadata.get("collection_status") == "partial"
+                else "全部题目信息已收集"
+            )
             await self.events.emit(parent_id, actor=SYSTEM_ACTOR, kind=EventKind.SYSTEM,
-                                   text="全部题目信息已收集，Scout 结束工作；Worker 继续解题",
-                                   channel_agent_id="scout", payload={"scout_phase": "completed"})
+                                   text=f"{status_label}（共 {len(questions)} 题），Scout 结束工作；Worker 继续解题",
+                                   channel_agent_id="scout",
+                                   payload={"scout_phase": "completed",
+                                            "collection_status": parent.metadata.get("collection_status", "complete"),
+                                            "question_count": len(questions)})
         finally:
+            if watcher is not None:
+                watcher.cancel()
+                await asyncio.gather(watcher, return_exceptions=True)
             await self.containers.stop(parent_id, "scout")
 
     async def _copy_realtime(self, parent_id: UUID, question: TaskRun) -> None:
@@ -1084,8 +1183,8 @@ class AOERuntime:
             questions = await self.storage.list_questions(parent_id)
             if reconcile:
                 await self._reconcile_inputs(parent_id, questions)
-                if not (self.config.task_path(parent_id) / "questions.json").is_file():
-                    await self._collection_manifest(parent_id, parent=parent, questions=questions)
+                if not (self.config.task_path(parent_id) / "collection-state.json").is_file():
+                    await self._collection_state(parent_id, parent=parent, questions=questions)
 
             def replace(question):
                 for index, current in enumerate(questions):

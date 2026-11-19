@@ -12,7 +12,7 @@ import httpx
 
 from ..flag_signals import file_flag_format, flag_pattern
 from .action_hook import record_tool, result_context
-from .aoe_access import overview_policy
+from .aoe_access import overview_policy, scout_post_tool_notice
 
 _publication_versions = {}
 
@@ -20,7 +20,7 @@ _publication_versions = {}
 def submission_failure(event, record):
     if not record or not os.environ.get('TGA3_AOE_PARENT_ID') or os.environ.get('TGA3_AOE_AUTO_SUBMIT_FLAG') == '0':
         return False
-    from ..submissions import SubmissionSpec, receipt_value, response_objects, result_text
+    from ..submissions import SubmissionSpec, is_rejected_value, receipt_value, response_objects, result_text
 
     path = Path(os.environ.get('TGA3_WORKSPACE', '/workspace')) / '.tga3/submission.json'
     if not path.is_file():
@@ -37,7 +37,23 @@ def submission_failure(event, record):
         return False
     response = event.get('tool_response', '')
     text = result_text(response if isinstance(response, str) else json.dumps(response))
-    return any(receipt_value(r, spec.success_path) is False for r in response_objects(text))
+    return any(
+        is_rejected_value(receipt_value(r, spec.success_path), spec.success_value)
+        and not (spec.duplicate_code and r.get("code") == spec.duplicate_code)
+        for r in response_objects(text)
+    )
+
+
+def outbox_pending() -> bool:
+    if os.environ.get("TGA3_AGENT_ROLE") != "scout" or not os.environ.get("TGA3_AOE_PARENT_ID"):
+        return False
+    outbox = Path(os.environ.get("TGA3_WORKSPACE", "/workspace")) / "outbox"
+    if not outbox.is_dir():
+        return False
+    return any(
+        not p.name.startswith(".") and p.suffix.lower() == ".json" and not p.name.endswith(".tmp")
+        for p in outbox.iterdir()
+    )
 
 
 def publications_changed():
@@ -74,9 +90,22 @@ def checkpoint(event: dict, *, client=None, record_action=None) -> dict:
         if not flag_format:
             flag_format = file_flag_format(os.environ.get("TGA3_QUESTION_SOURCE", "/question-source.json"))
         completion_hint = bool(flag_pattern(flag_format).search(str(event.get("tool_response", ""))))
-    if post_tool and not publications_changed() and not completion_hint and not failed_submission:
-        return ({"hookSpecificOutput": {"hookEventName": event_name, "additionalContext": result_context(record)}}
-                if record else {})
+    scout_outbox = post_tool and outbox_pending()
+    scout_notice = scout_post_tool_notice(event) if post_tool else None
+    if (
+        post_tool
+        and not publications_changed()
+        and not completion_hint
+        and not failed_submission
+        and not scout_outbox
+    ):
+        parts = []
+        if record:
+            parts.append(result_context(record))
+        if scout_notice:
+            parts.append(scout_notice)
+        return ({"hookSpecificOutput": {"hookEventName": event_name, "additionalContext": "\n\n".join(parts)}}
+                if parts else {})
     state_dir = Path(os.environ.get("TGA3_WORKSPACE", "/workspace")) / ".tga3"
     state_dir.mkdir(parents=True, exist_ok=True)
     ack_file = state_dir / "blackboard-ack.json"
@@ -127,6 +156,7 @@ def checkpoint(event: dict, *, client=None, record_action=None) -> dict:
             "ack_only": bool(event.get("ack_only")),
             "initial_only": event.get("hook_event_name") == "UserPromptSubmit" and not force_start,
             "file_sync": os.environ.get("TGA3_AGENT_ROLE") == "worker",
+            "outbox_sync": scout_outbox,
             "action_start": (os.environ.get("TGA3_ATTEMPT_ID", "")
                              if event_name == "PreToolUse" and event.get("tool_use_id") else ""),
             "force_start": force_start,
@@ -167,6 +197,10 @@ def checkpoint(event: dict, *, client=None, record_action=None) -> dict:
         parts.append(context)
     if receipts := delivery.get("publication_receipts"):
         parts.append("TGA system file-import receipts: " + json.dumps(receipts, ensure_ascii=False))
+    if import_receipts := delivery.get("question_import_receipts"):
+        parts.append("TGA system question-import receipts: " + json.dumps(import_receipts, ensure_ascii=False))
+    if scout_notice:
+        parts.append(scout_notice)
     if protection := delivery.get('submission_protection'):
         parts.append('TGA system submission protection: ' + json.dumps(protection, ensure_ascii=False))
     if not parts:

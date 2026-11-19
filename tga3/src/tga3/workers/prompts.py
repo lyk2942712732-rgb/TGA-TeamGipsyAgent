@@ -215,7 +215,8 @@ def worker_instructions() -> str:
         runtime_context += (
             "\nIn AOE, Scout ONLY collects question metadata and attachments. There is no per-question "
             "Scout reconnaissance/Intel extraction. Inspect your assigned question yourself, using its "
-            "board and /inputs. Never start, stop or close another question's target instance. "
+            "board (including any collection_notes explaining missing attachments or runtime-only details) "
+            "and /inputs. Never start, stop or close another question's target instance. "
             "These /inputs are the collected attachments of YOUR question, not the batch's original uploads. "
             "Attachment path values in question.json are relative to the question root (inputs/filename); "
             "read them at /inputs/filename inside this container. "

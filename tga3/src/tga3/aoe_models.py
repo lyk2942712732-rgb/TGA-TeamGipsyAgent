@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .domain import RunState, TaskRun
 from .submissions import SubmissionSpec
@@ -13,19 +13,22 @@ from .target_instances import TargetSpec
 
 
 class AOEQuestionInput(BaseModel):
-    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True, populate_by_name=True)
     source_key: str = Field(min_length=1, max_length=200)
-    title: str = Field(min_length=1, max_length=500)
-    description: str = Field(min_length=1, max_length=100000)
+    title: str = Field(default="", max_length=500)
+    description: str = Field(default="", max_length=100000)
     difficulty: str | float | None = None
+    category: str = Field(default="", max_length=200)
+    tags: list[str] = Field(default_factory=list, max_length=50)
     connection_info: str = Field(default="", max_length=20000)
     submission_instructions: str = Field(default="", max_length=20000)
     flag_format: str = Field(default="", max_length=1000)
+    collection_notes: str = Field(default="", max_length=20000)
     attachments: list[str] = Field(default_factory=list, max_length=100)
     target: TargetSpec = Field(default_factory=lambda: TargetSpec(mode="unknown"))
     submission: SubmissionSpec | None = None
-    # Exact list item is file-backed; never copy a second source blob into SQL.
-    source: dict[str, Any] | None = None
+    # Exact raw source record is file-backed in source.json; never copy a second blob into SQL.
+    source: dict[str, Any] | None = Field(default=None, validation_alias=AliasChoices("source", "raw_source"))
 
     @field_validator("difficulty", mode="before")
     @classmethod
@@ -33,6 +36,30 @@ class AOEQuestionInput(BaseModel):
         if isinstance(value, bool) or isinstance(value, (float, int)) and not math.isfinite(value):
             raise ValueError("Difficulty must be an original label or finite numeric level")
         return value
+
+    @field_validator("tags", mode="before")
+    @classmethod
+    def clean_tags(cls, value):
+        if value is None:
+            return []
+        if isinstance(value, str):
+            value = [value]
+        if not isinstance(value, list):
+            raise ValueError("tags must be a list of strings")
+        seen: list[str] = []
+        for item in value:
+            text = str(item).strip()
+            if text and text not in seen:
+                seen.append(text)
+        return seen
+
+    @model_validator(mode="after")
+    def require_content_and_title(self):
+        if not self.title:
+            self.title = self.source_key
+        if not self.description and not self.attachments:
+            raise ValueError("Each question requires a non-empty description or at least one attachment")
+        return self
 
 
 def difficulty_order(value: Any) -> float:
