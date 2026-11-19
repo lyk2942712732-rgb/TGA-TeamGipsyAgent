@@ -264,12 +264,17 @@ class AOERuntime:
         parent = parent if parent is not None else await self.storage.get_task(parent_id)
         questions = questions if questions is not None else await self.storage.list_questions(parent_id)
         complete = bool(parent.metadata.get("collection_complete", False))
+        summary = self.collection.state_summary(parent_id)
         value = {
             "task_id": str(parent_id),
             "collection_complete": complete,
             "status": parent.metadata.get("collection_status", "complete" if complete else "collecting"),
+            "import_seq": summary["import_seq"],
             "imported_count": len(questions),
             "imported_keys": sorted(q.metadata["source_key"] for q in questions),
+            "rejected_count": summary["rejected_count"],
+            "last_batch": summary["last_batch"],
+            "recent_errors": summary["recent_errors"],
             "warnings": list(parent.metadata.get("collection_warnings", [])),
         }
         path = self.config.task_path(parent_id) / "collection-state.json"
@@ -439,7 +444,9 @@ class AOERuntime:
                                             "name": saved_item.name,
                                             "media_type": saved_item.media_type,
                                             "sha256": saved_item.sha256,
-                                            "description": f"AOE question attachment (auto-downloaded): /inputs/{target.name}",
+                                            "description": (
+                                    f"AOE question attachment (auto-downloaded): /inputs/{target.name}"
+                                ),
                                         },
                                     ),
                                 )
@@ -737,6 +744,7 @@ class AOERuntime:
 
     def _clear_views(self, parent_id: UUID) -> None:
         self._collection_digests.pop(parent_id, None)
+        self.collection.clear_state(parent_id)
         for question_id, owner in list(self._parents.items()):
             if owner == parent_id:
                 self._input_files.pop(question_id, None)

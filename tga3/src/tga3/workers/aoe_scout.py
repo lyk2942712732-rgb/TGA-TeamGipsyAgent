@@ -52,11 +52,27 @@ def instructions() -> str:
         "submission_instructions, collection_notes, already_solved (bool: set true if the platform already marks "
         "this question solved before this task started—skip its attachments so Workers and Reporter skip it), "
         "solved_flag (optional known flag for pre-solved items), attachments (remote URLs/download specs or local "
-        "paths under /workspace/... or /inputs/...), target ({mode:'managed'|'static'|'none'|'unknown', start?, "
-        "stop?, addresses_path?, quota_limit?}), submission ({request:{method,url,headers,params,body}, "
-        "success_path?, success_value?, duplicate_codes?, duplicate_keywords?}), and raw_source (saved verbatim to "
-        "source.json). Choose submission.request.body field names to match the actual platform API and preserve "
-        "literal {flag}. Set target.mode='unknown' or submission=null when no static API contract is documented. "
+        "paths under /workspace/... or /inputs/...), target, submission, and raw_source (saved verbatim to "
+        "source.json). "
+        "EXACT schema for target (CRITICAL — NEVER pass bare URL strings for start/stop): "
+        '{"mode":"none"|"static"|"unknown"} OR for dynamic targets: '
+        '{"mode":"managed","start":{"method":"POST","url":"https://...","headers":{...},"params":{...},"body":{...}},'
+        '"stop":{"method":"POST","url":"https://...","headers":{...},"params":{...},"body":{...}},'
+        '"addresses_path":"data.addresses","quota_limit":1}. '
+        "Every target.start, target.stop, target.status, and submission.request MUST be a JSON object with at least "
+        "'url' (and 'method'/'headers'/'params'/'body' as needed)—NEVER a plain URL string. "
+        "EXACT schema for submission: "
+        '{"request":{"method":"POST","url":"https://...","headers":{...},"params":{...},"body":{"<id_field>":123,'
+        '"<flag_field>":"{flag}"}},"success_path":"data.result","success_value":true,'
+        '"duplicate_codes":[...],"duplicate_keywords":[...]}. '
+        "Choose submission.request.body field names to match the actual platform API and preserve literal {flag}. "
+        "Set target={'mode':'unknown'} or submission=null when no static API contract is documented. "
+        "Sample-first workflow: when generating many questions (especially managed-target challenges), first write "
+        "ONE sample question JSON to /workspace/outbox/ and call scout_import_questions() to confirm zero schema "
+        "errors before generating the remaining files. Note that /workspace/outbox/ being empty does NOT mean "
+        "success—rejected files move to /workspace/rejected/ with .error.json, and grouped errors are recorded in "
+        "/aoe/collection-state.json. Always inspect /aoe/collection-state.json or call scout_import_questions() "
+        "instead of running no-op checks (NEVER run echo ok, true, ls outbox loops, or write dummy test.json files). "
         "Strict boundaries: "
         "1) Evidence-driven collection ONLY: request only URLs/endpoints given in task.md, /inputs, or explicitly "
         "referenced in actual responses (HTML links, JS routes, API fields, pagination links). NEVER brute-force or "

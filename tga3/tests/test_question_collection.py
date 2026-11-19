@@ -731,3 +731,300 @@ def test_worker_direct_submission_blocked_by_hook(monkeypatch, tmp_path):
         ev("PreToolUse", f"python3 -c \"import requests; requests.post('{submit_url}', json={{'flag':'x'}})\"")
     )
     assert reason_py and "forbidden" in reason_py.lower()
+
+
+async def test_outbox_aggregates_target_request_string_errors_and_skips_existing_idempotently(tmp_path):
+    cfg, storage, _, c, parent, _ = await setup(tmp_path)
+    scout_ws = cfg.task_path(parent.id, "workspaces", "scout")
+    outbox = scout_ws / "outbox"
+    outbox.mkdir(parents=True, exist_ok=True)
+
+    (outbox / "00-static.json").write_text(
+        json.dumps(
+            {
+                "source_key": "static-1",
+                "title": "Static One",
+                "description": "Original text",
+                "target": {"mode": "none"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    for idx in range(1, 4):
+        (outbox / f"dyn-{idx}.json").write_text(
+            json.dumps(
+                {
+                    "source_key": f"dyn-{idx}",
+                    "title": f"Dynamic {idx}",
+                    "description": "Needs container",
+                    "target": {
+                        "mode": "managed",
+                        "start": "https://ctf.example/api/startChallenge",
+                        "stop": "https://ctf.example/api/stopChallenge",
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    first = await c.aoe.collection.import_outbox(parent.id)
+    assert first["import_seq"] == 1
+    assert first["imported_count"] == 1
+    assert first["rejected_count"] == 3
+    assert len(first["error_summary"]) == 1
+    grouped = first["error_summary"][0]
+    assert grouped["count"] == 3
+    assert len(grouped["sample_files"]) == 3
+    assert '{"method":"POST","url":"https://..."' in grouped["error"]
+
+    state = json.loads((cfg.task_path(parent.id) / "collection-state.json").read_text(encoding="utf-8"))
+    assert state["import_seq"] == 1
+    assert state["rejected_count"] == 3
+    assert state["last_batch"] == {"imported": 1, "skipped_existing": 0, "rejected": 3}
+    assert state["recent_errors"][0]["count"] == 3
+
+    # Re-emitting an already-registered source_key skips idempotently instead of ConflictError.
+    (outbox / "00-static-again.json").write_text(
+        json.dumps(
+            {
+                "source_key": "static-1",
+                "title": "Static One",
+                "description": "Re-generated wording",
+                "target": {"mode": "none"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (outbox / "dyn-1-fixed.json").write_text(
+        json.dumps(
+            {
+                "source_key": "dyn-1",
+                "title": "Dynamic 1",
+                "description": "Needs container",
+                "target": {
+                    "mode": "managed",
+                    "start": {"method": "POST", "url": "https://ctf.example/api/startChallenge", "body": {"id": 1}},
+                    "stop": {"method": "POST", "url": "https://ctf.example/api/stopChallenge", "body": {"id": 1}},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    second = await c.aoe.collection.import_outbox(parent.id)
+    assert second["import_seq"] == 2
+    assert second["imported_count"] == 2
+    assert second["skipped_count"] == 1
+    assert not second["errors"]
+    assert not second["error_summary"]
+    assert (scout_ws / "imported" / "00-static-again.json").is_file()
+    assert not (scout_ws / "rejected" / "00-static-again.json").exists()
+
+    state2 = json.loads((cfg.task_path(parent.id) / "collection-state.json").read_text(encoding="utf-8"))
+    assert state2["import_seq"] == 2
+    assert state2["recent_errors"] == []
+    assert state2["last_batch"] == {"imported": 1, "skipped_existing": 1, "rejected": 0}
+
+
+def test_background_outbox_import_delivers_grouped_errors_on_next_post_tool_without_duplication(monkeypatch, tmp_path):
+    ws = tmp_path / "ws"
+    aoe_root = tmp_path / "aoe"
+    (ws / "outbox").mkdir(parents=True)
+    aoe_root.mkdir()
+    for k, v in {
+        "TGA3_AGENT_ROLE": "scout",
+        "TGA3_AGENT_ID": "scout",
+        "TGA3_TASK_ID": str(uuid4()),
+        "TGA3_AOE_PARENT_ID": str(uuid4()),
+        "TGA3_WORKSPACE": str(ws),
+        "TGA3_AOE_ROOT": str(aoe_root),
+        "TGA3_TASK_OVERVIEW_ROOT": "/task-overview",
+        "TGA3_BLACKBOARD_MCP_URL": "http://127.0.0.1:8083/mcp",
+    }.items():
+        monkeypatch.setenv(k, v)
+
+    grouped_err = [
+        {
+            "error": 'target.start: Input should be a valid dictionary. Example: {"method":"POST","url":"https://..."}',
+            "count": 48,
+            "sample_files": ["/workspace/outbox/dyn-1.json", "/workspace/outbox/dyn-2.json"],
+        }
+    ]
+    # Simulate background watch_outbox() already emptying outbox/ and updating collection-state.json.
+    (aoe_root / "collection-state.json").write_text(
+        json.dumps(
+            {
+                "collection_complete": False,
+                "imported_count": 49,
+                "imported_keys": [f"q-{i}" for i in range(49)],
+                "import_seq": 1,
+                "rejected_count": 48,
+                "last_batch": {"imported": 49, "skipped_existing": 0, "rejected": 48},
+                "recent_errors": grouped_err,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    ev = {
+        "hook_event_name": "PostToolUse",
+        "tool_name": "exec_command",
+        "tool_input": {"cmd": "python3 export.py"},
+        "tool_response": "exported 97 files",
+    }
+    first = checkpoint(ev)
+    ctx1 = first["hookSpecificOutput"]["additionalContext"]
+    assert "[AOE Collection Import Update #1]" in ctx1
+    assert "48 files" in ctx1
+    assert "target.start" in ctx1
+
+    # Next PostToolUse with same import_seq must NOT duplicate the update.
+    second = checkpoint(ev)
+    ctx2 = second.get("hookSpecificOutput", {}).get("additionalContext", "")
+    assert "[AOE Collection Import Update #1]" not in ctx2
+
+    # Second batch with the exact same grouped error triggers repeat-error warning.
+    (aoe_root / "collection-state.json").write_text(
+        json.dumps(
+            {
+                "collection_complete": False,
+                "imported_count": 49,
+                "imported_keys": [f"q-{i}" for i in range(49)],
+                "import_seq": 2,
+                "rejected_count": 96,
+                "last_batch": {"imported": 0, "skipped_existing": 49, "rejected": 48},
+                "recent_errors": grouped_err,
+            }
+        ),
+        encoding="utf-8",
+    )
+    third = checkpoint(ev)
+    ctx3 = third["hookSpecificOutput"]["additionalContext"]
+    assert "[AOE Collection Import Update #2]" in ctx3
+    assert "repeated 2 times" in ctx3
+
+    # Synchronous outbox_sync with import_seq=3 must advance last_seen_import_seq and not duplicate.
+    (ws / "outbox" / "q50.json").write_text(json.dumps({"source_key": "q50", "description": "ok"}), encoding="utf-8")
+
+    class FakeResp:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            (aoe_root / "collection-state.json").write_text(
+                json.dumps(
+                    {
+                        "collection_complete": False,
+                        "imported_count": 50,
+                        "imported_keys": [f"q-{i}" for i in range(50)],
+                        "import_seq": 3,
+                        "rejected_count": 96,
+                        "last_batch": {"imported": 1, "skipped_existing": 0, "rejected": 0},
+                        "recent_errors": [],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (ws / "outbox" / "q50.json").unlink()
+            return {
+                "context": "",
+                "delivery_id": "",
+                "question_import_receipts": {"saved": True, "import_seq": 3, "imported_count": 50},
+            }
+
+    class FakeClient:
+        def post(self, url, json, timeout):
+            return FakeResp()
+
+    fourth = checkpoint(ev, client=FakeClient())
+    ctx4 = fourth["hookSpecificOutput"]["additionalContext"]
+    assert "TGA system question-import receipts:" in ctx4
+    assert "[AOE Collection Import Update #3]" not in ctx4
+    fifth = checkpoint(ev)
+    ctx5 = fifth.get("hookSpecificOutput", {}).get("additionalContext", "")
+    assert "[AOE Collection Import Update #3]" not in ctx5
+
+
+def test_scout_single_cycle_stall_watchdog_blocks_noop_probes_but_allows_fixes_and_finish(monkeypatch, tmp_path):
+    aoe_root = tmp_path / "aoe"
+    ws = tmp_path / "ws"
+    aoe_root.mkdir()
+    ws.mkdir()
+    for k, v in {
+        "TGA3_TASK_OVERVIEW_ROOT": "/task-overview",
+        "TGA3_WORKSPACE": str(ws),
+        "TGA3_AOE_ROOT": str(aoe_root),
+        "TGA3_AOE_PARENT_ID": "parent",
+        "TGA3_AGENT_ROLE": "scout",
+        "TGA3_AOE_COLLECTION_STALL_SECONDS": "600",
+    }.items():
+        monkeypatch.setenv(k, v)
+
+    def ev(name, command, response="", tool="exec_command", session="s1"):
+        return {
+            "hook_event_name": name,
+            "tool_name": tool,
+            "session_id": session,
+            "tool_input": {"cmd": command},
+            "tool_response": response,
+        }
+
+    for name in ("scene.md", "task.md"):
+        overview_policy(ev("PostToolUse", "cat /task-overview/" + name, "full content"))
+
+    (aoe_root / "collection-state.json").write_text(
+        json.dumps(
+            {
+                "collection_complete": False,
+                "imported_count": 49,
+                "imported_keys": [f"q-{i}" for i in range(49)],
+                "import_seq": 1,
+                "rejected_count": 48,
+                "recent_errors": [{"error": "target.start must be dict", "count": 48, "sample_files": ["dyn-1.json"]}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    # Record initial progress at 49 imported questions.
+    overview_policy(ev("PostToolUse", "python3 export.py", "done"))
+    scout_post_tool_notice(ev("PostToolUse", "python3 export.py", "done"))
+
+    # 4 no-op commands (each +2 idle_tool_calls -> 8) emit stall warning.
+    for cmd in ("echo ok", "true", "ls /workspace/outbox", "ls /workspace/outbox | wc -l"):
+        overview_policy(ev("PostToolUse", cmd, "0"))
+    notice = scout_post_tool_notice(ev("PostToolUse", "echo ok", "ok"))
+    assert notice and "Stall warning" in notice and "target.start must be dict" in notice
+
+    # 2 more no-op commands (+4 -> 12) lock out no-ops and network probing.
+    for cmd in ("echo hello", "true"):
+        overview_policy(ev("PostToolUse", cmd, "ok"))
+    scout_post_tool_notice(ev("PostToolUse", "true", ""))
+
+    blocked_noop = overview_policy(ev("PreToolUse", "echo ok"))
+    assert blocked_noop and "stalled" in blocked_noop.lower()
+    blocked_ls = overview_policy(ev("PreToolUse", "ls /workspace/outbox"))
+    assert blocked_ls and "stalled" in blocked_ls.lower()
+    blocked_net = overview_policy(ev("PreToolUse", "curl -s https://ctf.example/api/challenges"))
+    assert blocked_net and "stalled" in blocked_net.lower()
+
+    # Local conversion script fix and scout_finish_collection remain allowed!
+    assert not overview_policy(ev("PreToolUse", "python3 fix_export.py"))
+    assert not overview_policy(
+        {"hook_event_name": "PreToolUse", "tool_name": "mcp__intel__scout_finish_collection", "session_id": "s1"}
+    )
+
+    # Importing a new question resets stall state cleanly.
+    (aoe_root / "collection-state.json").write_text(
+        json.dumps(
+            {
+                "collection_complete": False,
+                "imported_count": 50,
+                "imported_keys": [f"q-{i}" for i in range(50)],
+                "import_seq": 2,
+                "rejected_count": 48,
+                "recent_errors": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    overview_policy(ev("PostToolUse", "python3 fix_export.py", "wrote dyn-1"))
+    assert not overview_policy(ev("PreToolUse", "curl -s https://ctf.example/api/challenges"))

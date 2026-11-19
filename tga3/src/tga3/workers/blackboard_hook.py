@@ -91,7 +91,6 @@ def checkpoint(event: dict, *, client=None, record_action=None) -> dict:
             flag_format = file_flag_format(os.environ.get("TGA3_QUESTION_SOURCE", "/question-source.json"))
         completion_hint = bool(flag_pattern(flag_format).search(str(event.get("tool_response", ""))))
     scout_outbox = post_tool and outbox_pending()
-    scout_notice = scout_post_tool_notice(event) if post_tool else None
     if (
         post_tool
         and not publications_changed()
@@ -102,7 +101,7 @@ def checkpoint(event: dict, *, client=None, record_action=None) -> dict:
         parts = []
         if record:
             parts.append(result_context(record))
-        if scout_notice:
+        if scout_notice := scout_post_tool_notice(event):
             parts.append(scout_notice)
         return ({"hookSpecificOutput": {"hookEventName": event_name, "additionalContext": "\n\n".join(parts)}}
                 if parts else {})
@@ -197,10 +196,14 @@ def checkpoint(event: dict, *, client=None, record_action=None) -> dict:
         parts.append(context)
     if receipts := delivery.get("publication_receipts"):
         parts.append("TGA system file-import receipts: " + json.dumps(receipts, ensure_ascii=False))
+    synced_seq = 0
     if import_receipts := delivery.get("question_import_receipts"):
+        if isinstance(import_receipts, dict):
+            synced_seq = int(import_receipts.get("import_seq", 0) or 0)
         parts.append("TGA system question-import receipts: " + json.dumps(import_receipts, ensure_ascii=False))
-    if scout_notice:
-        parts.append(scout_notice)
+    if post_tool:
+        if scout_notice := scout_post_tool_notice(event, synced_import_seq=synced_seq):
+            parts.append(scout_notice)
     if protection := delivery.get('submission_protection'):
         parts.append('TGA system submission protection: ' + json.dumps(protection, ensure_ascii=False))
     if not parts:

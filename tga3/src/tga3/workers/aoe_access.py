@@ -7,6 +7,7 @@ import os
 import re
 import shlex
 import threading
+import time
 from pathlib import Path, PurePosixPath
 
 SCANNER_BINARIES = {
@@ -149,14 +150,26 @@ def _probe_state_path() -> Path:
 
 def _load_probe_state() -> dict:
     path = _probe_state_path()
+    defaults = {
+        "imported_count": 0,
+        "last_seen_import_seq": 0,
+        "last_error_signature": "",
+        "same_error_repeats": 0,
+        "consecutive_misses": 0,
+        "tripped": False,
+        "idle_tool_calls": 0,
+        "last_progress_at": time.time(),
+        "stall_warned": False,
+        "stall_locked": False,
+    }
     if path.is_file():
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
             if isinstance(data, dict):
-                return data
+                return {**defaults, **data}
         except (OSError, ValueError):
             pass
-    return {"imported_count": 0, "consecutive_misses": 0, "tripped": False}
+    return defaults
 
 
 def _save_probe_state(state: dict) -> None:
@@ -177,6 +190,64 @@ def _max_probe_misses() -> int:
         return 6
 
 
+def _stall_seconds() -> float:
+    try:
+        return max(10.0, float(os.environ.get("TGA3_AOE_COLLECTION_STALL_SECONDS", "120")))
+    except ValueError:
+        return 120.0
+
+
+def _is_idle_probe_command(command: str) -> bool:
+    """Detect no-op liveness checks (echo ok, true, sleep, repeated outbox ls/wc) that waste budget."""
+    stripped = command.strip()
+    if not stripped or any(op in stripped for op in (">", ">>", "python", "node", "curl", "wget")):
+        return False
+    segments = _split_shell_segments(stripped)
+    if not segments:
+        return False
+    noop_bins = {"echo", "true", ":", "sleep", "printf", "pwd", "date"}
+    if all(PurePosixPath(seg[0]).name.lower() in noop_bins for seg in segments if seg):
+        return True
+    first = PurePosixPath(segments[0][0]).name.lower()
+    if first in {"ls", "find", "stat", "wc"} and "outbox" in stripped and "rejected" not in stripped:
+        return True
+    return False
+
+
+def _format_recent_errors(recent_errors: list[dict]) -> str:
+    lines: list[str] = []
+    for item in recent_errors[:5]:
+        count = item.get("count", 1)
+        samples = ", ".join(item.get("sample_files", [])[:3])
+        sample_text = f" (e.g. {samples})" if samples else ""
+        lines.append(f"- [{count} files{sample_text}]: {item.get('error', '')}")
+    return "\n".join(lines)
+
+
+def _error_signature(recent_errors: list[dict]) -> str:
+    if not recent_errors:
+        return ""
+    return "|".join(str(item.get("error", "")) for item in recent_errors[:3])
+
+
+def _sync_error_tracking(state: dict, current: dict) -> None:
+    """Update repeat-error counters once per import_seq so sync and async imports stay consistent."""
+    import_seq = int(current.get("import_seq", 0) or 0)
+    if import_seq <= int(state.get("last_tracked_error_seq", 0) or 0):
+        return
+    state["last_tracked_error_seq"] = import_seq
+    sig = _error_signature(current.get("recent_errors") or [])
+    if sig:
+        if sig == state.get("last_error_signature"):
+            state["same_error_repeats"] = int(state.get("same_error_repeats", 0) or 0) + 1
+        else:
+            state["last_error_signature"] = sig
+            state["same_error_repeats"] = 1
+    else:
+        state["last_error_signature"] = ""
+        state["same_error_repeats"] = 0
+
+
 _read_lock = threading.RLock()
 
 
@@ -186,35 +257,100 @@ def overview_policy(event: dict) -> str | None:
         return _overview_policy(event)
 
 
-def scout_post_tool_notice(event: dict) -> str | None:
-    """Return an optional non-blocking guidance note for AOE Scout after PostToolUse."""
+def scout_post_tool_notice(event: dict, *, synced_import_seq: int = 0) -> str | None:
+    """Return non-blocking import receipts, grouped rejection feedback, and stall/probe guidance."""
     if os.environ.get("TGA3_AGENT_ROLE") != "scout" or not os.environ.get("TGA3_AOE_PARENT_ID"):
         return None
     if event.get("hook_event_name") not in {"PostToolUse", "PostToolUseFailure"}:
         return None
     with _read_lock:
         state = _load_probe_state()
+        current = collection_state()
+        _sync_error_tracking(state, current)
+        notices: list[str] = []
+
+        import_seq = int(current.get("import_seq", 0) or 0)
+        last_seen = int(state.get("last_seen_import_seq", 0) or 0)
+        recent_errors = current.get("recent_errors") or []
+        imported_count = int(current.get("imported_count", 0) or 0)
+        rejected_count = int(current.get("rejected_count", 0) or 0)
+
+        if synced_import_seq > last_seen:
+            state["last_seen_import_seq"] = synced_import_seq
+            last_seen = synced_import_seq
+
+        if import_seq > last_seen:
+            last_batch = current.get("last_batch") or {}
+            msg = (
+                f"[AOE Collection Import Update #{import_seq}] "
+                f"imported_total={imported_count} "
+                f"(batch: +{last_batch.get('imported', 0)} new, "
+                f"{last_batch.get('skipped_existing', 0)} skipped_existing, "
+                f"{last_batch.get('rejected', 0)} rejected; total_rejected={rejected_count})."
+            )
+            if recent_errors:
+                msg += (
+                    "\nGrouped rejection errors (fix your generator script before writing again):\n"
+                    + _format_recent_errors(recent_errors)
+                )
+            notices.append(msg)
+            state["last_seen_import_seq"] = import_seq
+
+        if recent_errors and int(state.get("same_error_repeats", 0) or 0) >= 2:
+            notices.append(
+                f"WARNING: The exact same rejection error repeated {state['same_error_repeats']} times! "
+                "Do NOT re-run the unchanged script or write dummy test files. Fix the JSON field structure "
+                "shown above (e.g., target.start/stop must be {method,url,headers?,params?,body?} objects, "
+                'or set target={"mode":"unknown"}), or call scout_finish_collection if remaining items cannot be fixed.'
+            )
+
         max_misses = _max_probe_misses()
         if state.get("tripped"):
-            if state.get("imported_count", 0) > 0:
-                return (
+            if imported_count > 0:
+                notices.append(
                     "Probe guard tripped after repeated 403/404/405 responses without new questions. "
                     "Stop guessing undocumented paths or attachments; write remaining collected questions "
                     "to /workspace/outbox/ (with collection_notes explaining missing items) and call "
                     "scout_finish_collection."
                 )
-            return (
-                "Multiple 403/404/405 responses detected. Stop guessing undocumented paths; re-check "
-                "/task-overview/task.md and /inputs/ for the exact supplied entry points."
-            )
-        if state.get("consecutive_misses", 0) >= max(2, max_misses - 2):
-            return (
+            else:
+                notices.append(
+                    "Multiple 403/404/405 responses detected. Stop guessing undocumented paths; re-check "
+                    "/task-overview/task.md and /inputs/ for the exact supplied entry points."
+                )
+        elif state.get("consecutive_misses", 0) >= max(2, max_misses - 2):
+            notices.append(
                 f"Detected {state['consecutive_misses']} consecutive 403/404/405 probe responses without new "
                 "questions. Do not brute-force attachment or endpoint URLs; if an attachment is not referenced "
                 "in the response (e.g., only inside a dynamic target), leave attachments empty, document it in "
                 "collection_notes, and move on."
             )
-    return None
+
+        now = time.time()
+        idle_calls = int(state.get("idle_tool_calls", 0) or 0)
+        elapsed_idle = now - float(state.get("last_progress_at", now) or now)
+        stall_limit = _stall_seconds()
+        if imported_count > 0 and (idle_calls >= 8 or elapsed_idle >= stall_limit):
+            state["stall_warned"] = True
+            if idle_calls >= 12 or elapsed_idle >= stall_limit + 45:
+                state["stall_locked"] = True
+            stall_msg = (
+                f"Stall warning: {imported_count} questions are already imported, but no new questions were "
+                f"registered across {idle_calls} recent tool calls ({int(elapsed_idle)}s). "
+                "Stop running no-op commands (echo/true/ls outbox). "
+            )
+            if recent_errors:
+                stall_msg += (
+                    "Either fix the grouped rejection errors below and import the remaining questions now, "
+                    "or call scout_finish_collection(status='partial', warnings=[...]):\n"
+                    + _format_recent_errors(recent_errors)
+                )
+            else:
+                stall_msg += "Call scout_finish_collection immediately so Workers can proceed."
+            notices.append(stall_msg)
+
+        _save_probe_state(state)
+        return "\n\n".join(notices) if notices else None
 
 
 def _update_scout_probe_state(event: dict, output: str) -> None:
@@ -225,13 +361,24 @@ def _update_scout_probe_state(event: dict, output: str) -> None:
     current = collection_state()
     imported_count = int(current.get("imported_count", 0) or 0)
     state = _load_probe_state()
+
     if imported_count > int(state.get("imported_count", 0) or 0):
         state["imported_count"] = imported_count
         state["consecutive_misses"] = 0
         state["tripped"] = False
-        _save_probe_state(state)
+        state["idle_tool_calls"] = 0
+        state["last_progress_at"] = time.time()
+        state["stall_warned"] = False
+        state["stall_locked"] = False
     else:
         state["imported_count"] = imported_count
+        if imported_count > 0 and tool not in {"scout_import_questions", "scout_finish_collection"}:
+            increment = 2 if (command and _is_idle_probe_command(command)) else 1
+            state["idle_tool_calls"] = int(state.get("idle_tool_calls", 0) or 0) + increment
+
+    # Track repeated identical rejection errors across import batches.
+    _sync_error_tracking(state, current)
+
     if tool in {"scout_import_questions", "scout_finish_collection"}:
         _save_probe_state(state)
         return
@@ -245,7 +392,7 @@ def _update_scout_probe_state(event: dict, output: str) -> None:
         state["consecutive_misses"] = misses
         if misses >= _max_probe_misses():
             state["tripped"] = True
-        _save_probe_state(state)
+    _save_probe_state(state)
 
 
 def _worker_submission_block(event: dict) -> str | None:
@@ -368,6 +515,21 @@ def _overview_policy(event: dict) -> str | None:
                     "External network probing paused after repeated 403/404/405 misses without new questions. "
                     "Write already-collected questions to /workspace/outbox/ (recording missing items in "
                     "collection_notes) and call scout_import_questions / scout_finish_collection."
+                )
+            if probe_state.get("stall_locked") and imported_count > 0 and (
+                _is_idle_probe_command(command) or NETWORK_HINTS.search(command)
+            ):
+                recent = current.get("recent_errors") or []
+                hint = (
+                    " Fix the grouped rejection errors in your script first:\n" + _format_recent_errors(recent)
+                    if recent
+                    else ""
+                )
+                return (
+                    f"Collection stalled with {imported_count} questions already imported. "
+                    "No-op probes (echo/true/ls outbox) and further network probing are blocked. "
+                    "Either run your fixed local conversion script to write valid JSON to /workspace/outbox/ "
+                    "or call scout_finish_collection now." + hint
                 )
     if role == "worker":
         if reason := _worker_submission_block(event):

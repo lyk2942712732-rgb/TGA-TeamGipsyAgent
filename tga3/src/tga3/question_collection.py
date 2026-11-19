@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-from collections import defaultdict
+from collections import OrderedDict, defaultdict
 from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
@@ -21,6 +21,13 @@ ATTACHMENTS_DIR = "attachments"
 IMPORTED_DIR = "imported"
 REJECTED_DIR = "rejected"
 MAX_OUTBOX_FILE_BYTES = 2 * 1024 * 1024
+MAX_RECENT_ERROR_GROUPS = 8
+MAX_SAMPLE_FILES = 3
+
+REQUEST_OBJECT_HINT = (
+    ' (must be a request object like {"method":"POST","url":"https://...","headers":{},"params":{},"body":{}}, '
+    'not a bare URL string; or set target.mode="unknown" if no static API contract exists)'
+)
 
 
 def _archive_path(directory: Path, name: str) -> Path:
@@ -43,6 +50,23 @@ def _write_json(path: Path, payload: dict[str, Any]) -> None:
         temporary.unlink(missing_ok=True)
 
 
+def aggregate_errors(errors: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Collapse repeated identical rejection messages so models see clear grouped feedback."""
+    groups: OrderedDict[str, dict[str, Any]] = OrderedDict()
+    for entry in errors:
+        message = str(entry.get("error", "unknown error")).strip()
+        filename = Path(str(entry.get("file", ""))).name or "unknown.json"
+        group = groups.get(message)
+        if group is None:
+            group = {"count": 0, "error": message, "sample_files": []}
+            groups[message] = group
+        group["count"] += 1
+        if len(group["sample_files"]) < MAX_SAMPLE_FILES and filename not in group["sample_files"]:
+            group["sample_files"].append(filename)
+    ordered = sorted(groups.values(), key=lambda item: (-item["count"], item["error"]))
+    return ordered[:MAX_RECENT_ERROR_GROUPS]
+
+
 def _normalize_item(item: Any) -> AOEQuestionInput:
     if not isinstance(item, dict):
         raise ContractError("Each question entry must be a JSON object")
@@ -59,11 +83,18 @@ def _normalize_item(item: Any) -> AOEQuestionInput:
     try:
         return AOEQuestionInput.model_validate(data)
     except ValidationError as exc:
-        messages = "; ".join(
-            f"{'.'.join(str(part) for part in err.get('loc', ())) or 'question'}: {err.get('msg', 'invalid')}"
-            for err in exc.errors()
-        )
-        raise ContractError(messages) from exc
+        parts: list[str] = []
+        needs_request_hint = False
+        for err in exc.errors():
+            loc = ".".join(str(part) for part in err.get("loc", ())) or "question"
+            msg = err.get("msg", "invalid")
+            if loc in {"target.start", "target.stop", "target.status", "submission.request"} and "dictionary" in msg:
+                needs_request_hint = True
+            parts.append(f"{loc}: {msg}")
+        detail = "; ".join(parts)
+        if needs_request_hint:
+            detail += REQUEST_OBJECT_HINT
+        raise ContractError(detail) from exc
 
 
 def _extract_specs(payload: Any) -> list[AOEQuestionInput]:
@@ -86,6 +117,10 @@ class QuestionImporter:
     def __init__(self, aoe) -> None:
         self.aoe = aoe
         self.locks: defaultdict[UUID, asyncio.Lock] = defaultdict(asyncio.Lock)
+        self._import_seq: defaultdict[UUID, int] = defaultdict(int)
+        self._rejected_total: defaultdict[UUID, int] = defaultdict(int)
+        self._last_batch: dict[UUID, dict[str, int]] = {}
+        self._recent_errors: dict[UUID, list[dict[str, Any]]] = {}
 
     def workspace(self, parent_id: UUID) -> Path:
         return self.aoe.config.task_path(parent_id, "workspaces", "scout")
@@ -97,6 +132,22 @@ class QuestionImporter:
         root = self.workspace(parent_id)
         for name in (OUTBOX_DIR, ATTACHMENTS_DIR, IMPORTED_DIR, REJECTED_DIR):
             (root / name).mkdir(parents=True, exist_ok=True)
+
+    def state_summary(self, parent_id: UUID) -> dict[str, Any]:
+        return {
+            "import_seq": self._import_seq.get(parent_id, 0),
+            "rejected_count": self._rejected_total.get(parent_id, 0),
+            "last_batch": self._last_batch.get(
+                parent_id, {"imported": 0, "skipped_existing": 0, "rejected": 0}
+            ),
+            "recent_errors": list(self._recent_errors.get(parent_id, [])),
+        }
+
+    def clear_state(self, parent_id: UUID) -> None:
+        self._import_seq.pop(parent_id, None)
+        self._rejected_total.pop(parent_id, None)
+        self._last_batch.pop(parent_id, None)
+        self._recent_errors.pop(parent_id, None)
 
     def _resolve_targets(self, parent_id: UUID, supplied: str | None) -> list[Path]:
         root = self.workspace(parent_id).resolve()
@@ -152,9 +203,13 @@ class QuestionImporter:
                 return {
                     "saved": False,
                     "imported": [],
+                    "skipped_existing": [],
                     "errors": [],
+                    "error_summary": list(self._recent_errors.get(parent_id, [])),
+                    "import_seq": self._import_seq.get(parent_id, 0),
                     "imported_count": len(questions),
                     "imported_keys": keys,
+                    "rejected_count": self._rejected_total.get(parent_id, 0),
                     "collection_complete": True,
                     "status": parent.metadata.get("collection_status", "complete"),
                 }
@@ -165,8 +220,16 @@ class QuestionImporter:
             rejected_dir = workspace_root / REJECTED_DIR
 
             targets = self._resolve_targets(parent_id, path)
+            registered_keys = {
+                q.metadata["source_key"]
+                for q in await self.aoe.storage.list_questions(parent_id)
+                if q.metadata.get("registration_complete")
+            }
             imported: list[dict[str, Any]] = []
+            skipped_existing: list[dict[str, Any]] = []
             errors: list[dict[str, Any]] = []
+            new_questions_count = 0
+            skipped_questions_count = 0
 
             for file_path in targets:
                 in_outbox = file_path.parent.resolve() == outbox_root
@@ -190,7 +253,28 @@ class QuestionImporter:
                     except ValueError as exc:
                         raise ContractError(f"Invalid JSON syntax: {exc}") from exc
                     specs = _extract_specs(payload)
-                    receipt = await self.aoe.register_questions(parent_id, specs)
+                    new_specs = [spec for spec in specs if spec.source_key not in registered_keys]
+                    already_keys = [spec.source_key for spec in specs if spec.source_key in registered_keys]
+                    if not new_specs:
+                        archived_to = None
+                        if in_outbox:
+                            dest = _archive_path(imported_dir, file_path.name)
+                            os.replace(file_path, dest)
+                            archived_to = "/workspace/" + dest.resolve().relative_to(workspace_root).as_posix()
+                        skipped_questions_count += len(already_keys)
+                        skipped_existing.append(
+                            {
+                                "file": display,
+                                "status": "skipped_existing",
+                                "archived_to": archived_to,
+                                "source_keys": already_keys,
+                            }
+                        )
+                        continue
+                    receipt = await self.aoe.register_questions(parent_id, new_specs)
+                    registered_keys.update(spec.source_key for spec in new_specs)
+                    new_questions_count += len(new_specs)
+                    skipped_questions_count += len(already_keys)
                     archived_to = None
                     if in_outbox:
                         dest = _archive_path(imported_dir, file_path.name)
@@ -202,6 +286,7 @@ class QuestionImporter:
                             "status": "imported",
                             "archived_to": archived_to,
                             "questions": receipt["questions"],
+                            **({"skipped_existing": already_keys} if already_keys else {}),
                         }
                     )
                 except (ContractError, ConflictError, ValueError, OSError) as exc:
@@ -228,12 +313,35 @@ class QuestionImporter:
             questions = await self.aoe.storage.list_questions(parent_id)
             keys = sorted(q.metadata["source_key"] for q in questions)
             parent = await self.aoe.storage.get_task(parent_id)
+            error_summary = aggregate_errors(errors)
+
+            if imported or skipped_existing or errors:
+                self._import_seq[parent_id] += 1
+                self._rejected_total[parent_id] += len(errors)
+                self._last_batch[parent_id] = {
+                    "imported": new_questions_count,
+                    "skipped_existing": skipped_questions_count,
+                    "rejected": len(errors),
+                }
+                if error_summary:
+                    self._recent_errors[parent_id] = error_summary
+                elif new_questions_count > 0:
+                    # Clear stale errors once a clean batch succeeds.
+                    self._recent_errors[parent_id] = []
+                await self.aoe._collection_state(parent_id, parent=parent, questions=questions)
+
             return {
                 "saved": bool(imported),
-                "imported": imported,
-                "errors": errors,
+                "imported": imported[:20],
+                "imported_files_count": len(imported),
+                "skipped_existing": skipped_existing[:10],
+                "skipped_count": skipped_questions_count,
+                "errors": errors[:10],
+                "error_summary": error_summary,
+                "import_seq": self._import_seq.get(parent_id, 0),
                 "imported_count": len(questions),
                 "imported_keys": keys,
+                "rejected_count": self._rejected_total.get(parent_id, 0),
                 "collection_complete": bool(parent.metadata.get("collection_complete", False)),
                 "status": parent.metadata.get("collection_status", "collecting"),
             }
@@ -249,4 +357,5 @@ __all__ = [
     "REJECTED_DIR",
     "QuestionCollection",
     "QuestionImporter",
+    "aggregate_errors",
 ]
