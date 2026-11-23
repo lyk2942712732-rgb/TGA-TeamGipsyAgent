@@ -157,13 +157,20 @@ def active_attempts(question: TaskRun) -> list[dict]:
 
 
 def attempted_by(question: TaskRun) -> set[str]:
-    return {attempt["agent_id"] for attempt in question.metadata.get("attempts", [])
-            if attempt["phase"] in {"solo", "reinforcement"}}
+    return {
+        attempt["agent_id"]
+        for attempt in question.metadata.get("attempts", [])
+        if attempt["phase"] in {"solo", "reinforcement"} and not attempt.get("superseded")
+    }
 
 
 def solo_attempts(question: TaskRun) -> list[dict]:
     """Reinforcement counts as participation in round one, not a second round."""
-    return [a for a in question.metadata.get('attempts', []) if a['phase'] == 'solo']
+    return [
+        a
+        for a in question.metadata.get("attempts", [])
+        if a["phase"] == "solo" and not a.get("superseded")
+    ]
 
 
 def difficulty_key(value: Any) -> str | None:
@@ -265,8 +272,8 @@ def attempt_budget_seconds(metadata: dict, attempts: list[dict], current: dict) 
     elif current['phase'] == 'reinforcement':
         stage = 'first'
     else:
-        solo = [attempt for attempt in attempts if attempt["phase"] == "solo"]
-        stage = "first" if solo[0]["id"] == current["id"] else "second"
+        solo = [attempt for attempt in attempts if attempt["phase"] == "solo" and not attempt.get("superseded")]
+        stage = "first" if not solo or solo[0]["id"] == current["id"] else "second"
     return attempt_budgets(metadata)[stage]
 
 

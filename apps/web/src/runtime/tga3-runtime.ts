@@ -29,7 +29,7 @@ export type TGA3TaskEvent = {
   text: string; payload: Record<string, unknown>; created_at: string;
   question_id?: string;
 };
-export type AOEAttempt = { id: string; agent_id: string; phase: "solo" | "joint" | "swarm" | "reinforcement"; success_credit?: boolean; first_attempt_id?: string; previous_started_at?: number | null; previous_phase?: string; pauses?: Array<{ start: number; end: number | null }>; claimed_at?: number; started_at: number | null; deadline: number | null; outcome: "solved" | "timeout" | "interrupted" | "error" | null; finished_at?: number; cli_session_id?: string | null };
+export type AOEAttempt = { id: string; agent_id: string; phase: "solo" | "joint" | "swarm" | "reinforcement"; success_credit?: boolean; first_attempt_id?: string; previous_started_at?: number | null; previous_phase?: string; pauses?: Array<{ start: number; end: number | null }>; claimed_at?: number; started_at: number | null; deadline: number | null; manual_extension_seconds?: number; manual_extension_count?: number; superseded?: boolean; outcome: "solved" | "timeout" | "interrupted" | "error" | null; finished_at?: number; cli_session_id?: string | null };
 export type AOEQuestion = {
   question_id: string; parent_task_id: string; title: string; description: string; source_key: string;
   difficulty: string | number | null; category?: string; tags?: string[];

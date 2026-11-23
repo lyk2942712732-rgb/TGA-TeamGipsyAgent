@@ -61,6 +61,20 @@
 .aoe-worker-record li strong { white-space: nowrap; font-size: 13px; font-variant-numeric: tabular-nums; }
 .aoe-worker-record li small { display: block; margin-top: 7px; color: var(--c-text-muted); font-size: 11px; }
 .collab-agent-question { display: block; font-size: 12px; line-height: 1.6; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+.aoe-extended-tag { font-style: normal; font-size: 11px; color: var(--c-text-muted); margin-left: 6px; font-weight: 400; }
+.aoe-extend-notice { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; padding: 10px 12px; border: 1px solid var(--c-border); border-radius: var(--r-md); background: var(--c-surface-muted); font-size: 12px; }
+.aoe-extend-button:disabled { opacity: 0.55; cursor: not-allowed; }
+.aoe-extend-dialog { width: min(500px, calc(100vw - 32px)); }
+.aoe-extend-warning { padding: 10px 12px; border: 1px solid var(--c-border); border-radius: var(--r-md); background: var(--c-warning-soft, var(--c-surface-muted)); color: var(--c-text); font-size: 12px; line-height: 1.7; }
+.aoe-extend-meta { display: grid; gap: 10px; padding: 12px; border: 1px solid var(--c-border); border-radius: var(--r-md); background: var(--c-surface-muted); }
+.aoe-extend-meta > div { display: flex; flex-direction: column; gap: 3px; }
+.aoe-extend-meta small { font-size: 11px; color: var(--c-text-muted); }
+.aoe-extend-meta strong { font-size: 13px; font-weight: 500; overflow-wrap: anywhere; }
+.aoe-extend-input-block { display: grid; gap: 10px; }
+.aoe-extend-input-block label { display: grid; gap: 6px; font-size: 12px; }
+.aoe-extend-input-block input[type="number"] { padding: 8px 10px; border: 1px solid var(--c-border); border-radius: var(--r-md); font: inherit; background: var(--c-surface); color: var(--c-text); }
+.aoe-extend-presets { display: flex; flex-wrap: wrap; gap: 8px; }
+.aoe-extend-presets .is-selected { border-color: var(--c-text); background: var(--c-text); color: var(--c-surface); }
 @media (max-width: 640px) { .aoe-budget-inputs { grid-template-columns: 1fr; } .aoe-question-ownership { grid-template-columns: 1fr; gap: 10px; } .aoe-scope-toolbar label { width: 100%; } .aoe-scope-toolbar select { min-width: 0; flex: 1; } .aoe-report-list > article { align-items: flex-start; flex-direction: column; } }
 @media (max-width: 640px) {
   .workbench-new-task .scene-card-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }

@@ -1,7 +1,8 @@
-import { ArrowLeft, BookOpen, Download, Flag } from "lucide-react";
+import { ArrowLeft, BookOpen, Clock, Download, Flag } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { apiBase, requestJson } from "../../../api/client";
+import { tga3RuntimeApi } from "../../../api/tga3-runtime-control";
 import type { AOEQuestion, TGA3RuntimeSnapshot, TGA3TaskEvent } from "../../../runtime/tga3-runtime";
 import { formatTime } from "../tga3-view";
 import { aoeBudgets, attemptGroups, attemptLabel, matchesQuestionFilter, QUESTION_FILTERS, sortQuestions, type QuestionFilter } from "../aoe-view";
@@ -47,7 +48,7 @@ export function AOEWorkspace({ snapshot, tab, selectedAgentId, onTab, onChanged 
   };
   if (!question) {
     panels.blackboard = <>
-      <AOEOverviewPanel snapshot={snapshot} questions={questions} onOpen={id => choose(id, "blackboard")} name={name} />
+      <AOEOverviewPanel snapshot={snapshot} questions={questions} onOpen={id => choose(id, "blackboard")} onChanged={onChanged} name={name} />
       <RealtimePrompt taskId={snapshot.task.id} accepting={["scouting", "running"].includes(snapshot.task.state)} onChanged={onChanged} />
     </>;
     panels.findings = <div className="tga3-empty"><h3>按题查看 Findings</h3><p>在上方选择题目，查看它的已验证事实与最终候选。</p></div>;
@@ -93,33 +94,87 @@ export function AOEWorkspace({ snapshot, tab, selectedAgentId, onTab, onChanged 
   </div>;
 }
 
-function AOEOverviewPanel({ snapshot, questions, onOpen, name }: { snapshot: TGA3RuntimeSnapshot; questions: AOEQuestion[]; onOpen: (id: string) => void; name: (id: string) => string }) {
+const EXTEND_PRESETS = [5, 10, 15, 30] as const;
+
+function AOEOverviewPanel({ snapshot, questions, onOpen, onChanged, name }: { snapshot: TGA3RuntimeSnapshot; questions: AOEQuestion[]; onOpen: (id: string) => void; onChanged: () => void; name: (id: string) => string }) {
   const overview = snapshot.aoe!;
   const [now, setNow] = useState(Date.now() / 1000);
+  const [extendTarget, setExtendTarget] = useState<AOEQuestion | null>(null);
+  const [extendMinutes, setExtendMinutes] = useState("5");
+  const [extending, setExtending] = useState(false);
+  const [extendError, setExtendError] = useState("");
+  const [extendNotice, setExtendNotice] = useState("");
   useEffect(() => { const timer = window.setInterval(() => setNow(Date.now() / 1000), 1000); return () => window.clearInterval(timer); }, []);
   if (!overview.questions.length) return <div className="tga3-empty"><BookOpen /><h3>Scout 正在收集题目</h3><p>题面与附件登记后即可分配；收集期间先解简单题，无难度说明时直接分配。</p></div>;
+  const parentTerminal = ["completed", "failed", "cancelled", "stopped"].includes(snapshot.task.state);
   const solved = overview.questions.filter(item => item.status === "solved").length;
   const preSolved = overview.questions.filter(item => item.pre_solved).length;
   const abandoned = overview.questions.filter(item => item.status === "abandoned").length;
   const preparing = overview.questions.filter(item => item.scout_ready === false).length;
+
+  const parsedMinutes = Number(extendMinutes);
+  const validMinutes = Number.isInteger(parsedMinutes) && parsedMinutes >= 1 && parsedMinutes <= 240;
+  const liveTarget = extendTarget ? overview.questions.find(q => q.question_id === extendTarget.question_id) ?? extendTarget : null;
+  const targetActive = liveTarget ? liveTarget.attempts.filter(attempt => attempt.outcome === null) : [];
+  const targetDeadline = targetActive[0]?.deadline ?? null;
+  const targetSeconds = targetDeadline == null ? null : Math.max(0, Math.ceil(targetDeadline - now));
+
+  function openExtend(item: AOEQuestion) {
+    setExtendTarget(item);
+    setExtendMinutes("5");
+    setExtendError("");
+  }
+
+  async function confirmExtend() {
+    if (!liveTarget || extending || !validMinutes) return;
+    setExtending(true);
+    setExtendError("");
+    try {
+      await tga3RuntimeApi.extendQuestion(snapshot.task.id, liveTarget.question_id, parsedMinutes);
+      setExtendNotice(`已为「${liveTarget.title}」本轮延长 ${parsedMinutes} 分钟。`);
+      setExtendTarget(null);
+      onChanged();
+    } catch (reason) {
+      setExtendError(reason instanceof Error ? reason.message : "延长时间失败");
+    } finally {
+      setExtending(false);
+    }
+  }
+
   return <section className="aoe-overview" aria-label="题目总览">
     <header><h3>{questions.length === overview.questions.length ? overview.questions.length : `${questions.length} / ${overview.questions.length}`} 道题目</h3><span>{solved} 已解出{preSolved ? `（含开启任务前已解出 ${preSolved}）` : ""} · {abandoned} 已放弃{preparing ? ` · ${preparing} 待交接` : ""}</span></header>
+    {extendNotice ? <div className="aoe-extend-notice" role="status"><span>{extendNotice}</span><button type="button" className="text-button" onClick={() => setExtendNotice("")}>关闭</button></div> : null}
     {!questions.length ? <p className="tga3-muted">当前筛选下暂无题目。</p> : null}
     <div className="aoe-question-roster">{questions.map(question => {
       const active = question.attempts.filter(attempt => attempt.outcome === null);
       const stages = attemptGroups(question);
       const deadline = active[0]?.deadline;
       const seconds = deadline == null ? null : Math.max(0, Math.ceil(deadline - now));
+      const extendedMinutes = Math.round((active[0]?.manual_extension_seconds ?? 0) / 60);
+      const canShowExtend = !parentTerminal && question.status === "running";
+      const countdownStarted = seconds !== null && active.length > 0;
       return <article key={question.question_id} className="aoe-question-row" data-status={question.status}>
         <header><div><button className="text-button aoe-question-title" onClick={() => onOpen(question.question_id)}>{question.title}</button>
           <small>{question.difficulty === null ? "未标注难度" : `难度：${question.difficulty}`}</small></div><QuestionStatus question={question} /></header>
         <div className="aoe-question-ownership"><span>已尝试<strong>{question.attempted_by.map(name).join("、") || "尚无"}</strong></span>
           <span>正在解题<strong>{question.current_agents.map(name).join("、") || "暂无"}</strong></span>
-          {seconds !== null ? <span>{attemptLabel(question, active[0])}剩余<strong>{Math.floor(seconds / 60)}分{seconds % 60}秒</strong></span> : null}
+          {seconds !== null ? <span>{attemptLabel(question, active[0])}剩余<strong>{Math.floor(seconds / 60)}分{seconds % 60}秒{extendedMinutes > 0 ? <em className="aoe-extended-tag">（已延长 +{extendedMinutes}分）</em> : null}</strong></span> : null}
         </div>
         {question.flag ? <div className="aoe-question-answer"><Flag size={14} /><code className="aoe-flag">{question.flag}</code></div> : null}
         <QuestionMaterials question={question} />
         <footer><button className="ref-secondary-button" onClick={() => onOpen(question.question_id)}><BookOpen size={14} />进入黑板详情 <small>{question.blackboard_seq}</small></button>
+          {canShowExtend ? (
+            <button
+              type="button"
+              className="ref-secondary-button aoe-extend-button"
+              disabled={!countdownStarted}
+              title={countdownStarted ? "延长本题当前轮次时间" : "等待 Worker 执行首个动作开始倒计时后可延长"}
+              aria-label={`延长本轮时间 ${question.title}`}
+              onClick={() => openExtend(question)}
+            >
+              <Clock size={14} />{countdownStarted ? "延长本轮时间" : "延长本轮（未开始计时）"}
+            </button>
+          ) : null}
           <details className="aoe-attempt-history"><summary>尝试记录（{stages.length}）</summary>
             {stages.length ? <ol>{stages.map(stage => <li key={stage.id}>
               <strong>{stage.agents.map(name).join("＋")}</strong> · {stage.label} · {stage.outcome}
@@ -129,6 +184,62 @@ function AOEOverviewPanel({ snapshot, questions, onOpen, name }: { snapshot: TGA
         </footer>
       </article>;
     })}</div>
+
+    {liveTarget ? (
+      <div className="dialog-backdrop" role="presentation">
+        <section className="confirm-dialog aoe-extend-dialog" role="dialog" aria-modal="true" aria-labelledby="extend-dialog-title">
+          <h2 id="extend-dialog-title">确认延长本轮解题时间</h2>
+          <p className="aoe-extend-warning">防误触提醒：请核对下方题目名称与当前轮次，确认后将立即同步顺延所有正在解本题的 Worker 截止时间，不会中断当前执行。</p>
+          <div className="aoe-extend-meta">
+            <div><small>目标题目</small><strong>{liveTarget.title}</strong></div>
+            <div><small>当前阶段 / Worker</small><strong>{targetActive[0] ? attemptLabel(liveTarget, targetActive[0]) : "解题中"} · {liveTarget.current_agents.map(name).join("、") || "暂无"}</strong></div>
+            {targetSeconds !== null ? (
+              <div>
+                <small>剩余时间预览</small>
+                <strong>
+                  {Math.floor(targetSeconds / 60)}分{targetSeconds % 60}秒
+                  {validMinutes ? ` → ${Math.floor((targetSeconds + parsedMinutes * 60) / 60)}分${(targetSeconds + parsedMinutes * 60) % 60}秒` : ""}
+                </strong>
+              </div>
+            ) : null}
+          </div>
+          <div className="aoe-extend-input-block">
+            <label>
+              <span>延长时间（分钟，1–240）</span>
+              <input
+                type="number"
+                aria-label="延长分钟数"
+                min={1}
+                max={240}
+                step={1}
+                value={extendMinutes}
+                onChange={(event) => setExtendMinutes(event.target.value)}
+                autoFocus
+              />
+            </label>
+            <div className="aoe-extend-presets" role="group" aria-label="快捷延长时间">
+              {EXTEND_PRESETS.map((preset) => (
+                <button
+                  key={preset}
+                  type="button"
+                  className={`ref-secondary-button${parsedMinutes === preset ? " is-selected" : ""}`}
+                  onClick={() => setExtendMinutes(String(preset))}
+                >
+                  +{preset} 分钟
+                </button>
+              ))}
+            </div>
+          </div>
+          {extendError ? <p className="inline-error" role="alert">{extendError}</p> : null}
+          <div>
+            <button type="button" className="secondary-button" disabled={extending} onClick={() => setExtendTarget(null)}>取消</button>
+            <button type="button" className="ref-primary-button" disabled={extending || !validMinutes} onClick={() => void confirmExtend()}>
+              {extending ? "正在延长…" : validMinutes ? `确认延长 +${parsedMinutes} 分钟` : "请输入有效分钟数"}
+            </button>
+          </div>
+        </section>
+      </div>
+    ) : null}
   </section>;
 }
 

@@ -108,6 +108,31 @@ describe("TaskRuntimePage", () => {
     expect(screen.getByRole("button", { name: "写入黑板" })).toBeDisabled();
     addPrompt.mockRestore();
   });
+  it("opens restart dialog with checkpoint preview for terminal tasks and calls restart API", async () => {
+    const restartSpy = vi.spyOn(tga3RuntimeApi, "restartTask").mockResolvedValue({
+      task: { id: "task", state: "running" },
+      resumed_from: "workers",
+      restart_count: 1,
+      fallback_models: [],
+    });
+    const refresh = vi.fn();
+    const scout = { ...snapshot.agents[0], agent_id: "scout", display_name: "Scout", role: "scout", actual_state: "completed", metadata: { scout_phase: "completed" } };
+    useTGA3Runtime.mockReturnValue({
+      snapshot: { ...snapshot, task: { ...snapshot.task, state: "cancelled" }, agents: [scout, ...snapshot.agents] },
+      connection: "offline",
+      refresh,
+    });
+    render(<MemoryRouter initialEntries={["/tasks/task/runtime"]}><TaskRuntimePage taskId="task" /></MemoryRouter>);
+    expect(screen.getByRole("button", { name: "基于此任务新建" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "重新启动" }));
+    const dialog = screen.getByRole("dialog", { name: /重新启动任务/ });
+    expect(dialog).toHaveTextContent("跳过 Scout");
+    expect(dialog).toHaveTextContent("保留继承");
+    fireEvent.click(within(dialog).getByRole("button", { name: "确认原地重启" }));
+    await waitFor(() => expect(restartSpy).toHaveBeenCalledWith("task", { rerun_scout: false }));
+    await waitFor(() => expect(refresh).toHaveBeenCalled());
+    restartSpy.mockRestore();
+  });
   it("switches shared blackboard entries between details and square tiles", () => {
     render(<MemoryRouter initialEntries={["/tasks/task/runtime?tab=blackboard"]}><TaskRuntimePage taskId="task" /></MemoryRouter>);
     const switcher = screen.getByRole("group", { name: "共享黑板展示方式" });

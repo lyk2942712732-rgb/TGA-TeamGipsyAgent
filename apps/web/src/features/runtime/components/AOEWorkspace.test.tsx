@@ -164,4 +164,38 @@ describe("AOE question workspace", () => {
       "Active", "Solved Now", "Pre Solved One", "Pre Solved Two",
     ]);
   });
+
+  it("disables extend before countdown starts and opens custom-minutes confirm dialog once active", async () => {
+    const user = userEvent.setup();
+    const onChanged = vi.fn();
+    mocks.request.mockResolvedValue({ question_id: "q-started", added_minutes: 12, deadline: Date.now() / 1000 + 1320, agents: ["worker-openai"] });
+    const notStarted: AOEQuestion = {
+      ...question("q-wait", "Waiting Timer"),
+      attempts: [{ id: "a1", agent_id: "worker-openai", phase: "solo", outcome: null, started_at: null, deadline: null }],
+    };
+    const started: AOEQuestion = {
+      ...question("q-started", "Active Timer"),
+      attempts: [{ id: "a2", agent_id: "worker-openai", phase: "solo", outcome: null, started_at: Date.now() / 1000, deadline: Date.now() / 1000 + 600 }],
+    };
+    const data = { ...parent, aoe: { ...parent.aoe!, questions: [notStarted, started] } };
+    render(<MemoryRouter><AOEWorkspace snapshot={data} tab="blackboard" onTab={vi.fn()} selectedAgentId={null} onChanged={onChanged} /></MemoryRouter>);
+
+    expect(screen.getByRole("button", { name: "延长本轮时间 Waiting Timer" })).toBeDisabled();
+    const activeBtn = screen.getByRole("button", { name: "延长本轮时间 Active Timer" });
+    expect(activeBtn).toBeEnabled();
+    await user.click(activeBtn);
+
+    const dialog = screen.getByRole("dialog", { name: "确认延长本轮解题时间" });
+    expect(dialog).toHaveTextContent("Active Timer");
+    const input = within(dialog).getByLabelText("延长分钟数");
+    expect(input).toHaveValue(5);
+    await user.clear(input);
+    await user.type(input, "12");
+    await user.click(within(dialog).getByRole("button", { name: "确认延长 +12 分钟" }));
+    await waitFor(() => expect(mocks.request).toHaveBeenCalledWith(
+      "/api/v3/tasks/batch/questions/q-started/extend",
+      expect.objectContaining({ method: "POST", body: JSON.stringify({ minutes: 12 }) }),
+    ));
+    expect(onChanged).toHaveBeenCalled();
+  });
 });

@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { tga3RuntimeApi } from "../../api/tga3-runtime-control";
+import { tga3RuntimeApi, type RestartTaskPayload } from "../../api/tga3-runtime-control";
 import { deleteTask } from "../../api/tga3-tasks";
 import { ConfirmDialog } from "../../components/ui/ConfirmDialog";
+import { RestartTaskDialog } from "./components/RestartTaskDialog";
 import { TGA3AgentInspector } from "./components/TGA3AgentInspector";
 import { TGA3RuntimeGraph } from "./components/TGA3RuntimeGraph";
 import { TGA3TaskHeader } from "./components/TGA3TaskHeader";
@@ -29,6 +30,20 @@ export function TaskRuntimePage({ taskId }: { taskId: string }) {
   const [inspectorOpen, setInspectorOpen] = useState(true);
   const [busy, setBusy] = useState(false); const [notice, setNotice] = useState<string | null>(null);
   const [remove, setRemove] = useState(false);
+  const [restartOpen, setRestartOpen] = useState(false);
+  const [restartError, setRestartError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!snapshot) return;
+    const isTerminal = ["completed", "failed", "cancelled", "stopped"].includes(snapshot.task.state);
+    if (params.get("restart") === "1" && isTerminal) {
+      setRestartOpen(true);
+      setRestartError(null);
+      const next = new URLSearchParams(location.search);
+      next.delete("restart");
+      navigate({ pathname: location.pathname, search: next.toString() }, { replace: true });
+    }
+  }, [snapshot, params, location.pathname, location.search, navigate]);
 
   useEffect(() => {
     if (!snapshot?.agents.length) return;
@@ -52,9 +67,39 @@ export function TaskRuntimePage({ taskId }: { taskId: string }) {
   const selectedAgent = current.agents.find((agent) => agent.agent_id === selectedAgentId) ?? null;
   async function stop() { if (busy) return; setBusy(true); setNotice(null); try { await tga3RuntimeApi.stopTask(taskId); setNotice("停止请求已提交。"); refresh(); } catch (reason) { setNotice(reason instanceof Error ? reason.message : "停止任务失败"); } finally { setBusy(false); } }
   async function confirmDelete() { if (busy) return; setBusy(true); setNotice(null); try { await deleteTask(taskId); navigate("/tasks", { replace: true }); } catch (reason) { setNotice(reason instanceof Error ? reason.message : "删除任务失败"); setBusy(false); setRemove(false); } }
+  async function confirmRestart(payload: RestartTaskPayload) {
+    if (busy) return;
+    setBusy(true);
+    setRestartError(null);
+    try {
+      const res = await tga3RuntimeApi.restartTask(taskId, payload);
+      setRestartOpen(false);
+      const stageLabel = res.resumed_from === "scout" ? "Scout 阶段" : res.resumed_from === "reporter" ? "Reporter 报告阶段" : "Workers 解题阶段";
+      const fallbackNote = res.fallback_models?.length ? `（已自动回退为默认模型：${res.fallback_models.join("、")}）` : "";
+      setNotice(`任务已原地重启（第 ${res.restart_count} 次运行），将从 ${stageLabel}继续推进${fallbackNote}。`);
+      refresh();
+    } catch (reason) {
+      setRestartError(reason instanceof Error ? reason.message : "重启任务失败");
+    } finally {
+      setBusy(false);
+    }
+  }
+  function cloneToNew() {
+    setRestartOpen(false);
+    navigate(`/tasks/new?clone=${encodeURIComponent(taskId)}`);
+  }
 
   return <section className={`task-runtime-page tga3-runtime-page${snapshot.aoe ? " aoe-runtime-page" : ""}`}>
-    <TGA3TaskHeader snapshot={snapshot} connection={connection} busy={busy} onRefresh={refresh} onStop={() => void stop()} onDelete={() => setRemove(true)} />
+    <TGA3TaskHeader
+      snapshot={snapshot}
+      connection={connection}
+      busy={busy}
+      onRefresh={refresh}
+      onStop={() => void stop()}
+      onRestart={() => { setRestartError(null); setRestartOpen(true); }}
+      onClone={cloneToNew}
+      onDelete={() => setRemove(true)}
+    />
     {error ? <div className="runtime-sync-error" role="alert">实时同步暂时中断：{error}<button onClick={refresh}>重试</button></div> : null}
     {notice ? <div className="runtime-sync-notice" role="status">{notice}<button onClick={() => setNotice(null)}>关闭</button></div> : null}
     <TGA3RuntimeGraph snapshot={snapshot} selectedAgentId={selectedAgentId} onSelectAgent={(id) => { setSelectedAgentId(id); setInspectorOpen(true); }} />
@@ -64,6 +109,15 @@ export function TaskRuntimePage({ taskId }: { taskId: string }) {
       {inspectorOpen ? <div className="workbench-inspector"><TGA3AgentInspector snapshot={snapshot} agent={selectedAgent} onChanged={refresh} /></div> : null}
     </div>
 
+    <RestartTaskDialog
+      open={restartOpen}
+      snapshot={current}
+      busy={busy}
+      error={restartError}
+      onConfirm={(payload) => void confirmRestart(payload)}
+      onCloneNew={cloneToNew}
+      onCancel={() => setRestartOpen(false)}
+    />
     <ConfirmDialog open={remove} title={`删除任务 ${current.task.title}`} description="将停止仍在运行的 Agent，并永久删除该任务的数据库记录、工作区、输入、产物和报告。" confirmLabel="彻底删除" danger busy={busy} onCancel={() => setRemove(false)} onConfirm={() => void confirmDelete()} />
   </section>;
 }

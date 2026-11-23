@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { Grid2X2, List, Plus, Search, Trash2 } from "lucide-react";
+import { Copy, Grid2X2, List, Plus, RotateCcw, Search, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { deleteTask, listTasks, type TGA3TaskListItem } from "../api/tga3-tasks";
@@ -34,6 +34,9 @@ export function TaskListPage() {
   const visible = usePage(rows, pageSize, page);
   const update = (key: string, value: string) => { const next = new URLSearchParams(params); if (value) next.set(key, value); else next.delete(key); setParams(next); setPage(1); };
   const open = (task: TGA3TaskListItem) => navigate(`/tasks/${encodeURIComponent(task.id)}/runtime`);
+  const openRestart = (task: TGA3TaskListItem) => navigate(`/tasks/${encodeURIComponent(task.id)}/runtime?restart=1`);
+  const openClone = (task: TGA3TaskListItem) => navigate(`/tasks/new?clone=${encodeURIComponent(task.id)}`);
+  const isTerminal = (task: TGA3TaskListItem) => ["completed", "failed", "cancelled", "stopped"].includes(task.state);
   async function confirmDelete() {
     if (!removeTask || deleting) return;
     setDeleting(true); setMessage("");
@@ -52,7 +55,45 @@ export function TaskListPage() {
     { id: "blackboard", header: "黑板序号", render: (task) => task.blackboard_seq ?? 0, align: "center" },
     { id: "events", header: "事件序号", render: (task) => task.event_seq ?? 0, align: "center" },
     { id: "updated", header: "更新时间", render: (task) => <span className="cell-muted">{formatDate(task.updated_at)}</span> },
-    { id: "actions", header: "操作", width: "70px", align: "center", render: (task) => <button className="task-delete-button" aria-label={`删除任务 ${task.title}`} title="删除任务" onKeyDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); setRemoveTask(task); }}><Trash2 size={15} /></button> },
+    {
+      id: "actions",
+      header: "操作",
+      width: "126px",
+      align: "center",
+      render: (task) => (
+        <span className="task-row-actions">
+          {isTerminal(task) ? (
+            <button
+              className="task-action-button"
+              aria-label={`重新启动 ${task.title}`}
+              title="原地重新启动（断点续跑）"
+              onKeyDown={(event) => event.stopPropagation()}
+              onClick={(event) => { event.stopPropagation(); openRestart(task); }}
+            >
+              <RotateCcw size={14} />
+            </button>
+          ) : null}
+          <button
+            className="task-action-button"
+            aria-label={`基于此任务新建 ${task.title}`}
+            title="基于此任务配置新建任务"
+            onKeyDown={(event) => event.stopPropagation()}
+            onClick={(event) => { event.stopPropagation(); openClone(task); }}
+          >
+            <Copy size={14} />
+          </button>
+          <button
+            className="task-delete-button"
+            aria-label={`删除任务 ${task.title}`}
+            title="删除任务"
+            onKeyDown={(event) => event.stopPropagation()}
+            onClick={(event) => { event.stopPropagation(); setRemoveTask(task); }}
+          >
+            <Trash2 size={15} />
+          </button>
+        </span>
+      ),
+    },
   ];
 
   return <div className="ref-page">
@@ -60,7 +101,7 @@ export function TaskListPage() {
     {message ? <p className="settings-message" role="status">{message}</p> : null}
     <div className="workbench-task-toolbar"><label className="ref-search is-wide"><Search size={16} /><input aria-label="搜索任务" placeholder="搜索任务名称或 ID" value={query} onChange={(event) => update("query", event.target.value)} /></label>
     <section className="ref-filter-row"><select aria-label="场景筛选" value={scene} onChange={(event) => update("scene", event.target.value)}><option value="">所有场景</option>{TASK_MODES.map((value) => <option key={value} value={value}>{sceneLabel(value)}</option>)}</select><select aria-label="状态筛选" value={state} onChange={(event) => update("state", event.target.value)}><option value="">所有状态</option>{STATES.map((value) => <option key={value} value={value}>{statusLabel(value)}</option>)}</select><div className="view-toggle push-end"><button className={view === "list" ? "active" : ""} aria-label="列表视图" onClick={() => update("view", "")}><List size={15} /></button><button className={view === "cards" ? "active" : ""} aria-label="卡片视图" onClick={() => update("view", "cards")}><Grid2X2 size={15} /></button></div></section></div>
-    {tasks.isLoading ? <LoadingSkeleton label="正在读取任务" rows={6} /> : tasks.isError ? <ErrorState description={tasks.error instanceof Error ? tasks.error.message : "无法读取任务"} actionLabel="重试" onAction={() => void tasks.refetch()} /> : <>{view === "cards" ? visible.length ? <div className="task-card-grid ref-fill">{visible.map((task) => <article key={task.id} className="task-ref-card"><header><span className={`ref-chip ${STATE_TONES[task.state] ?? "tone-muted"}`}>{statusLabel(task.state)}</span><span className="ref-chip tone-muted">{sceneLabel(task.scene_id)}</span><button className="task-delete-button" aria-label={`删除任务 ${task.title}`} title="删除任务" onClick={() => setRemoveTask(task)}><Trash2 size={15} /></button></header><button className="task-ref-card-main" onClick={() => open(task)}><h3>{task.title}</h3><p>#{task.id}</p></button><div className="task-ref-card-stats"><span><b>{task.blackboard_seq ?? 0}</b>黑板序号</span><span><b>{task.event_seq ?? 0}</b>事件序号</span><span><b>{formatDate(task.updated_at)}</b>最近更新</span></div></article>)}</div> : <EmptyState label="没有匹配的任务" /> : <CatalogTable fill label="任务列表" columns={columns} rows={visible} rowKey={(task) => task.id} onSelect={open} emptyLabel="没有匹配的任务" />}<Pagination total={rows.length} pageSize={pageSize} page={page} onPage={setPage} onPageSize={(size) => { setPageSize(size); setPage(1); }} /></>}
+    {tasks.isLoading ? <LoadingSkeleton label="正在读取任务" rows={6} /> : tasks.isError ? <ErrorState description={tasks.error instanceof Error ? tasks.error.message : "无法读取任务"} actionLabel="重试" onAction={() => void tasks.refetch()} /> : <>{view === "cards" ? visible.length ? <div className="task-card-grid ref-fill">{visible.map((task) => <article key={task.id} className="task-ref-card"><header><span className={`ref-chip ${STATE_TONES[task.state] ?? "tone-muted"}`}>{statusLabel(task.state)}</span><span className="ref-chip tone-muted">{sceneLabel(task.scene_id)}</span><span className="task-row-actions">{isTerminal(task) ? <button className="task-action-button" aria-label={`重新启动 ${task.title}`} title="原地重新启动（断点续跑）" onClick={() => openRestart(task)}><RotateCcw size={14} /></button> : null}<button className="task-action-button" aria-label={`基于此任务新建 ${task.title}`} title="基于此任务配置新建任务" onClick={() => openClone(task)}><Copy size={14} /></button><button className="task-delete-button" aria-label={`删除任务 ${task.title}`} title="删除任务" onClick={() => setRemoveTask(task)}><Trash2 size={15} /></button></span></header><button className="task-ref-card-main" onClick={() => open(task)}><h3>{task.title}</h3><p>#{task.id}</p></button><div className="task-ref-card-stats"><span><b>{task.blackboard_seq ?? 0}</b>黑板序号</span><span><b>{task.event_seq ?? 0}</b>事件序号</span><span><b>{formatDate(task.updated_at)}</b>最近更新</span></div></article>)}</div> : <EmptyState label="没有匹配的任务" /> : <CatalogTable fill label="任务列表" columns={columns} rows={visible} rowKey={(task) => task.id} onSelect={open} emptyLabel="没有匹配的任务" />}<Pagination total={rows.length} pageSize={pageSize} page={page} onPage={setPage} onPageSize={(size) => { setPageSize(size); setPage(1); }} /></>}
     <ConfirmDialog open={Boolean(removeTask)} title={`删除任务 ${removeTask?.title ?? ""}`} description="将停止仍在运行的 Agent，并永久删除该任务的数据库记录、工作区、输入、产物和报告。" confirmLabel="彻底删除" danger busy={deleting} onCancel={() => setRemoveTask(null)} onConfirm={() => void confirmDelete()} />
   </div>;
 }

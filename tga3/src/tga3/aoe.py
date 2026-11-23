@@ -1291,6 +1291,252 @@ class AOERuntime:
                 payload={'question_id': str(question.id), 'action_id': evidence})
         return question
 
+    async def extend_question_attempt(self, parent_id: UUID, question_id: UUID, *, minutes: int = 5) -> dict:
+        """Manually extend the active round deadline for a single running AOE question."""
+        if not isinstance(minutes, int) or not 1 <= minutes <= 240:
+            raise ContractError("延长时间必须是 1 到 240 分钟之间的整数")
+        max_total_extension = 240 * 60
+        async with self.locks[parent_id]:
+            parent = await self.storage.get_task(parent_id)
+            if parent.scene_id != "aoe" or parent.parent_task_id is not None:
+                raise ContractError("延长本轮时间仅支持 AOE 批量任务")
+            if parent.state in TERMINAL:
+                raise ConflictError("当前任务已结束，无法延长题目时间")
+            question = await self.storage.get_task(question_id)
+            if question.parent_task_id != parent_id:
+                raise ContractError("题目不属于当前 AOE 任务")
+            if question.metadata.get("status") != "running":
+                raise ConflictError("仅可为正在解题中的题目延长本轮时间")
+            active = active_attempts(question)
+            if not active:
+                raise ConflictError("本题当前没有正在运行的尝试")
+            deadlines = [attempt["deadline"] for attempt in active if attempt.get("deadline") is not None]
+            if not deadlines:
+                raise ConflictError("本题尚未开始倒计时，待 Worker 执行首个动作开始计时后再延长")
+            delta = minutes * 60
+            existing_ext = max(int(attempt.get("manual_extension_seconds", 0) or 0) for attempt in active)
+            if existing_ext + delta > max_total_extension:
+                remaining_allowed = max(0, (max_total_extension - existing_ext) // 60)
+                raise ConflictError(
+                    f"单轮手动延长累计上限为 240 分钟，本轮还可延长最多 {remaining_allowed} 分钟"
+                )
+            now = self.clock()
+            new_deadline = max(max(deadlines), now) + delta
+            active_ids = {attempt["id"] for attempt in active}
+
+            def extend(metadata):
+                updated_attempts = [
+                    {
+                        **a,
+                        "deadline": new_deadline,
+                        "manual_extension_seconds": int(a.get("manual_extension_seconds", 0) or 0) + delta,
+                        "manual_extension_count": int(a.get("manual_extension_count", 0) or 0) + 1,
+                    }
+                    if a["id"] in active_ids
+                    else a
+                    for a in metadata.get("attempts", [])
+                ]
+                return {
+                    **metadata,
+                    **(
+                        {"swarm": {**metadata["swarm"], "deadline": new_deadline}}
+                        if metadata.get("swarm")
+                        else {}
+                    ),
+                    "attempts": updated_attempts,
+                }
+
+            question = await self.storage.mutate_task_metadata(question.id, extend)
+            await self._save_question(question)
+            agents = [attempt["agent_id"] for attempt in active_attempts(question)]
+            for attempt in active_attempts(question):
+                await self.coordinator.gateway.notify(
+                    question.id,
+                    attempt["agent_id"],
+                    "session.deadline",
+                    {"attempt_id": attempt["id"], "deadline": new_deadline},
+                )
+            await self.events.emit(
+                parent_id,
+                actor=SYSTEM_ACTOR,
+                kind=EventKind.SYSTEM,
+                text=f"人工延长本轮时间 +{minutes} 分钟：{question.title}",
+                payload={
+                    "question_id": str(question.id),
+                    "added_minutes": minutes,
+                    "deadline": new_deadline,
+                    "agents": agents,
+                },
+            )
+            self.wake(parent_id)
+            return {
+                "question_id": str(question.id),
+                "added_minutes": minutes,
+                "deadline": new_deadline,
+                "agents": agents,
+            }
+
+    async def prepare_restart(
+        self,
+        parent_id: UUID,
+        *,
+        rerun_scout: bool = False,
+        retry_abandoned: bool = False,
+        budgets: dict[str, int] | None = None,
+        restart_count: int = 1,
+    ) -> dict:
+        """Reset an ended AOE batch to resume from its highest completed checkpoint."""
+        async with self.locks[parent_id]:
+            parent = await self.storage.get_task(parent_id)
+            await self.targets.release_parent(parent_id)
+            questions = await self.storage.list_questions(parent_id)
+            need_scout = rerun_scout or not parent.metadata.get("collection_complete") or not questions
+
+            resumed_questions = 0
+            requeued_abandoned = 0
+            pending_reports = 0
+            for question in questions:
+                q_status = question.metadata.get("status", "queued")
+                if q_status == "solved":
+                    if (
+                        not question.metadata.get("pre_solved")
+                        and question.metadata.get("produce_report", True)
+                        and question.state != RunState.COMPLETED
+                    ):
+                        await self.storage.update_task(question.id, state=RunState.RUNNING)
+                        pending_reports += 1
+                    continue
+
+                if q_status == "abandoned":
+                    if not retry_abandoned:
+                        if (
+                            self.automation is not None
+                            and question.metadata.get("produce_report", True)
+                            and question.state not in {RunState.COMPLETED, RunState.CANCELLED}
+                        ):
+                            await self.storage.update_task(question.id, state=RunState.RUNNING)
+                            pending_reports += 1
+                        continue
+
+                    def reset_abandoned(metadata):
+                        cleaned = dict(metadata)
+                        for key in ("swarm", "rescue", "reinforcement", "finish_reason"):
+                            cleaned.pop(key, None)
+                        attempts = [
+                            {**a, "outcome": a.get("outcome") or "interrupted", "superseded": True}
+                            for a in cleaned.get("attempts", [])
+                        ]
+                        cleaned["attempts"] = attempts
+                        cleaned["status"] = "queued"
+                        cleaned["scout_ready"] = True
+                        cleaned["scout_phase"] = "completed"
+                        return cleaned
+
+                    question = await self.storage.mutate_task_metadata(question.id, reset_abandoned)
+                    question = await self.storage.update_task(question.id, state=RunState.RUNNING)
+                    await self.board.publish(
+                        question.id,
+                        SYSTEM_ACTOR,
+                        PublishRequest(
+                            kind="user_prompt",
+                            topic="restart",
+                            body={
+                                "text": (
+                                    f"任务已重新启动（第 {restart_count} 次运行），本题从“已放弃”恢复重新挑战。"
+                                    "此前黑板中的 Findings 与工作区文件均已保留，动态靶场将重新分配，"
+                                    "请先查阅历史结论并确认环境后继续推进。"
+                                )
+                            },
+                            idempotency_key=f"aoe-restart:{restart_count}:{question.id}",
+                        ),
+                    )
+                    await self._save_question(question)
+                    requeued_abandoned += 1
+                    continue
+
+                # Unfinished / interrupted / cancelled questions return to queued without burning interrupted slots.
+                def reset_unfinished(metadata):
+                    cleaned = dict(metadata)
+                    cleaned.pop("swarm", None)
+                    cleaned.pop("rescue", None)
+                    cleaned.pop("reinforcement", None)
+                    cleaned.pop("finish_reason", None)
+                    attempts = []
+                    for a in cleaned.get("attempts", []):
+                        if a.get("outcome") is None or a.get("outcome") == "interrupted":
+                            attempts.append({**a, "outcome": "interrupted", "superseded": True})
+                        else:
+                            attempts.append(a)
+                    cleaned["attempts"] = attempts
+                    cleaned["status"] = "queued"
+                    if cleaned.get("registration_complete", True):
+                        cleaned["scout_ready"] = True
+                        cleaned["scout_phase"] = "completed"
+                    return cleaned
+
+                question = await self.storage.mutate_task_metadata(question.id, reset_unfinished)
+                question = await self.storage.update_task(question.id, state=RunState.RUNNING)
+                await self.board.publish(
+                    question.id,
+                    SYSTEM_ACTOR,
+                    PublishRequest(
+                        kind="user_prompt",
+                        topic="restart",
+                        body={
+                            "text": (
+                                f"任务已重新启动（第 {restart_count} 次运行）。"
+                                "此前黑板中的记录与工作区文件已保留，动态靶场将重新启动，"
+                                "请先检查已有线索与最新地址后继续解题。"
+                            )
+                        },
+                        idempotency_key=f"aoe-restart:{restart_count}:{question.id}",
+                    ),
+                )
+                await self._save_question(question)
+                resumed_questions += 1
+
+            if not need_scout and resumed_questions == 0 and requeued_abandoned == 0 and pending_reports == 0:
+                raise ConflictError(
+                    "所有题目均已结束且无待补跑报告；如需重跑已放弃题目请勾选“重新挑战已放弃题目”，"
+                    "或使用“基于此任务新建”开启全新运行。"
+                )
+
+            parent_meta: dict = {
+                "restart_count": restart_count,
+                "aoe_phase": "collecting" if need_scout else "solo",
+                "collection_complete": not need_scout,
+                "collection_status": (
+                    "collecting" if need_scout else parent.metadata.get("collection_status", "complete")
+                ),
+                "scout_complete": not need_scout,
+            }
+            if budgets:
+                parent_meta["aoe_attempt_budgets"] = budgets
+            parent = await self.storage.update_task(
+                parent_id,
+                state=RunState.SCOUTING if need_scout else RunState.RUNNING,
+                metadata=parent_meta,
+            )
+            if need_scout:
+                await self.storage.update_agent(
+                    parent_id,
+                    "scout",
+                    desired_state=AgentState.RUNNING,
+                    actual_state=AgentState.CREATED,
+                    container_id=None,
+                    last_error=None,
+                    metadata={"scout_phase": "collecting"},
+                )
+            refreshed = await self.storage.list_questions(parent_id)
+            await self._collection_state(parent_id, parent=parent, questions=refreshed)
+            return {
+                "resumed_from": "scout" if need_scout else "workers",
+                "need_scout": need_scout,
+                "resumed_questions": resumed_questions,
+                "requeued_abandoned": requeued_abandoned,
+                "pending_reports": pending_reports,
+            }
+
     async def _settle(self, question: TaskRun, *, status: str, flag: str | None = None,
                       solver_agent_id: str | None = None) -> TaskRun:
         active = active_attempts(question)

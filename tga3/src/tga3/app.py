@@ -61,6 +61,21 @@ class ScoutSettingsRequest(BaseModel):
     timeout_seconds: int = Field(ge=60, le=600)
 
 
+class ExtendQuestionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    minutes: int = Field(default=5, ge=1, le=240)
+
+
+class RestartTaskRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    rerun_scout: bool = False
+    retry_abandoned: bool = False
+    agent_models: dict[str, ModelRequest] | None = None
+    aoe_first_attempt_minutes: int | None = Field(default=None, ge=1, le=1440)
+    aoe_second_attempt_minutes: int | None = Field(default=None, ge=1, le=1440)
+    aoe_joint_minutes: int | None = Field(default=None, ge=1, le=1440)
+
+
 def create_app(
     config: TGA3Config,
     storage: Storage,
@@ -307,6 +322,10 @@ def create_app(
     async def question_overview(task_id: UUID) -> dict:
         return await coordinator.aoe.snapshot(task_id)
 
+    @api.post("/tasks/{task_id}/questions/{question_id}/extend")
+    async def extend_question(task_id: UUID, question_id: UUID, body: ExtendQuestionRequest) -> dict:
+        return await coordinator.aoe.extend_question_attempt(task_id, question_id, minutes=body.minutes)
+
     async def owned_question(task_id: UUID, question_id: UUID):
         question = await storage.get_task(question_id)
         if question.parent_task_id != task_id:
@@ -424,6 +443,31 @@ def create_app(
     async def stop_task(task_id: UUID) -> None:
         await automation.cancel(task_id)
         await coordinator.stop_task(task_id)
+
+    @api.post("/tasks/{task_id}/restart")
+    async def restart_task(task_id: UUID, body: RestartTaskRequest | None = None) -> dict[str, Any]:
+        payload = body or RestartTaskRequest()
+        overrides = (
+            {
+                agent_id: (model.provider_id, model.model_id, model.protocol)
+                for agent_id, model in payload.agent_models.items()
+            }
+            if payload.agent_models is not None
+            else None
+        )
+        return await coordinator.restart_task(
+            task_id,
+            rerun_scout=payload.rerun_scout,
+            retry_abandoned=payload.retry_abandoned,
+            model_overrides=overrides,
+            aoe_first_attempt_minutes=payload.aoe_first_attempt_minutes,
+            aoe_second_attempt_minutes=payload.aoe_second_attempt_minutes,
+            aoe_joint_minutes=payload.aoe_joint_minutes,
+        )
+
+    @api.get("/tasks/{task_id}/clone-config")
+    async def clone_task_config(task_id: UUID) -> dict[str, Any]:
+        return await coordinator.clone_config(task_id)
 
     @api.delete("/tasks/{task_id}", status_code=204)
     async def delete_task(task_id: UUID) -> None:

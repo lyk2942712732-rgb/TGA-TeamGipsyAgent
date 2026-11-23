@@ -11,6 +11,7 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from .aoe import AOERuntime
+from .aoe_models import attempt_budgets
 from .blackboard import Blackboard
 from .config import ResolvedAgent, TGA3Config
 from .docker_runtime import ContainerRuntime, LaunchSpec
@@ -27,6 +28,7 @@ from .domain import (
     RunState,
     UserFileBody,
 )
+from .errors import ConflictError, ContractError
 from .events import TaskEvents
 from .gateway import AgentGateway
 from .knowledge import KnowledgeSource
@@ -236,22 +238,9 @@ class TaskCoordinator:
                 payload={"intel_count": intel_count, "scout_phases": outcomes},
             )
             task = await self.storage.update_task(task_id, state=RunState.RUNNING)
-            for agent_id in self.config.worker_agent_ids:
-                run = await self.storage.update_agent(
-                    task_id, agent_id, desired_state=AgentState.RUNNING, actual_state=AgentState.STARTING
-                )
-                launch = asyncio.create_task(
-                    self.containers.launch(LaunchSpec(
-                        task_id=task_id, agent=bindings[agent_id],
-                        knowledge_source=task.metadata.get("knowledge_source", "online")))
-                )
-                try:
-                    container_id = await asyncio.shield(launch)
-                except asyncio.CancelledError:
-                    await launch
-                    raise
-                await self.storage.update_agent(task_id, agent_id, container_id=container_id)
-                await self.events.announce_status(task_id, self.actor_for(run), AgentState.STARTING.value)
+            await self._launch_workers(
+                task_id, bindings, knowledge_source=task.metadata.get("knowledge_source", "online")
+            )
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -268,6 +257,327 @@ class TaskCoordinator:
             await asyncio.gather(
                 *(self.containers.stop(task_id, agent_id) for agent_id in bindings), return_exceptions=True,
             )
+
+    async def _launch_workers(
+        self,
+        task_id: UUID,
+        bindings: dict[str, ResolvedAgent],
+        *,
+        knowledge_source: KnowledgeSource = "online",
+        fresh_session: bool = False,
+    ) -> None:
+        board_reset = {"blackboard_cursor": 0, "blackboard_pending": None, "blackboard_read_at": 0}
+        for agent_id in self.config.worker_agent_ids:
+            if agent_id not in bindings:
+                continue
+            run = await self.storage.update_agent(
+                task_id,
+                agent_id,
+                desired_state=AgentState.RUNNING,
+                actual_state=AgentState.STARTING,
+                container_id=None,
+                last_error=None,
+                **({"metadata": board_reset} if fresh_session else {}),
+            )
+            launch = asyncio.create_task(
+                self.containers.launch(
+                    LaunchSpec(
+                        task_id=task_id,
+                        agent=bindings[agent_id],
+                        knowledge_source=knowledge_source,
+                        fresh_session=fresh_session,
+                    )
+                )
+            )
+            try:
+                container_id = await asyncio.shield(launch)
+            except asyncio.CancelledError:
+                await launch
+                raise
+            await self.storage.update_agent(task_id, agent_id, container_id=container_id)
+            await self.events.announce_status(task_id, self.actor_for(run), AgentState.STARTING.value)
+
+    async def restart_task(
+        self,
+        task_id: UUID,
+        *,
+        rerun_scout: bool = False,
+        retry_abandoned: bool = False,
+        model_overrides: dict[str, tuple[str, str, ProviderProtocol]] | None = None,
+        aoe_first_attempt_minutes: int | None = None,
+        aoe_second_attempt_minutes: int | None = None,
+        aoe_joint_minutes: int | None = None,
+    ) -> dict[str, Any]:
+        """Restart an ended task in-place from its highest completed checkpoint."""
+        task = await self.storage.get_task(task_id)
+        if task.parent_task_id is not None:
+            raise ContractError("请对主任务执行重新启动")
+        if task.state not in {RunState.COMPLETED, RunState.FAILED, RunState.CANCELLED}:
+            raise ConflictError("任务仍在运行中，请先停止任务再重新启动")
+        existing_job = self._startup_jobs.get(task_id)
+        if existing_job is not None and not existing_job.done():
+            raise ConflictError("任务调度器仍在收尾退出，请稍后再试")
+
+        model_overrides = model_overrides or {}
+        unknown_agents = sorted(set(model_overrides).difference(self.config.agents.agents))
+        if unknown_agents:
+            raise ValueError(f"unknown task agent model overrides: {', '.join(unknown_agents)}")
+
+        stage_minutes = {
+            "first": aoe_first_attempt_minutes,
+            "second": aoe_second_attempt_minutes,
+            "joint": aoe_joint_minutes,
+        }
+        if task.scene_id == "aoe" and any(
+            not 1 <= value <= 1440 for value in stage_minutes.values() if value is not None
+        ):
+            raise ValueError("AOE attempt budgets must be between 1 and 1440 minutes")
+
+        existing_runs = {run.agent_id: run for run in await self.storage.list_agents(task_id)}
+        resolved_agents: dict[str, ResolvedAgent] = {}
+        fallback_models: list[str] = []
+        for agent_id, configured in self.config.agents.agents.items():
+            if agent_id in model_overrides:
+                resolved = self.config.resolve_agent(agent_id, *model_overrides[agent_id])
+            elif agent_id in existing_runs:
+                run = existing_runs[agent_id]
+                try:
+                    resolved = self.config.resolve_agent(agent_id, run.provider_id, run.model_id, run.protocol)
+                except (KeyError, ValueError):
+                    resolved = self.config.resolve_agent(agent_id)
+                    fallback_models.append(configured.display_name)
+            else:
+                resolved = self.config.resolve_agent(agent_id)
+            resolved_agents[agent_id] = resolved
+
+        restart_count = int(task.metadata.get("restart_count", 0) or 0) + 1
+        for agent_id, resolved in resolved_agents.items():
+            if agent_id in existing_runs:
+                await self.storage.update_agent(
+                    task_id,
+                    agent_id,
+                    sdk=resolved.runtime,
+                    provider_id=resolved.provider.id,
+                    model_id=resolved.model.id,
+                    protocol=resolved.protocol,
+                    container_id=None,
+                    last_error=None,
+                    **({"metadata": {"aoe_paused": False}} if task.scene_id == "aoe" else {}),
+                )
+            else:
+                await self.storage.upsert_agent(
+                    AgentRun(
+                        task_id=task_id,
+                        agent_id=agent_id,
+                        sdk=resolved.runtime,
+                        provider_id=resolved.provider.id,
+                        model_id=resolved.model.id,
+                        protocol=resolved.protocol,
+                    )
+                )
+
+        if task.scene_id == "aoe":
+            new_budgets = None
+            if any(value is not None for value in stage_minutes.values()):
+                current_budgets = attempt_budgets(task.metadata)
+                new_budgets = {
+                    stage: (minutes * 60 if minutes is not None else current_budgets[stage])
+                    for stage, minutes in stage_minutes.items()
+                }
+            summary = await self.aoe.prepare_restart(
+                task_id,
+                rerun_scout=rerun_scout,
+                retry_abandoned=retry_abandoned,
+                budgets=new_budgets,
+                restart_count=restart_count,
+            )
+            detail_parts = []
+            if summary["need_scout"]:
+                detail_parts.append("重跑 Scout 收集")
+            else:
+                detail_parts.append("跳过 Scout")
+            if summary["resumed_questions"]:
+                detail_parts.append(f"续跑 {summary['resumed_questions']} 道未完成题")
+            if summary["requeued_abandoned"]:
+                detail_parts.append(f"重新挑战 {summary['requeued_abandoned']} 道已放弃题")
+            if summary["pending_reports"]:
+                detail_parts.append(f"补跑 {summary['pending_reports']} 份报告")
+            await self.events.emit(
+                task_id,
+                actor=SYSTEM_ACTOR,
+                kind=EventKind.SYSTEM,
+                text=f"任务已原地重启（第 {restart_count} 次运行）：{'，'.join(detail_parts)}。",
+                payload={"restart_count": restart_count, **summary, "fallback_models": fallback_models},
+            )
+            self._startup_jobs[task_id] = asyncio.create_task(self.aoe.run(task_id, resolved_agents))
+            refreshed = await self.storage.get_task(task_id)
+            return {
+                "task": refreshed.model_dump(mode="json"),
+                "resumed_from": summary["resumed_from"],
+                "restart_count": restart_count,
+                "fallback_models": fallback_models,
+                "summary": summary,
+            }
+
+        # Normal single-question task restart.
+        scout_run = existing_runs.get("scout")
+        scout_done = bool(scout_run and scout_run.metadata.get("scout_phase") == "completed")
+        entries = await self.storage.list_entries(task_id, limit=10_000)
+        has_final = any(entry.kind == EntryKind.FINAL_CANDIDATE for entry in entries)
+
+        if has_final and task.state == RunState.FAILED and not rerun_scout and self.aoe.automation is not None:
+            resumed_from = "reporter"
+            await self.storage.update_agent(
+                task_id,
+                "reporter",
+                desired_state=AgentState.RUNNING,
+                actual_state=AgentState.CREATED,
+                container_id=None,
+                last_error=None,
+            )
+            refreshed = await self.storage.update_task(
+                task_id, state=RunState.REPORTING, metadata={"restart_count": restart_count}
+            )
+            await self.events.emit(
+                task_id,
+                actor=SYSTEM_ACTOR,
+                kind=EventKind.SYSTEM,
+                text=f"任务已原地重启（第 {restart_count} 次运行）：已有最终候选，直接重跑 Reporter 生成报告。",
+                payload={"restart_count": restart_count, "resumed_from": resumed_from},
+            )
+            self.aoe.automation.start_report(task_id)
+        elif scout_done and not rerun_scout:
+            resumed_from = "workers"
+            refreshed = await self.storage.update_task(
+                task_id, state=RunState.RUNNING, metadata={"restart_count": restart_count}
+            )
+            await self.blackboard.publish(
+                task_id,
+                SYSTEM_ACTOR,
+                PublishRequest(
+                    kind=EntryKind.USER_PROMPT,
+                    topic="restart",
+                    body={
+                        "text": (
+                            f"任务已重新启动（第 {restart_count} 次运行）。"
+                            "此前黑板中已验证的 Intel、Findings 与工作区文件均已保留，"
+                            "请先查阅已有进展并确认目标状态后继续推进，避免重复劳动。"
+                        )
+                    },
+                    idempotency_key=f"task-restart:{restart_count}",
+                ),
+            )
+            await self.events.emit(
+                task_id,
+                actor=SYSTEM_ACTOR,
+                kind=EventKind.SYSTEM,
+                text=f"任务已原地重启（第 {restart_count} 次运行）：保留已有 Intel 与黑板，直接启动 Workers 续跑。",
+                payload={"restart_count": restart_count, "resumed_from": resumed_from},
+            )
+
+            async def launch_only():
+                try:
+                    await self._launch_workers(
+                        task_id,
+                        resolved_agents,
+                        knowledge_source=refreshed.metadata.get("knowledge_source", "online"),
+                        fresh_session=True,
+                    )
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    await self.storage.update_task(task_id, state=RunState.FAILED)
+                    await self.events.emit(
+                        task_id, actor=SYSTEM_ACTOR, kind=EventKind.ERROR, text=f"任务重启失败：{exc}"
+                    )
+
+            self._startup_jobs[task_id] = asyncio.create_task(launch_only())
+        else:
+            resumed_from = "scout"
+            await self.storage.update_agent(
+                task_id,
+                "scout",
+                desired_state=AgentState.RUNNING,
+                actual_state=AgentState.CREATED,
+                container_id=None,
+                last_error=None,
+                metadata={"scout_phase": "executing"},
+            )
+            refreshed = await self.storage.update_task(
+                task_id, state=RunState.SCOUTING, metadata={"restart_count": restart_count}
+            )
+            if entries:
+                await self.blackboard.publish(
+                    task_id,
+                    SYSTEM_ACTOR,
+                    PublishRequest(
+                        kind=EntryKind.USER_PROMPT,
+                        topic="restart",
+                        body={
+                            "text": (
+                                f"任务已重新启动（第 {restart_count} 次运行），将从 Scout 阶段重新执行。"
+                                "此前黑板记录与附件已保留。"
+                            )
+                        },
+                        idempotency_key=f"task-restart:{restart_count}",
+                    ),
+                )
+            await self.events.emit(
+                task_id,
+                actor=SYSTEM_ACTOR,
+                kind=EventKind.SYSTEM,
+                text=f"任务已原地重启（第 {restart_count} 次运行）：从 Scout 阶段重新开始。",
+                payload={"restart_count": restart_count, "resumed_from": resumed_from},
+            )
+            self._startup_jobs[task_id] = asyncio.create_task(self._scout_then_workers(task_id, resolved_agents))
+
+        return {
+            "task": refreshed.model_dump(mode="json"),
+            "resumed_from": resumed_from,
+            "restart_count": restart_count,
+            "fallback_models": fallback_models,
+        }
+
+    async def clone_config(self, task_id: UUID) -> dict[str, Any]:
+        """Extract reusable configuration from an existing task to prefill a clean new task."""
+        task = await self.storage.get_task(task_id)
+        if task.parent_task_id is not None:
+            task = await self.storage.get_task(task.parent_task_id)
+        entries = await self.storage.list_entries(task.id, limit=500)
+        prompt_entry = next(
+            (e for e in entries if e.idempotency_key == "initial-user-prompt"),
+            next((e for e in entries if e.kind == EntryKind.USER_PROMPT and e.topic == "task"), None),
+        )
+        prompt_text = str((prompt_entry.body or {}).get("text", "")) if prompt_entry else ""
+        agents = await self.storage.list_agents(task.id)
+        files = await self.storage.list_input_files(task.id)
+        budgets_sec = attempt_budgets(task.metadata)
+        return {
+            "source_task_id": str(task.id),
+            "title": task.title,
+            "scene_id": task.scene_id,
+            "prompt": prompt_text,
+            "knowledge_source": task.metadata.get("knowledge_source", "online"),
+            "produce_report": bool(task.metadata.get("produce_report", True)),
+            "aoe_auto_submit_flag": bool(task.metadata.get("aoe_auto_submit_flag", True)),
+            "aoe_budgets": {
+                "first": max(1, round(budgets_sec["first"] / 60)),
+                "second": max(1, round(budgets_sec["second"] / 60)),
+                "joint": max(1, round(budgets_sec["joint"] / 60)),
+            },
+            "agent_models": {
+                run.agent_id: {
+                    "provider_id": run.provider_id,
+                    "model_id": run.model_id,
+                    "protocol": run.protocol,
+                }
+                for run in agents
+            },
+            "input_files": [
+                {"id": str(item.id), "name": item.name, "size_bytes": item.size_bytes}
+                for item in files
+            ],
+        }
 
     async def cancel_startup(self, task_id: UUID) -> None:
         job = self._startup_jobs.pop(task_id, None)

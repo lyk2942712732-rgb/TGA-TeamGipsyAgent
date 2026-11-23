@@ -85,6 +85,23 @@ export async function deleteTask(taskId: string): Promise<void> {
   return requestJson<void>(`/api/v3/tasks/${encodeURIComponent(taskId)}`, { method: "DELETE" });
 }
 
+export type TaskCloneConfig = {
+  source_task_id: string;
+  title: string;
+  scene_id: TaskMode;
+  prompt: string;
+  knowledge_source: KnowledgeSource;
+  produce_report: boolean;
+  aoe_auto_submit_flag: boolean;
+  aoe_budgets: { first: number; second: number; joint: number };
+  agent_models: Record<string, { provider_id: string; model_id: string; protocol: ProviderProtocol }>;
+  input_files: Array<{ id: string; name: string; size_bytes: number }>;
+};
+
+export async function fetchTaskCloneConfig(taskId: string): Promise<TaskCloneConfig> {
+  return requestJson<TaskCloneConfig>(`/api/v3/tasks/${encodeURIComponent(taskId)}/clone-config`);
+}
+
 export async function listScenes(): Promise<ScenesConfig> {
   return requestJson<ScenesConfig>("/api/v3/config/scenes");
 }

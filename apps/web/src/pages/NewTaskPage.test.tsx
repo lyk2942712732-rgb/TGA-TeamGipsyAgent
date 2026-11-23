@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   stageInput: vi.fn(async (file: File) => ({ id: `asset-${file.name}`, originalName: file.name, mimeType: file.type, mediaKind: "image", size: file.size, status: "uploaded" as const })),
   deleteStagedInput: vi.fn(),
   fetchKnowledgeSources: vi.fn(async () => ({ online: { available: true }, local: { available: true, documents: 773 } })),
+  fetchTaskCloneConfig: vi.fn(),
   listScenes: vi.fn(async () => ({ schema_version: 1, scenes: [{ id: "penetration_test", name: "渗透测试", description: "Web target", system_prompt: "Test safely" }] })),
   fetchAgentModelOptions: vi.fn(async () => ({ scene_id: "penetration_test", agents: [{ id: "worker-openai", display_name: "OpenAI Worker", role: "worker", runtime: "codex_cli", model: { provider_id: "openai", provider_name: "OpenAI", model_id: "gpt-test", model_name: "gpt-test", protocol: "openai_responses", ready: true } }], models: [{ provider_id: "openai", provider_name: "OpenAI", model_id: "gpt-test", model_name: "gpt-test", protocol: "openai_responses", ready: true }] })),
 }));
@@ -17,7 +18,7 @@ vi.stubGlobal("URL", { createObjectURL: vi.fn(() => "blob:image"), revokeObjectU
 import { NewTaskPage } from "./NewTaskPage";
 
 describe("NewTaskPage", () => {
-  beforeEach(() => { vi.clearAllMocks(); mocks.listScenes.mockResolvedValue(sceneConfig); mocks.fetchKnowledgeSources.mockResolvedValue({ online: { available: true }, local: { available: true, documents: 773 } }); });
+  beforeEach(() => { window.localStorage.clear(); vi.clearAllMocks(); mocks.listScenes.mockResolvedValue(sceneConfig); mocks.fetchKnowledgeSources.mockResolvedValue({ online: { available: true }, local: { available: true, documents: 773 } }); });
 
   it("loads TGA3 scenes and task-level agent models", async () => {
     render(<NewTaskPage onCreated={vi.fn()} />);
@@ -83,5 +84,80 @@ describe("NewTaskPage", () => {
     render(<NewTaskPage onCreated={vi.fn()} />);
     expect(await screen.findByRole("option", { name: /本地知识库.*未就绪/ })).toBeDisabled();
     expect(screen.getByText(/请先运行 tga3 sync-knowledge/)).toBeInTheDocument();
+  });
+
+  it("restores unsubmitted content from banner and falls back unavailable models on one-click fill", async () => {
+    const user = userEvent.setup();
+    window.localStorage.setItem(
+      "tga3.newTask.unsubmitted.v1",
+      JSON.stringify({
+        name: "Half Written Task",
+        description: "Unsaved notes",
+        sceneId: "penetration_test",
+        aoeMinutes: { first: "30", second: "15", joint: "20" },
+        produceReport: true,
+        aoeAutoSubmitFlag: true,
+        knowledgeSource: "online",
+        agentModels: {},
+        savedAt: "2026-11-23T10:00:00Z",
+      }),
+    );
+    window.localStorage.setItem(
+      "tga3.newTask.lastSubmitted.v1",
+      JSON.stringify({
+        name: "Last AOE Event",
+        description: "https://ctf.example token=abc",
+        sceneId: "penetration_test",
+        aoeMinutes: { first: "25", second: "12", joint: "18" },
+        produceReport: false,
+        aoeAutoSubmitFlag: true,
+        knowledgeSource: "online",
+        agentModels: {
+          "worker-openai": { provider_id: "openai", model_id: "deleted-old-model", protocol: "openai_responses" },
+        },
+        savedAt: "2026-11-23T09:00:00Z",
+      }),
+    );
+
+    render(<NewTaskPage onCreated={vi.fn()} />);
+    await screen.findByText("Web渗透测试");
+
+    // Restore unsubmitted banner works cleanly.
+    expect(screen.getByText(/检测到上次未提交的内容/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "点击恢复" }));
+    expect(screen.getByLabelText("任务名称")).toHaveValue("Half Written Task");
+    expect(screen.getByLabelText(/描述/)).toHaveValue("Unsaved notes");
+
+    // One-click fill last config falls back deleted model to default and shows light notice.
+    await user.click(screen.getByRole("button", { name: "一键填充上次配置" }));
+    expect(screen.getByLabelText("任务名称")).toHaveValue("Last AOE Event");
+    expect(screen.getByLabelText(/描述/)).toHaveValue("https://ctf.example token=abc");
+    expect(screen.getByLabelText("OpenAI Worker 模型")).toHaveValue(JSON.stringify(["openai", "gpt-test"]));
+    expect(screen.getByText(/已自动回退为当前默认模型：OpenAI Worker/)).toBeInTheDocument();
+  });
+
+  it("shows hover memory popover for remembered fields and supports 1-click fill + undo", async () => {
+    const user = userEvent.setup();
+    window.localStorage.setItem(
+      "tga3.newTask.fieldHistory.v1",
+      JSON.stringify({
+        title: [{ value: "GeekCTF 2026", savedAt: "2026-11-23T09:30:00Z" }],
+        "description:penetration_test": [{ value: "Cookie: session=xyz", savedAt: "2026-11-23T09:30:00Z" }],
+      }),
+    );
+
+    render(<NewTaskPage onCreated={vi.fn()} />);
+    await screen.findByText("Web渗透测试");
+
+    const titleInput = screen.getByLabelText("任务名称");
+    await user.type(titleInput, "Temp");
+    await user.hover(titleInput);
+    const popover = await screen.findByRole("region", { name: "任务名称 历史记忆" });
+    await user.click(within(popover).getByRole("button", { name: /GeekCTF 2026/ }));
+    expect(titleInput).toHaveValue("GeekCTF 2026");
+
+    // Undo restores previous user input.
+    await user.click(screen.getByRole("button", { name: "撤销填入" }));
+    expect(titleInput).toHaveValue("Temp");
   });
 });

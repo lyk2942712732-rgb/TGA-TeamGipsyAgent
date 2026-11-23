@@ -1,4 +1,4 @@
-import { ChevronRight, Download, RefreshCw, Square, Trash2 } from "lucide-react";
+import { ChevronRight, Copy, Download, RefreshCw, RotateCcw, Square, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { tga3RuntimeApi } from "../../../api/tga3-runtime-control";
 import type { TGA3RuntimeSnapshot } from "../../../runtime/tga3-runtime";
@@ -6,7 +6,25 @@ import type { TGA3Connection } from "../use-tga3-runtime";
 import { agentStateLabel, formatTime, stateLabel, stateTone } from "../tga3-view";
 import { MODE_PROFILES } from "../../../modes";
 
-export function TGA3TaskHeader({ snapshot, connection, busy, onRefresh, onStop, onDelete }: { snapshot: TGA3RuntimeSnapshot; connection: TGA3Connection; busy: boolean; onRefresh: () => void; onStop: () => void; onDelete: () => void }) {
+export function TGA3TaskHeader({
+  snapshot,
+  connection,
+  busy,
+  onRefresh,
+  onStop,
+  onRestart,
+  onClone,
+  onDelete,
+}: {
+  snapshot: TGA3RuntimeSnapshot;
+  connection: TGA3Connection;
+  busy: boolean;
+  onRefresh: () => void;
+  onStop: () => void;
+  onRestart?: () => void;
+  onClone?: () => void;
+  onDelete: () => void;
+}) {
   const { task, agents, blackboard } = snapshot;
   const [usageOpen, setUsageOpen] = useState(false);
   const reported = agents.filter(agent => agent.metadata?.token_usage?.reported);
@@ -22,6 +40,8 @@ export function TGA3TaskHeader({ snapshot, connection, busy, onRefresh, onStop, 
       <div className="tga3-task-actions">
         <button type="button" className="ref-secondary-button" onClick={onRefresh}><RefreshCw size={15} />刷新</button>
         {snapshot.aoe ? <a className="ref-secondary-button" href={`/tasks/${encodeURIComponent(task.id)}/runtime?tab=report`}>查看逐题报告</a> : task.state === "completed" ? <a className="ref-secondary-button" href={tga3RuntimeApi.reportUrl(task.id)} target="_blank" rel="noreferrer"><Download size={15} />下载报告</a> : null}
+        {terminal && onRestart ? <button type="button" className="ref-primary-button" disabled={busy} onClick={onRestart}><RotateCcw size={14} />重新启动</button> : null}
+        {onClone ? <button type="button" className="ref-secondary-button" disabled={busy} onClick={onClone}><Copy size={14} />基于此任务新建</button> : null}
         {!terminal ? <button type="button" className="tga3-danger-button" disabled={busy} onClick={onStop}><Square size={14} />停止任务</button> : null}
         <button type="button" className="ref-secondary-button tga3-delete-task-button" disabled={busy} onClick={onDelete}><Trash2 size={14} />删除任务</button>
       </div>
