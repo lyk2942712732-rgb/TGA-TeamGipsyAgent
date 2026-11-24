@@ -1,13 +1,22 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-theme="obsidian">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>TGA</title>
+    <title>TGA3 Ops</title>
+    <script>
+      (function () {
+        try {
+          var t = localStorage.getItem("tga3.ui.theme.v1");
+          if (t !== "obsidian" && t !== "daylight" && t !== "cyber") t = "obsidian";
+          document.documentElement.dataset.theme = t;
+          document.documentElement.style.colorScheme = t === "daylight" ? "light" : "dark";
+        } catch (e) {}
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
-

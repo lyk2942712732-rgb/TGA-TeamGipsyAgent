@@ -20,7 +20,7 @@ export function TGA3AgentInspector({ snapshot, agent, onChanged }: { snapshot: T
   const tabs: typeof TABS = snapshot.aoe && agent.role === "worker" ? [...TABS, ["record", "战绩"]] : TABS;
   const activeTab = tabs.some(([value]) => value === tab) ? tab : "overview";
   return <aside className="tga3-agent-inspector">
-    <header><div><h2>{agent.display_name}</h2><p>{agent.agent_id} · {roleLabel(agent)}</p></div><span className={`tga3-state-pill tone-${stateTone(agent.actual_state)}`}><i />{agentStateLabel(agent)}</span></header>
+    <header><div><h2>{agent.display_name}</h2><p>{roleLabel(agent)} <span className={`cli-badge is-${agent.sdk}`}>{sdkLabel(agent.sdk)}</span></p></div><span className={`tga3-state-pill tone-${stateTone(agent.actual_state)}`}><i />{agentStateLabel(agent)}</span></header>
     <div className="tga3-inspector-tabs" role="tablist">{tabs.map(([value, label]) => <button key={value} role="tab" aria-selected={activeTab === value} onClick={() => setTab(value)}>{label}</button>)}</div>
     <div className="tga3-inspector-body">
       {activeTab === "overview" ? <Overview snapshot={snapshot} agent={agent} /> : null}

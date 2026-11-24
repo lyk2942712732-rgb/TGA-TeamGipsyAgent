@@ -74,4 +74,17 @@ describe("RuntimeApp TGA3 shell", () => {
     renderShell("/unknown");
     expect(screen.getByRole("heading", { name: "此入口不存在" })).toBeInTheDocument();
   });
+
+  it("switches between the 3 visual themes and persists selection", async () => {
+    window.localStorage.clear();
+    const user = userEvent.setup();
+    renderShell("/reports");
+    expect(document.documentElement.dataset.theme).toBe("obsidian");
+    await user.click(screen.getByRole("button", { name: "亮色" }));
+    expect(document.documentElement.dataset.theme).toBe("daylight");
+    expect(window.localStorage.getItem("tga3.ui.theme.v1")).toBe("daylight");
+    await user.click(screen.getByRole("button", { name: "极客" }));
+    expect(document.documentElement.dataset.theme).toBe("cyber");
+    expect(window.localStorage.getItem("tga3.ui.theme.v1")).toBe("cyber");
+  });
 });

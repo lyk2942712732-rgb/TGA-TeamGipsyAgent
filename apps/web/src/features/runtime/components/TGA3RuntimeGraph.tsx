@@ -48,7 +48,7 @@ export function TGA3RuntimeGraph({ snapshot, selectedAgentId, onSelectAgent }: {
       <span className="collab-agent-state">{value.actual_state === "completed" ? <Check size={11} /> : ["running", "starting"].includes(value.actual_state) ? <Play size={11} /> : <Minus size={11} />}{agentStateLabel(value)}</span>
       {value.metadata?.current_question_title ? <span className="collab-agent-question" title={value.metadata.current_question_title}>题目：{value.metadata.current_question_title}</span> : null}
       <span className="collab-agent-action" title={action?.detail}>{action ? <><Terminal size={12} /><span>{action.pending ? "" : "最近："}{action.text}</span></> : <><Clock3 size={12} /><span>{idleAction(value, entry?.seq)}</span></>}</span>
-      {models ? <span className="collab-model" data-graph-node={modelNode(id)}><BrainCircuit size={12} /><span>{value.model_name ?? value.model_id}<small>{sdkLabel(value.sdk)}</small></span></span> : null}
+      {models ? <span className="collab-model" data-graph-node={modelNode(id)}><BrainCircuit size={12} /><span>{value.model_name ?? value.model_id}<small className={`cli-badge is-${value.sdk}`}>{sdkLabel(value.sdk)}</small></span></span> : null}
     </button>;
   }
   const labels: Array<{ key: string; activity: RuntimeActivity; point: GraphPoint }> = [];

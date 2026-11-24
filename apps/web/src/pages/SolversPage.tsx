@@ -328,8 +328,10 @@ export function SolversPage() {
                       <Bot size={14} /> {agent.display_name}
                     </strong>
                     <small className="solver-node-runtime">
-                      <Cpu size={11} />
-                      {sdkName(agent.runtime)}
+                      <span className={`cli-badge is-${agent.runtime}`}>
+                        <Cpu size={11} />
+                        {sdkName(agent.runtime)}
+                      </span>
                       {rtHealth ? (
                         <em className={`runtime-dot ${rtHealth.status}`} title={rtHealth.detail} />
                       ) : null}

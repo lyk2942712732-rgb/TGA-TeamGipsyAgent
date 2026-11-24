@@ -3,12 +3,15 @@ import { createRoot } from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
 import { RuntimeApp } from "./app/RuntimeApp";
 import { AppProviders } from "./app/providers";
+import { applyTheme, loadTheme } from "./styles/theme";
 import "./styles/globals.css";
 import "./styles/reference.css";
 import "./styles/tga3-runtime.css";
 import "./styles/workbench.css";
 import "./styles/collaboration.css";
 import "./styles/aoe.css";
+
+applyTheme(loadTheme());
 
 createRoot(document.getElementById("root")!).render(
   <React.StrictMode>

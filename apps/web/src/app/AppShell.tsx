@@ -1,10 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
-import { Bell, ChevronLeft, ChevronRight, CirclePlay, HeartPulse, Shield } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { Bell, ChevronLeft, ChevronRight, CirclePlay, HeartPulse, Palette, Shield } from "lucide-react";
+import { useEffect, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import { attentionApi } from "../api/tga3-attention";
 import { fetchSystemHealth } from "../api/tga3-system";
 import { listTasks } from "../api/tga3-tasks";
+import { APP_THEMES, applyTheme, loadTheme, saveTheme, type AppTheme } from "../styles/theme";
 import { NAVIGATION_GROUPS, isNavigationItemActive } from "./navigation";
 import { isRuntimePage, type AppRoute } from "./router";
 import { statusLabel } from "../shared/status";
@@ -12,6 +13,16 @@ import { statusLabel } from "../shared/status";
 export function AppShell({ route, children }: { route: AppRoute; children: ReactNode }) {
   const navigate = useNavigate();
   const [collapsed, setCollapsed] = useState(false);
+  const [theme, setTheme] = useState<AppTheme>(() => loadTheme());
+
+  useEffect(() => {
+    applyTheme(theme);
+  }, [theme]);
+
+  const chooseTheme = (next: AppTheme) => {
+    setTheme(next);
+    saveTheme(next);
+  };
 
   const tasks = useQuery({ queryKey: ["tga3", "tasks"], queryFn: listTasks });
   const attention = useQuery({ queryKey: ["tga3", "attention"], queryFn: attentionApi.list, refetchInterval: 5000 });
@@ -70,6 +81,26 @@ export function AppShell({ route, children }: { route: AppRoute; children: React
       </section> : null}
 
       <footer className="app-sidebar-footer">
+        <div className="sidebar-theme-switcher" role="group" aria-label="界面主题">
+          <span className="sidebar-theme-label">
+            <Palette size={13} aria-hidden="true" />
+            主题
+          </span>
+          <div className="sidebar-theme-pills">
+            {APP_THEMES.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                className={theme === item.id ? "is-active" : ""}
+                aria-pressed={theme === item.id}
+                title={item.label}
+                onClick={() => chooseTheme(item.id)}
+              >
+                {item.short}
+              </button>
+            ))}
+          </div>
+        </div>
         <button className="app-collapse-footer" onClick={() => setCollapsed((value) => !value)}>
           <ChevronLeft size={15} aria-hidden="true" />
           <span>收起侧栏</span>
