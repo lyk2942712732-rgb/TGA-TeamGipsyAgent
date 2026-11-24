@@ -197,7 +197,10 @@ class QuestionImporter:
     async def import_outbox(self, parent_id: UUID, path: str | None = None) -> dict[str, Any]:
         async with self.locks[parent_id]:
             parent = await self.aoe.storage.get_task(parent_id)
-            if parent.metadata.get("collection_complete"):
+            incremental = bool(
+                parent.metadata.get("collection_complete") and parent.metadata.get("scout_collecting")
+            )
+            if parent.metadata.get("collection_complete") and not incremental:
                 questions = await self.aoe.storage.list_questions(parent_id)
                 keys = sorted(q.metadata["source_key"] for q in questions)
                 return {
@@ -254,7 +257,10 @@ class QuestionImporter:
                         raise ContractError(f"Invalid JSON syntax: {exc}") from exc
                     specs = _extract_specs(payload)
                     new_specs = [spec for spec in specs if spec.source_key not in registered_keys]
-                    already_keys = [spec.source_key for spec in specs if spec.source_key in registered_keys]
+                    existing_specs = [spec for spec in specs if spec.source_key in registered_keys]
+                    already_keys = [spec.source_key for spec in existing_specs]
+                    if incremental and existing_specs:
+                        await self.aoe.apply_incremental_updates(parent_id, existing_specs)
                     if not new_specs:
                         archived_to = None
                         if in_outbox:

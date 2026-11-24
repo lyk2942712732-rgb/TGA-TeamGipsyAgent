@@ -1,5 +1,5 @@
 import { ModelPicker } from "../../../components/ModelPicker";
-import { Bot, Box, CirclePause, CirclePlay, Settings2 } from "lucide-react";
+import { Bot, Box, CirclePause, CirclePlay, RefreshCw, Settings2, ShieldCheck, Square } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { tga3RuntimeApi } from "../../../api/tga3-runtime-control";
@@ -101,10 +101,20 @@ function Controls({ snapshot, agent, onChanged }: { snapshot: TGA3RuntimeSnapsho
   async function change(value: string) { setSelected(value); const [provider, model, protocol] = value.split("::"); if (!provider || !model || !protocol) return; setBusy(true); setNotice(null); try { await tga3RuntimeApi.setWorkerModel(snapshot.task.id, agent.agent_id, provider, model, protocol as ProviderProtocol); setNotice("模型已切换，将用于该 Agent 的后续周期。"); onChanged(); } catch (reason) { setNotice(errorText(reason)); } finally { setBusy(false); } }
   async function control(action: "pause" | "resume") { setBusy(true); setNotice(null); try { await tga3RuntimeApi.setWorkerState(snapshot.task.id, agent.agent_id, action); setNotice(action === "pause" ? "暂停请求已提交，将在下一个周期检查点生效。" : "Agent 已恢复运行。"); onChanged(); } catch (reason) { setNotice(errorText(reason)); } finally { setBusy(false); } }
   const worker = agent.role === "worker" && agent.runtime_location === "container"; const paused = ["paused", "pause_requested"].includes(agent.actual_state);
+  const aoeScout = Boolean(snapshot.aoe && agent.role === "scout");
+  const parentTerminal = ["completed", "failed", "cancelled", "stopped"].includes(snapshot.task.state);
+  const scoutWatch = snapshot.aoe?.scout_watch ?? null;
+  const scoutCollecting = Boolean(snapshot.aoe?.scout_collecting || (snapshot.aoe && !snapshot.aoe.collection_complete));
+  async function scoutAction(fn: () => Promise<unknown>, okText: string) {
+    setBusy(true); setNotice(null);
+    try { await fn(); setNotice(okText); onChanged(); }
+    catch (reason) { setNotice(errorText(reason)); }
+    finally { setBusy(false); }
+  }
   return <div className="tga3-controls"><section><header><Settings2 size={17} /><h3>后续模型</h3></header><div>供应商 / 已启用模型<ModelPicker label="供应商 / 已启用模型" options={models.map(model => ({ ...model, ready: true }))}
     value={(() => { const [provider_id, model_id, protocol] = selected.split("::"); return { provider_id, model_id, protocol: protocol as ProviderProtocol }; })()}
     disabled={busy || !worker} onChange={model => void change(`${model.provider_id}::${model.model_id}::${model.protocol}`)} /></div></section>
-    <section><header><Box size={17} /><h3>执行控制</h3></header>{worker ? <button type="button" disabled={busy} onClick={() => void control(paused ? "resume" : "pause")}>{paused ? <CirclePlay size={16} /> : <CirclePause size={16} />}{paused ? "恢复 Worker" : "暂停 Worker"}</button> : <p className="tga3-muted">该角色由任务生命周期启动一次性容器，不提供独立暂停或运行中切换模型。</p>}</section>{notice ? <p className="tga3-notice" role="status">{notice}</p> : null}
+    <section><header><Box size={17} /><h3>执行控制</h3></header>{worker ? <button type="button" disabled={busy} onClick={() => void control(paused ? "resume" : "pause")}>{paused ? <CirclePlay size={16} /> : <CirclePause size={16} />}{paused ? "恢复 Worker" : "暂停 Worker"}</button> : aoeScout && !parentTerminal ? <div className="aoe-scout-inspector-actions">{scoutCollecting ? <button type="button" disabled={busy} onClick={() => void scoutAction(() => tga3RuntimeApi.stopScout(snapshot.task.id), "已停止本轮 Scout 收集。")}><Square size={15} />停止 Scout 收集</button> : <><button type="button" disabled={busy} onClick={() => void scoutAction(() => tga3RuntimeApi.wakeScout(snapshot.task.id), "已唤醒 Scout 开始增量收题。")}><RefreshCw size={15} />唤醒 Scout 增量巡检</button>{scoutWatch?.enabled ? <button type="button" disabled={busy} onClick={() => void scoutAction(() => tga3RuntimeApi.stopScout(snapshot.task.id), "已暂停自动站岗。")}><CirclePause size={15} />停止自动站岗</button> : scoutWatch?.probe_script_present ? <button type="button" disabled={busy} onClick={() => void scoutAction(() => tga3RuntimeApi.configureScoutWatch(snapshot.task.id, "enable_sentinel"), "已开启零 Token 哨兵站岗。")}><ShieldCheck size={15} />开启零 Token 哨兵</button> : null}</>}</div> : <p className="tga3-muted">该角色由任务生命周期启动一次性容器，不提供独立暂停或运行中切换模型。</p>}</section>{notice ? <p className="tga3-notice" role="status">{notice}</p> : null}
   </div>;
 }
 

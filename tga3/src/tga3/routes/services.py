@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -56,6 +57,18 @@ class ScoutSettingsRequest(BaseModel):
 class ExtendQuestionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     minutes: int = Field(default=5, ge=1, le=240)
+
+
+class ScoutWatchRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    action: Literal["enable_sentinel", "enable_llm_poll", "disable"]
+    interval_seconds: int | None = Field(default=None, ge=15, le=3600)
+
+
+class FinishDecisionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    decision: Literal["continue_standby", "finish_after_reports", "finish_now"]
+    auto_standby_future: bool = False
 
 
 class RestartTaskRequest(BaseModel):

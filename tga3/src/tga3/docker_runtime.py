@@ -34,6 +34,8 @@ class LaunchSpec:
     evidence_agents: tuple[str, ...] = ()
     aoe_auto_submit_flag: bool = True
     knowledge_source: KnowledgeSource = "online"
+    aoe_incremental: bool = False
+    aoe_detected_new_keys: tuple[str, ...] = ()
 
 
 class ContainerRuntime(Protocol):
@@ -42,6 +44,7 @@ class ContainerRuntime(Protocol):
     async def image_status(self, image: str) -> dict[str, object]: ...
     async def report(self, spec: LaunchSpec, emit) -> str: ...
     async def scout(self, spec: LaunchSpec, emit) -> None: ...
+    async def run_scout_probe(self, task_id: UUID, *, timeout: int = 25) -> tuple[int, str, str]: ...
 
 
 class DockerContainerRuntime:
@@ -345,9 +348,14 @@ class DockerContainerRuntime:
                 # publishing a request that only the resumed runner may consume.
                 await self.stop(spec.task_id, "scout")
             self._ensure_worker_directory(state_dir)
-            request = {"id": request_id, "phase": spec.scout_phase,
-                       "question_id": str(spec.scout_question_id) if spec.scout_question_id else None,
-                       "budget_seconds": spec.phase_budget_seconds}
+            request = {
+                "id": request_id,
+                "phase": spec.scout_phase,
+                "question_id": str(spec.scout_question_id) if spec.scout_question_id else None,
+                "budget_seconds": spec.phase_budget_seconds,
+                "incremental": spec.aoe_incremental,
+                "detected_new_keys": list(spec.aoe_detected_new_keys),
+            }
             temporary = state_dir / f"aoe-scout-request.{request_id}.tmp"
             temporary.write_text(json.dumps(request), encoding="utf-8")
             temporary.replace(state_dir / "aoe-scout-request.json")
@@ -462,6 +470,74 @@ class DockerContainerRuntime:
         if agent_id == "scout":
             getattr(self, "_scouts", {}).pop(task_id, None)
 
+    def _run_scout_probe_sync(self, task_id: UUID, timeout: int) -> tuple[int, str, str]:
+        runtime = self.config.runtime
+        docker_cfg = runtime.docker
+        workspace = self.config.task_path(task_id, "workspaces", "scout")
+        inputs = self.config.task_path(task_id, "inputs")
+        overview = self.config.task_path(task_id) / "overview"
+        volumes = {
+            str(workspace): {"bind": "/workspace", "mode": "rw"},
+            str(inputs): {"bind": "/inputs", "mode": "ro"},
+            str(self.config.task_path(task_id)): {"bind": "/aoe", "mode": "ro"},
+        }
+        if overview.is_dir():
+            volumes[str(overview)] = {"bind": "/task-overview", "mode": "ro"}
+        scout_cfg = self.config.agents.agents.get("scout")
+        image = (
+            self.config.image_for_runtime(scout_cfg.runtime, "scout")
+            if scout_cfg is not None
+            else docker_cfg.image
+        )
+        container = None
+        try:
+            container = self.client.containers.run(
+                image=image,
+                name=f"tga3-{str(task_id)[:8]}-probe-{uuid4().hex[:6]}",
+                entrypoint=["python3", "/workspace/watch_probe.py"],
+                detach=True,
+                auto_remove=False,
+                environment={
+                    "HOME": "/home/tga3",
+                    "PYTHONDONTWRITEBYTECODE": "1",
+                    "PYTHONUNBUFFERED": "1",
+                    "TGA3_AOE_PARENT_ID": str(task_id),
+                    "TGA3_TASK_OVERVIEW_ROOT": "/task-overview",
+                },
+                user=f"{docker_cfg.worker_uid}:{docker_cfg.worker_gid}",
+                labels={"tga3.task_id": str(task_id), "tga3.agent_id": "scout-probe"},
+                volumes=volumes,
+                working_dir="/workspace",
+                network=runtime.docker.network,
+                nano_cpus=int(min(docker_cfg.cpu_cores, 1.0) * 1_000_000_000),
+                mem_limit="512m",
+                pids_limit=min(docker_cfg.pids_limit, 64),
+                cap_drop=["ALL"],
+                security_opt=["no-new-privileges:true"],
+                extra_hosts={"host.docker.internal": "host-gateway"},
+            )
+            result = container.wait(timeout=timeout)
+            exit_code = int(result.get("StatusCode", 1))
+            stdout = container.logs(stdout=True, stderr=False).decode("utf-8", errors="replace")
+            stderr = container.logs(stdout=False, stderr=True).decode("utf-8", errors="replace")
+            return exit_code, stdout, stderr
+        except Exception as exc:
+            if container is not None:
+                try:
+                    container.stop(timeout=2)
+                except Exception:
+                    pass
+            raise RuntimeError(f"Zero-token probe execution failed: {exc}") from exc
+        finally:
+            if container is not None:
+                try:
+                    container.remove(v=True, force=True)
+                except Exception:
+                    pass
+
+    async def run_scout_probe(self, task_id: UUID, *, timeout: int = 25) -> tuple[int, str, str]:
+        return await asyncio.to_thread(self._run_scout_probe_sync, task_id, timeout)
+
     def _image_status_sync(self, image: str) -> dict[str, object]:
         try:
             item = self.client.images.get(image)
@@ -492,10 +568,21 @@ class FakeContainerRuntime:
     def __init__(self) -> None:
         self.launched: list[LaunchSpec] = []
         self.stopped: list[tuple[UUID, str]] = []
+        self.probe_calls: list[UUID] = []
+        self.probe_handler = None
 
     async def launch(self, spec: LaunchSpec) -> str:
         self.launched.append(spec)
         return f"fake-{spec.task_id}-{spec.agent.agent_id}"
+
+    async def run_scout_probe(self, task_id: UUID, *, timeout: int = 25) -> tuple[int, str, str]:
+        self.probe_calls.append(task_id)
+        if self.probe_handler is not None:
+            result = self.probe_handler(task_id, timeout)
+            if asyncio.iscoroutine(result):
+                return await result
+            return result
+        return 0, '{"source_keys": [], "solved_keys": []}', ""
 
     async def report(self, spec: LaunchSpec, emit) -> str:
         container_id = await self.launch(spec)

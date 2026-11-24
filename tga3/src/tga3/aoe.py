@@ -8,7 +8,7 @@ import json
 import time
 from collections import defaultdict
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 from uuid import UUID, uuid4, uuid5
 
 import httpx
@@ -34,6 +34,7 @@ from .aoe_models import (
 )
 from .aoe_scout_runner import AOEScoutRunner
 from .aoe_views import AOEViewStore, atomic_json
+from .aoe_watch import AOEScoutWatch, WatchAction
 from .batch_context import BatchContext
 from .docker_runtime import LaunchSpec
 from .domain import SYSTEM_ACTOR, AgentRun, AgentState, EventKind, InputFile, PublishRequest, RunState, TaskRun
@@ -81,10 +82,14 @@ class AOERuntime:
         )
         self.collection = QuestionCollection(self)
         self.scout_runner = AOEScoutRunner(self)
+        self.watch = AOEScoutWatch(self)
         self._recovering: set[UUID] = set()
         self._target_jobs: dict[UUID, asyncio.Task] = {}
         self._target_claims: dict[UUID, tuple[str, ...]] = {}
         self._target_closes: dict[UUID, asyncio.Task] = {}
+        self._scout_jobs: dict[UUID, asyncio.Task] = {}
+        self._probe_jobs: dict[UUID, asyncio.Task] = {}
+        self._bindings: dict[UUID, dict] = {}
 
     @property
     def targets(self) -> TargetInstances:
@@ -189,7 +194,8 @@ class AOERuntime:
         return await self.views.question_view(question)
 
     async def snapshot(self, parent_id: UUID) -> dict:
-        return await self.views.snapshot(parent_id)
+        parent = await self.storage.get_task(parent_id)
+        return await self.views.snapshot(parent_id, scout_watch=self.watch.state_for(parent))
 
     async def _save_question(self, question: TaskRun) -> None:
         await self.views.save_question(question)
@@ -209,12 +215,15 @@ class AOERuntime:
     async def _collecting_parent(self, task_id: UUID) -> TaskRun:
         parent = await self.storage.get_task(task_id)
         scout = await self.storage.get_agent(task_id, "scout")
+        incremental = bool(
+            parent.metadata.get("collection_complete") and parent.metadata.get("scout_collecting")
+        )
         if (
             parent.scene_id != "aoe"
             or parent.parent_task_id is not None
-            or parent.state not in {RunState.SCOUTING, RunState.RUNNING}
+            or parent.state not in {RunState.SCOUTING, RunState.RUNNING, RunState.REPORTING}
             or scout.metadata.get("scout_phase") != "collecting"
-            or parent.metadata.get("collection_complete")
+            or (parent.metadata.get("collection_complete") and not incremental)
         ):
             raise ContractError("Question collection is available only in the AOE Scout pre-phase")
         return parent
@@ -252,6 +261,7 @@ class AOERuntime:
                 if spec.source_key not in existing
                 or not existing[spec.source_key].metadata.get("registration_complete")
             }
+            incremental = bool(parent.metadata.get("collection_complete") and parent.metadata.get("scout_collecting"))
             for spec in specifications:
                 local_paths, remote_specs = split_map[spec.source_key]
                 payload = spec.model_dump(mode="json", exclude={"source"})
@@ -262,14 +272,20 @@ class AOERuntime:
                 ).hexdigest()
                 if spec.source_key in existing:
                     old = existing[spec.source_key]
-                    legacy = hashlib.sha256(json.dumps({k: v for k, v in payload.items() if k != "target"},
-                                                       ensure_ascii=False, sort_keys=True).encode()).hexdigest()
-                    compatible = old.metadata.get("target") is None and spec.target.mode == "unknown"
-                    accepted = {fingerprint, legacy} if compatible else {fingerprint}
-                    if old.metadata.get("registration_digest") not in accepted:
-                        raise ConflictError("Original question key already registered with different data")
-                    if existing[spec.source_key].metadata.get("registration_complete"):
-                        continue
+                    if incremental:
+                        if old.metadata.get("registration_complete"):
+                            await self._apply_incremental_spec_update(parent_id, old, spec)
+                            existing[spec.source_key] = await self.storage.get_task(old.id)
+                            continue
+                    else:
+                        legacy = hashlib.sha256(json.dumps({k: v for k, v in payload.items() if k != "target"},
+                                                           ensure_ascii=False, sort_keys=True).encode()).hexdigest()
+                        compatible = old.metadata.get("target") is None and spec.target.mode == "unknown"
+                        accepted = {fingerprint, legacy} if compatible else {fingerprint}
+                        if old.metadata.get("registration_digest") not in accepted:
+                            raise ConflictError("Original question key already registered with different data")
+                        if existing[spec.source_key].metadata.get("registration_complete"):
+                            continue
                 question_id = uuid5(parent_id, "aoe-question:" + spec.source_key)
                 self.config.register_question_path(parent_id, question_id)
                 self.config.ensure_task_directories(question_id)
@@ -389,8 +405,12 @@ class AOERuntime:
                                                 metadata={"scout_phase": "completed"})
                 existing[spec.source_key] = await self.storage.get_task(question.id)
                 await self._save_question(existing[spec.source_key])
-            parent = await self.storage.update_task(parent_id, state=RunState.RUNNING,
-                                                    metadata={"aoe_scout_mode": "collection_only"})
+            parent_updates: dict = {"aoe_scout_mode": "collection_only"}
+            if incremental and any(q.metadata.get("status") not in {"solved", "abandoned"} for q in existing.values()):
+                parent_updates["finish_confirm"] = None
+                if parent.metadata.get("aoe_phase") in {"standby", "awaiting_finish_confirm", "reporting"}:
+                    parent_updates["aoe_phase"] = "solo"
+            parent = await self.storage.update_task(parent_id, state=RunState.RUNNING, metadata=parent_updates)
             await self._collection_state(parent_id, parent=parent, questions=list(existing.values()))
             await self.events.emit(
                 parent_id,
@@ -405,6 +425,123 @@ class AOERuntime:
                                    "path": str(existing[spec.source_key].id) + '/question.json'}
                                   for spec in specifications]}
 
+    async def _apply_incremental_spec_update(
+        self,
+        parent_id: UUID,
+        question: TaskRun,
+        spec: AOEQuestionInput,
+    ) -> dict[str, bool]:
+        """Idempotently sync platform-solved state or newly added hints for an existing question."""
+        updated = {"solved_synced": False, "hint_pushed": False}
+        q_status = question.metadata.get("status", "queued")
+        if spec.already_solved and q_status not in {"solved", "abandoned"}:
+            await self._settle_platform_solved(question, flag=spec.solved_flag)
+            updated["solved_synced"] = True
+            return updated
+
+        if q_status in {"solved", "abandoned"}:
+            return updated
+
+        old_desc = (question.metadata.get("description") or "").strip()
+        old_notes = (question.metadata.get("collection_notes") or "").strip()
+        new_desc = (spec.description or "").strip()
+        new_notes = (spec.collection_notes or "").strip()
+        additions: list[str] = []
+        if new_notes and new_notes != old_notes and new_notes not in old_notes:
+            additions.append(f"新增收集备注 / Hint：{new_notes}")
+        if new_desc and new_desc != old_desc and len(new_desc) > len(old_desc):
+            additions.append(f"题面更新：\n{new_desc}")
+        if additions:
+            note_text = "【Scout 增量巡检同步更新】\n" + "\n\n".join(additions)
+            digest = hashlib.sha256(note_text.encode("utf-8")).hexdigest()[:16]
+            await self.board.publish(
+                question.id,
+                SYSTEM_ACTOR,
+                PublishRequest(
+                    kind="user_prompt",
+                    topic="realtime",
+                    body={"text": note_text},
+                    idempotency_key=f"aoe-incremental-update:{digest}",
+                ),
+            )
+            meta_updates: dict = {}
+            if new_notes and new_notes != old_notes:
+                meta_updates["collection_notes"] = new_notes
+            if new_desc and len(new_desc) > len(old_desc):
+                meta_updates["description"] = new_desc
+            if meta_updates:
+                question = await self.storage.update_task(question.id, metadata=meta_updates)
+                await self._save_question(question)
+            await self.events.emit(
+                parent_id,
+                actor=SYSTEM_ACTOR,
+                kind=EventKind.SYSTEM,
+                text=f"增量巡检发现题目补充信息，已同步推送到黑板：{question.title}",
+                payload={"question_id": str(question.id)},
+            )
+            updated["hint_pushed"] = True
+        return updated
+
+    async def apply_incremental_updates(self, parent_id: UUID, specifications: list[AOEQuestionInput]) -> dict:
+        """Apply incremental updates for already-registered questions without raising ConflictError."""
+        async with self.locks[parent_id]:
+            existing = {q.metadata["source_key"]: q for q in await self.storage.list_questions(parent_id)}
+            solved_synced = 0
+            hints_pushed = 0
+            for spec in specifications:
+                question = existing.get(spec.source_key)
+                if question is None:
+                    continue
+                result = await self._apply_incremental_spec_update(parent_id, question, spec)
+                if result["solved_synced"]:
+                    solved_synced += 1
+                if result["hint_pushed"]:
+                    hints_pushed += 1
+            return {"solved_synced": solved_synced, "hints_pushed": hints_pushed}
+
+    async def _settle_platform_solved(self, question: TaskRun, *, flag: str | None = None) -> TaskRun:
+        active = active_attempts(question)
+        agents = {attempt["agent_id"] for attempt in active}
+        if agents:
+            question = await self._finish_attempts(question, agents, "solved")
+        question = await self.storage.update_task(
+            question.id,
+            state=RunState.COMPLETED,
+            metadata={
+                "status": "solved",
+                "flag": flag or question.metadata.get("flag"),
+                "finish_reason": "platform_solved",
+                "solved_at": self.clock(),
+                "produce_report": False,
+            },
+        )
+        await self._save_question(question)
+        await self.events.emit(
+            question.parent_task_id,
+            actor=SYSTEM_ACTOR,
+            kind=EventKind.SYSTEM,
+            text=f"平台同步：题目已在平台显示解出，自动结题并释放 Worker：{question.title}",
+            payload={"question_id": str(question.id), "status": "solved", "finish_reason": "platform_solved"},
+        )
+        return question
+
+    async def sync_platform_solved_keys(self, parent_id: UUID, solved_keys: list[str]) -> int:
+        """Settle unsolved questions that the zero-token sentinel reports as solved on the platform."""
+        key_set = {str(k).strip() for k in solved_keys if str(k).strip()}
+        if not key_set:
+            return 0
+        async with self.locks[parent_id]:
+            count = 0
+            for question in await self.storage.list_questions(parent_id):
+                if question.metadata.get("status") in {"solved", "abandoned"}:
+                    continue
+                if question.metadata.get("source_key") in key_set:
+                    await self._settle_platform_solved(question)
+                    count += 1
+            if count:
+                self.wake(parent_id)
+            return count
+
     async def finish_collection(
         self,
         parent_id: UUID,
@@ -418,11 +555,24 @@ class AOERuntime:
             raise ContractError("Collection status must be 'complete' or 'partial'")
         if self.collection.has_pending(parent_id):
             parent_check = await self.storage.get_task(parent_id)
-            if not parent_check.metadata.get("collection_complete"):
+            if not parent_check.metadata.get("collection_complete") or parent_check.metadata.get("scout_collecting"):
                 await self.collection.import_outbox(parent_id)
         async with self.locks[parent_id]:
             parent = await self.storage.get_task(parent_id)
             questions = await self.storage.list_questions(parent_id)
+            incremental = bool(
+                parent.metadata.get("collection_complete") and parent.metadata.get("scout_collecting")
+            )
+            if incremental:
+                parent = await self.storage.update_task(
+                    parent_id,
+                    metadata={
+                        "scout_collecting": False,
+                        "collection_round_complete": True,
+                        "detected_new_keys": [],
+                    },
+                )
+                return {"saved": True, **await self._collection_state(parent_id, parent=parent, questions=questions)}
             if not questions or any(not q.metadata.get("registration_complete") for q in questions):
                 raise ContractError("No complete registered questions are available to finish collection")
             if status == "complete" and expected_count is not None and len(questions) != expected_count:
@@ -440,14 +590,16 @@ class AOERuntime:
                         "collection_complete": True,
                         "collection_status": status,
                         "collection_warnings": warnings_list,
+                        "scout_collecting": False,
+                        "collection_round_complete": True,
                     },
                 )
             return {"saved": True, **await self._collection_state(parent_id, parent=parent, questions=questions)}
 
     async def run(self, parent_id: UUID, bindings: dict) -> None:
-        scout_job = None
         wakeup = self._wakeups.setdefault(parent_id, asyncio.Event())
         self._parents[parent_id] = parent_id
+        self._bindings[parent_id] = dict(bindings)
         loop = asyncio.get_running_loop()
         next_reconcile = loop.time()
         try:
@@ -458,22 +610,56 @@ class AOERuntime:
                 "scout_complete", bool(questions) and all(scout_ready(q) for q in questions)
             )
             if pending:
-                scout_job = asyncio.create_task(self._scout(parent_id, bindings))
-                scout_job.add_done_callback(lambda _job: self.wake(parent_id))
+                initial_job = asyncio.create_task(self._scout(parent_id, bindings))
+                initial_job.add_done_callback(lambda _job: self.wake(parent_id))
+                self._scout_jobs[parent_id] = initial_job
             while True:
                 # Clear before reading authoritative state, so changes arriving
                 # during this tick remain set and cannot be lost before waiting.
                 wakeup.clear()
+                scout_job = self._scout_jobs.get(parent_id)
                 if scout_job is not None and scout_job.done():
-                    await scout_job  # Surface Scout failure while Workers are running.
+                    self._scout_jobs.pop(parent_id, None)
+                    current_parent = await self.storage.get_task(parent_id)
+                    if not current_parent.metadata.get("collection_complete"):
+                        await scout_job  # Surface initial Scout failure while Workers are running.
+                    else:
+                        await asyncio.gather(scout_job, return_exceptions=True)
+                probe_job = self._probe_jobs.get(parent_id)
+                if probe_job is not None and probe_job.done():
+                    self._probe_jobs.pop(parent_id, None)
+                    await asyncio.gather(probe_job, return_exceptions=True)
                 reconcile = loop.time() >= next_reconcile
                 if await self.tick(parent_id, reconcile=reconcile):
                     break
+                current_parent = await self.storage.get_task(parent_id)
+                watch_due = self.watch.next_due(current_parent)
+                if (
+                    watch_due is not None
+                    and watch_due <= self.clock()
+                    and parent_id not in self._scout_jobs
+                    and parent_id not in self._probe_jobs
+                    and current_parent.state not in TERMINAL
+                ):
+                    watch_mode = (current_parent.metadata.get("scout_watch") or {}).get("mode")
+                    if watch_mode == "sentinel":
+                        pjob = asyncio.create_task(self.watch.run_sentinel_probe(parent_id))
+                        pjob.add_done_callback(lambda _job: self.wake(parent_id))
+                        self._probe_jobs[parent_id] = pjob
+                    elif watch_mode == "llm_poll":
+                        try:
+                            await self.wake_scout(parent_id, reason="llm_poll")
+                        except ConflictError:
+                            pass
+                    current_parent = await self.storage.get_task(parent_id)
+                    watch_due = self.watch.next_due(current_parent)
                 if reconcile:
                     next_reconcile = loop.time() + self.reconcile_seconds
                 delay = max(0, next_reconcile - loop.time())
                 if (due := self._next_due.get(parent_id)) is not None:
                     delay = min(delay, max(0, due - self.clock()))
+                if watch_due is not None:
+                    delay = min(delay, max(0, watch_due - self.clock()))
                 try:
                     await asyncio.wait_for(wakeup.wait(), timeout=delay)
                 except TimeoutError:
@@ -485,14 +671,244 @@ class AOERuntime:
             await self.events.emit(parent_id, actor=SYSTEM_ACTOR, kind=EventKind.ERROR, text=f"AOE 任务运行失败：{exc}")
             await self.stop_children(parent_id)
         finally:
-            if scout_job is not None:
-                if not scout_job.done():
-                    scout_job.cancel()
-                await asyncio.gather(scout_job, return_exceptions=True)
+            await self._cancel_scout_and_probe(parent_id)
             await self._cancel_target_jobs(parent_id)
+            self._bindings.pop(parent_id, None)
             self._wakeups.pop(parent_id, None)
             self._next_due.pop(parent_id, None)
             self._clear_views(parent_id)
+
+    async def _cancel_scout_and_probe(self, parent_id: UUID) -> None:
+        jobs = []
+        for mapping in (self._scout_jobs, self._probe_jobs):
+            job = mapping.pop(parent_id, None)
+            if job is not None:
+                if not job.done():
+                    job.cancel()
+                jobs.append(job)
+        if jobs:
+            await asyncio.gather(*jobs, return_exceptions=True)
+
+    async def _resolve_bindings(self, parent_id: UUID) -> dict:
+        resolved = {}
+        for run in await self.storage.list_agents(parent_id):
+            resolved[run.agent_id] = self.config.resolve_agent(
+                run.agent_id,
+                run.provider_id,
+                run.model_id,
+                run.protocol,
+                runtime=run.sdk or None,
+            )
+        if not resolved and parent_id in self._bindings:
+            return dict(self._bindings[parent_id])
+        self._bindings[parent_id] = resolved
+        return resolved
+
+    async def wake_scout(
+        self,
+        parent_id: UUID,
+        *,
+        reason: str = "manual",
+        detected_new_keys: list[str] | None = None,
+    ) -> dict:
+        """Manually (or via sentinel/llm_poll) wake Scout for an incremental collection pass."""
+        async with self.locks[parent_id]:
+            parent = await self.storage.get_task(parent_id)
+            if parent.scene_id != "aoe" or parent.parent_task_id is not None:
+                raise ContractError("唤醒 Scout 仅支持 AOE 批量任务")
+            if parent.state in TERMINAL:
+                raise ConflictError("当前任务已结束，无法唤醒 Scout")
+            if not parent.metadata.get("collection_complete"):
+                raise ConflictError("Scout 正在执行首轮题目收集，无需重复唤醒")
+            active_scout = self._scout_jobs.get(parent_id)
+            if parent.metadata.get("scout_collecting") or (active_scout is not None and not active_scout.done()):
+                raise ConflictError("Scout 正在执行增量收题，请等待本轮完成或先停止")
+            probe = self._probe_jobs.pop(parent_id, None)
+            if probe is not None and not probe.done():
+                probe.cancel()
+            bindings = await self._resolve_bindings(parent_id)
+            job = asyncio.create_task(
+                self.scout_runner.run_incremental(
+                    parent_id,
+                    bindings,
+                    reason=reason,
+                    detected_new_keys=detected_new_keys,
+                )
+            )
+            job.add_done_callback(lambda _job: self.wake(parent_id))
+            self._scout_jobs[parent_id] = job
+            self.wake(parent_id)
+            return {
+                "started": True,
+                "reason": reason,
+                "scout_watch": self.watch.state_for(await self.storage.get_task(parent_id)),
+            }
+
+    async def stop_scout(self, parent_id: UUID) -> dict:
+        """Stop an active Scout collection/incremental pass, or pause automatic standby watch."""
+        parent = await self.storage.get_task(parent_id)
+        if parent.scene_id != "aoe" or parent.parent_task_id is not None:
+            raise ContractError("停止 Scout 仅支持 AOE 批量任务")
+        if parent.state in TERMINAL:
+            raise ConflictError("当前任务已结束")
+
+        probe = self._probe_jobs.pop(parent_id, None)
+        if probe is not None and not probe.done():
+            probe.cancel()
+            await asyncio.gather(probe, return_exceptions=True)
+
+        active_scout = self._scout_jobs.get(parent_id)
+        if active_scout is not None and not active_scout.done():
+            if not parent.metadata.get("collection_complete"):
+                # Initial round: if questions are already collected, seal as partial so Workers continue.
+                questions = await self.storage.list_questions(parent_id)
+                if not questions:
+                    raise ConflictError("首轮尚未收集到任何题目，暂不可停止 Scout；如需中止请直接停止整个任务")
+                await self.finish_collection(
+                    parent_id,
+                    status="partial",
+                    warnings=["人工提前停止首轮 Scout 收集"],
+                    force=True,
+                )
+                await self.containers.stop(parent_id, "scout")
+                active_scout.cancel()
+                await asyncio.gather(active_scout, return_exceptions=True)
+                self._scout_jobs.pop(parent_id, None)
+                await self.storage.update_task(
+                    parent_id,
+                    state=RunState.RUNNING,
+                    metadata={"scout_complete": True, "scout_collecting": False, "collection_round_complete": True},
+                )
+                watch = await self.watch.configure(parent_id, action="disable")
+                self.wake(parent_id)
+                return {"stopped": True, "mode": "initial_partial", "scout_watch": watch}
+            active_scout.cancel()
+            await asyncio.gather(active_scout, return_exceptions=True)
+            self._scout_jobs.pop(parent_id, None)
+            self.wake(parent_id)
+            return {
+                "stopped": True,
+                "mode": "incremental_cancelled",
+                "scout_watch": self.watch.state_for(await self.storage.get_task(parent_id)),
+            }
+
+        watch = await self.watch.configure(parent_id, action="disable")
+        return {"stopped": True, "mode": "watch_disabled", "scout_watch": watch}
+
+    async def configure_scout_watch(
+        self,
+        parent_id: UUID,
+        *,
+        action: WatchAction,
+        interval_seconds: int | None = None,
+    ) -> dict:
+        watch = await self.watch.configure(parent_id, action=action, interval_seconds=interval_seconds)
+        return {"scout_watch": watch}
+
+    async def apply_finish_decision(
+        self,
+        parent_id: UUID,
+        *,
+        decision: Literal["continue_standby", "finish_after_reports", "finish_now"],
+        auto_standby_future: bool = False,
+    ) -> dict:
+        """Apply user confirmation when all current AOE questions have reached solved/abandoned."""
+        async with self.locks[parent_id]:
+            parent = await self.storage.get_task(parent_id)
+            if parent.scene_id != "aoe" or parent.parent_task_id is not None:
+                raise ContractError("结束确认仅支持 AOE 批量任务")
+            if parent.state in TERMINAL:
+                raise ConflictError("当前任务已结束")
+
+            now = self.clock()
+            questions = await self.storage.list_questions(parent_id)
+            if decision == "continue_standby":
+                await self.targets.release_parent(parent_id)
+                confirm = {
+                    "status": "continued",
+                    "decided_at": now,
+                    "wave_question_count": len(questions),
+                }
+                meta_updates: dict = {
+                    "aoe_phase": "standby",
+                    "finish_confirm": confirm,
+                }
+                if auto_standby_future:
+                    meta_updates["auto_standby_on_complete"] = True
+                await self.storage.update_task(parent_id, state=RunState.RUNNING, metadata=meta_updates)
+                watch = await self.watch.ensure_standby_watch(parent_id)
+                note = (
+                    f"保持默认零 Token 哨兵站岗（每 {watch['probe_interval_seconds']}s 探测新题）"
+                    if watch.get("mode") == "sentinel" and watch.get("enabled")
+                    else "保持定时巡检站岗"
+                    if watch.get("mode") == "llm_poll" and watch.get("enabled")
+                    else "当前无零 Token 探测脚本，保持人工候题状态（可随时手动唤醒 Scout）"
+                )
+                await self.events.emit(
+                    parent_id,
+                    actor=SYSTEM_ACTOR,
+                    kind=EventKind.SYSTEM,
+                    text=f"已确认继续任务：{note}",
+                    channel_agent_id="scout",
+                    payload={"decision": decision, "auto_standby_future": auto_standby_future, "scout_watch": watch},
+                )
+                self.wake(parent_id)
+                return {
+                    "decision": decision,
+                    "phase": "standby",
+                    "finish_confirm": confirm,
+                    "scout_watch": watch,
+                }
+
+            # User confirmed finishing the task: stop watch/sentinel and any follow-up probe/scan.
+            await self._cancel_scout_and_probe(parent_id)
+            await self.containers.stop(parent_id, "scout")
+            watch = self.watch.state_for(parent)
+            watch.update(enabled=False, state="idle", next_check_at=None)
+            confirm = {
+                "status": "finishing",
+                "wait_for_reports": decision == "finish_after_reports",
+                "decided_at": now,
+                "wave_question_count": len(questions),
+            }
+            if decision == "finish_now":
+                for question in questions:
+                    if question.state in TERMINAL:
+                        continue
+                    if self.automation is not None:
+                        await self.automation.cancel(question.id)
+                    await self.containers.stop(question.id, "reporter")
+                    final_state = (
+                        RunState.COMPLETED if question.metadata.get("status") == "solved" else RunState.CANCELLED
+                    )
+                    await self.storage.update_task(question.id, state=final_state)
+            await self.storage.update_task(
+                parent_id,
+                metadata={
+                    "scout_watch": watch,
+                    "scout_collecting": False,
+                    "finish_confirm": confirm,
+                    "aoe_phase": "reporting" if decision == "finish_after_reports" else "completed",
+                },
+            )
+            await self.events.emit(
+                parent_id,
+                actor=SYSTEM_ACTOR,
+                kind=EventKind.SYSTEM,
+                text=(
+                    "已确认立即结束任务（跳过剩余未完成报告）"
+                    if decision == "finish_now"
+                    else "已确认结束任务，待剩余逐题报告完成后自动归档"
+                ),
+                payload={"decision": decision},
+            )
+            self.wake(parent_id)
+            return {
+                "decision": decision,
+                "phase": "completed" if decision == "finish_now" else "reporting",
+                "finish_confirm": confirm,
+                "scout_watch": watch,
+            }
 
     def _clear_views(self, parent_id: UUID) -> None:
         self.collection.clear_state(parent_id)
@@ -1127,6 +1543,10 @@ class AOERuntime:
                     "collecting" if need_scout else parent.metadata.get("collection_status", "complete")
                 ),
                 "scout_complete": not need_scout,
+                "scout_collecting": need_scout,
+                "collection_round_complete": not need_scout,
+                "detected_new_keys": [],
+                "finish_confirm": None,
             }
             if budgets:
                 parent_meta["aoe_attempt_budgets"] = budgets
@@ -1243,8 +1663,23 @@ class AOERuntime:
             slots = {run.agent_id: run for run in await self.storage.list_agents(parent_id)}
             workers = tuple(agent for agent in self.config.worker_agent_ids if agent in slots)
             remaining = unfinished(questions)
+            if remaining and (
+                parent.state == RunState.REPORTING
+                or parent.metadata.get("finish_confirm") is not None
+                or parent.metadata.get("aoe_phase") in {"standby", "awaiting_finish_confirm", "reporting"}
+            ):
+                parent = await self._update_parent(
+                    parent,
+                    state=RunState.RUNNING,
+                    metadata={"finish_confirm": None, "aoe_phase": "solo"},
+                )
             swarm_question = next((q for q in remaining if q.metadata.get('swarm')), None)
-            if parent.metadata.get("collection_complete") and len(workers) == 4 and len(remaining) == 1:
+            if (
+                parent.metadata.get("collection_complete")
+                and not parent.metadata.get("scout_collecting")
+                and len(workers) == 4
+                and len(remaining) == 1
+            ):
                 swarm_question = remaining[0]
             for question in remaining:
                 question = await self._protect_completion(question)
@@ -1303,8 +1738,27 @@ class AOERuntime:
                 phase = "joint"
             if swarm_question is not None and unfinished(questions):
                 phase = 'swarm'
-            if parent.metadata.get("collection_complete") and questions and not unfinished(questions):
-                phase = "reporting"
+            all_solved_or_abandoned = (
+                bool(questions)
+                and parent.metadata.get("collection_complete")
+                and not unfinished(questions)
+            )
+            if all_solved_or_abandoned:
+                if parent.metadata.get("aoe_finish_confirm_enabled"):
+                    confirm = parent.metadata.get("finish_confirm") or {}
+                    confirm_status = confirm.get("status")
+                    if confirm_status == "finishing":
+                        phase = "reporting"
+                    elif confirm_status == "continued" and confirm.get("wave_question_count") == len(questions):
+                        phase = "standby"
+                    elif parent.metadata.get("scout_collecting"):
+                        phase = "standby" if parent.metadata.get("aoe_phase") == "standby" else "solo"
+                    elif parent.metadata.get("auto_standby_on_complete"):
+                        phase = "standby"
+                    else:
+                        phase = "awaiting_finish_confirm"
+                else:
+                    phase = "reporting"
             parent = await self._update_parent(parent, metadata={"aoe_phase": phase})
             if phase == "solo":
                 for agent_id in available:
@@ -1371,6 +1825,98 @@ class AOERuntime:
                        if record["parent_id"] == str(parent_id) and record.get("retry_at", 0) > self.clock()
                        and record.get("state") != "ready")
             self._next_due[parent_id] = min(due, default=None)
+            if (
+                questions
+                and parent.metadata.get("collection_complete")
+                and not parent.metadata.get("scout_collecting")
+                and not unfinished(questions)
+            ):
+                if parent.metadata.get("aoe_finish_confirm_enabled"):
+                    confirm = parent.metadata.get("finish_confirm") or {}
+                    confirm_status = confirm.get("status")
+                    if confirm_status == "finishing":
+                        if any(q.state not in TERMINAL for q in questions):
+                            parent = await self._update_parent(
+                                parent, state=RunState.REPORTING, metadata={"aoe_phase": "reporting"}
+                            )
+                            return False
+                        await self.storage.update_task(
+                            parent_id, state=RunState.COMPLETED, metadata={"aoe_phase": "completed"}
+                        )
+                        for agent_id in [*workers, "reporter", "scout"]:
+                            if agent_id in slots:
+                                await self.storage.update_agent(
+                                    parent_id,
+                                    agent_id,
+                                    desired_state=AgentState.COMPLETED,
+                                    actual_state=AgentState.COMPLETED,
+                                    metadata={"aoe_waiting": False},
+                                )
+                        await self.events.emit(
+                            parent_id,
+                            actor=SYSTEM_ACTOR,
+                            kind=EventKind.SYSTEM,
+                            text="AOE 所有题目已结束，逐题报告已处理完成。",
+                        )
+                        return True
+                    if confirm_status == "continued" and confirm.get("wave_question_count") == len(questions):
+                        await self._update_parent(parent, state=RunState.RUNNING, metadata={"aoe_phase": "standby"})
+                        return False
+                    if parent.metadata.get("auto_standby_on_complete"):
+                        await self.targets.release_parent(parent_id)
+                        continued = {
+                            "status": "continued",
+                            "decided_at": self.clock(),
+                            "wave_question_count": len(questions),
+                        }
+                        await self.storage.update_task(
+                            parent_id,
+                            state=RunState.RUNNING,
+                            metadata={"aoe_phase": "standby", "finish_confirm": continued},
+                        )
+                        await self.watch.ensure_standby_watch(parent_id)
+                        await self.events.emit(
+                            parent_id,
+                            actor=SYSTEM_ACTOR,
+                            kind=EventKind.SYSTEM,
+                            text="本波所有题目已结束，已按设置自动保持 Scout 站岗候题。",
+                            channel_agent_id="scout",
+                        )
+                        return False
+                    pending_reports = sum(1 for q in questions if q.state not in TERMINAL)
+                    solved_count = sum(1 for q in questions if q.metadata.get("status") == "solved")
+                    abandoned_count = sum(1 for q in questions if q.metadata.get("status") == "abandoned")
+                    already_pending = (
+                        confirm_status == "pending" and confirm.get("wave_question_count") == len(questions)
+                    )
+                    prompt_payload = {
+                        "status": "pending",
+                        "prompted_at": confirm.get("prompted_at", self.clock()) if already_pending else self.clock(),
+                        "wave_question_count": len(questions),
+                        "solved_count": solved_count,
+                        "abandoned_count": abandoned_count,
+                        "pending_reports": pending_reports,
+                    }
+                    if not already_pending:
+                        await self.targets.release_parent(parent_id)
+                    await self._update_parent(
+                        parent,
+                        state=RunState.RUNNING,
+                        metadata={"aoe_phase": "awaiting_finish_confirm", "finish_confirm": prompt_payload},
+                    )
+                    if not already_pending:
+                        await self.events.emit(
+                            parent_id,
+                            actor=SYSTEM_ACTOR,
+                            kind=EventKind.SYSTEM,
+                            text=(
+                                f"全部题目已进入已解出/已放弃（共 {len(questions)} 题：已解出 {solved_count}、"
+                                f"已放弃 {abandoned_count}），等待确认是否继续由 Scout 站岗候题。"
+                            ),
+                            payload={"finish_confirm": prompt_payload},
+                        )
+                    return False
+
             if (parent.metadata.get("collection_complete") and questions and not unfinished(questions)
                     and any(q.state not in TERMINAL for q in questions)):
                 parent = await self._update_parent(parent, state=RunState.REPORTING,
@@ -1378,6 +1924,7 @@ class AOERuntime:
             if (
                 questions
                 and parent.metadata.get("collection_complete")
+                and not parent.metadata.get("scout_collecting")
                 and not unfinished(questions)
                 and all(q.state in TERMINAL for q in questions)
                 and parent.metadata.get("scout_complete", all(scout_ready(q) for q in questions))
@@ -1462,6 +2009,8 @@ class AOERuntime:
                     self.automation.start_report(question.id)
 
     async def stop_children(self, parent_id: UUID, *, cancelled: bool = False) -> None:
+        await self._cancel_scout_and_probe(parent_id)
+        await self.containers.stop(parent_id, "scout")
         await self._cancel_target_jobs(parent_id)
         for question in await self.storage.list_questions(parent_id):
             if self.automation is not None:
@@ -1490,7 +2039,12 @@ class AOERuntime:
 
     async def close(self) -> None:
         self._unsubscribe()
-        jobs = [*self._target_jobs.values(), *self._target_closes.values()]
+        jobs = [
+            *self._target_jobs.values(),
+            *self._target_closes.values(),
+            *self._scout_jobs.values(),
+            *self._probe_jobs.values(),
+        ]
         for job in jobs:
             if not job.done():
                 job.cancel()
@@ -1499,6 +2053,9 @@ class AOERuntime:
         self._target_jobs.clear()
         self._target_closes.clear()
         self._target_claims.clear()
+        self._scout_jobs.clear()
+        self._probe_jobs.clear()
+        self._bindings.clear()
         self.attachments.clear_all()
         self.views.clear_all()
         self._agent_sources.clear()

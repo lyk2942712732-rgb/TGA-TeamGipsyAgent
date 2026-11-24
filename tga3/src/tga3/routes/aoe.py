@@ -8,7 +8,7 @@ from uuid import UUID
 from fastapi import APIRouter
 from fastapi.responses import FileResponse
 
-from .services import AppServices, ExtendQuestionRequest
+from .services import AppServices, ExtendQuestionRequest, FinishDecisionRequest, ScoutWatchRequest
 
 
 def build_aoe_router(services: AppServices) -> APIRouter:
@@ -28,6 +28,30 @@ def build_aoe_router(services: AppServices) -> APIRouter:
     @router.post("/tasks/{task_id}/questions/{question_id}/extend")
     async def extend_question(task_id: UUID, question_id: UUID, body: ExtendQuestionRequest) -> dict:
         return await coordinator.aoe.extend_question_attempt(task_id, question_id, minutes=body.minutes)
+
+    @router.post("/tasks/{task_id}/scout/wake")
+    async def wake_scout(task_id: UUID) -> dict:
+        return await coordinator.aoe.wake_scout(task_id, reason="manual")
+
+    @router.post("/tasks/{task_id}/scout/stop")
+    async def stop_scout(task_id: UUID) -> dict:
+        return await coordinator.aoe.stop_scout(task_id)
+
+    @router.post("/tasks/{task_id}/scout/watch")
+    async def configure_scout_watch(task_id: UUID, body: ScoutWatchRequest) -> dict:
+        return await coordinator.aoe.configure_scout_watch(
+            task_id,
+            action=body.action,
+            interval_seconds=body.interval_seconds,
+        )
+
+    @router.post("/tasks/{task_id}/aoe/finish-decision")
+    async def finish_decision(task_id: UUID, body: FinishDecisionRequest) -> dict:
+        return await coordinator.aoe.apply_finish_decision(
+            task_id,
+            decision=body.decision,
+            auto_standby_future=body.auto_standby_future,
+        )
 
     @router.get("/tasks/{task_id}/questions/{question_id}/files/{file_id}")
     async def question_file(task_id: UUID, question_id: UUID, file_id: UUID):

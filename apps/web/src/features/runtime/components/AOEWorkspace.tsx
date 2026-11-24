@@ -8,9 +8,10 @@ import { formatTime } from "../tga3-view";
 import { aoeBudgets, attemptGroups, attemptLabel, matchesQuestionFilter, QUESTION_FILTERS, sortQuestions, type QuestionFilter } from "../aoe-view";
 import { useTGA3Runtime } from "../use-tga3-runtime";
 import { EventCard, RealtimePrompt, TGA3Workspace, type TGA3WorkspaceTab } from "./TGA3Workspace";
+import { AOEScoutStandbyBar } from "./AOEScoutStandbyBar";
 
 const STATUS: Record<string, string> = { queued: "待解题", running: "解题中", solved: "已解出", abandoned: "已放弃", cancelled: "已取消" };
-const PHASE: Record<string, string> = { collecting: "收集题目", executing: "基础侦察", extracting: "提取情报", merging: "按题合并", solo: "独立解题", joint: "共同攻坚", swarm: "共同攻坚（群殴）", reporting: "生成逐题报告", completed: "已结束", failed: "运行失败", cancelled: "已取消" };
+const PHASE: Record<string, string> = { collecting: "收集题目", executing: "基础侦察", extracting: "提取情报", merging: "按题合并", solo: "独立解题", joint: "共同攻坚", swarm: "共同攻坚（群殴）", awaiting_finish_confirm: "待确认结束", standby: "Scout 站岗候题", reporting: "生成逐题报告", completed: "已结束", failed: "运行失败", cancelled: "已取消" };
 const REPORT: Record<string, string> = { pending: "等待解题结束", generating: "生成中", completed: "已生成", failed: "生成失败", disabled: "未启用报告", pre_solved: "任务前已解出，无需报告" };
 
 export function AOEWorkspace({ snapshot, tab, selectedAgentId, onTab, onChanged }: {
@@ -68,6 +69,7 @@ export function AOEWorkspace({ snapshot, tab, selectedAgentId, onTab, onChanged 
     panels.report = <div className="tga3-empty"><h3>正在准备未解出题目的报告</h3><p>报告会保留已验证的方法、结果和失败边界。</p></div>;
   }
   return <div className="aoe-workspace">
+    <AOEScoutStandbyBar taskId={snapshot.task.id} taskState={snapshot.task.state} overview={overview} onChanged={onChanged} />
     <div className="aoe-scope-toolbar">
       <label>题目<select aria-label="题目筛选" value={question?.question_id ?? ""} onChange={event => choose(event.target.value)}>
         <option value="">全部题目 / 总览</option>

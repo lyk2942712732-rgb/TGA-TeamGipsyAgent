@@ -14,7 +14,7 @@ export type TGA3Agent = {
   agent_id: string; sdk: string; desired_state: string; actual_state: string; provider_id: string; model_id: string;
   model_name?: string; protocol: string; display_name: string; role: string; runtime_location: string; container_id?: string | null;
   session_id?: string | null; updated_at: string; last_error?: string | null;
-  metadata?: { blackboard_cursor?: number; blackboard_read_at?: number; cli_session_id?: string; token_usage?: TGA3TokenUsage; scout_phase?: "collecting" | "executing" | "extracting" | "merging" | "importing" | "completed"; intel_file_count?: number; intel_merged_count?: number; current_question_id?: string | null; current_question_title?: string | null; aoe_waiting?: boolean; attempt_deadline?: number | null };
+  metadata?: { blackboard_cursor?: number; blackboard_read_at?: number; cli_session_id?: string; token_usage?: TGA3TokenUsage; scout_phase?: "collecting" | "watching" | "executing" | "extracting" | "merging" | "importing" | "completed"; intel_file_count?: number; intel_merged_count?: number; current_question_id?: string | null; current_question_title?: string | null; aoe_waiting?: boolean; attempt_deadline?: number | null };
 };
 export type TGA3Actor = { agent_id: string; display_name: string; role: string; sdk?: string | null; model?: string | null };
 export type TGA3BoardEntry = {
@@ -46,7 +46,50 @@ export type AOEQuestion = {
   swarm?: { entered_at: number; started_at: number | null; deadline: number | null } | null;
   attachments: Array<{ id: string; name: string; media_type: string; size_bytes: number; sha256: string }>;
 };
-export type AOEOverview = { task_id: string; phase: string; attempt_seconds: number; attempt_budgets?: { first: number; second: number; joint: number }; scout_mode?: string; collection_complete?: boolean; collection_status?: string; collection_warnings?: string[]; scout_question_seconds?: number; questions: AOEQuestion[] };
+export type AOEScoutWatch = {
+  mode: "sentinel" | "llm_poll" | "manual";
+  enabled: boolean;
+  state: "collecting" | "watching" | "probing" | "idle" | "error_paused";
+  probe_script_present: boolean;
+  probe_interval_seconds: number;
+  llm_interval_seconds: number | null;
+  next_check_at: number | null;
+  last_checked_at: number | null;
+  last_check_kind: "sentinel" | "llm_scan" | null;
+  last_result: string | null;
+  last_new_count: number;
+  last_solved_sync_count: number;
+  last_error: string | null;
+  consecutive_failures: number;
+  scan_round: number;
+  sentinel_checks_total: number;
+};
+export type AOEFinishConfirm = {
+  status: "pending" | "continued" | "finishing";
+  prompted_at?: number;
+  decided_at?: number;
+  wave_question_count?: number;
+  solved_count?: number;
+  abandoned_count?: number;
+  pending_reports?: number;
+  wait_for_reports?: boolean;
+};
+export type AOEOverview = {
+  task_id: string;
+  phase: string;
+  attempt_seconds: number;
+  attempt_budgets?: { first: number; second: number; joint: number };
+  scout_mode?: string;
+  collection_complete?: boolean;
+  collection_status?: string;
+  collection_warnings?: string[];
+  scout_collecting?: boolean;
+  scout_watch?: AOEScoutWatch | null;
+  finish_confirm?: AOEFinishConfirm | null;
+  auto_standby_on_complete?: boolean;
+  scout_question_seconds?: number;
+  questions: AOEQuestion[];
+};
 export type TGA3RuntimeSnapshot = { task: TGA3Task; agents: TGA3Agent[]; blackboard: TGA3BoardEntry[]; events: TGA3TaskEvent[]; aoe?: AOEOverview; experience_count?: number };
 type TaskDetail = { task: TGA3Task; agents: TGA3Agent[]; experience_count?: number };
 

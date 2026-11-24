@@ -353,6 +353,7 @@ class AOEOrchestrator(BaseTaskOrchestrator):
             "aoe_phase": "collecting",
             "aoe_auto_submit_flag": options.aoe_auto_submit_flag,
             "aoe_scout_mode": "collection_only",
+            "aoe_finish_confirm_enabled": True,
             "scout_complete": False,
         }
 

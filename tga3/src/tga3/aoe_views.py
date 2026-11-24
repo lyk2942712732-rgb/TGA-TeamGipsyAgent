@@ -149,7 +149,7 @@ class AOEViewStore:
             ],
         }
 
-    async def snapshot(self, parent_id: UUID) -> dict:
+    async def snapshot(self, parent_id: UUID, *, scout_watch: dict | None = None) -> dict:
         parent = await self.storage.get_task(parent_id)
         if parent.scene_id != "aoe" or parent.parent_task_id is not None:
             raise ContractError("AOE overview requires its parent task")
@@ -167,6 +167,10 @@ class AOEViewStore:
                 "complete" if parent.metadata.get("collection_complete") else "collecting",
             ),
             "collection_warnings": list(parent.metadata.get("collection_warnings", [])),
+            "scout_collecting": bool(parent.metadata.get("scout_collecting", False)),
+            "scout_watch": scout_watch if scout_watch is not None else parent.metadata.get("scout_watch"),
+            "finish_confirm": parent.metadata.get("finish_confirm"),
+            "auto_standby_on_complete": bool(parent.metadata.get("auto_standby_on_complete", False)),
             "questions": views,
         }
 
@@ -204,9 +208,18 @@ class AOEViewStore:
         parent = parent if parent is not None else await self.storage.get_task(parent_id)
         questions = questions if questions is not None else await self.storage.list_questions(parent_id)
         complete = bool(parent.metadata.get("collection_complete", False))
+        scout_collecting = bool(parent.metadata.get("scout_collecting", not complete))
+        scan_round = int(parent.metadata.get("collection_round", 1) or 1)
+        round_complete = bool(
+            parent.metadata.get("collection_round_complete", complete and not scout_collecting)
+        )
         value = {
             "task_id": str(parent_id),
             "collection_complete": complete,
+            "round_complete": round_complete,
+            "incremental": complete and scan_round > 1,
+            "scan_round": scan_round,
+            "detected_new_keys": list(parent.metadata.get("detected_new_keys", [])),
             "status": parent.metadata.get("collection_status", "complete" if complete else "collecting"),
             "import_seq": summary["import_seq"],
             "imported_count": len(questions),

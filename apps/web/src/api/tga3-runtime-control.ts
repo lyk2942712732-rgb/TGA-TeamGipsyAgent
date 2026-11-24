@@ -1,5 +1,6 @@
 import type { ProviderProtocol } from "./tga3-config";
 import { apiBase, requestJson } from "./client";
+import type { AOEFinishConfirm, AOEScoutWatch } from "../runtime/tga3-runtime";
 
 export type RestartTaskPayload = {
   rerun_scout?: boolean;
@@ -43,6 +44,50 @@ export const tga3RuntimeApi = {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ minutes }),
+      },
+    ),
+  wakeScout: (taskId: string) =>
+    requestJson<{ started: boolean; reason: string; scout_watch: AOEScoutWatch }>(
+      `/api/v3/tasks/${encodeURIComponent(taskId)}/scout/wake`,
+      { method: "POST" },
+    ),
+  stopScout: (taskId: string) =>
+    requestJson<{ stopped: boolean; mode: string; scout_watch: AOEScoutWatch }>(
+      `/api/v3/tasks/${encodeURIComponent(taskId)}/scout/stop`,
+      { method: "POST" },
+    ),
+  configureScoutWatch: (
+    taskId: string,
+    action: "enable_sentinel" | "enable_llm_poll" | "disable",
+    intervalSeconds?: number,
+  ) =>
+    requestJson<{ scout_watch: AOEScoutWatch }>(
+      `/api/v3/tasks/${encodeURIComponent(taskId)}/scout/watch`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action,
+          ...(intervalSeconds !== undefined ? { interval_seconds: intervalSeconds } : {}),
+        }),
+      },
+    ),
+  submitFinishDecision: (
+    taskId: string,
+    decision: "continue_standby" | "finish_after_reports" | "finish_now",
+    autoStandbyFuture = false,
+  ) =>
+    requestJson<{
+      decision: string;
+      phase: string;
+      finish_confirm: AOEFinishConfirm;
+      scout_watch: AOEScoutWatch;
+    }>(
+      `/api/v3/tasks/${encodeURIComponent(taskId)}/aoe/finish-decision`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ decision, auto_standby_future: autoStandbyFuture }),
       },
     ),
   setWorkerState: (taskId: string, agentId: string, action: "pause" | "resume") =>

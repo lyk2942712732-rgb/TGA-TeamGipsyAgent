@@ -83,6 +83,16 @@ def instructions() -> str:
         "3) Missing items are valid: some attachments or connection details only exist after starting a dynamic "
         "target instance. If an attachment or field is not present in the platform response, leave it empty, explain "
         "why in collection_notes, and register the question immediately so Workers can handle it. "
+        "Zero-token watch probe (HIGH VALUE for dynamic/continuous-release platforms): "
+        "If questions come from a scriptable platform API or list endpoint, also save a standalone, read-only "
+        "Python script at /workspace/watch_probe.py (using only stdlib or installed packages, reading credentials "
+        "from /task-overview/task.md or saved session files in /workspace). When executed as "
+        "`python3 /workspace/watch_probe.py`, it must perform ONLY a lightweight read-only listing (never start "
+        "targets or submit flags), print a single JSON object to stdout in the exact format "
+        '{"source_keys": ["<key1>", "<key2>", ...], "solved_keys": ["<already_solved_key>", ...]} '
+        "using the exact same source_key format you wrote to /workspace/outbox/, and exit 0 (or non-zero if auth "
+        "expired / request failed). Verify `python3 /workspace/watch_probe.py` once before finishing. If the "
+        "source is purely static local files or cannot be polled cleanly by script, do NOT create watch_probe.py. "
         "Call scout_import_questions() to verify import receipts if needed, then call scout_finish_collection() "
         "as soon as available questions are staged (use status='partial' with warnings if some items could not be "
         "retrieved) and stop immediately."
@@ -153,25 +163,66 @@ async def scout(adapter: CliAdapter | None = None) -> None:
                 if request["phase"] != "collecting" or request.get("question_id"):
                     raise ValueError("AOE Scout supports only batch collection")
                 os.environ["TGA3_SCOUT_PHASE"] = adapter.scout_phase = "collecting"
+                incremental = bool(request.get("incremental"))
+                detected_new_keys = [
+                    str(item).strip() for item in (request.get("detected_new_keys") or []) if str(item).strip()
+                ]
                 started_at = time.monotonic()
                 deadline = started_at + float(budget_seconds) if budget_seconds else None
                 last_progress_at = started_at
                 stalled_turns = 0
                 wrapup_warned = False
 
-                while not collection_state().get("collection_complete"):
+                def round_done(st: dict) -> bool:
+                    if "round_complete" in st:
+                        return bool(st["round_complete"])
+                    return bool(st.get("collection_complete"))
+
+                while not round_done(collection_state()):
                     if deadline is not None:
                         remaining = deadline - time.monotonic()
                         if remaining <= 0:
-                            if collection_state().get("imported_count", 0) > 0:
+                            if incremental or collection_state().get("imported_count", 0) > 0:
                                 break
                             raise TimeoutError(f"Scout collection exceeded budget of {budget_seconds}s")
                         adapter.timeout = max(30, int(remaining))
                     else:
                         adapter.timeout = None
 
-                    before = int(collection_state().get("imported_count", 0) or 0)
-                    if before > 0 and (stalled_turns >= 1 or (time.monotonic() - last_progress_at) >= stall_seconds):
+                    state_now = collection_state()
+                    before = int(state_now.get("imported_count", 0) or 0)
+                    if incremental:
+                        if stalled_turns >= 1:
+                            if wrapup_warned:
+                                break
+                            wrapup_warned = True
+                            prompt = (
+                                "Wrap up this incremental scan now: stage any newly discovered questions into "
+                                "/workspace/outbox/<source_key>.json, verify /workspace/watch_probe.py if applicable, "
+                                "and immediately call scout_finish_collection() (even if 0 new questions were found)."
+                            )
+                        else:
+                            hint_keys = (
+                                f" The zero-token sentinel detected newly released source_keys: "
+                                f"{json.dumps(detected_new_keys, ensure_ascii=False)}. Prioritize collecting them!"
+                                if detected_new_keys
+                                else ""
+                            )
+                            prompt = (
+                                "This is an incremental follow-up collection round on an active AOE task. "
+                                "Read /aoe/collection-state.json first to inspect `imported_keys` "
+                                "(already registered). Reuse your existing scripts/auth in /workspace "
+                                "to check the platform for newly released questions, newly posted "
+                                f"hints/updates, or questions already solved on the platform.{hint_keys} "
+                                "Stage ONLY new questions (or existing questions that became "
+                                "already_solved=true or gained new hints) into "
+                                "/workspace/outbox/<source_key>.json. If /workspace/watch_probe.py "
+                                "is missing or failed (e.g. expired session), create/repair and verify "
+                                "it for scriptable platforms. Then call scout_import_questions() if "
+                                "files were staged and call scout_finish_collection() immediately "
+                                "(0 new questions is valid)."
+                            )
+                    elif before > 0 and (stalled_turns >= 1 or (time.monotonic() - last_progress_at) >= stall_seconds):
                         if wrapup_warned:
                             # Already warned once with no new questions; exit cleanly so host finishes partial.
                             break
@@ -187,15 +238,16 @@ async def scout(adapter: CliAdapter | None = None) -> None:
                             "Read /task-overview/scene.md and /task-overview/task.md separately, inspect /inputs if "
                             "present, collect all available questions into /workspace/outbox/<source_key>.json "
                             "(put remote attachment URLs directly in attachments instead of downloading them, and set "
-                            "already_solved=true for questions already solved on the platform), then call "
-                            "scout_finish_collection and stop."
+                            "already_solved=true for questions already solved on the platform). For scriptable "
+                            "platforms, also create and verify /workspace/watch_probe.py for zero-token standby "
+                            "monitoring. Then call scout_finish_collection and stop."
                         )
 
                     output = await adapter.run_cycle(prompt, emit)
                     if output.strip():
                         await emit("agent.output.delta", {"text": output})
                     after_state = collection_state()
-                    if after_state.get("collection_complete"):
+                    if round_done(after_state):
                         break
                     after = int(after_state.get("imported_count", 0) or 0)
                     if after > before:
@@ -204,9 +256,9 @@ async def scout(adapter: CliAdapter | None = None) -> None:
                         wrapup_warned = False
                     else:
                         stalled_turns += 1
-                        if after > 0 and wrapup_warned:
+                        if (incremental or after > 0) and wrapup_warned:
                             break
-                        if after == 0 and stalled_turns >= 3:
+                        if not incremental and after == 0 and stalled_turns >= 3:
                             raise RuntimeError("Scout ended three turns without registering any questions")
             except TimeoutError:
                 result.update(finish_reason="timeout", error="Scout collection timed out")
