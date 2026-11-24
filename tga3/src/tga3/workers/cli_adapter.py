@@ -91,6 +91,37 @@ class CliAdapter(AgentAdapter):
     def mcp_headers(self) -> dict[str, str]:
         return {"X-TGA3-Task-ID": os.environ["TGA3_TASK_ID"], "X-TGA3-Agent-ID": os.environ["TGA3_AGENT_ID"]}
 
+    def scout_intel_mcp_url(self) -> str | None:
+        if (
+            not self.reporter
+            and os.environ.get("TGA3_AGENT_ROLE") == "scout"
+            and self.scout_phase in {"collecting", "extracting", "merging"}
+        ):
+            return os.environ.get("TGA3_SCOUT_INTEL_MCP_URL") or None
+        return None
+
+    def role_instructions(self) -> str:
+        if not self.reporter:
+            return worker_instructions()
+        if os.environ.get("TGA3_PRODUCE_REPORT", "1") == "0":
+            return (
+                os.environ["TGA3_SYSTEM_PROMPT"]
+                + "\nRead /workspace/report-input.json and read-only records in /evidence "
+                "and files in /evidence-files. "
+                "Do not contact targets or modify evidence. Do not generate or save a Markdown report. "
+                "Save experience-cards.json with exact evidence citations; finish with a brief acknowledgement."
+            )
+        return (
+            os.environ["TGA3_SYSTEM_PROMPT"]
+            + "\nRead /workspace/report-input.json and read-only records in /evidence "
+            "and files in /evidence-files. "
+            "Skills are in /skills; read SKILL.md and referenced files directly. "
+            "Records and files are grouped by agent. Save your own output files in "
+            "/workspace/result/. Do not contact targets or change evidence. "
+            "Use only recorded commands/code for reproduction steps; if absent, state they were not recorded. "
+            "Never invent example commands. Return only Markdown."
+        )
+
     def record_stream_action(self, native_id: str, tool: str, **kwargs) -> None:
         # Built-in web search has no native tool hook. Preserve its result via the
         # stream; local tools and MCP calls are already saved synchronously by hooks.
@@ -383,22 +414,7 @@ class CodexAdapter(CliAdapter):
             raise ValueError("Codex CLI requires the Responses protocol")
         cli_home = Path(os.environ.get("TGA3_CLI_HOME", str(self.workspace / ".codex")))
         cli_home.mkdir(exist_ok=True)
-        instructions = (
-            os.environ["TGA3_SYSTEM_PROMPT"]
-            + "\nRead /workspace/report-input.json and read-only records in /evidence and files in /evidence-files. "
-            "Skills are in /skills; read SKILL.md and referenced files directly. "
-            "Records and files are grouped by agent. Save your own output files in "
-            "/workspace/result/. Do not contact targets or change evidence. "
-            "Use only recorded commands/code for reproduction steps; if absent, state they were not recorded. "
-            "Never invent example commands. Return only Markdown."
-            if self.reporter
-            else worker_instructions()
-        )
-        if self.reporter and os.environ.get("TGA3_PRODUCE_REPORT", "1") == "0":
-            instructions = (os.environ["TGA3_SYSTEM_PROMPT"]
-                + "\nRead /workspace/report-input.json and read-only records in /evidence and files in /evidence-files. "
-                "Do not contact targets or modify evidence. Do not generate or save a Markdown report. "
-                "Save experience-cards.json with exact evidence citations; finish with a brief acknowledgement.")
+        instructions = self.role_instructions()
         # JSON strings are valid TOML basic strings; credentials stay in the environment.
         config = [
             f"model = {json.dumps(self.model_name)}",
@@ -419,10 +435,9 @@ class CodexAdapter(CliAdapter):
                 'env_key = "CODEX_API_KEY"',
                 'wire_api = "responses"',
             ]
-        if (not self.reporter and os.environ.get("TGA3_AGENT_ROLE") == "scout"
-                and self.scout_phase in {"collecting", "extracting", "merging"}):
+        if intel_url := self.scout_intel_mcp_url():
             config += ["[mcp_servers.intel]",
-                       f"url = {json.dumps(os.environ['TGA3_SCOUT_INTEL_MCP_URL'])}",
+                       f"url = {json.dumps(intel_url)}",
                        "http_headers = {" + ", ".join(f"{json.dumps(k)} = {json.dumps(v)}"
                                                       for k, v in self.mcp_headers().items()) + "}",
                        "required = true"]
@@ -497,6 +512,8 @@ class ClaudeAdapter(CliAdapter):
         cli_home.mkdir(exist_ok=True)
         mcp_file = self.state_dir / "mcp.json"
         servers = {}
+        if intel_url := self.scout_intel_mcp_url():
+            servers["intel"] = {"type": "http", "url": intel_url, "headers": self.mcp_headers()}
         if web_url := os.environ.get('TGA3_WEB_SEARCH_MCP_URL'):
             servers['web'] = {'type':'http', 'url':web_url, 'headers':self.mcp_headers()}
         if knowledge := worker_knowledge_server():
@@ -512,6 +529,15 @@ class ClaudeAdapter(CliAdapter):
         env.pop("ANTHROPIC_BASE_URL", None)
         if self.base_url:
             env["ANTHROPIC_BASE_URL"] = self.base_url
+        aoe_scout = bool(os.environ.get("TGA3_AOE_PARENT_ID") and os.environ.get("TGA3_AGENT_ROLE") == "scout")
+        base_tools = (
+            "Bash,Read,Write,Edit,Glob,Grep"
+            if aoe_scout
+            else "Bash,Read,Write,Edit,Glob,Grep,WebSearch,WebFetch"
+        )
+        allowed_tools = [base_tools, "mcp__web__web_search", f"mcp__{worker_knowledge_name()}__*"]
+        if "intel" in servers:
+            allowed_tools.append("mcp__intel__*")
         args = [
             self.binary,
             "-p",
@@ -522,11 +548,11 @@ class ClaudeAdapter(CliAdapter):
             "--model",
             self.model_name,
             "--system-prompt",
-            worker_instructions(),
+            self.role_instructions(),
             "--tools",
-            "Bash,Read,Write,Edit,Glob,Grep,WebSearch,WebFetch",
+            base_tools,
             "--allowedTools",
-            f"Bash,Read,Write,Edit,Glob,Grep,WebSearch,WebFetch,mcp__web__web_search,mcp__{worker_knowledge_name()}__*",
+            ",".join(allowed_tools),
             "--disallowedTools",
             "AskUserQuestion",
             "--strict-mcp-config",

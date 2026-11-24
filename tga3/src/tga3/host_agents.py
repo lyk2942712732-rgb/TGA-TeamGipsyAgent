@@ -116,12 +116,17 @@ class Automation:
             agent_id="reporter",
             display_name=configured.display_name,
             role="reporter",
-            sdk=configured.runtime,
+            sdk=run.sdk or configured.runtime,
             model=run.model_id,
         )
         try:
             binding = self.config.resolve_agent(
-                "reporter", run.provider_id, run.model_id, run.protocol, require_api_key=False
+                "reporter",
+                run.provider_id,
+                run.model_id,
+                run.protocol,
+                runtime=run.sdk or None,
+                require_api_key=False,
             )
             question = await self.storage.get_task(task_id)
             produce_report = question.metadata.get("produce_report", True)

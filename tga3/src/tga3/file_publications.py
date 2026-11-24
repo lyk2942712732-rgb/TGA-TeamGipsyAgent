@@ -75,8 +75,14 @@ class FilePublications:
                         continue
                     request = ActionFindingInput.model_validate(value)
                     result = await self.findings.publish(task_id, agent_id, request)
-                    receipt = {'path': label, 'status': 'imported', 'entry_id': result['entry']['id'],
-                               'action_id': request.action_id, 'sha256': digest}
+                    receipt = {
+                        'path': label,
+                        'status': 'imported',
+                        'entry_id': result['entry']['id'],
+                        'action_id': result.get('action_id') or request.action_id,
+                        'action_ids': result.get('action_ids') or ([request.action_id] if request.action_id else []),
+                        'sha256': digest,
+                    }
                     self._save(receipt_path, receipt)
                     self.versions[key] = version
                 except Exception as exc:

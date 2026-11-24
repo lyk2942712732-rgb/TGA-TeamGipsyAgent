@@ -366,7 +366,9 @@ class AOEOrchestrator(BaseTaskOrchestrator):
             if parent.scene_id != "aoe" or parent.state in {RunState.COMPLETED, RunState.FAILED, RunState.CANCELLED}:
                 continue
             bindings = {
-                run.agent_id: c.config.resolve_agent(run.agent_id, run.provider_id, run.model_id, run.protocol)
+                run.agent_id: c.config.resolve_agent(
+                    run.agent_id, run.provider_id, run.model_id, run.protocol, runtime=run.sdk or None
+                )
                 for run in await c.storage.list_agents(parent.id)
             }
             c._startup_jobs[parent.id] = asyncio.create_task(self.aoe.run(parent.id, bindings))
@@ -492,7 +494,7 @@ class AOEOrchestrator(BaseTaskOrchestrator):
             return None
         c = self.coordinator
         slot = await c._worker_run(task.id, agent_id)
-        c.config.resolve_agent(agent_id, provider_id, model_id, protocol)
+        c.config.resolve_agent(agent_id, provider_id, model_id, protocol, runtime=slot.sdk or None)
         if slot.metadata.get("current_question_id"):
             await c.set_agent_model(
                 UUID(slot.metadata["current_question_id"]), agent_id, provider_id, model_id, protocol

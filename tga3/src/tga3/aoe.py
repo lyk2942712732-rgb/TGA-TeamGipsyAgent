@@ -626,7 +626,9 @@ class AOERuntime:
         if auto_submit_flag:
             self.submissions.write_context(question, agent_id)
         slot = await self.storage.get_agent(parent_id, agent_id)
-        binding = self.config.resolve_agent(agent_id, slot.provider_id, slot.model_id, slot.protocol)
+        binding = self.config.resolve_agent(
+            agent_id, slot.provider_id, slot.model_id, slot.protocol, runtime=slot.sdk or None
+        )
         pointer = (
             self.config.task_path(question.id, "workspaces", agent_id) / ".tga3" / f"{binding.runtime}-session.json"
         )
@@ -634,6 +636,7 @@ class AOERuntime:
         await self.storage.update_agent(
             question.id,
             agent_id,
+            sdk=binding.runtime,
             provider_id=slot.provider_id,
             model_id=slot.model_id,
             protocol=slot.protocol,

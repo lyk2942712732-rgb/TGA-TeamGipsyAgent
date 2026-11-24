@@ -35,9 +35,20 @@ class WebSearchService:
                 return {'status': 'disabled', 'stop_searching': True,
                         'error': 'Two consecutive searches failed in this attempt. Continue local analysis; do not retry.'}
             try:
-                backend = self.config.resolve_agent('worker-openai')
-                if backend.protocol != 'openai_responses':
-                    raise ValueError('Search backend requires Responses protocol')
+                backend = None
+                candidates = ["worker-openai"] + [
+                    aid for aid in self.config.agents.agents if aid != "worker-openai"
+                ]
+                for aid in candidates:
+                    cfg = self.config.agents.agents.get(aid)
+                    if cfg and cfg.protocol == "openai_responses" and cfg.provider_id and cfg.model_id:
+                        try:
+                            backend = self.config.resolve_agent(aid)
+                            break
+                        except (KeyError, ValueError):
+                            continue
+                if backend is None:
+                    raise ValueError('Search backend requires an active agent configured with Responses protocol')
                 if self.client is None:
                     self.client = httpx.AsyncClient(timeout=60, transport=self.transport,
                                                    limits=httpx.Limits(keepalive_expiry=120))

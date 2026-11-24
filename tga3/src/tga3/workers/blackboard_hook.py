@@ -70,6 +70,82 @@ def publications_changed():
     return changed
 
 
+def worker_finding_nudge(record: dict | None, *, imported_finding: bool = False) -> str:
+    """Track tool cadence since the last Finding and emit low-noise milestone/handoff nudges."""
+    if not record or os.environ.get("TGA3_AGENT_ROLE") != "worker":
+        return ""
+    tool = str(record.get("action", {}).get("tool", "")).lower()
+    if "blackboard" in tool:
+        return ""
+    workspace = Path(os.environ.get("TGA3_WORKSPACE", "/workspace"))
+    state_dir = workspace / ".tga3"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    state_path = state_dir / "worker-finding-state.json"
+    scope = os.environ.get("TGA3_ATTEMPT_ID") or os.environ.get("TGA3_TASK_ID") or "task"
+    try:
+        state = json.loads(state_path.read_text(encoding="utf-8")) if state_path.is_file() else {}
+    except (OSError, ValueError):
+        state = {}
+    if state.get("scope") != scope:
+        state = {"scope": scope, "steps_since_finding": 0, "known_findings": 0, "handoff_reminded": False}
+
+    findings_root = Path(os.environ.get("TGA3_FINDINGS", "/findings"))
+    current_findings = (
+        sum(1 for p in findings_root.glob("*.json") if not p.name.startswith("."))
+        if findings_root.is_dir()
+        else 0
+    )
+    if imported_finding or current_findings > int(state.get("known_findings", 0)):
+        state["steps_since_finding"] = 0
+        state["known_findings"] = current_findings
+    else:
+        state["steps_since_finding"] = int(state.get("steps_since_finding", 0)) + 1
+
+    nudges: list[str] = []
+    try:
+        interval = int(os.environ.get("TGA3_FINDING_NUDGE_STEPS", "6"))
+    except ValueError:
+        interval = 6
+    steps = int(state["steps_since_finding"])
+    if interval > 0 and steps > 0 and steps % interval == 0:
+        nudges.append(
+            f"[阶段沉淀提醒] 你已连续执行 {steps} 步工具调用但尚未写入新的 Finding。"
+            "若已确认以下任一进展，请现在用 1 条简短 JSON 写入 /findings/<简短名>.json"
+            '（仅需 {"claim": "..."}，系统自动关联最近 action 与证据）：\n'
+            "1) 架构/防护/源码/关键接口或协议细节；2) 已验证的漏洞原语/有效载荷/关键线索；"
+            "3) 已明确证伪的死胡同（帮队友避坑）；4) /workspace 中已写好的关键脚本或中间产物。"
+        )
+
+    deadline_raw = os.environ.get("TGA3_ATTEMPT_DEADLINE", "").strip()
+    if (
+        deadline_raw
+        and os.environ.get("TGA3_AOE_PARENT_ID")
+        and not state.get("handoff_reminded")
+        and not (workspace / "final-candidate.json").is_file()
+    ):
+        try:
+            remaining = float(deadline_raw) - time.time()
+            threshold = float(os.environ.get("TGA3_FINDING_HANDOFF_SECONDS", "150"))
+        except ValueError:
+            remaining, threshold = -1.0, 150.0
+        if 0 < remaining <= threshold:
+            state["handoff_reminded"] = True
+            nudges.append(
+                f"[交棒沉淀提醒] 本轮剩余约 {int(remaining)} 秒且尚未产出最终候选。"
+                "请尽快将目前已验证的关键线索、已排除的无效方向、以及 /workspace 中可复用的脚本/中间产物"
+                '整理为 1-2 条 Finding 写入 /findings/（只需 {"claim": "...", "scope": "..."}），'
+                "避免超时交棒后后续队友从零重复踩坑。"
+            )
+
+    tmp = state_path.with_suffix(".tmp")
+    try:
+        tmp.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
+        tmp.replace(state_path)
+    finally:
+        tmp.unlink(missing_ok=True)
+    return "\n\n".join(nudges)
+
+
 def checkpoint(event: dict, *, client=None, record_action=None) -> dict:
     if os.environ.get("TGA3_AGENT_ROLE") not in {"scout", "worker"}:
         return {}
@@ -101,6 +177,8 @@ def checkpoint(event: dict, *, client=None, record_action=None) -> dict:
         parts = []
         if record:
             parts.append(result_context(record))
+            if nudge := worker_finding_nudge(record):
+                parts.append(nudge)
         if scout_notice := scout_post_tool_notice(event):
             parts.append(scout_notice)
         return ({"hookSpecificOutput": {"hookEventName": event_name, "additionalContext": "\n\n".join(parts)}}
@@ -192,6 +270,14 @@ def checkpoint(event: dict, *, client=None, record_action=None) -> dict:
             "delivery_id": delivery["experience_delivery_id"]}))
     if record:
         parts.append(result_context(record))
+        imported_finding = any(
+            isinstance(item, dict)
+            and str(item.get("path", "")).startswith("/findings/")
+            and item.get("status") == "imported"
+            for item in (delivery.get("publication_receipts") or [])
+        )
+        if nudge := worker_finding_nudge(record, imported_finding=imported_finding):
+            parts.append(nudge)
     if context:
         parts.append(context)
     if receipts := delivery.get("publication_receipts"):

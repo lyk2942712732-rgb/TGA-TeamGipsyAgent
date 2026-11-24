@@ -9,11 +9,12 @@ from pathlib import Path
 
 from ..knowledge import worker_knowledge_name, worker_knowledge_server
 from .cli_adapter import CliAdapter
-from .prompts import worker_instructions
 
 
 def servers(adapter):
     result = {}
+    if intel_url := adapter.scout_intel_mcp_url():
+        result["intel"] = {"url": intel_url, "headers": adapter.mcp_headers()}
     if url := os.environ.get("TGA3_WEB_SEARCH_MCP_URL"):
         result["web"] = {"url": url, "headers": adapter.mcp_headers()}
     if knowledge := worker_knowledge_server():
@@ -63,7 +64,7 @@ class QwenAdapter(CliAdapter):
             "--model",
             self.model_name,
             "--append-system-prompt",
-            worker_instructions(),
+            self.role_instructions(),
         ]
         if self.session_id:
             args += ["--resume", self.session_id]
@@ -150,7 +151,7 @@ class OpenCodeAdapter(CliAdapter):
         root = self.workspace / ".opencode"
         root.mkdir(exist_ok=True)
         prompt = root / "worker.md"
-        prompt.write_text(worker_instructions(), encoding="utf8")
+        prompt.write_text(self.role_instructions(), encoding="utf8")
         config = {
             "$schema": "https://opencode.ai/config.json",
             "model": "tga/" + self.model_name,

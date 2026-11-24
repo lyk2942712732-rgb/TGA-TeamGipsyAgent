@@ -103,7 +103,8 @@ def build_tasks_router(services: AppServices) -> APIRouter:
             scene_id,
             initial_files,
             model_overrides={
-                agent_id: (value.provider_id, value.model_id, value.protocol) for agent_id, value in overrides.items()
+                agent_id: (value.provider_id, value.model_id, value.protocol, value.runtime)
+                for agent_id, value in overrides.items()
             },
             aoe_attempt_minutes=aoe_attempt_minutes,
             aoe_first_attempt_minutes=aoe_first_attempt_minutes,
@@ -241,7 +242,7 @@ def build_tasks_router(services: AppServices) -> APIRouter:
         payload = body or RestartTaskRequest()
         overrides = (
             {
-                agent_id: (model.provider_id, model.model_id, model.protocol)
+                agent_id: (model.provider_id, model.model_id, model.protocol, model.runtime)
                 for agent_id, model in payload.agent_models.items()
             }
             if payload.agent_models is not None

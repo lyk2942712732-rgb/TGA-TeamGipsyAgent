@@ -148,7 +148,7 @@ class DockerContainerRuntime:
                             raise RuntimeUnavailableError('Prior-attempt attachment escapes its workspace')
                         if path.is_file():
                             volumes[str(path)] = {'bind': f'/evidence-files/{agent_id}/{relative}', 'mode': 'ro'}
-        image = runtime.worker_images[binding.agent_id]
+        image = self.config.image_for_runtime(binding.runtime, binding.agent_id)
         blackboard_mcp_url = f"{runtime.blackboard_mcp_url.rstrip('/')}/"
         environment = {
             "HOME": "/home/tga3",

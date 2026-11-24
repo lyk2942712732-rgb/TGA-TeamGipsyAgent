@@ -1,8 +1,11 @@
-import type { ProviderProtocol } from "../api/tga3-config";
+import type { AgentRuntime, ProviderProtocol } from "../api/tga3-config";
 import type { AgentModelOptions, KnowledgeSource } from "../api/tga3-tasks";
 import type { TaskMode } from "../modes";
 
-export type SavedAgentModels = Record<string, { provider_id: string; model_id: string; protocol: ProviderProtocol }>;
+export type SavedAgentModels = Record<
+  string,
+  { provider_id: string; model_id: string; protocol: ProviderProtocol; runtime?: AgentRuntime }
+>;
 
 export type SavedTaskFormSnapshot = {
   name: string;
@@ -138,16 +141,29 @@ export function reconcileAgentModels(
       models[agent.id] = defaultModel;
       continue;
     }
+    const effectiveRuntime = candidate.runtime ?? agent.runtime;
     const stillValid = options.models.some(
       (choice) =>
         choice.provider_id === candidate.provider_id &&
         choice.model_id === candidate.model_id &&
         choice.protocol === candidate.protocol &&
         choice.ready &&
-        isCompatible(agent.runtime, choice.protocol),
+        isCompatible(effectiveRuntime, choice.protocol),
     );
     if (stillValid) {
-      models[agent.id] = candidate;
+      models[agent.id] =
+        candidate.runtime && candidate.runtime !== agent.runtime
+          ? {
+              provider_id: candidate.provider_id,
+              model_id: candidate.model_id,
+              protocol: candidate.protocol,
+              runtime: candidate.runtime,
+            }
+          : {
+              provider_id: candidate.provider_id,
+              model_id: candidate.model_id,
+              protocol: candidate.protocol,
+            };
     } else {
       models[agent.id] = defaultModel;
       fallbackAgents.push(agent.display_name);

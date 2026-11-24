@@ -111,8 +111,12 @@ class TaskCoordinator:
             raise ValueError(f"unknown task agent model overrides: {', '.join(unknown_agents)}")
         resolved_agents = {
             agent_id: self.config.resolve_agent(
-                agent_id, *(model_overrides.get(agent_id) or (None, None, None)),
+                agent_id,
+                *model_overrides[agent_id][:3],
+                runtime=model_overrides[agent_id][3] if len(model_overrides[agent_id]) > 3 else None,
             )
+            if agent_id in model_overrides
+            else self.config.resolve_agent(agent_id)
             for agent_id in self.config.agents.agents
         }
         orchestrator = self.orchestrators.for_scene(scene_id)
@@ -385,11 +389,18 @@ class TaskCoordinator:
         fallback_models: list[str] = []
         for agent_id, configured in self.config.agents.agents.items():
             if agent_id in model_overrides:
-                resolved = self.config.resolve_agent(agent_id, *model_overrides[agent_id])
+                override = model_overrides[agent_id]
+                resolved = self.config.resolve_agent(
+                    agent_id,
+                    *override[:3],
+                    runtime=override[3] if len(override) > 3 else None,
+                )
             elif agent_id in existing_runs:
                 run = existing_runs[agent_id]
                 try:
-                    resolved = self.config.resolve_agent(agent_id, run.provider_id, run.model_id, run.protocol)
+                    resolved = self.config.resolve_agent(
+                        agent_id, run.provider_id, run.model_id, run.protocol, runtime=run.sdk or None
+                    )
                 except (KeyError, ValueError):
                     resolved = self.config.resolve_agent(agent_id)
                     fallback_models.append(configured.display_name)
@@ -473,6 +484,7 @@ class TaskCoordinator:
                     "provider_id": run.provider_id,
                     "model_id": run.model_id,
                     "protocol": run.protocol,
+                    "runtime": run.sdk,
                 }
                 for run in agents
             },

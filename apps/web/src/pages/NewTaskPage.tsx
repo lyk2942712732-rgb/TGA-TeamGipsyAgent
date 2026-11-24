@@ -3,7 +3,12 @@ import {
   useEffect, useMemo, useRef, useState,
 } from "react";
 import { Check, Copy, FileText, History, Image, Paperclip, Play, Sparkles, X } from "lucide-react";
-import { modelCompatible } from "../api/model-compatibility";
+import {
+  ALL_RUNTIMES,
+  RUNTIME_SHORT_LABELS,
+  modelCompatible,
+  type WorkerRuntime,
+} from "../api/model-compatibility";
 import {
   createTask, deleteStagedInput, fetchAgentModelOptions, fetchKnowledgeSources, fetchTaskCloneConfig, listScenes, stageInput,
   type AgentModelOptions, type KnowledgeSource, type KnowledgeSources, type StagedAsset, type TaskCloneConfig,
@@ -239,8 +244,49 @@ export function NewTaskPage({
     Number.isInteger(Number(value)) && Number(value) >= 1 && Number(value) <= 1440);
   const ready = Boolean(name.trim() && description.trim() && validAoeBudget && scenes.length && agentOptions && agentOptions.agents.every((agent) => {
     const selectedModel = agentModels[agent.id];
-    return selectedModel && agentOptions.models.some((model) => model.provider_id === selectedModel.provider_id && model.model_id === selectedModel.model_id && model.protocol === selectedModel.protocol && model.ready && modelCompatible(agent.runtime, model.protocol));
+    const effectiveRuntime = selectedModel?.runtime ?? agent.runtime;
+    return selectedModel && agentOptions.models.some((model) => model.provider_id === selectedModel.provider_id && model.model_id === selectedModel.model_id && model.protocol === selectedModel.protocol && model.ready && modelCompatible(effectiveRuntime, model.protocol));
   }) && !busy && assets.every((asset) => asset.status === "uploaded"));
+
+  function switchTaskRuntime(agentId: string, defaultRuntime: WorkerRuntime, nextRuntime: WorkerRuntime) {
+    if (!agentOptions) return;
+    markEdited();
+    setAgentModels((current) => {
+      const existing = current[agentId];
+      const compatible = agentOptions.models.filter(
+        (model) => model.ready && modelCompatible(nextRuntime, model.protocol),
+      );
+      const keepExisting =
+        existing &&
+        compatible.some(
+          (model) =>
+            model.provider_id === existing.provider_id &&
+            model.model_id === existing.model_id &&
+            model.protocol === existing.protocol,
+        );
+      const chosen = keepExisting
+        ? existing
+        : compatible[0]
+          ? {
+              provider_id: compatible[0].provider_id,
+              model_id: compatible[0].model_id,
+              protocol: compatible[0].protocol,
+            }
+          : existing
+            ? { provider_id: "", model_id: "", protocol: existing.protocol }
+            : { provider_id: "", model_id: "", protocol: "openai_responses" as const };
+      const nextEntry =
+        nextRuntime === defaultRuntime
+          ? { provider_id: chosen.provider_id, model_id: chosen.model_id, protocol: chosen.protocol }
+          : {
+              provider_id: chosen.provider_id,
+              model_id: chosen.model_id,
+              protocol: chosen.protocol,
+              runtime: nextRuntime,
+            };
+      return { ...current, [agentId]: nextEntry };
+    });
+  }
 
   async function upload(files: File[]) {
     if (!files.length) return;
@@ -462,12 +508,34 @@ export function NewTaskPage({
           {knowledgeSources && !knowledgeSources.local.available ? <small>本地 CTF Wiki 尚未就绪，请先运行 tga3 sync-knowledge。</small> : null}
           {knowledgeSources && !knowledgeSources.online.available && knowledgeSource === "online" ? <small role="alert">在线知识库已禁用，请选择已就绪的本地知识库。</small> : null}
         </label>
-        {agentOptions ? <fieldset className="task-agent-models"><legend>本任务 Solver 模型</legend><p>默认继承 Solver 配置；这里的选择只影响本任务。</p><div>{agentOptions.agents.map((agent) => {
-          const compatible = agentOptions.models.filter((model) => modelCompatible(agent.runtime, model.protocol));
+        {agentOptions ? <fieldset className="task-agent-models"><legend>本任务 Solver 装配与模型</legend><p>默认继承 Solver 配置；这里可以临时为本任务切换 CLI 引擎与模型。</p><div>{agentOptions.agents.map((agent) => {
           const current = agentModels[agent.id];
-          return <div className="task-agent-model-row" key={agent.id}><span><strong>{agent.display_name}</strong><small>{agent.id}</small></span>
-            <ModelPicker label={`${agent.display_name} 模型`} options={compatible} value={current}
-              onChange={(model) => { markEdited(); setAgentModels((value) => ({ ...value, [agent.id]: model })); }} />
+          const effectiveRuntime = current?.runtime ?? agent.runtime;
+          const compatible = agentOptions.models.filter((model) => modelCompatible(effectiveRuntime, model.protocol));
+          return <div className="task-agent-model-row" key={agent.id}><span><strong>{agent.display_name}</strong><small>{agent.id}</small>
+            <div className="task-agent-cli-pills" role="group" aria-label={`${agent.display_name} CLI 引擎`}>
+              {ALL_RUNTIMES.map((rt) => (
+                <button
+                  key={rt}
+                  type="button"
+                  className={`task-agent-cli-pill${effectiveRuntime === rt ? " is-selected" : ""}`}
+                  aria-pressed={effectiveRuntime === rt}
+                  disabled={busy}
+                  onClick={() => switchTaskRuntime(agent.id, agent.runtime, rt)}
+                >
+                  {RUNTIME_SHORT_LABELS[rt]}
+                </button>
+              ))}
+            </div>
+          </span>
+            <ModelPicker label={`${agent.display_name} 模型`} options={compatible} value={current?.model_id ? current : undefined}
+              onChange={(model) => {
+                markEdited();
+                setAgentModels((value) => ({
+                  ...value,
+                  [agent.id]: effectiveRuntime === agent.runtime ? model : { ...model, runtime: effectiveRuntime },
+                }));
+              }} />
           </div>;
         })}</div></fieldset> : null}
         <aside className="new-task-config-note"><strong>{sceneId === "aoe" ? produceReport ? "收集题目 → 分题解题 → 逐题报告" : "收集题目 → 分题解题 → 经验卡" : "Scout → Workers → Reporter"}</strong><p>{sceneId === "aoe" ? "四个 Worker 优先领取未尝试的简单题，题目各自保留黑板和文件，按所选选项整理产出。" : `${selected?.name ?? "场景"}提示词、题目描述和附件索引将自动进入黑板。`}</p></aside>

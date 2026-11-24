@@ -9,16 +9,21 @@ from uuid import UUID
 from ..action_logs import read_action_log
 from ..action_materials import action_materials
 from ..scout_intel import read_intels
-from .cli_adapter import CodexAdapter
+from .adapter_factory import create_adapter, run_role_entrypoint
+from .cli_adapter import CliAdapter, CodexAdapter
 from .prompts import worker_instructions
-from .runtime import WorkerSession
 
 
-async def report() -> None:
+def _default_adapter() -> CliAdapter:
+    runtime = os.environ.get("TGA3_AGENT_RUNTIME") or "codex_cli"
+    return CodexAdapter() if runtime == "codex_cli" else create_adapter(runtime)
+
+
+async def report(adapter: CliAdapter | None = None) -> None:
     async def emit(method, params):
         print(json.dumps({"method": method, "params": params}, ensure_ascii=False), flush=True)
 
-    adapter = CodexAdapter()
+    adapter = adapter or _default_adapter()
     produce_report = os.environ.get("TGA3_PRODUCE_REPORT", "1") != "0"
     output = await adapter.run_cycle(
         "Read /workspace/report-input.json and produce the final Markdown report." if produce_report else
@@ -47,17 +52,17 @@ async def report() -> None:
         Path("/workspace/result/writeup.md").write_text(output, encoding="utf-8")
 
 
-async def scout() -> None:
+async def scout(adapter: CliAdapter | None = None) -> None:
     if os.environ.get("TGA3_AOE_PARENT_ID"):
         from .aoe_scout import scout as aoe_scout
 
-        await aoe_scout()
+        await aoe_scout(adapter)
         return
 
     async def emit(method, params):
         print(json.dumps({"method": method, "params": params}, ensure_ascii=False), flush=True)
 
-    adapter = CodexAdapter()
+    adapter = adapter or _default_adapter()
     intels = Path(os.environ.get("TGA3_INTELS", "/intels"))
     for phase in ("executing", "extracting", "merging"):
         if phase != "executing":
@@ -137,12 +142,7 @@ def unmerged_intels(intels: Path) -> list[dict]:
 
 
 def main() -> None:
-    if os.environ.get("TGA3_AGENT_ROLE") == "reporter":
-        asyncio.run(report())
-    elif os.environ.get("TGA3_AGENT_ROLE") == "scout":
-        asyncio.run(scout())
-    else:
-        asyncio.run(WorkerSession(CodexAdapter()).run())
+    run_role_entrypoint("codex_cli")
 
 
 if __name__ == "__main__":

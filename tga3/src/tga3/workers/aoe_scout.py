@@ -11,8 +11,9 @@ from uuid import UUID
 
 from ..action_logs import read_action_log
 from .action_journal import ActionJournal
+from .adapter_factory import create_adapter
 from .aoe_access import collection_state
-from .cli_adapter import CodexAdapter
+from .cli_adapter import CliAdapter, CodexAdapter
 from .scout_probe_guard import ScoutProbeGuard, build_no_proxy, default_bypass_hosts
 
 
@@ -88,7 +89,7 @@ def instructions() -> str:
     )
 
 
-async def scout() -> None:
+async def scout(adapter: CliAdapter | None = None) -> None:
     batch_id = os.environ["TGA3_AOE_PARENT_ID"]
     workspace = Path(os.environ.get("TGA3_WORKSPACE", "/workspace"))
     state = workspace / ".tga3"
@@ -118,7 +119,9 @@ async def scout() -> None:
             os.environ["NO_PROXY"] = no_proxy
             os.environ["no_proxy"] = no_proxy
 
-        adapter = CodexAdapter()
+        if adapter is None:
+            runtime = os.environ.get("TGA3_AGENT_RUNTIME") or "codex_cli"
+            adapter = CodexAdapter() if runtime == "codex_cli" else create_adapter(runtime)
         adapter.journal.identity["scope"] = "batch_collection"
         adapter.journal.enabled = True
         adapter.timeout = None

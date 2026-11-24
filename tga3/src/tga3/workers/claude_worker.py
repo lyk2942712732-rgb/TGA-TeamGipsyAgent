@@ -1,13 +1,10 @@
-"""Claude Code CLI Worker entry point."""
+"""Claude Code CLI entry point (supports worker, scout, and reporter roles)."""
 
-import asyncio
-
-from .cli_adapter import ClaudeAdapter
-from .runtime import WorkerSession
+from .adapter_factory import run_role_entrypoint
 
 
 def main() -> None:
-    asyncio.run(WorkerSession(ClaudeAdapter()).run())
+    run_role_entrypoint("claude_cli")
 
 
 if __name__ == "__main__":

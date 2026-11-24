@@ -152,4 +152,58 @@ describe("SolversPage", () => {
       agents: expect.objectContaining({ "worker-claude": expect.objectContaining({ blackboard_interval_seconds: 120 }) }),
     })));
   });
+
+  it("switches a slot's assembled CLI runtime via cards, enforces protocol/model compatibility, and syncs worker prompts", async () => {
+    const user = userEvent.setup();
+    render(<SolversPage />);
+    await user.click(await screen.findByRole("button", { name: "配置 OpenAI Worker" }));
+    const panel = screen.getByLabelText("OpenAI Worker Solver 配置");
+
+    // Pick a responses-only model first, then switch CLI to Claude Code CLI (anthropic only).
+    const modelSelect = within(panel).getByRole("combobox", { name: "供应商 / 已启用模型" });
+    await user.selectOptions(modelSelect, JSON.stringify(["deepseek", "responses-only"]));
+
+    const cliGroup = within(panel).getByRole("group", { name: "装配 CLI 引擎" });
+    await user.click(within(cliGroup).getByRole("button", { name: /Claude Code CLI/ }));
+
+    // Protocol switches to anthropic, incompatible responses-only model forces re-selection before saving.
+    expect(within(panel).getByRole("combobox", { name: "协议" })).toHaveValue("anthropic");
+    expect(within(panel).getByRole("button", { name: "保存配置" })).toBeDisabled();
+
+    await user.selectOptions(modelSelect, JSON.stringify(["deepseek", "anthropic-only"]));
+    expect(within(panel).getByRole("button", { name: "保存配置" })).toBeEnabled();
+    await user.click(within(panel).getByRole("button", { name: "保存配置" }));
+    await waitFor(() =>
+      expect(mocks.saveAgents).toHaveBeenCalledWith(
+        expect.objectContaining({
+          agents: expect.objectContaining({
+            "worker-openai": expect.objectContaining({
+              runtime: "claude_cli",
+              protocol: "anthropic",
+              model_id: "anthropic-only",
+            }),
+          }),
+        }),
+      ),
+    );
+
+    // Sync prompt across all Worker slots without overwriting Reporter.
+    await user.click(screen.getByRole("tab", { name: "系统提示词" }));
+    const promptInput = screen.getByLabelText("OpenAI Worker System Prompt");
+    await user.clear(promptInput);
+    await user.type(promptInput, "shared worker milestone prompt");
+    await user.click(within(panel).getByRole("button", { name: "同步提示词到全部 Worker" }));
+    await user.click(within(panel).getByRole("button", { name: "保存配置" }));
+    await waitFor(() =>
+      expect(mocks.saveAgents).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          agents: expect.objectContaining({
+            "worker-openai": expect.objectContaining({ system_prompt: "shared worker milestone prompt" }),
+            "worker-claude": expect.objectContaining({ system_prompt: "shared worker milestone prompt" }),
+            reporter: expect.objectContaining({ system_prompt: "report" }),
+          }),
+        }),
+      ),
+    );
+  });
 });

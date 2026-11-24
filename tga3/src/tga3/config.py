@@ -17,6 +17,29 @@ from .provider_profiles import (
     runtime_base_url,
 )
 
+AgentRuntime = Literal["codex_cli", "claude_cli", "opencode_cli", "qwen_cli"]
+
+RUNTIME_FALLBACK_AGENT: dict[str, str] = {
+    "codex_cli": "worker-openai",
+    "claude_cli": "worker-claude",
+    "opencode_cli": "worker-opencode",
+    "qwen_cli": "worker-qwen",
+}
+
+RUNTIME_SUPPORTED_PROTOCOLS: dict[str, tuple[ProviderProtocol, ...]] = {
+    "codex_cli": ("openai_responses",),
+    "claude_cli": ("anthropic",),
+    "opencode_cli": ("openai_chat_completions", "openai_responses", "anthropic"),
+    "qwen_cli": ("openai_chat_completions", "openai_responses", "anthropic"),
+}
+
+RUNTIME_DISPLAY_NAMES: dict[str, str] = {
+    "codex_cli": "Codex CLI",
+    "claude_cli": "Claude Code CLI",
+    "opencode_cli": "OpenCode CLI",
+    "qwen_cli": "Qwen Code CLI",
+}
+
 
 class APIKeyConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -227,6 +250,7 @@ class RuntimeConfig(BaseModel):
     # Accepted for existing configurations only; extraction/merging have no total deadline.
     scout_extract_timeout_seconds: int | None = Field(default=None, exclude=True)
     worker_images: dict[str, str]
+    runtime_images: dict[str, str] = Field(default_factory=dict)
     worker_cycle_prompts: WorkerCyclePromptsConfig
     docker: DockerConfig = Field(default_factory=DockerConfig)
     cadence: CadenceConfig = Field(default_factory=CadenceConfig)
@@ -297,6 +321,7 @@ class TGA3Config:
         provider_id: str | None = None,
         model_id: str | None = None,
         protocol: ProviderProtocol | None = None,
+        runtime: AgentRuntime | None = None,
         *,
         require_api_key: bool = True,
     ) -> ResolvedAgent:
@@ -309,8 +334,9 @@ class TGA3Config:
         if not selected_provider or not selected_model:
             raise ValueError(f"{binding.display_name} 尚未配置模型，请先在 Solver 页面选择已启用模型")
         provider = self.models.provider(selected_provider)
+        selected_runtime: AgentRuntime = runtime or binding.runtime
         selected_protocol = protocol or binding.protocol
-        self.validate_runtime_protocol(binding.runtime, selected_protocol)
+        self.validate_runtime_protocol(selected_runtime, selected_protocol)
         model = provider.model(selected_model, selected_protocol, require_enabled=require_api_key)
         selected_key = next(
             (value.api_key for value in provider.api_keys if value.id == provider.selected_api_key_id),
@@ -323,13 +349,32 @@ class TGA3Config:
             agent_id=agent_id,
             display_name=binding.display_name,
             role=binding.role,
-            runtime=binding.runtime,
+            runtime=selected_runtime,
             provider=provider,
             model=model,
             protocol=selected_protocol,
             api_key=api_key,
             system_prompt=binding.system_prompt,
         )
+
+    @staticmethod
+    def _resolve_runtime_image(
+        runtime_config: RuntimeConfig, runtime: str, agent_id: str | None = None
+    ) -> str | None:
+        if image := runtime_config.runtime_images.get(runtime):
+            return image
+        fallback_agent = RUNTIME_FALLBACK_AGENT.get(runtime)
+        if fallback_agent and (image := runtime_config.worker_images.get(fallback_agent)):
+            return image
+        if agent_id and (image := runtime_config.worker_images.get(agent_id)):
+            return image
+        return None
+
+    def image_for_runtime(self, runtime: str, agent_id: str | None = None) -> str:
+        image = self._resolve_runtime_image(self.runtime, runtime, agent_id)
+        if not image:
+            raise ValueError(f"runtime.json is missing Docker image for runtime={runtime}")
+        return image
 
     @staticmethod
     def validate_runtime_protocol(runtime: str, protocol: ProviderProtocol) -> None:
@@ -428,16 +473,21 @@ class TGA3Config:
                 raise ValueError("Agent definitions cannot be added, removed, or renamed")
             for agent_id, current in self.agents.agents.items():
                 proposed = value.agents[agent_id]
-                if (proposed.display_name, proposed.role, proposed.runtime) != (
+                if (proposed.display_name, proposed.role) != (
                     current.display_name,
                     current.role,
-                    current.runtime,
                 ):
-                    raise ValueError(f"{agent_id} name, role, and runtime are fixed definitions")
-                if proposed.provider_id and (proposed.provider_id, proposed.model_id, proposed.protocol) != (
+                    raise ValueError(f"{agent_id} name and role are fixed definitions")
+                if proposed.provider_id and (
+                    proposed.provider_id,
+                    proposed.model_id,
+                    proposed.protocol,
+                    proposed.runtime,
+                ) != (
                     current.provider_id,
                     current.model_id,
                     current.protocol,
+                    current.runtime,
                 ):
                     self.models.provider(proposed.provider_id).model(
                         proposed.model_id, proposed.protocol, require_enabled=True
@@ -564,18 +614,6 @@ class TGA3Config:
         extra_scenes = sorted(scene_ids.difference(cls.REQUIRED_SCENES))
         if extra_scenes:
             raise ValueError(f"scenes.json has unsupported scene ids: {', '.join(extra_scenes)}")
-        expected_runtimes = {
-            "scout": "codex_cli",
-            "worker-openai": "codex_cli",
-            "worker-claude": "claude_cli",
-            "reporter": "codex_cli",
-        }
-        expected_runtimes.update({agent_id: runtime for agent_id, runtime in
-                                 [('worker-opencode', 'opencode_cli'), ('worker-qwen', 'qwen_cli')]
-                                 if agent_id in agents.agents})
-        for agent_id, expected_runtime in expected_runtimes.items():
-            if agents.agents[agent_id].runtime != expected_runtime:
-                raise ValueError(f"{agent_id} must use runtime={expected_runtime}")
         for _agent_id, binding in agents.agents.items():
             cls.validate_runtime_protocol(binding.runtime, binding.protocol)
             if not binding.provider_id and not binding.model_id:
@@ -585,20 +623,25 @@ class TGA3Config:
         missing_images = sorted(
             agent_id
             for agent_id, binding in agents.agents.items()
-            if binding.role in {"scout", "worker", "reporter"} and agent_id not in runtime.worker_images
+            if binding.role in {"scout", "worker", "reporter"}
+            and cls._resolve_runtime_image(runtime, binding.runtime, agent_id) is None
         )
         if missing_images:
-            raise ValueError(f"runtime.json worker_images is missing: {', '.join(missing_images)}")
+            raise ValueError(f"runtime.json worker_images/runtime_images is missing: {', '.join(missing_images)}")
 
 
 __all__ = [
     "AgentConfig",
+    "AgentRuntime",
     "AgentsConfig",
     "ConfigBundle",
     "DockerConfig",
     "ModelConfig",
     "ModelsConfig",
     "ProviderConfig",
+    "RUNTIME_DISPLAY_NAMES",
+    "RUNTIME_FALLBACK_AGENT",
+    "RUNTIME_SUPPORTED_PROTOCOLS",
     "ResolvedAgent",
     "RuntimeConfig",
     "SceneConfig",

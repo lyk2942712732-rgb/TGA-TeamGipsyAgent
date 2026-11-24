@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from pydantic import BaseModel, ConfigDict, Field
 
 from ..blackboard_delivery import BlackboardDelivery
-from ..config import TGA3Config
+from ..config import AgentRuntime, TGA3Config
 from ..coordinator import TaskCoordinator
 from ..docker_runtime import ContainerRuntime
 from ..file_publications import FilePublications
@@ -28,6 +28,7 @@ class ModelRequest(BaseModel):
     provider_id: str
     model_id: str
     protocol: ProviderProtocol
+    runtime: AgentRuntime | None = None
 
 
 class ModelEnabledRequest(BaseModel):

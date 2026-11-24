@@ -160,4 +160,69 @@ describe("NewTaskPage", () => {
     await user.click(screen.getByRole("button", { name: "撤销填入" }));
     expect(titleInput).toHaveValue("Temp");
   });
+
+  it("allows per-task CLI runtime override and filters compatible models", async () => {
+    mocks.fetchAgentModelOptions.mockResolvedValue({
+      scene_id: "penetration_test",
+      agents: [
+        {
+          id: "worker-openai",
+          display_name: "OpenAI Worker",
+          role: "worker",
+          runtime: "codex_cli",
+          model: {
+            provider_id: "openai",
+            provider_name: "OpenAI",
+            model_id: "gpt-test",
+            model_name: "gpt-test",
+            protocol: "openai_responses",
+            ready: true,
+          },
+        },
+      ],
+      models: [
+        {
+          provider_id: "openai",
+          provider_name: "OpenAI",
+          model_id: "gpt-test",
+          model_name: "gpt-test",
+          protocol: "openai_responses",
+          ready: true,
+        },
+        {
+          provider_id: "anthropic",
+          provider_name: "Anthropic",
+          model_id: "claude-sonnet",
+          model_name: "claude-sonnet",
+          protocol: "anthropic",
+          ready: true,
+        },
+      ],
+    });
+    const user = userEvent.setup();
+    render(<NewTaskPage onCreated={vi.fn()} />);
+    await screen.findByText("Web渗透测试");
+
+    const cliGroup = screen.getByRole("group", { name: "OpenAI Worker CLI 引擎" });
+    await user.click(within(cliGroup).getByRole("button", { name: "Claude" }));
+    expect(screen.getByLabelText("OpenAI Worker 模型")).toHaveValue(JSON.stringify(["anthropic", "claude-sonnet"]));
+
+    await user.type(screen.getByLabelText("任务名称"), "CLI Override Task");
+    await user.type(screen.getByLabelText(/描述/), "Test Claude override");
+    await user.click(screen.getByRole("button", { name: "创建并启动" }));
+    await waitFor(() =>
+      expect(mocks.createTask).toHaveBeenCalledWith(
+        expect.objectContaining({
+          agentModels: {
+            "worker-openai": {
+              provider_id: "anthropic",
+              model_id: "claude-sonnet",
+              protocol: "anthropic",
+              runtime: "claude_cli",
+            },
+          },
+        }),
+      ),
+    );
+  });
 });

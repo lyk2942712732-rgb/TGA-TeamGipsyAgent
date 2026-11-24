@@ -1,7 +1,7 @@
 import type { TaskMode } from "../modes";
 import { requestJson } from "./client";
 import { enabledModelOptions } from "./model-options";
-import type { AgentsConfig, ModelsConfig, ProviderProtocol, ScenesConfig } from "./tga3-config";
+import type { AgentRuntime, AgentsConfig, ModelsConfig, ProviderProtocol, ScenesConfig } from "./tga3-config";
 
 export type TGA3TaskListItem = {
   id: string;
@@ -94,7 +94,7 @@ export type TaskCloneConfig = {
   produce_report: boolean;
   aoe_auto_submit_flag: boolean;
   aoe_budgets: { first: number; second: number; joint: number };
-  agent_models: Record<string, { provider_id: string; model_id: string; protocol: ProviderProtocol }>;
+  agent_models: Record<string, { provider_id: string; model_id: string; protocol: ProviderProtocol; runtime?: AgentRuntime }>;
   input_files: Array<{ id: string; name: string; size_bytes: number }>;
 };
 
@@ -111,7 +111,7 @@ export async function createTask(input: {
   sceneId: TaskMode;
   prompt: string;
   fileIds: string[];
-  agentModels: Record<string, { provider_id: string; model_id: string; protocol: ProviderProtocol }>;
+  agentModels: Record<string, { provider_id: string; model_id: string; protocol: ProviderProtocol; runtime?: AgentRuntime }>;
   aoeAttemptMinutes?: number;
   aoeFirstAttemptMinutes?: number;
   aoeSecondAttemptMinutes?: number;

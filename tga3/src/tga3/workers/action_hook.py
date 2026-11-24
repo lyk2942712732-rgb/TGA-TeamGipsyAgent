@@ -130,8 +130,6 @@ class HookActionRecorder:
 
 def result_context(record: dict) -> str:
     return (
-        f"TGA action_id: {record['action_id']}\n"
-        "If this result establishes a new reusable fact, immediately write one JSON file in /findings/ "
-        "with action_id, claim, scope and optional preconditions. The system registers evidence and imports it. "
-        "Otherwise continue; no log review."
+        f"TGA action_id: {record['action_id']} "
+        '(to share a fact, write one JSON file in /findings/ with {"claim": "..."}; action_id & scope are optional)'
     )

@@ -8,10 +8,60 @@ from typing import Any
 
 from fastapi import APIRouter
 
-from ..config import AgentsConfig, ModelConfig, ModelsConfig, RuntimeConfig, ScenesConfig
+from ..config import (
+    RUNTIME_DISPLAY_NAMES,
+    RUNTIME_SUPPORTED_PROTOCOLS,
+    AgentsConfig,
+    ModelConfig,
+    ModelsConfig,
+    RuntimeConfig,
+    ScenesConfig,
+)
 from ..model_discovery import discover_provider_models as _default_discover_provider_models
 from ..provider_profiles import PROVIDER_PROFILES, ProviderProtocol
 from .services import AppServices, ModelEnabledRequest, ScoutSettingsRequest
+
+_RUNTIME_NATIVE_TOOLS: dict[str, list[str]] = {
+    "codex_cli": ["Shell", "Read", "Edit", "web_search"],
+    "claude_cli": ["Bash", "Read", "Write", "Edit", "Glob", "Grep", "web_search", "WebSearch", "WebFetch"],
+    "opencode_cli": ["bash", "read", "write", "edit", "web_search"],
+    "qwen_cli": ["run_shell_command", "read_file", "write_file", "edit", "tool_search", "tool_call", "web_search"],
+}
+
+_WORKER_SHARED_TOOLS: list[str] = [
+    "知识库 MCP",
+    "Skills",
+    "经验卡",
+    "原生黑板同步 Hook",
+    "/findings/ 独立 JSON",
+    "系统导入最终候选文件",
+    "按 action 自动关联复现方法和证据",
+]
+
+_SCOUT_SHARED_TOOLS: list[str] = [
+    "第一轮：Shell / 安全工具 / logs 留存",
+    "第二轮：只读 logs",
+    "scout_write_intel → /intels/raw/scout-intels.json",
+    "第三轮：Intel 合并",
+    "scout_merge_intel → /intels/merged/scout-intels.json",
+    "系统仅导入合并 Intel",
+]
+
+_REPORTER_SHARED_TOOLS: list[str] = [
+    "Read snapshot",
+    "Read evidence",
+    "Read skills",
+    "Markdown Writeup",
+]
+
+
+def _tools_for(role: str, runtime: str) -> list[str]:
+    native = _RUNTIME_NATIVE_TOOLS.get(runtime, [])
+    if role == "scout":
+        return [*native, *_SCOUT_SHARED_TOOLS]
+    if role == "reporter":
+        return [*_REPORTER_SHARED_TOOLS]
+    return [*native, *_WORKER_SHARED_TOOLS]
 
 
 def build_config_router(services: AppServices) -> APIRouter:
@@ -51,62 +101,12 @@ def build_config_router(services: AppServices) -> APIRouter:
 
     @router.get("/agent-definitions")
     async def agent_definitions() -> list[dict[str, Any]]:
-        tools = {
-            "scout": [
-                "第一轮：Shell / 安全工具 / logs 留存",
-                "第二轮：只读 logs",
-                "scout_write_intel → /intels/raw/scout-intels.json",
-                "第三轮：Intel 合并",
-                "scout_merge_intel → /intels/merged/scout-intels.json",
-                "系统仅导入合并 Intel",
-            ],
-            "worker-openai": [
-                "Shell",
-                "Read",
-                "Edit",
-                "web_search",
-                "原生黑板同步 Hook",
-                "/findings/ 独立 JSON",
-                "系统导入最终候选文件",
-                "按 action 自动关联复现方法和证据",
-                "发布时自动校验证据路径",
-            ],
-            "worker-claude": [
-                "Bash",
-                "Read",
-                "Write",
-                "Edit",
-                "Glob",
-                "Grep",
-                "web_search",
-                "WebSearch",
-                "WebFetch",
-                "原生黑板同步 Hook",
-                "/findings/ 独立 JSON",
-                "系统导入最终候选文件",
-                "按 action 自动关联复现方法和证据",
-                "发布时自动校验证据路径",
-            ],
-            "reporter": ["Read snapshot", "Read evidence", "Read skills", "Markdown Writeup"],
-        }
-        for name, native in [
-            ("worker-opencode", ["bash", "read", "write", "edit"]),
-            ("worker-qwen", ["run_shell_command", "read_file", "write_file", "edit", "tool_search", "tool_call"]),
-        ]:
-            tools[name] = [
-                *native,
-                "web_search",
-                "知识库 MCP",
-                "Skills",
-                "经验卡",
-                "原生黑板同步 Hook",
-                "/findings/ 独立 JSON",
-                "系统导入最终候选文件",
-                "按 action 自动关联复现方法和证据",
-            ]
         result: list[dict[str, Any]] = []
         for agent_id, binding in config.agents.agents.items():
-            image = config.runtime.worker_images.get(agent_id)
+            try:
+                image = config.image_for_runtime(binding.runtime, agent_id)
+            except ValueError:
+                image = None
             image_health = await containers.image_status(image) if image else None
             result.append(
                 {
@@ -114,12 +114,36 @@ def build_config_router(services: AppServices) -> APIRouter:
                     "scout_timeout_seconds": config.runtime.scout_timeout_seconds if binding.role == "scout" else None,
                     "scout_extract_timeout_seconds": None,
                     **binding.model_dump(mode="json"),
-                    "tools": tools.get(agent_id, []),
+                    "tools": _tools_for(binding.role, binding.runtime),
                     "image": image,
                     "image_health": image_health,
                 }
             )
         return result
+
+    @router.get("/runtimes")
+    async def runtimes() -> list[dict[str, Any]]:
+        items: list[dict[str, Any]] = []
+        for runtime_id, display_name in RUNTIME_DISPLAY_NAMES.items():
+            try:
+                image = config.image_for_runtime(runtime_id)
+            except ValueError:
+                image = None
+            image_health = await containers.image_status(image) if image else None
+            items.append(
+                {
+                    "id": runtime_id,
+                    "display_name": display_name,
+                    "supported_protocols": list(RUNTIME_SUPPORTED_PROTOCOLS[runtime_id]),
+                    "image": image,
+                    "image_health": image_health,
+                    "native_tools": list(_RUNTIME_NATIVE_TOOLS.get(runtime_id, [])),
+                    "tools_by_role": {
+                        role: _tools_for(role, runtime_id) for role in ("scout", "worker", "reporter")
+                    },
+                }
+            )
+        return items
 
     @router.get("/config/models")
     async def read_models_config() -> dict:
