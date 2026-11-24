@@ -13,7 +13,7 @@ from uuid import UUID
 from .blackboard import Blackboard
 from .config import ResolvedAgent, TGA3Config
 from .docker_runtime import ContainerRuntime, LaunchSpec
-from .domain import SYSTEM_ACTOR, Actor, AgentState, EntryKind, EventKind, RunState
+from .domain import SYSTEM_ACTOR, Actor, AgentState, EntryKind, EventKind, RunState, TaskRun
 from .events import TaskEvents
 from .experience import CARDS_ONLY_INSTRUCTIONS, REPORT_INSTRUCTIONS, ExperienceStore
 from .storage import Storage
@@ -80,17 +80,18 @@ class Automation:
         events: TaskEvents,
         model: HostModel,
         stop_workers: Callable[[UUID], Awaitable[None]] | None = None,
+        should_auto_report: Callable[[TaskRun], bool] | None = None,
     ) -> None:
         self.config, self.storage, self.blackboard = config, storage, blackboard
         self.events, self.model, self.stop_workers = events, model, stop_workers
+        self.should_auto_report = should_auto_report or (lambda task: task.scene_id != "aoe")
         self.experience = ExperienceStore(config)
         self._reporter_jobs: dict[UUID, asyncio.Task[None]] = {}
 
     async def changed(self, task_id: UUID, latest_seq: int) -> None:
         task = await self.storage.get_task(task_id)
-        # AOE settles the question lease before requesting its report. Starting
-        # here would race its deadline/worker cleanup and the attempt history.
-        if task.scene_id == "aoe":
+        # Modes that manage their own settlement (e.g. AOE) trigger start_report explicitly.
+        if not self.should_auto_report(task):
             return
         if task.state in {RunState.COMPLETED, RunState.FAILED, RunState.CANCELLED}:
             return

@@ -1,14 +1,16 @@
 import {
-  type ChangeEvent, type ClipboardEvent, type DragEvent, type ReactNode,
+  type ChangeEvent, type ClipboardEvent, type DragEvent,
   useEffect, useMemo, useRef, useState,
 } from "react";
-import { Check, Copy, FileText, History, Image, Paperclip, Play, RotateCcw, Sparkles, Trash2, X } from "lucide-react";
+import { Check, Copy, FileText, History, Image, Paperclip, Play, Sparkles, X } from "lucide-react";
+import { modelCompatible } from "../api/model-compatibility";
 import {
   createTask, deleteStagedInput, fetchAgentModelOptions, fetchKnowledgeSources, fetchTaskCloneConfig, listScenes, stageInput,
   type AgentModelOptions, type KnowledgeSource, type KnowledgeSources, type StagedAsset, type TaskCloneConfig,
 } from "../api/tga3-tasks";
-import type { ProviderProtocol, SceneConfig } from "../api/tga3-config";
+import type { SceneConfig } from "../api/tga3-config";
 import { ModelPicker } from "../components/ModelPicker";
+import { MemoryField } from "../components/ui/FieldMemoryPopover";
 import { TASK_MODES, type TaskMode } from "../modes";
 import {
   clearUnsubmittedDraft,
@@ -476,130 +478,4 @@ export function NewTaskPage({
   </div>;
 }
 
-function MemoryField({
-  className = "",
-  label,
-  subLabel,
-  fieldKey,
-  currentValue,
-  items,
-  multiline = false,
-  compact = false,
-  undoAvailable = false,
-  onUndo,
-  onSelect,
-  onForget,
-  children,
-}: {
-  className?: string;
-  label: string;
-  subLabel?: string;
-  fieldKey: string;
-  currentValue: string;
-  items: FieldHistoryEntry[];
-  multiline?: boolean;
-  compact?: boolean;
-  undoAvailable?: boolean;
-  onUndo: () => void;
-  onSelect: (value: string) => void;
-  onForget: (value: string) => void;
-  children: ReactNode;
-}) {
-  const [open, setOpen] = useState(false);
-  const closeTimerRef = useRef<number | null>(null);
-  const suggestions = items.filter((item) => item.value !== currentValue);
-
-  function cancelClose() {
-    if (closeTimerRef.current !== null) {
-      window.clearTimeout(closeTimerRef.current);
-      closeTimerRef.current = null;
-    }
-  }
-
-  function openNow() {
-    cancelClose();
-    if (suggestions.length > 0) setOpen(true);
-  }
-
-  function scheduleClose() {
-    cancelClose();
-    closeTimerRef.current = window.setTimeout(() => setOpen(false), 180);
-  }
-
-  useEffect(() => () => cancelClose(), []);
-
-  const willReplace = Boolean(currentValue.trim());
-
-  return (
-    <div
-      className={`memory-field-wrap${compact ? " is-compact" : ""} ${className}`.trim()}
-      onMouseEnter={openNow}
-      onMouseLeave={scheduleClose}
-      data-field={fieldKey}
-    >
-      <label className={className}>
-        <span className="memory-field-label-row">
-          <span>{label}{subLabel ? <span className="memory-field-sub">{subLabel}</span> : null}</span>
-        </span>
-        {children}
-      </label>
-      {undoAvailable ? (
-        <button type="button" className="text-button memory-undo-btn" onClick={onUndo}>
-          <RotateCcw size={12} />撤销填入
-        </button>
-      ) : null}
-
-      {open && suggestions.length > 0 ? (
-        <div
-          className={`memory-popover${multiline ? " is-multiline" : ""}`}
-          role="region"
-          aria-label={`${label} 历史记忆`}
-          onMouseEnter={cancelClose}
-          onMouseLeave={scheduleClose}
-        >
-          <header>
-            <span><History size={12} /> 上次填写{willReplace ? "（点击将替换当前内容）" : "（点击快速填入）"}</span>
-          </header>
-          <ul>
-            {suggestions.map((entry, idx) => (
-              <li key={`${entry.savedAt}-${idx}`}>
-                <button
-                  type="button"
-                  className="memory-option-btn"
-                  onClick={() => {
-                    onSelect(entry.value);
-                    setOpen(false);
-                  }}
-                >
-                  <span className="memory-option-text">
-                    {multiline && entry.value.length > 140 ? `${entry.value.slice(0, 140)}…` : entry.value}
-                  </span>
-                  <small>
-                    {idx === 0 ? "最近一次" : `较早记录`}
-                    {multiline ? ` · ${entry.value.length} 字` : ""}
-                    {formatShortTime(entry.savedAt) ? ` · ${formatShortTime(entry.savedAt)}` : ""}
-                  </small>
-                </button>
-                <button
-                  type="button"
-                  className="memory-forget-btn"
-                  aria-label={`清除这条${label}记忆`}
-                  title="清除此条记忆"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    onForget(entry.value);
-                  }}
-                >
-                  <Trash2 size={12} />
-                </button>
-              </li>
-            ))}
-          </ul>
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
 function formatBytes(value: number) { return value < 1024 ? `${value} B` : value < 1024 ** 2 ? `${(value / 1024).toFixed(1)} KB` : `${(value / 1024 ** 2).toFixed(1)} MB`; }
-function modelCompatible(runtime: "codex_cli" | "claude_cli" | "opencode_cli" | "qwen_cli", protocol: "openai_responses" | "openai_chat_completions" | "anthropic") { return runtime === "claude_cli" ? protocol === "anthropic" : runtime === "codex_cli" ? protocol === "openai_responses" : true; }

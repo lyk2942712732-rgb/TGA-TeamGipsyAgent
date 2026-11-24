@@ -1,5 +1,6 @@
 import { AlertTriangle, CheckCircle2, ChevronDown, ChevronRight, Copy, RotateCcw, RefreshCw } from "lucide-react";
 import { useEffect, useState } from "react";
+import { modelCompatible } from "../../../api/model-compatibility";
 import type { ProviderProtocol } from "../../../api/tga3-config";
 import type { RestartTaskPayload } from "../../../api/tga3-runtime-control";
 import { fetchAgentModelOptions, type AgentModelOptions } from "../../../api/tga3-tasks";
@@ -7,13 +8,6 @@ import { ModelPicker } from "../../../components/ModelPicker";
 import type { TaskMode } from "../../../modes";
 import type { TGA3RuntimeSnapshot } from "../../../runtime/tga3-runtime";
 import { aoeBudgets } from "../aoe-view";
-
-function modelCompatible(
-  runtime: "codex_cli" | "claude_cli" | "opencode_cli" | "qwen_cli",
-  protocol: ProviderProtocol,
-) {
-  return runtime === "claude_cli" ? protocol === "anthropic" : runtime === "codex_cli" ? protocol === "openai_responses" : true;
-}
 
 export function RestartTaskDialog({
   open,

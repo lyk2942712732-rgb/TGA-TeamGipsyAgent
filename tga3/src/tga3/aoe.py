@@ -1,25 +1,21 @@
-"""AOE-only question collection, isolated boards and multi-Worker attempt scheduling."""
+"""AOE question lifecycle facade and multi-Worker attempt scheduler."""
 
 from __future__ import annotations
 
 import asyncio
 import hashlib
 import json
-import mimetypes
-import re
 import time
 from collections import defaultdict
-from copy import deepcopy
 from pathlib import Path
 from typing import TYPE_CHECKING
-from urllib.parse import unquote, urlsplit
 from uuid import UUID, uuid4, uuid5
 
 import httpx
 
+from .aoe_attachments import AOEAttachmentManager
 from .aoe_models import (
     AOEQuestionInput,
-    AttachmentDownloadSpec,
     active_attempts,
     attempt_budget_seconds,
     attempt_budgets,
@@ -29,7 +25,6 @@ from .aoe_models import (
     joint_workers,
     next_joint_question,
     next_solo_question,
-    overview_order,
     question_order,
     rescue_after,
     schedulable_questions,
@@ -37,20 +32,23 @@ from .aoe_models import (
     solo_attempts,
     unfinished,
 )
+from .aoe_scout_runner import AOEScoutRunner
+from .aoe_views import AOEViewStore, atomic_json
 from .batch_context import BatchContext
 from .docker_runtime import LaunchSpec
 from .domain import SYSTEM_ACTOR, AgentRun, AgentState, EventKind, InputFile, PublishRequest, RunState, TaskRun
 from .errors import ConflictError, ContractError
-from .evidence import evidence_files
 from .question_collection import QuestionCollection
 from .submissions import Submissions
 from .target_instances import TargetInstances
+from .task_metadata import clear_question_round_state
 
 if TYPE_CHECKING:
     from .coordinator import TaskCoordinator
 
 
 TERMINAL = {RunState.COMPLETED, RunState.FAILED, RunState.CANCELLED}
+_UNSET = object()
 
 
 class AOERuntime:
@@ -60,28 +58,77 @@ class AOERuntime:
         self.containers, self.board, self.events = coordinator.containers, coordinator.blackboard, coordinator.events
         self.clock = clock
         self.locks: defaultdict[UUID, asyncio.Lock] = defaultdict(asyncio.Lock)
-        self.automation = None
+        self._automation_override: object = _UNSET
         self._checked_sequences: dict[UUID, int] = {}
-        self._manifest_digests: dict[UUID, str] = {}
-        self._collection_digests: dict[UUID, str] = {}
-        self._manifest_sources: dict[UUID, tuple] = {}
-        self._input_files: dict[UUID, list[InputFile]] = {}
         self._parents: dict[UUID, UUID] = {}
         self._agent_sources: dict[tuple[UUID, str], tuple] = {}
         self._wakeups: dict[UUID, asyncio.Event] = {}
         self._next_due: dict[UUID, float | None] = {}
         self.reconcile_seconds = reconcile_seconds
         self._unsubscribe = self.storage.subscribe_changes(self._storage_changed)
-        self.targets = TargetInstances(self.config, clock=lambda: self.clock(), on_change=self.wake)
-        self.submissions = Submissions(self.config)
+        self._targets = TargetInstances(self.config, clock=lambda: self.clock(), on_change=self.wake)
+        self._submissions = Submissions(self.config)
         self.overview = BatchContext(self.config, self.storage)
+        self.attachments = AOEAttachmentManager(self.config, self.storage, self.board)
+        self.views = AOEViewStore(
+            self.config,
+            self.storage,
+            self.attachments,
+            self._targets,
+            self._submissions,
+            write_json=lambda path, value: self._atomic_json(path, value),
+            build_question_view=lambda q: self.question_view(q),
+        )
         self.collection = QuestionCollection(self)
-        self.attachment_client: httpx.AsyncClient | None = None
-        self._attachment_locks: defaultdict[UUID, asyncio.Lock] = defaultdict(asyncio.Lock)
+        self.scout_runner = AOEScoutRunner(self)
         self._recovering: set[UUID] = set()
         self._target_jobs: dict[UUID, asyncio.Task] = {}
         self._target_claims: dict[UUID, tuple[str, ...]] = {}
         self._target_closes: dict[UUID, asyncio.Task] = {}
+
+    @property
+    def targets(self) -> TargetInstances:
+        return self._targets
+
+    @targets.setter
+    def targets(self, value: TargetInstances) -> None:
+        self._targets = value
+        self.views.targets = value
+
+    @property
+    def submissions(self) -> Submissions:
+        return self._submissions
+
+    @submissions.setter
+    def submissions(self, value: Submissions) -> None:
+        self._submissions = value
+        self.views.submissions = value
+
+    @property
+    def _input_files(self) -> dict[UUID, list[InputFile]]:
+        return self.attachments._input_files
+
+    @property
+    def _manifest_sources(self) -> dict[UUID, tuple]:
+        return self.views._manifest_sources
+
+    @property
+    def automation(self):
+        if self._automation_override is not _UNSET:
+            return self._automation_override
+        return getattr(self.coordinator, "automation", None)
+
+    @automation.setter
+    def automation(self, value) -> None:
+        self._automation_override = value
+
+    @property
+    def attachment_client(self) -> httpx.AsyncClient | None:
+        return self.attachments.client
+
+    @attachment_client.setter
+    def attachment_client(self, value: httpx.AsyncClient | None) -> None:
+        self.attachments.client = value
 
     def wake(self, parent_id: UUID) -> None:
         if event := self._wakeups.get(parent_id):
@@ -98,8 +145,8 @@ class AOERuntime:
             if parent_id is None:
                 return
             if kind == "input":
-                self._input_files.pop(value.task_id, None)
-                self._manifest_sources.pop(value.task_id, None)
+                self.attachments.invalidate(value.task_id)
+                self.views.invalidate_question(value.task_id)
             elif kind == "agent":
                 # Token/accounting and acknowledgement metadata do not affect scheduling.
                 key = (value.task_id, value.agent_id)
@@ -117,21 +164,10 @@ class AOERuntime:
             self._parents[question.id] = question.parent_task_id
 
     async def _attachments(self, question_id: UUID) -> list[InputFile]:
-        if question_id not in self._input_files:
-            files = await self.storage.list_input_files(question_id)
-            self._input_files[question_id] = sorted(files, key=lambda f: (f.created_at, f.id))
-        return self._input_files[question_id]
+        return await self.attachments.list_for(question_id)
 
     async def _reconcile_inputs(self, parent_id: UUID, questions: list[TaskRun]) -> None:
-        # One batch query also recovers a missed input notification; no N+1 reads.
-        grouped = defaultdict(list)
-        for item in await self.storage.list_question_input_files(parent_id):
-            grouped[item.task_id].append(item)
-        for question in questions:
-            files = sorted(grouped[question.id], key=lambda f: (f.created_at, f.id))
-            if files != self._input_files.get(question.id):
-                self._manifest_sources.pop(question.id, None)
-                self._input_files[question.id] = files
+        await self.attachments.reconcile(parent_id, questions, on_changed=self.views.invalidate_question)
 
     async def _update_agent(self, current: AgentRun, **changes) -> AgentRun:
         metadata = changes.get("metadata", {})
@@ -146,143 +182,29 @@ class AOERuntime:
             return await self.storage.update_task(current.id, state=state, metadata=metadata)
         return current
 
-    def _question_source(self, question: TaskRun) -> tuple:
-        fields = ("description", "source_key", "difficulty", "category", "tags", "connection_info",
-                  "submission_instructions", "flag_format", "collection_notes", "pre_solved",
-                  "status", "registered_at", "solved_at", "scout_ready", "scout_phase", "attempts", "flag",
-                  "rescue", "reinforcement", "finish_reason", "swarm", "solver_agent_id")
-        return (question.title, question.state, question.created_at, question.blackboard_seq,
-                *(question.metadata.get(k) for k in fields), self.targets.spec(question).model_dump(mode="json"),
-                self.targets.state(question.id))
-
     def _atomic_json(self, path: Path, value: dict) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = path.with_suffix(f".{uuid4().hex}.tmp")
-        try:
-            temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-            temporary.replace(path)
-        finally:
-            temporary.unlink(missing_ok=True)
+        atomic_json(path, value)
 
     async def question_view(self, question: TaskRun) -> dict:
-        attempts = question.metadata.get("attempts", [])
-        files = await self._attachments(question.id)
-        return {
-            "question_id": str(question.id),
-            "parent_task_id": str(question.parent_task_id),
-            "title": question.title,
-            "description": question.metadata["description"],
-            "source_key": question.metadata["source_key"],
-            "difficulty": question.metadata.get("difficulty"),
-            "category": question.metadata.get("category", ""),
-            "tags": list(question.metadata.get("tags", [])),
-            "connection_info": question.metadata.get("connection_info", ""),
-            "submission_instructions": question.metadata.get("submission_instructions", ""),
-            "flag_format": question.metadata.get("flag_format", ""),
-            "collection_notes": question.metadata.get("collection_notes", ""),
-            "pre_solved": bool(question.metadata.get("pre_solved", False)),
-            "remote_attachments_count": len(question.metadata.get("remote_attachments", [])),
-            "status": question.metadata.get("status", "queued"),
-            "registered_at": question.metadata.get("registered_at", question.created_at.timestamp()),
-            "solved_at": question.metadata.get("solved_at"),
-            "scout_ready": scout_ready(question),
-            "scout_phase": question.metadata.get("scout_phase", "completed" if scout_ready(question) else "queued"),
-            "attempted_by": sorted({a['agent_id'] for a in attempts}),
-            "current_agents": [attempt["agent_id"] for attempt in active_attempts(question)],
-            "attempts": attempts,
-            "flag": question.metadata.get("flag"),
-            "rescue": question.metadata.get('rescue'),
-            "reinforcement": question.metadata.get('reinforcement'),
-            "finish_reason": question.metadata.get('finish_reason'),
-            "swarm": question.metadata.get('swarm'),
-            "solver_agent_id": question.metadata.get('solver_agent_id'),
-            "report_state": (
-                "pre_solved"
-                if question.metadata.get("pre_solved")
-                else "disabled"
-                if not question.metadata.get("produce_report", True)
-                else
-                "completed"
-                if question.state == RunState.COMPLETED
-                else "failed"
-                if question.metadata.get("status") in {"solved", "abandoned"} and question.state == RunState.FAILED
-                else "generating"
-                if question.state in {RunState.FINALIZING, RunState.REPORTING}
-                else "pending"
-            ),
-            "blackboard_seq": question.blackboard_seq,
-            "attachments": [
-                {**{key: value for key, value in item.model_dump(mode="json").items() if key != "storage_path"},
-                 "path": Path(item.storage_path).relative_to(self.config.task_path(question.id)).as_posix()}
-                for item in files
-            ],
-        }
+        return await self.views.question_view(question)
 
     async def snapshot(self, parent_id: UUID) -> dict:
-        parent = await self.storage.get_task(parent_id)
-        if parent.scene_id != "aoe" or parent.parent_task_id is not None:
-            raise ContractError("AOE overview requires its parent task")
-        questions = await self.storage.list_questions(parent_id)
-        views = [await self.question_view(question) for question in sorted(questions, key=overview_order)]
-        return {
-            "task_id": str(parent_id),
-            "phase": parent.metadata.get("aoe_phase", "collecting"),
-            "attempt_seconds": attempt_budgets(parent.metadata)["first"],
-            "attempt_budgets": attempt_budgets(parent.metadata),
-            "scout_mode": parent.metadata.get("aoe_scout_mode", "legacy_recon"),
-            "collection_complete": parent.metadata.get("collection_complete", False),
-            "collection_status": parent.metadata.get(
-                "collection_status",
-                "complete" if parent.metadata.get("collection_complete") else "collecting",
-            ),
-            "collection_warnings": list(parent.metadata.get("collection_warnings", [])),
-            "questions": views,
-        }
+        return await self.views.snapshot(parent_id)
 
     async def _save_question(self, question: TaskRun) -> None:
-        source = self._question_source(question)
-        path = self.config.task_path(question.id) / "question.json"
-        if self._manifest_sources.get(question.id) == source and path.is_file():
-            return
-        value = await self.question_view(question)
-        value["target"] = self.targets.spec(question).model_dump(mode="json")
-        submission = self.submissions.spec(question)
-        value["submission"] = submission.model_dump(mode="json") if submission else None
-        value["target_runtime"] = self.targets.state(question.id)
-        if (path.parent / 'source.json').is_file():
-            value['source_path'] = 'source.json'
-        digest = hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
-        if self._manifest_digests.get(question.id) != digest:
-            self._atomic_json(path, value)
-            self._manifest_digests[question.id] = digest
-        elif not path.is_file():
-            self._atomic_json(path, value)
-        self._manifest_sources[question.id] = deepcopy(source)
+        await self.views.save_question(question)
+
+    async def refresh_collection_state(self, parent_id: UUID, *, parent=None, questions=None) -> dict:
+        """Public entry point for QuestionImporter & scheduler to update collection-state.json."""
+        return await self.views.write_collection_state(
+            parent_id,
+            summary=self.collection.state_summary(parent_id),
+            parent=parent,
+            questions=questions,
+        )
 
     async def _collection_state(self, parent_id: UUID, *, parent=None, questions=None) -> dict:
-        """Minimal control-plane signal file for Scout container; carries no question content."""
-        parent = parent if parent is not None else await self.storage.get_task(parent_id)
-        questions = questions if questions is not None else await self.storage.list_questions(parent_id)
-        complete = bool(parent.metadata.get("collection_complete", False))
-        summary = self.collection.state_summary(parent_id)
-        value = {
-            "task_id": str(parent_id),
-            "collection_complete": complete,
-            "status": parent.metadata.get("collection_status", "complete" if complete else "collecting"),
-            "import_seq": summary["import_seq"],
-            "imported_count": len(questions),
-            "imported_keys": sorted(q.metadata["source_key"] for q in questions),
-            "rejected_count": summary["rejected_count"],
-            "last_batch": summary["last_batch"],
-            "recent_errors": summary["recent_errors"],
-            "warnings": list(parent.metadata.get("collection_warnings", [])),
-        }
-        path = self.config.task_path(parent_id) / "collection-state.json"
-        digest = hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
-        if self._collection_digests.get(parent_id) != digest or not path.is_file():
-            self._atomic_json(path, value)
-            self._collection_digests[parent_id] = digest
-        return value
+        return await self.refresh_collection_state(parent_id, parent=parent, questions=questions)
 
     async def _collecting_parent(self, task_id: UUID) -> TaskRun:
         parent = await self.storage.get_task(task_id)
@@ -298,187 +220,17 @@ class AOERuntime:
         return parent
 
     def _source_file(self, parent_id: UUID, supplied: str) -> Path:
-        if supplied.startswith("/inputs/"):
-            root, relative = self.config.task_path(parent_id, "inputs"), supplied.removeprefix("/inputs/")
-        else:
-            root = self.config.task_path(parent_id, "workspaces", "scout")
-            relative = supplied.removeprefix("/workspace/")
-        return next(iter(evidence_files(root, [relative]).values()))
+        return self.attachments.resolve_source_file(parent_id, supplied)
 
     async def _copy_input(self, question: TaskRun, source: Path, supplied: str) -> None:
-        ident = uuid5(question.id, "attachment:" + supplied)
-        path = self.config.task_path(question.id, "inputs") / f"{ident}-{source.name}"
-
-        def copy():
-            digest, size = hashlib.sha256(), 0
-            temporary = path.with_suffix(f".{uuid4().hex}.tmp")
-            try:
-                with source.open("rb") as src, temporary.open("wb") as out:
-                    while chunk := src.read(1024 * 1024):
-                        out.write(chunk)
-                        digest.update(chunk)
-                        size += len(chunk)
-                temporary.replace(path)
-            finally:
-                temporary.unlink(missing_ok=True)
-            return digest.hexdigest(), size
-
-        item = next((file for file in await self.storage.list_input_files(question.id) if file.id == ident), None)
-        if item is None:
-            digest, size = await asyncio.to_thread(copy)
-            item = await self.storage.register_input_file(
-                InputFile(
-                    id=ident,
-                    task_id=question.id,
-                    name=source.name,
-                    storage_path=str(path),
-                    media_type=mimetypes.guess_type(source.name)[0] or "application/octet-stream",
-                    sha256=digest,
-                    size_bytes=size,
-                )
-            )
-        await self.board.publish(
-            question.id,
-            SYSTEM_ACTOR,
-            PublishRequest(
-                kind="user_file",
-                topic="input",
-                idempotency_key="question-file:" + str(ident),
-                body={
-                    "input_file_id": str(item.id),
-                    "name": item.name,
-                    "media_type": item.media_type,
-                    "sha256": item.sha256,
-                    "description": f"AOE question attachment: /inputs/{path.name}",
-                },
-            ),
-        )
-
-    @staticmethod
-    def _remote_filename(spec: AttachmentDownloadSpec, content_disposition: str = "") -> str:
-        candidate = spec.filename.strip()
-        if not candidate and content_disposition:
-            match = re.search(r"filename\*=(?:UTF-8''|utf-8'')([^;\r\n]+)", content_disposition)
-            if match:
-                candidate = unquote(match[1].strip().strip("\"'"))
-            else:
-                match = re.search(r'filename="?([^";\r\n]+)"?', content_disposition)
-                if match:
-                    candidate = match[1].strip()
-        if not candidate:
-            candidate = unquote(Path(urlsplit(spec.url).path).name)
-        candidate = Path(candidate.replace("\\", "/")).name.strip()
-        candidate = re.sub(r"[\x00-\x1f<>:\"|?*]+", "_", candidate)
-        return candidate or "attachment.bin"
+        await self.attachments.copy_local_input(question, source, supplied)
 
     async def _prepare_attachments(self, question: TaskRun) -> None:
-        """Download declared remote attachments on demand when a Worker claims this question."""
-        raw_specs = question.metadata.get("remote_attachments") or []
-        if not raw_specs or question.metadata.get("pre_solved"):
-            return
-        max_bytes = 256 * 1024 * 1024
-        async with self._attachment_locks[question.id]:
-            specs = [AttachmentDownloadSpec.model_validate(item) for item in raw_specs]
-            existing_ids = {file.id for file in await self.storage.list_input_files(question.id)}
-            pending = []
-            for spec in specs:
-                ident = uuid5(question.id, f"remote-attachment:{spec.method}:{spec.url}:{spec.filename}")
-                if ident not in existing_ids:
-                    pending.append((ident, spec))
-            if not pending:
-                return
-            inputs_root = self.config.task_path(question.id, "inputs")
-            inputs_root.mkdir(parents=True, exist_ok=True)
-            client = self.attachment_client
-            owns = client is None
-            if owns:
-                client = httpx.AsyncClient(follow_redirects=True, timeout=60.0)
-            changed = False
-            try:
-                for ident, spec in pending:
-                    last_error = ""
-                    saved_item = None
-                    for _attempt in range(2):
-                        temporary = inputs_root / f".{ident}.{uuid4().hex[:8]}.tmp"
-                        try:
-                            kwargs: dict = {"headers": spec.headers, "params": spec.params}
-                            if isinstance(spec.body, (dict, list)):
-                                kwargs["json"] = spec.body
-                            elif spec.body is not None:
-                                kwargs["content"] = str(spec.body).encode("utf-8")
-                            async with client.stream(spec.method, spec.url, **kwargs) as response:
-                                if response.status_code >= 400:
-                                    last_error = f"HTTP {response.status_code}"
-                                    continue
-                                name = self._remote_filename(spec, response.headers.get("content-disposition", ""))
-                                digest, size = hashlib.sha256(), 0
-                                with temporary.open("wb") as out:
-                                    async for chunk in response.aiter_bytes(1024 * 1024):
-                                        size += len(chunk)
-                                        if size > max_bytes:
-                                            raise ContractError(f"Remote attachment exceeds {max_bytes} bytes")
-                                        out.write(chunk)
-                                        digest.update(chunk)
-                                target = inputs_root / f"{ident}-{name}"
-                                temporary.replace(target)
-                                saved_item = await self.storage.register_input_file(
-                                    InputFile(
-                                        id=ident,
-                                        task_id=question.id,
-                                        name=name,
-                                        storage_path=str(target),
-                                        media_type=mimetypes.guess_type(name)[0] or "application/octet-stream",
-                                        sha256=digest.hexdigest(),
-                                        size_bytes=size,
-                                    )
-                                )
-                                await self.board.publish(
-                                    question.id,
-                                    SYSTEM_ACTOR,
-                                    PublishRequest(
-                                        kind="user_file",
-                                        topic="input",
-                                        idempotency_key="question-file:" + str(ident),
-                                        body={
-                                            "input_file_id": str(saved_item.id),
-                                            "name": saved_item.name,
-                                            "media_type": saved_item.media_type,
-                                            "sha256": saved_item.sha256,
-                                            "description": (
-                                    f"AOE question attachment (auto-downloaded): /inputs/{target.name}"
-                                ),
-                                        },
-                                    ),
-                                )
-                                changed = True
-                                break
-                        except Exception as exc:
-                            last_error = str(exc) or type(exc).__name__
-                        finally:
-                            temporary.unlink(missing_ok=True)
-                    if saved_item is None:
-                        await self.board.publish(
-                            question.id,
-                            SYSTEM_ACTOR,
-                            PublishRequest(
-                                kind="user_prompt",
-                                topic="system",
-                                idempotency_key="remote-attachment-error:" + str(ident),
-                                body={
-                                    "text": (
-                                        f"系统自动下载题目附件失败（{spec.url}）：{last_error}。"
-                                        "请根据题面或动态靶机情况自行确认附件来源。"
-                                    )
-                                },
-                            ),
-                        )
-            finally:
-                if owns:
-                    await client.aclose()
-            if changed:
-                self._input_files.pop(question.id, None)
-                self._manifest_sources.pop(question.id, None)
-                await self._save_question(await self.storage.get_task(question.id))
+        async def on_updated(updated: TaskRun) -> None:
+            self.views.invalidate_question(updated.id)
+            await self.views.save_question(updated)
+
+        await self.attachments.prepare_remote(question, on_updated=on_updated)
 
     async def register_questions(self, parent_id: UUID, specifications: list[AOEQuestionInput]) -> dict:
         async with self.locks[parent_id]:
@@ -743,131 +495,17 @@ class AOERuntime:
             self._clear_views(parent_id)
 
     def _clear_views(self, parent_id: UUID) -> None:
-        self._collection_digests.pop(parent_id, None)
         self.collection.clear_state(parent_id)
-        for question_id, owner in list(self._parents.items()):
-            if owner == parent_id:
-                self._input_files.pop(question_id, None)
-                self._manifest_sources.pop(question_id, None)
-                self._manifest_digests.pop(question_id, None)
-        self._agent_sources = {k: v for k, v in self._agent_sources.items()
-                               if self._parents.get(k[0]) != parent_id}
+        question_ids = [qid for qid, owner in list(self._parents.items()) if owner == parent_id]
+        for question_id in question_ids:
+            self.attachments.invalidate(question_id)
+        self.views.clear_parent(parent_id, question_ids)
+        self._agent_sources = {
+            k: v for k, v in self._agent_sources.items() if self._parents.get(k[0]) != parent_id
+        }
 
     async def _scout(self, parent_id: UUID, bindings: dict) -> None:
-        parent = await self.storage.get_task(parent_id)
-        await self.overview.prepare(parent_id)
-        self.collection.ensure_directories(parent_id)
-        await self._collection_state(parent_id, parent=parent)
-
-        async def emit(method: str, params: dict):
-            if method == "container.started":
-                await self.storage.update_agent(parent_id, "scout", container_id=params["container_id"],
-                                                actual_state=AgentState.RUNNING)
-            else:
-                await self.coordinator.handle_agent_event(parent_id, "scout", method, params)
-
-        async def watch_outbox() -> None:
-            while True:
-                try:
-                    current = await self.storage.get_task(parent_id)
-                    if current.metadata.get("collection_complete"):
-                        return
-                    if self.collection.has_pending(parent_id):
-                        await self.collection.import_outbox(parent_id)
-                except asyncio.CancelledError:
-                    raise
-                except Exception:
-                    pass
-                await asyncio.sleep(0.5)
-
-        watcher: asyncio.Task | None = None
-        scout_error: str | None = None
-        try:
-            await self.storage.update_task(parent_id, metadata={"aoe_scout_mode": "collection_only"})
-            if not parent.metadata.get("collection_complete"):
-                budget = self.config.runtime.aoe_collection_timeout_seconds
-                await self.storage.update_agent(parent_id, "scout", actual_state=AgentState.RUNNING,
-                                                metadata={"scout_phase": "collecting"})
-                await self.events.emit(parent_id, actor=SYSTEM_ACTOR, kind=EventKind.SYSTEM,
-                                       text="Scout 收集题目，Worker 随登记并行认领简单题或无难度题",
-                                       channel_agent_id="scout", payload={"scout_phase": "collecting"})
-                watcher = asyncio.create_task(watch_outbox())
-                try:
-                    async with asyncio.timeout(budget + 15):
-                        await self.containers.scout(
-                            LaunchSpec(
-                                task_id=parent_id,
-                                agent=bindings["scout"],
-                                scout_phase="collecting",
-                                phase_budget_seconds=budget,
-                                aoe_parent_id=parent_id,
-                            ),
-                            emit,
-                        )
-                except TimeoutError:
-                    scout_error = f"Scout collection timed out after {budget}s"
-                except Exception as exc:
-                    scout_error = str(exc) or type(exc).__name__
-                finally:
-                    if watcher is not None:
-                        watcher.cancel()
-                        await asyncio.gather(watcher, return_exceptions=True)
-                        watcher = None
-                if self.collection.has_pending(parent_id):
-                    current = await self.storage.get_task(parent_id)
-                    if not current.metadata.get("collection_complete"):
-                        await self.collection.import_outbox(parent_id)
-            parent = await self.storage.get_task(parent_id)
-            questions = await self.storage.list_questions(parent_id)
-            if not parent.metadata.get("collection_complete"):
-                if questions:
-                    warning = (
-                        scout_error
-                        or "Scout ended before calling scout_finish_collection; continuing with collected questions"
-                    )
-                    await self.finish_collection(parent_id, status="partial", warnings=[warning], force=True)
-                    await self.events.emit(
-                        parent_id,
-                        actor=SYSTEM_ACTOR,
-                        kind=EventKind.SYSTEM,
-                        text=f"Scout 部分收集结束（已登记 {len(questions)} 题），继续解题：{warning}",
-                        channel_agent_id="scout",
-                        payload={"scout_phase": "completed", "collection_status": "partial", "warning": warning},
-                    )
-                else:
-                    raise ContractError(scout_error or "Scout finished without registering any questions")
-            parent = await self.storage.get_task(parent_id)
-            questions = await self.storage.list_questions(parent_id)
-            # A restored pre-upgrade collection may contain registered but unprepared questions.
-            # Registration already populated its board and inputs; no reconnaissance is needed.
-            for question in questions:
-                if not scout_ready(question) and question.metadata.get("registration_complete"):
-                    await self.storage.update_task(question.id, state=RunState.RUNNING,
-                                                   metadata={"scout_ready": True, "scout_phase": "completed",
-                                                             "status": "queued"})
-                    await self._save_question(await self.storage.get_task(question.id))
-            await self.storage.update_agent(parent_id, "scout", desired_state=AgentState.COMPLETED,
-                                            actual_state=AgentState.COMPLETED,
-                                            metadata={"scout_phase": "completed", "current_question_id": None,
-                                                      "current_question_title": None})
-            await self.storage.update_task(parent_id, state=RunState.RUNNING,
-                                           metadata={"scout_complete": True})
-            status_label = (
-                "部分题目信息已收集"
-                if parent.metadata.get("collection_status") == "partial"
-                else "全部题目信息已收集"
-            )
-            await self.events.emit(parent_id, actor=SYSTEM_ACTOR, kind=EventKind.SYSTEM,
-                                   text=f"{status_label}（共 {len(questions)} 题），Scout 结束工作；Worker 继续解题",
-                                   channel_agent_id="scout",
-                                   payload={"scout_phase": "completed",
-                                            "collection_status": parent.metadata.get("collection_status", "complete"),
-                                            "question_count": len(questions)})
-        finally:
-            if watcher is not None:
-                watcher.cancel()
-                await asyncio.gather(watcher, return_exceptions=True)
-            await self.containers.stop(parent_id, "scout")
+        await self.scout_runner.run(parent_id, bindings)
 
     async def _copy_realtime(self, parent_id: UUID, question: TaskRun) -> None:
         # Initial shared instructions stay in the overview; only live corrections
@@ -1170,7 +808,8 @@ class AOERuntime:
         await self._launch_attempt(parent_id, question, addition, fresh=True)
         return question
 
-    async def _stop_worker(self, question_id: UUID, agent_id: str) -> None:
+    async def stop_worker(self, question_id: UUID, agent_id: str) -> None:
+        """Stop an active Worker on a specific AOE child question."""
         await self.storage.update_agent(question_id, agent_id, desired_state=AgentState.STOPPING)
         try:
             async with asyncio.timeout(7):
@@ -1182,6 +821,9 @@ class AOERuntime:
         await self.storage.update_agent(
             question_id, agent_id, desired_state=AgentState.STOPPED, actual_state=AgentState.STOPPED, container_id=None
         )
+
+    async def _stop_worker(self, question_id: UUID, agent_id: str) -> None:
+        await self.stop_worker(question_id, agent_id)
 
     async def record_pause(self, question_id: UUID, agent_id: str, *, paused: bool) -> None:
         """Record acknowledged pause intervals without touching stage budgets."""
@@ -1418,21 +1060,10 @@ class AOERuntime:
                             pending_reports += 1
                         continue
 
-                    def reset_abandoned(metadata):
-                        cleaned = dict(metadata)
-                        for key in ("swarm", "rescue", "reinforcement", "finish_reason"):
-                            cleaned.pop(key, None)
-                        attempts = [
-                            {**a, "outcome": a.get("outcome") or "interrupted", "superseded": True}
-                            for a in cleaned.get("attempts", [])
-                        ]
-                        cleaned["attempts"] = attempts
-                        cleaned["status"] = "queued"
-                        cleaned["scout_ready"] = True
-                        cleaned["scout_phase"] = "completed"
-                        return cleaned
-
-                    question = await self.storage.mutate_task_metadata(question.id, reset_abandoned)
+                    question = await self.storage.mutate_task_metadata(
+                        question.id,
+                        lambda m: clear_question_round_state(m, supersede_all=True),
+                    )
                     question = await self.storage.update_task(question.id, state=RunState.RUNNING)
                     await self.board.publish(
                         question.id,
@@ -1455,26 +1086,10 @@ class AOERuntime:
                     continue
 
                 # Unfinished / interrupted / cancelled questions return to queued without burning interrupted slots.
-                def reset_unfinished(metadata):
-                    cleaned = dict(metadata)
-                    cleaned.pop("swarm", None)
-                    cleaned.pop("rescue", None)
-                    cleaned.pop("reinforcement", None)
-                    cleaned.pop("finish_reason", None)
-                    attempts = []
-                    for a in cleaned.get("attempts", []):
-                        if a.get("outcome") is None or a.get("outcome") == "interrupted":
-                            attempts.append({**a, "outcome": "interrupted", "superseded": True})
-                        else:
-                            attempts.append(a)
-                    cleaned["attempts"] = attempts
-                    cleaned["status"] = "queued"
-                    if cleaned.get("registration_complete", True):
-                        cleaned["scout_ready"] = True
-                        cleaned["scout_phase"] = "completed"
-                    return cleaned
-
-                question = await self.storage.mutate_task_metadata(question.id, reset_unfinished)
+                question = await self.storage.mutate_task_metadata(
+                    question.id,
+                    lambda m: clear_question_round_state(m, supersede_interrupted=True),
+                )
                 question = await self.storage.update_task(question.id, state=RunState.RUNNING)
                 await self.board.publish(
                     question.id,
@@ -1881,10 +1496,8 @@ class AOERuntime:
         self._target_jobs.clear()
         self._target_closes.clear()
         self._target_claims.clear()
-        self._input_files.clear()
-        self._manifest_sources.clear()
-        self._manifest_digests.clear()
-        self._collection_digests.clear()
+        self.attachments.clear_all()
+        self.views.clear_all()
         self._agent_sources.clear()
         self._parents.clear()
         self._next_due.clear()

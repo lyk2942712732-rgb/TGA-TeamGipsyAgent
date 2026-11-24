@@ -328,7 +328,7 @@ class QuestionImporter:
                 elif new_questions_count > 0:
                     # Clear stale errors once a clean batch succeeds.
                     self._recent_errors[parent_id] = []
-                await self.aoe._collection_state(parent_id, parent=parent, questions=questions)
+                await self.aoe.refresh_collection_state(parent_id, parent=parent, questions=questions)
 
             return {
                 "saved": bool(imported),

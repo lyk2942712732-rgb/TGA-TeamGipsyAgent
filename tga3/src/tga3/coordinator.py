@@ -1,4 +1,4 @@
-"""Thin task lifecycle coordinator; planning remains inside the agents."""
+"""Thin task lifecycle coordinator; execution modes plug in via OrchestratorRegistry."""
 
 from __future__ import annotations
 
@@ -26,6 +26,7 @@ from .domain import (
     InputFile,
     PublishRequest,
     RunState,
+    TaskRun,
     UserFileBody,
 )
 from .errors import ConflictError, ContractError
@@ -33,6 +34,14 @@ from .events import TaskEvents
 from .gateway import AgentGateway
 from .knowledge import KnowledgeSource
 from .local_knowledge import LocalKnowledge
+from .orchestrator import (
+    AOEOrchestrator,
+    OrchestratorRegistry,
+    SingleTaskOrchestrator,
+    TaskCreateOptions,
+    TaskOrchestrator,
+    TaskRestartOptions,
+)
 from .provider_profiles import ProviderProtocol
 from .scout_intel import ScoutIntelStore
 from .storage import Storage
@@ -49,7 +58,19 @@ class TaskCoordinator:
         self.blackboard = Blackboard(storage, self.blackboard_changed)
         self.scout_intel = ScoutIntelStore(config, self.blackboard)
         self.change_handlers: list[Callable[[UUID, int], Awaitable[None]]] = []
+        self.automation: Any = None
         self.aoe = AOERuntime(self)
+        self.orchestrators = OrchestratorRegistry(SingleTaskOrchestrator(self))
+        self.orchestrators.register(AOEOrchestrator(self, self.aoe))
+
+    def attach_automation(self, automation: Any) -> None:
+        """Bind host report automation cleanly without ad-hoc cross-module attribute poking."""
+        self.automation = automation
+
+    def orchestrator_for(self, target: TaskRun | str) -> TaskOrchestrator:
+        if isinstance(target, str):
+            return self.orchestrators.for_scene(target)
+        return self.orchestrators.for_task(target)
 
     def actor_for(self, run: AgentRun) -> Actor:
         configured = self.config.agents.agents[run.agent_id]
@@ -92,23 +113,19 @@ class TaskCoordinator:
             agent_id: self.config.resolve_agent(
                 agent_id, *(model_overrides.get(agent_id) or (None, None, None)),
             )
-            for agent_id, configured in self.config.agents.agents.items()
+            for agent_id in self.config.agents.agents
         }
-        stage_minutes = {"first": aoe_first_attempt_minutes, "second": aoe_second_attempt_minutes,
-                         "joint": aoe_joint_minutes}
-        if scene_id == "aoe" and any(not 1 <= value <= 1440
-                                    for value in [aoe_attempt_minutes, *stage_minutes.values()] if value is not None):
-            raise ValueError("AOE attempt budgets must be between 1 and 1440 minutes")
-        budget_metadata = ({"aoe_attempt_budgets": {
-            stage: (minutes if minutes is not None else aoe_attempt_minutes) * 60
-            for stage, minutes in stage_minutes.items()
-        }} if any(value is not None for value in stage_minutes.values()) else
-            {"aoe_attempt_seconds": aoe_attempt_minutes * 60})
-        metadata = {"knowledge_source": knowledge_source, "produce_report": produce_report}
-        if scene_id == "aoe":
-            metadata.update({**budget_metadata, "aoe_phase": "collecting",
-                             "aoe_auto_submit_flag": aoe_auto_submit_flag,
-                             "aoe_scout_mode": "collection_only", "scout_complete": False})
+        orchestrator = self.orchestrators.for_scene(scene_id)
+        options = TaskCreateOptions(
+            knowledge_source=knowledge_source,
+            produce_report=produce_report,
+            aoe_attempt_minutes=aoe_attempt_minutes,
+            aoe_first_attempt_minutes=aoe_first_attempt_minutes,
+            aoe_second_attempt_minutes=aoe_second_attempt_minutes,
+            aoe_joint_minutes=aoe_joint_minutes,
+            aoe_auto_submit_flag=aoe_auto_submit_flag,
+        )
+        metadata = orchestrator.build_initial_metadata(options)
         task = await self.storage.create_task(title, scene.id, task_id, metadata=metadata)
         self.config.ensure_task_directories(task.id)
         await self.storage.update_task(task.id, state=RunState.STARTING)
@@ -150,28 +167,27 @@ class TaskCoordinator:
         for name, media_type, content in initial_files or []:
             await self.add_input_file(task.id, name, media_type, content)
         task = await self.storage.update_task(task.id, state=RunState.SCOUTING)
-        self._startup_jobs[task.id] = asyncio.create_task(
-            self.aoe.run(task.id, resolved_agents) if scene_id == "aoe"
-            else self._scout_then_workers(task.id, resolved_agents))
+        self._startup_jobs[task.id] = asyncio.create_task(orchestrator.run_startup(task.id, resolved_agents))
         return task
 
+    async def restore_tasks(self) -> None:
+        """Restore active tasks across all registered execution-mode orchestrators."""
+        for orchestrator in self.orchestrators.all:
+            await orchestrator.restore()
+
     async def restore_aoe(self) -> None:
-        await self.aoe.restore_paths()
-        for parent in await self.storage.list_tasks(limit=10000):
-            if parent.scene_id != "aoe" or parent.state in {RunState.COMPLETED, RunState.FAILED, RunState.CANCELLED}:
-                continue
-            bindings = {run.agent_id: self.config.resolve_agent(
-                            run.agent_id, run.provider_id, run.model_id, run.protocol)
-                        for run in await self.storage.list_agents(parent.id)}
-            self._startup_jobs[parent.id] = asyncio.create_task(self.aoe.run(parent.id, bindings))
+        await self.restore_tasks()
 
     async def _scout_then_workers(self, task_id: UUID, bindings: dict[str, ResolvedAgent]) -> None:
         scout = await self.storage.update_agent(
             task_id, "scout", desired_state=AgentState.RUNNING, actual_state=AgentState.STARTING
         )
         actor = self.actor_for(scout)
-        budgets = {"executing": self.config.runtime.scout_timeout_seconds,
-                   "extracting": None, "merging": None}
+        budgets = {
+            "executing": self.config.runtime.scout_timeout_seconds,
+            "extracting": None,
+            "merging": None,
+        }
 
         async def emit(method: str, params: dict) -> None:
             if method == "container.started":
@@ -190,19 +206,32 @@ class TaskCoordinator:
 
                 await self.storage.mutate_agent_metadata(task_id, "scout", phase_metadata)
                 await self.storage.update_agent(task_id, "scout", actual_state=AgentState.STARTING)
-                label = {"executing": "第一轮：侦察执行中", "extracting": "第二轮：Intel 提取中",
-                         "merging": "第三轮：Intel 合并中"}[phase]
+                label = {
+                    "executing": "第一轮：侦察执行中",
+                    "extracting": "第二轮：Intel 提取中",
+                    "merging": "第三轮：Intel 合并中",
+                }[phase]
                 deadline_text = f"（预算 {budget} 秒）" if budget is not None else "（全部覆盖后结束）"
-                await self.events.emit(task_id, actor=actor, kind=EventKind.SYSTEM,
-                                       text=f"{label}{deadline_text}", channel_agent_id="scout",
-                                       payload={"scout_phase": phase, "budget_seconds": budget})
+                await self.events.emit(
+                    task_id,
+                    actor=actor,
+                    kind=EventKind.SYSTEM,
+                    text=f"{label}{deadline_text}",
+                    channel_agent_id="scout",
+                    payload={"scout_phase": phase, "budget_seconds": budget},
+                )
                 reason, error = "completed", None
                 try:
                     # The in-container deadline includes CLI process-tree cleanup.
                     async with asyncio.timeout(budget + 10 if budget is not None else None):
                         await self.containers.scout(
-                            LaunchSpec(task_id=task_id, agent=bindings["scout"], scout_phase=phase,
-                                       phase_budget_seconds=budget), emit,
+                            LaunchSpec(
+                                task_id=task_id,
+                                agent=bindings["scout"],
+                                scout_phase=phase,
+                                phase_budget_seconds=budget,
+                            ),
+                            emit,
                         )
                 except TimeoutError:
                     reason = "timeout"
@@ -210,31 +239,52 @@ class TaskCoordinator:
                     reason, error = "error", str(exc)
                 outcomes[phase] = {"finish_reason": reason, "error": error, "budget_seconds": budget}
                 await self.storage.update_agent(
-                    task_id, "scout", metadata={f"scout_{phase}_result": outcomes[phase]},
+                    task_id,
+                    "scout",
+                    metadata={f"scout_{phase}_result": outcomes[phase]},
                 )
                 if phase != "executing":
                     if reason != "completed":
                         raise RuntimeError(f"Scout {phase} failed: {error or reason}")
-                    coverage = (self.scout_intel.validate_extraction(task_id) if phase == "extracting"
-                                else self.scout_intel.validate_merge(task_id))
+                    coverage = (
+                        self.scout_intel.validate_extraction(task_id)
+                        if phase == "extracting"
+                        else self.scout_intel.validate_merge(task_id)
+                    )
                     await self.storage.update_agent(task_id, "scout", metadata=coverage)
             await self.storage.update_agent(task_id, "scout", metadata={"scout_phase": "importing"})
             intel_count = await self.scout_intel.flush(task_id)
             result = outcomes["merging"]
-            state = (AgentState.FAILED if result["finish_reason"] == "error" else
-                     AgentState.STOPPED if result["finish_reason"] == "timeout" else AgentState.COMPLETED)
+            state = (
+                AgentState.FAILED
+                if result["finish_reason"] == "error"
+                else AgentState.STOPPED
+                if result["finish_reason"] == "timeout"
+                else AgentState.COMPLETED
+            )
             await self.storage.update_agent(
-                task_id, "scout", desired_state=state, actual_state=state, last_error=result["error"],
-                metadata={"scout_phase": "completed", "finish_reason": result["finish_reason"],
-                          "intel_count": intel_count},
+                task_id,
+                "scout",
+                desired_state=state,
+                actual_state=state,
+                last_error=result["error"],
+                metadata={
+                    "scout_phase": "completed",
+                    "finish_reason": result["finish_reason"],
+                    "intel_count": intel_count,
+                },
             )
             await self.events.announce_status(
                 task_id, actor, state.value, f"系统已从 /intels/merged 导入 {intel_count} 条 Intel"
             )
             await self.events.emit(
-                task_id, actor=SYSTEM_ACTOR, kind=EventKind.SYSTEM,
-                text=(f"Scout 三轮结束，系统已导入 {intel_count} 条合并 Intel，"
-                      f"开始启动 {len(await self._worker_runs(task_id))} 位 Worker。"),
+                task_id,
+                actor=SYSTEM_ACTOR,
+                kind=EventKind.SYSTEM,
+                text=(
+                    f"Scout 三轮结束，系统已导入 {intel_count} 条合并 Intel，"
+                    f"开始启动 {len(await self._worker_runs(task_id))} 位 Worker。"
+                ),
                 payload={"intel_count": intel_count, "scout_phases": outcomes},
             )
             task = await self.storage.update_task(task_id, state=RunState.RUNNING)
@@ -248,14 +298,21 @@ class TaskCoordinator:
             current = await self.storage.get_agent(task_id, "scout")
             if current.actual_state not in {AgentState.COMPLETED, AgentState.STOPPED}:
                 await self.storage.update_agent(
-                    task_id, "scout", desired_state=AgentState.FAILED, actual_state=AgentState.FAILED,
+                    task_id,
+                    "scout",
+                    desired_state=AgentState.FAILED,
+                    actual_state=AgentState.FAILED,
                     last_error=str(exc),
                 )
             await self.events.emit(
-                task_id, actor=SYSTEM_ACTOR, kind=EventKind.ERROR, text=f"任务启动失败：{exc}",
+                task_id,
+                actor=SYSTEM_ACTOR,
+                kind=EventKind.ERROR,
+                text=f"任务启动失败：{exc}",
             )
             await asyncio.gather(
-                *(self.containers.stop(task_id, agent_id) for agent_id in bindings), return_exceptions=True,
+                *(self.containers.stop(task_id, agent_id) for agent_id in bindings),
+                return_exceptions=True,
             )
 
     async def _launch_workers(
@@ -308,7 +365,7 @@ class TaskCoordinator:
         aoe_second_attempt_minutes: int | None = None,
         aoe_joint_minutes: int | None = None,
     ) -> dict[str, Any]:
-        """Restart an ended task in-place from its highest completed checkpoint."""
+        """Restart an ended task in-place via its registered execution-mode orchestrator."""
         task = await self.storage.get_task(task_id)
         if task.parent_task_id is not None:
             raise ContractError("请对主任务执行重新启动")
@@ -322,16 +379,6 @@ class TaskCoordinator:
         unknown_agents = sorted(set(model_overrides).difference(self.config.agents.agents))
         if unknown_agents:
             raise ValueError(f"unknown task agent model overrides: {', '.join(unknown_agents)}")
-
-        stage_minutes = {
-            "first": aoe_first_attempt_minutes,
-            "second": aoe_second_attempt_minutes,
-            "joint": aoe_joint_minutes,
-        }
-        if task.scene_id == "aoe" and any(
-            not 1 <= value <= 1440 for value in stage_minutes.values() if value is not None
-        ):
-            raise ValueError("AOE attempt budgets must be between 1 and 1440 minutes")
 
         existing_runs = {run.agent_id: run for run in await self.storage.list_agents(task_id)}
         resolved_agents: dict[str, ResolvedAgent] = {}
@@ -350,7 +397,9 @@ class TaskCoordinator:
                 resolved = self.config.resolve_agent(agent_id)
             resolved_agents[agent_id] = resolved
 
+        orchestrator = self.orchestrators.for_task(task)
         restart_count = int(task.metadata.get("restart_count", 0) or 0) + 1
+        reset_meta = orchestrator.reset_agent_metadata_on_restart()
         for agent_id, resolved in resolved_agents.items():
             if agent_id in existing_runs:
                 await self.storage.update_agent(
@@ -362,7 +411,7 @@ class TaskCoordinator:
                     protocol=resolved.protocol,
                     container_id=None,
                     last_error=None,
-                    **({"metadata": {"aoe_paused": False}} if task.scene_id == "aoe" else {}),
+                    **({"metadata": reset_meta} if reset_meta is not None else {}),
                 )
             else:
                 await self.storage.upsert_agent(
@@ -376,167 +425,21 @@ class TaskCoordinator:
                     )
                 )
 
-        if task.scene_id == "aoe":
-            new_budgets = None
-            if any(value is not None for value in stage_minutes.values()):
-                current_budgets = attempt_budgets(task.metadata)
-                new_budgets = {
-                    stage: (minutes * 60 if minutes is not None else current_budgets[stage])
-                    for stage, minutes in stage_minutes.items()
-                }
-            summary = await self.aoe.prepare_restart(
-                task_id,
-                rerun_scout=rerun_scout,
-                retry_abandoned=retry_abandoned,
-                budgets=new_budgets,
-                restart_count=restart_count,
-            )
-            detail_parts = []
-            if summary["need_scout"]:
-                detail_parts.append("重跑 Scout 收集")
-            else:
-                detail_parts.append("跳过 Scout")
-            if summary["resumed_questions"]:
-                detail_parts.append(f"续跑 {summary['resumed_questions']} 道未完成题")
-            if summary["requeued_abandoned"]:
-                detail_parts.append(f"重新挑战 {summary['requeued_abandoned']} 道已放弃题")
-            if summary["pending_reports"]:
-                detail_parts.append(f"补跑 {summary['pending_reports']} 份报告")
-            await self.events.emit(
-                task_id,
-                actor=SYSTEM_ACTOR,
-                kind=EventKind.SYSTEM,
-                text=f"任务已原地重启（第 {restart_count} 次运行）：{'，'.join(detail_parts)}。",
-                payload={"restart_count": restart_count, **summary, "fallback_models": fallback_models},
-            )
-            self._startup_jobs[task_id] = asyncio.create_task(self.aoe.run(task_id, resolved_agents))
-            refreshed = await self.storage.get_task(task_id)
-            return {
-                "task": refreshed.model_dump(mode="json"),
-                "resumed_from": summary["resumed_from"],
-                "restart_count": restart_count,
-                "fallback_models": fallback_models,
-                "summary": summary,
-            }
-
-        # Normal single-question task restart.
-        scout_run = existing_runs.get("scout")
-        scout_done = bool(scout_run and scout_run.metadata.get("scout_phase") == "completed")
-        entries = await self.storage.list_entries(task_id, limit=10_000)
-        has_final = any(entry.kind == EntryKind.FINAL_CANDIDATE for entry in entries)
-
-        if has_final and task.state == RunState.FAILED and not rerun_scout and self.aoe.automation is not None:
-            resumed_from = "reporter"
-            await self.storage.update_agent(
-                task_id,
-                "reporter",
-                desired_state=AgentState.RUNNING,
-                actual_state=AgentState.CREATED,
-                container_id=None,
-                last_error=None,
-            )
-            refreshed = await self.storage.update_task(
-                task_id, state=RunState.REPORTING, metadata={"restart_count": restart_count}
-            )
-            await self.events.emit(
-                task_id,
-                actor=SYSTEM_ACTOR,
-                kind=EventKind.SYSTEM,
-                text=f"任务已原地重启（第 {restart_count} 次运行）：已有最终候选，直接重跑 Reporter 生成报告。",
-                payload={"restart_count": restart_count, "resumed_from": resumed_from},
-            )
-            self.aoe.automation.start_report(task_id)
-        elif scout_done and not rerun_scout:
-            resumed_from = "workers"
-            refreshed = await self.storage.update_task(
-                task_id, state=RunState.RUNNING, metadata={"restart_count": restart_count}
-            )
-            await self.blackboard.publish(
-                task_id,
-                SYSTEM_ACTOR,
-                PublishRequest(
-                    kind=EntryKind.USER_PROMPT,
-                    topic="restart",
-                    body={
-                        "text": (
-                            f"任务已重新启动（第 {restart_count} 次运行）。"
-                            "此前黑板中已验证的 Intel、Findings 与工作区文件均已保留，"
-                            "请先查阅已有进展并确认目标状态后继续推进，避免重复劳动。"
-                        )
-                    },
-                    idempotency_key=f"task-restart:{restart_count}",
-                ),
-            )
-            await self.events.emit(
-                task_id,
-                actor=SYSTEM_ACTOR,
-                kind=EventKind.SYSTEM,
-                text=f"任务已原地重启（第 {restart_count} 次运行）：保留已有 Intel 与黑板，直接启动 Workers 续跑。",
-                payload={"restart_count": restart_count, "resumed_from": resumed_from},
-            )
-
-            async def launch_only():
-                try:
-                    await self._launch_workers(
-                        task_id,
-                        resolved_agents,
-                        knowledge_source=refreshed.metadata.get("knowledge_source", "online"),
-                        fresh_session=True,
-                    )
-                except asyncio.CancelledError:
-                    raise
-                except Exception as exc:
-                    await self.storage.update_task(task_id, state=RunState.FAILED)
-                    await self.events.emit(
-                        task_id, actor=SYSTEM_ACTOR, kind=EventKind.ERROR, text=f"任务重启失败：{exc}"
-                    )
-
-            self._startup_jobs[task_id] = asyncio.create_task(launch_only())
-        else:
-            resumed_from = "scout"
-            await self.storage.update_agent(
-                task_id,
-                "scout",
-                desired_state=AgentState.RUNNING,
-                actual_state=AgentState.CREATED,
-                container_id=None,
-                last_error=None,
-                metadata={"scout_phase": "executing"},
-            )
-            refreshed = await self.storage.update_task(
-                task_id, state=RunState.SCOUTING, metadata={"restart_count": restart_count}
-            )
-            if entries:
-                await self.blackboard.publish(
-                    task_id,
-                    SYSTEM_ACTOR,
-                    PublishRequest(
-                        kind=EntryKind.USER_PROMPT,
-                        topic="restart",
-                        body={
-                            "text": (
-                                f"任务已重新启动（第 {restart_count} 次运行），将从 Scout 阶段重新执行。"
-                                "此前黑板记录与附件已保留。"
-                            )
-                        },
-                        idempotency_key=f"task-restart:{restart_count}",
-                    ),
-                )
-            await self.events.emit(
-                task_id,
-                actor=SYSTEM_ACTOR,
-                kind=EventKind.SYSTEM,
-                text=f"任务已原地重启（第 {restart_count} 次运行）：从 Scout 阶段重新开始。",
-                payload={"restart_count": restart_count, "resumed_from": resumed_from},
-            )
-            self._startup_jobs[task_id] = asyncio.create_task(self._scout_then_workers(task_id, resolved_agents))
-
-        return {
-            "task": refreshed.model_dump(mode="json"),
-            "resumed_from": resumed_from,
-            "restart_count": restart_count,
-            "fallback_models": fallback_models,
-        }
+        options = TaskRestartOptions(
+            rerun_scout=rerun_scout,
+            retry_abandoned=retry_abandoned,
+            aoe_first_attempt_minutes=aoe_first_attempt_minutes,
+            aoe_second_attempt_minutes=aoe_second_attempt_minutes,
+            aoe_joint_minutes=aoe_joint_minutes,
+        )
+        return await orchestrator.restart(
+            task,
+            existing_runs=existing_runs,
+            resolved_agents=resolved_agents,
+            options=options,
+            restart_count=restart_count,
+            fallback_models=fallback_models,
+        )
 
     async def clone_config(self, task_id: UUID) -> dict[str, Any]:
         """Extract reusable configuration from an existing task to prefill a clean new task."""
@@ -589,16 +492,7 @@ class TaskCoordinator:
                 return_exceptions=True,
             )
             task = await self.storage.get_task(task_id)
-            if task.scene_id == "aoe" and task.parent_task_id is None:
-                # Shutdown preserves current attempt deadlines/history for same-question recovery.
-                for question in await self.storage.list_questions(task_id):
-                    from .aoe_models import active_attempts
-
-                    await asyncio.gather(*(self.aoe._stop_worker(question.id, a["agent_id"])
-                                           for a in active_attempts(question)))
-                    if self.aoe.automation is not None:
-                        await self.aoe.automation.cancel(question.id)
-                    await self.containers.stop(question.id, "reporter")
+            await self.orchestrators.for_task(task).on_cancel_startup(task)
 
     async def close(self) -> None:
         for task_id in list(self._startup_jobs):
@@ -660,17 +554,12 @@ class TaskCoordinator:
             )
             await self.events.announce_status(task_id, self.actor_for(run), AgentState.RUNNING.value)
             task = await self.storage.get_task(task_id)
-            if task.parent_task_id:
-                from .aoe_models import active_attempts
-                active = next((a for a in active_attempts(task) if a['agent_id'] == agent_id), None)
-                if active and active.get('deadline') is not None:
-                    await self.gateway.notify(task_id, agent_id, 'session.deadline',
-                        {'attempt_id': active['id'], 'deadline': active['deadline']})
+            await self.orchestrators.for_task(task).on_agent_hello(task, agent_id)
         elif method == "agent.status":
             state = AgentState(str(params["state"]))
-            if run.metadata.get('aoe_attempt_id') and state in {AgentState.PAUSED, AgentState.RUNNING}:
-                await self.aoe.record_pause(task_id, agent_id, paused=state == AgentState.PAUSED)
-            changes = {"actual_state": state}
+            task = await self.storage.get_task(task_id)
+            await self.orchestrators.for_task(task).on_agent_status(task, run, state)
+            changes: dict[str, Any] = {"actual_state": state}
             if state in {AgentState.RUNNING, AgentState.IDLE}:
                 changes["last_error"] = None
             run = await self.storage.update_agent(task_id, agent_id, **changes)
@@ -688,9 +577,9 @@ class TaskCoordinator:
                 channel_agent_id=agent_id,
             )
         elif method in {"agent.action.started", "agent.action.completed"}:
-            if method == 'agent.action.started' and params.get('tool_use_id') and run.metadata.get('aoe_attempt_id'):
-                # Native built-in web search has no PreToolUse hook.
-                await self.aoe.action_started(task_id, agent_id, run.metadata['aoe_attempt_id'])
+            if method == "agent.action.started":
+                task = await self.storage.get_task(task_id)
+                await self.orchestrators.for_task(task).on_action_started(task_id, run, params)
             kind = EventKind.ACTION_STARTED if method.endswith("started") else EventKind.ACTION_COMPLETED
             await self.events.emit(
                 task_id,
@@ -702,8 +591,12 @@ class TaskCoordinator:
             )
         elif method == "agent.recovery":
             await self.events.emit(
-                task_id, actor=actor, kind=EventKind.SYSTEM,
-                text=str(params.get("summary", "CLI 会话恢复")), channel_agent_id=agent_id, payload=params,
+                task_id,
+                actor=actor,
+                kind=EventKind.SYSTEM,
+                text=str(params.get("summary", "CLI 会话恢复")),
+                channel_agent_id=agent_id,
+                payload=params,
             )
         elif method == "agent.error":
             detail = str(params.get("message", "agent error"))
@@ -726,17 +619,10 @@ class TaskCoordinator:
             )
             await self.events.announce_status(task_id, self.actor_for(run), state.value, detail)
 
-
-
     async def pause_agent(self, task_id: UUID, agent_id: str) -> AgentRun:
         task = await self.storage.get_task(task_id)
-        if task.scene_id == "aoe" and task.parent_task_id is None:
-            slot = await self._worker_run(task_id, agent_id)
-            await self.storage.update_agent(task_id, agent_id, metadata={"aoe_paused": True})
-            if slot.metadata.get("current_question_id"):
-                await self.pause_agent(UUID(slot.metadata["current_question_id"]), agent_id)
-            return await self.storage.update_agent(task_id, agent_id, desired_state=AgentState.PAUSED,
-                                                     actual_state=AgentState.PAUSED)
+        if (handled := await self.orchestrators.for_task(task).pause_agent(task, agent_id)) is not None:
+            return handled
         await self._worker_run(task_id, agent_id)
         await self.storage.update_agent(task_id, agent_id, desired_state=AgentState.PAUSE_REQUESTED)
         await self.gateway.request(task_id, agent_id, "session.pause")
@@ -744,13 +630,8 @@ class TaskCoordinator:
 
     async def resume_agent(self, task_id: UUID, agent_id: str) -> AgentRun:
         task = await self.storage.get_task(task_id)
-        if task.scene_id == "aoe" and task.parent_task_id is None:
-            slot = await self._worker_run(task_id, agent_id)
-            await self.storage.update_agent(task_id, agent_id, metadata={"aoe_paused": False})
-            if slot.metadata.get("current_question_id"):
-                await self.resume_agent(UUID(slot.metadata["current_question_id"]), agent_id)
-            return await self.storage.update_agent(task_id, agent_id, desired_state=AgentState.RUNNING,
-                                                     actual_state=AgentState.IDLE)
+        if (handled := await self.orchestrators.for_task(task).resume_agent(task, agent_id)) is not None:
+            return handled
         await self._worker_run(task_id, agent_id)
         await self.gateway.request(task_id, agent_id, "session.resume")
         return await self.storage.update_agent(task_id, agent_id, desired_state=AgentState.RUNNING)
@@ -759,14 +640,11 @@ class TaskCoordinator:
         self, task_id: UUID, agent_id: str, provider_id: str, model_id: str, protocol: ProviderProtocol
     ) -> AgentRun:
         task = await self.storage.get_task(task_id)
-        if task.scene_id == "aoe" and task.parent_task_id is None:
-            slot = await self._worker_run(task_id, agent_id)
-            self.config.resolve_agent(agent_id, provider_id, model_id, protocol)
-            if slot.metadata.get("current_question_id"):
-                await self.set_agent_model(UUID(slot.metadata["current_question_id"]), agent_id,
-                                           provider_id, model_id, protocol)
-            return await self.storage.update_agent(task_id, agent_id, provider_id=provider_id,
-                                                     model_id=model_id, protocol=protocol)
+        handled = await self.orchestrators.for_task(task).set_agent_model(
+            task, agent_id, provider_id, model_id, protocol
+        )
+        if handled is not None:
+            return handled
         current = await self._worker_run(task_id, agent_id)
         provider = self.config.models.provider(provider_id)
         self.config.validate_runtime_protocol(current.sdk, protocol)
@@ -832,9 +710,7 @@ class TaskCoordinator:
     async def stop_task(self, task_id: UUID) -> None:
         task = await self.storage.get_task(task_id)
         await self.cancel_startup(task_id)
-        if task.scene_id == "aoe" and task.parent_task_id is None:
-            await self.aoe.stop_children(task_id, cancelled=True)
-            await self.storage.update_task(task_id, metadata={"aoe_phase": "cancelled"})
+        await self.orchestrators.for_task(task).on_stop(task)
         await self.containers.stop(task_id, "scout")
         # Cancellation retains raw/merged JSON without publishing an incomplete handoff.
         workers = await self._worker_runs(task_id)
@@ -863,17 +739,14 @@ class TaskCoordinator:
                 *(self.containers.stop(task_id, run.agent_id) for run in workers),
                 return_exceptions=True,
             )
-        if task.scene_id == "aoe" and task.parent_task_id is None:
-            if not await self.aoe.targets.release_parent(task_id):
-                from .errors import ConflictError
-
-                raise ConflictError("Target cleanup is pending; retry deletion after platform close succeeds")
+        orchestrator = self.orchestrators.for_task(task)
+        await orchestrator.before_delete(task)
         await self.gateway.disconnect_task(task_id)
         # Keep task data recoverable if the database deletion fails. Filesystem
         # cleanup is intentionally best-effort and only begins after the database
         # transaction has committed.
         await self.storage.delete_task(task_id)
-        self.aoe.targets.forget_parent(task_id)
+        orchestrator.after_delete(task)
         path = self.config.task_path(task_id)
         await asyncio.to_thread(shutil.rmtree, path, True)
 
