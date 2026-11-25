@@ -9,7 +9,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 from pydantic import SecretStr
 
-from tga3.aoe_models import AOEQuestionInput
+from tga3.aoe_models import AOEQuestionInput, active_attempts, first_success_statistics
 from tga3.aoe_watch import (
     DEFAULT_PROBE_INTERVAL_SECONDS,
     MAX_CONSECUTIVE_PROBE_FAILURES,
@@ -410,4 +410,60 @@ async def test_http_routes_for_scout_watch_wake_stop_and_finish_decision(tmp_pat
         assert resp.status_code == 200
         assert resp.json()["phase"] == "standby"
         assert resp.json()["scout_watch"]["mode"] == "sentinel"
+    await coordinator.close()
+
+
+async def test_platform_solved_frees_worker_without_crediting_win_and_reassigns_next_question(tmp_path):
+    cfg, storage, containers, coordinator, parent, clock = await _setup_batch(tmp_path)
+    aoe = coordinator.aoe
+    _write_probe_script(cfg, parent.id)
+    await aoe.register_questions(
+        parent.id,
+        [
+            AOEQuestionInput(source_key="q1", title="Q1", description="easy one", difficulty="easy"),
+            AOEQuestionInput(source_key="q2", title="Q2", description="medium two", difficulty="medium"),
+            AOEQuestionInput(source_key="q3", title="Q3", description="hard three", difficulty="hard"),
+        ],
+    )
+    await aoe.finish_collection(parent.id, 3)
+    await storage.update_task(
+        parent.id, state=RunState.RUNNING, metadata={"scout_complete": True, "aoe_phase": "solo"}
+    )
+    await aoe.watch.on_initial_collection_complete(parent.id)
+
+    # First tick assigns the 2 workers to q1 and q2; q3 stays queued.
+    await aoe.tick(parent.id)
+    assert len(containers.launched) == 2
+    for spec in containers.launched:
+        await aoe.action_started(spec.task_id, spec.agent.agent_id, spec.attempt_id)
+    q1 = next(q for q in await storage.list_questions(parent.id) if q.metadata["source_key"] == "q1")
+    q1_worker = active_attempts(q1)[0]["agent_id"]
+
+    # Sentinel sees q1 solved externally on the platform while q1_worker is mid-attempt.
+    clock[0] += 90
+    containers.probe_handler = lambda _tid, _to: (
+        0,
+        '{"source_keys": ["q1", "q2", "q3"], "solved_keys": ["q1"]}',
+        "",
+    )
+    await aoe.watch.run_sentinel_probe(parent.id)
+
+    q1_after = await storage.get_task(q1.id)
+    assert q1_after.state == RunState.COMPLETED
+    assert q1_after.metadata["status"] == "solved"
+    assert q1_after.metadata["finish_reason"] == "platform_solved"
+    assert (await aoe.question_view(q1_after))["report_state"] == "platform_solved"
+    assert q1.id not in aoe.automation.questions
+    assert (q1.id, q1_worker) in containers.stopped
+
+    # Must NOT falsely credit the interrupted worker with a win or pollute difficulty averages!
+    q1_attempt = q1_after.metadata["attempts"][0]
+    assert q1_attempt["outcome"] == "interrupted"
+    assert q1_attempt["success_credit"] is False
+    assert first_success_statistics(await storage.list_questions(parent.id)) == []
+
+    # Next tick immediately reassigns the freed worker to q3!
+    await aoe.tick(parent.id)
+    q3 = next(q for q in await storage.list_questions(parent.id) if q.metadata["source_key"] == "q3")
+    assert [a["agent_id"] for a in active_attempts(q3)] == [q1_worker]
     await coordinator.close()

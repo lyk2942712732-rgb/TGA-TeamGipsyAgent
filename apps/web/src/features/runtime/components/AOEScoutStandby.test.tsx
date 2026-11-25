@@ -1,7 +1,8 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { tga3RuntimeApi } from "../../../api/tga3-runtime-control";
-import type { AOEOverview, AOEScoutWatch } from "../../../runtime/tga3-runtime";
+import type { AOEOverview, AOEQuestion, AOEScoutWatch } from "../../../runtime/tga3-runtime";
+import { workerRecords } from "../aoe-view";
 import { AOEFinishConfirmDialog } from "./AOEFinishConfirmDialog";
 import { AOEScoutStandbyBar } from "./AOEScoutStandbyBar";
 
@@ -136,5 +137,44 @@ describe("AOEFinishConfirmDialog", () => {
 
     expect(screen.getByText(/当前未检测到零 Token 探测脚本/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /立即结束任务/ })).toBeInTheDocument();
+  });
+});
+
+describe("platform_solved attribution", () => {
+  it("does not credit an interrupted worker with a win when platform_solved settles the question", () => {
+    const question: AOEQuestion = {
+      question_id: "q-ext",
+      parent_task_id: "task-1",
+      title: "External Solved Challenge",
+      description: "desc",
+      source_key: "q-ext",
+      difficulty: "easy",
+      connection_info: "",
+      submission_instructions: "",
+      status: "solved",
+      finish_reason: "platform_solved",
+      report_state: "platform_solved",
+      attempted_by: ["worker-openai"],
+      current_agents: [],
+      attempts: [
+        {
+          id: "att-1",
+          agent_id: "worker-openai",
+          phase: "solo",
+          started_at: 1000,
+          finished_at: 1090,
+          deadline: 2200,
+          outcome: "interrupted",
+          success_credit: false,
+        },
+      ],
+      flag: null,
+      blackboard_seq: 1,
+      attachments: [],
+    };
+    const records = workerRecords([question], "worker-openai", 1100);
+    expect(records).toHaveLength(1);
+    expect(records[0].successful).toBe(false);
+    expect(records[0].assisted).toBe(false);
   });
 });

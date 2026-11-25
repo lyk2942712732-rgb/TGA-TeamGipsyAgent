@@ -501,9 +501,18 @@ class AOERuntime:
 
     async def _settle_platform_solved(self, question: TaskRun, *, flag: str | None = None) -> TaskRun:
         active = active_attempts(question)
+        active_ids = {attempt["id"] for attempt in active}
         agents = {attempt["agent_id"] for attempt in active}
         if agents:
-            question = await self._finish_attempts(question, agents, "solved")
+            question = await self._finish_attempts(question, agents, "interrupted")
+        updated_attempts = (
+            [
+                {**a, "success_credit": False} if a["id"] in active_ids else a
+                for a in question.metadata.get("attempts", [])
+            ]
+            if active_ids
+            else question.metadata.get("attempts", [])
+        )
         question = await self.storage.update_task(
             question.id,
             state=RunState.COMPLETED,
@@ -513,6 +522,7 @@ class AOERuntime:
                 "finish_reason": "platform_solved",
                 "solved_at": self.clock(),
                 "produce_report": False,
+                **({"attempts": updated_attempts} if active_ids else {}),
             },
         )
         await self._save_question(question)

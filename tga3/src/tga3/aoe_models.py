@@ -244,7 +244,10 @@ def schedulable_questions(questions: list[TaskRun], *, collection_complete: bool
 
 def overview_order(question: TaskRun) -> tuple[int, float, int, str]:
     solved = question.metadata.get("status") == "solved"
-    pre_solved = bool(question.metadata.get("pre_solved"))
+    external_solved = (
+        bool(question.metadata.get("pre_solved"))
+        or question.metadata.get("finish_reason") == "platform_solved"
+    )
     timestamp = question.metadata.get("solved_at") if solved else None
     if timestamp is None and solved:
         timestamp = max((a.get("finished_at", 0) for a in question.metadata.get("attempts", [])
@@ -252,7 +255,7 @@ def overview_order(question: TaskRun) -> tuple[int, float, int, str]:
     timestamp = timestamp if solved else question.metadata.get("registered_at", question.created_at.timestamp())
     priority = (
         0 if question.metadata.get("status") == "running"
-        else 2 if (solved and pre_solved)
+        else 2 if (solved and external_solved)
         else 1 if solved
         else 3
     )

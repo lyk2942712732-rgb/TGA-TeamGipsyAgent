@@ -74,7 +74,7 @@ function Record({ snapshot, agent }: { snapshot: TGA3RuntimeSnapshot; agent: TGA
       <header><h3>未成功解出 {unsuccessful.length} 道题</h3></header>
       {unsuccessful.length ? <ol>{unsuccessful.map(({ question, attempt }) => <li key={question.question_id}>
         <div><Link to={link(question.question_id)}>{question.title}</Link></div>
-        <small>{question.status === "solved" ? "其他 Worker 已解出" : attempt.outcome === null ? "进行中" : question.status === "abandoned" ? "已放弃" : question.status === "cancelled" ? "已取消" : "尝试结束，尚未解出"} · {attemptLabel(question, attempt)}</small>
+        <small>{question.finish_reason === "platform_solved" ? "平台已由外部解出" : question.status === "solved" ? "其他 Worker 已解出" : attempt.outcome === null ? "进行中" : question.status === "abandoned" ? "已放弃" : question.status === "cancelled" ? "已取消" : "尝试结束，尚未解出"} · {attemptLabel(question, attempt)}</small>
       </li>)}</ol> : <p className="tga3-muted">暂无未成功解出的题目。</p>}
     </section>
   </section>;

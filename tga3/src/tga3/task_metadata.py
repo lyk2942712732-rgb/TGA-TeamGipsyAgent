@@ -95,6 +95,8 @@ class AOEQuestionMeta(BaseModel):
     def report_state(self, task_state: RunState) -> str:
         if self.pre_solved:
             return "pre_solved"
+        if self.finish_reason == "platform_solved":
+            return "platform_solved"
         if not self.produce_report:
             return "disabled"
         if task_state == RunState.COMPLETED:
