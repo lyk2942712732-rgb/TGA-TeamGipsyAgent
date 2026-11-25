@@ -65,6 +65,22 @@ export function TGA3TaskHeader({
   const terminal = ["completed", "failed", "cancelled", "stopped"].includes(task.state);
   const scoutAgent = task.state === "scouting" ? agents.find((agent) => agent.role === "scout") : null;
   const aoeSolved = snapshot.aoe ? snapshot.aoe.questions.filter((q) => q.status === "solved").length : 0;
+  const aoeStandbyLabel =
+    snapshot.aoe && !terminal && snapshot.aoe.collection_complete
+      ? snapshot.aoe.scout_collecting
+        ? "增量收集中"
+        : snapshot.aoe.scout_watch?.state === "error_paused"
+          ? "哨兵已熔断"
+          : snapshot.aoe.scout_watch?.state === "probing"
+            ? "哨兵探测中"
+            : snapshot.aoe.scout_watch?.enabled
+              ? snapshot.aoe.scout_watch.mode === "sentinel"
+                ? "零 Token 哨兵"
+                : "定时 LLM 巡检"
+              : snapshot.aoe.scout_watch && !snapshot.aoe.scout_watch.probe_script_present
+                ? "无脚本·手动"
+                : "已暂停"
+      : null;
 
   return (
     <header className="tga3-task-header cockpit-telemetry-bar">
@@ -103,6 +119,7 @@ export function TGA3TaskHeader({
         )}
         <Fact label="同步" value={connectionLabel(connection)} />
         {scoutAgent ? <Fact label="Scout" value={agentStateLabel(scoutAgent)} /> : null}
+        {aoeStandbyLabel ? <Fact label="站岗" value={aoeStandbyLabel} /> : null}
 
         <div className="tga3-token-usage">
           <button

@@ -292,18 +292,26 @@ export function AOEWorkspace({
         <footer className="aoe-sb-foot">
           {["completed", "failed", "cancelled", "stopped"].includes(snapshot.task.state) ? (
             <span className="mono subtle" style={{ fontSize: "10px" }}>
-              任务已结束 · 原地重启后可启用 Scout 智能站岗与零 Token 哨兵
+              任务已结束 · 原地重启后可启用 Scout 零 Token 哨兵站岗
+            </span>
+          ) : overview.scout_watch?.state === "error_paused" ? (
+            <span className="mono" style={{ fontSize: "10px", color: "var(--c-warning)" }}>
+              Scout 站岗：哨兵已熔断（连续失败 {overview.scout_watch.consecutive_failures} 次 · 需手动处理）
             </span>
           ) : (
             <span className="mono muted" style={{ fontSize: "10px" }}>
               Scout 站岗：
-              {overview.scout_watch?.enabled
-                ? overview.scout_watch.mode === "sentinel"
-                  ? "零 Token 哨兵运行中"
-                  : "定时 LLM 巡检中"
-                : overview.scout_collecting || !overview.collection_complete
-                  ? "收集中"
-                  : "手动待命"}
+              {overview.scout_collecting || !overview.collection_complete
+                ? "收集中"
+                : overview.scout_watch?.state === "probing"
+                  ? "零 Token 哨兵探测中"
+                  : overview.scout_watch?.enabled
+                    ? overview.scout_watch.mode === "sentinel"
+                      ? "零 Token 哨兵运行中"
+                      : "定时 LLM 巡检中（耗 Token）"
+                    : overview.scout_watch && !overview.scout_watch.probe_script_present
+                      ? "无脚本 · 手动待命"
+                      : "已暂停 · 手动待命"}
             </span>
           )}
         </footer>

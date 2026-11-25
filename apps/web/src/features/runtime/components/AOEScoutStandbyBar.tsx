@@ -5,10 +5,10 @@ import type { AOEOverview, AOEScoutWatch } from "../../../runtime/tga3-runtime";
 
 const LLM_INTERVAL_OPTIONS = [
   { value: "", label: "定时 LLM 巡检：关闭（手动）" },
-  { value: "180", label: "每 3 分钟 LLM 巡检" },
-  { value: "300", label: "每 5 分钟 LLM 巡检" },
-  { value: "600", label: "每 10 分钟 LLM 巡检" },
-  { value: "900", label: "每 15 分钟 LLM 巡检" },
+  { value: "180", label: "每 3 分钟 LLM 巡检（耗 Token）" },
+  { value: "300", label: "每 5 分钟 LLM 巡检（耗 Token）" },
+  { value: "600", label: "每 10 分钟 LLM 巡检（耗 Token）" },
+  { value: "900", label: "每 15 分钟 LLM 巡检（耗 Token）" },
 ];
 
 function formatCountdown(seconds: number): string {
@@ -94,6 +94,9 @@ export function AOEScoutStandbyBar({
     headline = "Scout 自动站岗已暂停（手动模式）";
   }
 
+  const sentinelRunning = Boolean(watch?.enabled && watch.mode === "sentinel");
+  const showLlmPollSelect = !sentinelRunning;
+  const sentinelRecoverLabel = watch?.state === "error_paused" ? "重试零 Token 哨兵" : "恢复零 Token 哨兵";
   const llmSelectValue = watch?.mode === "llm_poll" && watch.enabled && watch.llm_interval_seconds
     ? String(watch.llm_interval_seconds)
     : "";
@@ -176,10 +179,32 @@ export function AOEScoutStandbyBar({
             </button>
           ) : (
             <>
+              {!watch?.enabled && watch?.probe_script_present ? (
+                <button
+                  type="button"
+                  className="ref-primary-button"
+                  disabled={busy}
+                  onClick={() =>
+                    void runAction(
+                      async () => {
+                        await tga3RuntimeApi.configureScoutWatch(taskId, "enable_sentinel");
+                      },
+                      watch?.state === "error_paused"
+                        ? "已重新拉起零 Token 哨兵站岗。"
+                        : "已恢复零 Token 哨兵站岗。",
+                    )
+                  }
+                >
+                  <Play size={14} />
+                  {sentinelRecoverLabel}
+                </button>
+              ) : null}
+
               <button
                 type="button"
-                className="ref-primary-button"
+                className="ref-secondary-button"
                 disabled={busy}
+                title="立即运行一轮 LLM Scout 增量收题（消耗 Token）"
                 onClick={() =>
                   void runAction(
                     async () => {
@@ -210,61 +235,46 @@ export function AOEScoutStandbyBar({
                   <Pause size={14} />
                   停止站岗
                 </button>
-              ) : watch?.probe_script_present ? (
-                <button
-                  type="button"
-                  className="ref-secondary-button"
-                  disabled={busy}
-                  onClick={() =>
-                    void runAction(
-                      async () => {
-                        await tga3RuntimeApi.configureScoutWatch(taskId, "enable_sentinel");
-                      },
-                      "已开启零 Token 哨兵站岗。",
-                    )
-                  }
-                >
-                  <Play size={14} />
-                  开启零 Token 哨兵
-                </button>
               ) : null}
 
-              <select
-                aria-label="Scout 定时 LLM 巡检间隔"
-                className="aoe-standby-select"
-                disabled={busy}
-                value={llmSelectValue}
-                onChange={(event) => {
-                  const val = event.target.value;
-                  if (!val) {
-                    void runAction(
-                      async () => {
-                        await tga3RuntimeApi.configureScoutWatch(
-                          taskId,
-                          watch?.probe_script_present ? "enable_sentinel" : "disable",
-                        );
-                      },
-                      watch?.probe_script_present
-                        ? "已切回零 Token 哨兵站岗。"
-                        : "已关闭定时 LLM 巡检。",
-                    );
-                  } else {
-                    const sec = Number(val);
-                    void runAction(
-                      async () => {
-                        await tga3RuntimeApi.configureScoutWatch(taskId, "enable_llm_poll", sec);
-                      },
-                      `已开启每 ${Math.round(sec / 60)} 分钟定时 LLM 巡检。`,
-                    );
-                  }
-                }}
-              >
-                {LLM_INTERVAL_OPTIONS.map((opt) => (
-                  <option key={opt.value} value={opt.value}>
-                    {opt.label}
-                  </option>
-                ))}
-              </select>
+              {showLlmPollSelect ? (
+                <select
+                  aria-label="Scout 定时 LLM 巡检间隔"
+                  className="aoe-standby-select"
+                  disabled={busy}
+                  value={llmSelectValue}
+                  onChange={(event) => {
+                    const val = event.target.value;
+                    if (!val) {
+                      void runAction(
+                        async () => {
+                          await tga3RuntimeApi.configureScoutWatch(
+                            taskId,
+                            watch?.probe_script_present ? "enable_sentinel" : "disable",
+                          );
+                        },
+                        watch?.probe_script_present
+                          ? "已切回零 Token 哨兵站岗。"
+                          : "已关闭定时 LLM 巡检。",
+                      );
+                    } else {
+                      const sec = Number(val);
+                      void runAction(
+                        async () => {
+                          await tga3RuntimeApi.configureScoutWatch(taskId, "enable_llm_poll", sec);
+                        },
+                        `已开启每 ${Math.round(sec / 60)} 分钟定时 LLM 巡检（耗 Token）。`,
+                      );
+                    }
+                  }}
+                >
+                  {LLM_INTERVAL_OPTIONS.map((opt) => (
+                    <option key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+              ) : null}
             </>
           )}
         </div>

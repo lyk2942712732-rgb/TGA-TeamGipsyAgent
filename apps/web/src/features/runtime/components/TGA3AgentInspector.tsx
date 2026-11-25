@@ -521,11 +521,14 @@ function Controls({ snapshot, agent, onChanged }: { snapshot: TGA3RuntimeSnapsho
                     onClick={() =>
                       void scoutAction(
                         () => tga3RuntimeApi.configureScoutWatch(snapshot.task.id, "enable_sentinel"),
-                        "已开启零 Token 哨兵站岗。",
+                        scoutWatch?.state === "error_paused"
+                          ? "已重新拉起零 Token 哨兵站岗。"
+                          : "已恢复零 Token 哨兵站岗。",
                       )
                     }
                   >
-                    <ShieldCheck size={13} /> 开启零 Token 哨兵
+                    <ShieldCheck size={13} />{" "}
+                    {scoutWatch?.state === "error_paused" ? "重试零 Token 哨兵" : "恢复零 Token 哨兵"}
                   </button>
                 ) : null}
               </>

@@ -59,6 +59,8 @@ describe("AOEScoutStandbyBar", () => {
 
     expect(screen.getByText(/零 Token 哨兵站岗中/)).toBeInTheDocument();
     expect(screen.getByText(/0 Token · 已探测 4 次/)).toBeInTheDocument();
+    // When zero-token sentinel is active, hide periodic LLM select to avoid accidentally switching to token-burning polling.
+    expect(screen.queryByLabelText("Scout 定时 LLM 巡检间隔")).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: /唤醒 Scout 巡检/ }));
     await waitFor(() => expect(wakeSpy).toHaveBeenCalledWith("task-1"));
@@ -71,7 +73,7 @@ describe("AOEScoutStandbyBar", () => {
     stopSpy.mockRestore();
   });
 
-  it("shows manual standby message when no probe script exists", () => {
+  it("shows manual standby message and explicit token-cost LLM poll option when no probe script exists", () => {
     render(
       <AOEScoutStandbyBar
         taskId="task-1"
@@ -89,7 +91,45 @@ describe("AOEScoutStandbyBar", () => {
 
     expect(screen.getByText(/未检测到零 Token 探测脚本/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /唤醒 Scout 巡检/ })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /开启零 Token 哨兵/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /零 Token 哨兵/ })).not.toBeInTheDocument();
+    const select = screen.getByLabelText("Scout 定时 LLM 巡检间隔");
+    expect(select).toBeInTheDocument();
+    expect(screen.getAllByText(/耗 Token/)).toHaveLength(4);
+  });
+
+  it("uses clear recover/retry labels when sentinel was paused or circuit-broken", () => {
+    const { rerender } = render(
+      <AOEScoutStandbyBar
+        taskId="task-1"
+        taskState="running"
+        overview={makeOverview({
+          mode: "manual",
+          enabled: false,
+          state: "idle",
+          probe_script_present: true,
+          next_check_at: null,
+        })}
+        onChanged={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole("button", { name: /恢复零 Token 哨兵/ })).toBeInTheDocument();
+
+    rerender(
+      <AOEScoutStandbyBar
+        taskId="task-1"
+        taskState="running"
+        overview={makeOverview({
+          mode: "sentinel",
+          enabled: false,
+          state: "error_paused",
+          consecutive_failures: 3,
+          probe_script_present: true,
+          next_check_at: null,
+        })}
+        onChanged={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole("button", { name: /重试零 Token 哨兵/ })).toBeInTheDocument();
   });
 });
 
