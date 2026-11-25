@@ -35,7 +35,7 @@
 /* Balanced architectural page proportions (non-runtime pages never stretch excessively on wide monitors) */
 .page-frame {
   width: 100%;
-  max-width: 1280px;
+  max-width: 1440px;
   height: 100%;
   margin: 0 auto;
   display: flex;
@@ -45,16 +45,19 @@
   border-right: 1px solid var(--c-border);
   background: var(--c-bg);
 }
+.page-frame.is-overview {
+  max-width: 1460px;
+}
 .page-frame.is-lg {
-  max-width: 1360px;
+  max-width: 1460px;
 }
 .page-frame.is-xl {
-  max-width: 1440px;
+  max-width: 1520px;
 }
 .page-frame.is-md {
-  max-width: 1220px;
+  max-width: 1360px;
 }
-@media (max-width: 1300px) {
+@media (max-width: 1480px) {
   .page-frame {
     border-left: none;
     border-right: none;
@@ -292,6 +295,58 @@
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+.overview-grid-2 {
+  display: grid;
+  grid-template-columns: 1.5fr 1fr;
+  flex: 1;
+  min-height: 260px;
+  border-bottom: 1px solid var(--c-border);
+}
+
+/* Crisp Scout Standby Bar & Finish Confirm Modal */
+.aoe-sb-foot {
+  padding: 8px 10px;
+  border-top: 1px solid var(--c-border);
+  background: var(--c-surface-muted);
+  flex-shrink: 0;
+}
+.aoe-standby-bar {
+  margin: 0 !important;
+  border: none !important;
+  border-bottom: 1px solid var(--c-border) !important;
+  border-radius: 0 !important;
+  padding: 8px 12px !important;
+  background: var(--c-surface) !important;
+}
+.aoe-standby-bar.tone-sentinel {
+  border-left: 2px solid var(--c-success) !important;
+}
+.aoe-standby-bar.tone-active {
+  border-left: 2px solid var(--c-accent) !important;
+}
+.aoe-standby-bar.tone-warn {
+  border-left: 2px solid var(--c-warning) !important;
+}
+.ref-modal-backdrop {
+  position: fixed;
+  z-index: 85;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: var(--c-overlay);
+}
+.ref-modal {
+  width: min(540px, 100%);
+  padding: 20px;
+  border: 1px solid var(--c-border-strong);
+  border-radius: var(--r-md);
+  background: var(--c-surface);
+  color: var(--c-text);
+  box-shadow: var(--shadow-modal);
 }
 .overview-head {
   padding: 14px 20px;

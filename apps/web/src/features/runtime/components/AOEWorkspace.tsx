@@ -289,6 +289,24 @@ export function AOEWorkspace({
             );
           })}
         </div>
+        <footer className="aoe-sb-foot">
+          {["completed", "failed", "cancelled", "stopped"].includes(snapshot.task.state) ? (
+            <span className="mono subtle" style={{ fontSize: "10px" }}>
+              任务已结束 · 原地重启后可启用 Scout 智能站岗与零 Token 哨兵
+            </span>
+          ) : (
+            <span className="mono muted" style={{ fontSize: "10px" }}>
+              Scout 站岗：
+              {overview.scout_watch?.enabled
+                ? overview.scout_watch.mode === "sentinel"
+                  ? "零 Token 哨兵运行中"
+                  : "定时 LLM 巡检中"
+                : overview.scout_collecting || !overview.collection_complete
+                  ? "收集中"
+                  : "手动待命"}
+            </span>
+          )}
+        </footer>
       </aside>
 
       {/* Main AOE Workspace Column */}

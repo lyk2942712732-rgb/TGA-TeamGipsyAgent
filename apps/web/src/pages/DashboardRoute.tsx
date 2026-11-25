@@ -26,7 +26,15 @@ export function DashboardRoute() {
     attention={attention.data}
     health={health.data}
     onNew={() => navigate("/tasks/new")}
-    onTask={(taskId) => navigate(`/tasks/${encodeURIComponent(taskId)}`)}
+    onQuickNew={({ scene, title, prompt }) => {
+      const qs = new URLSearchParams();
+      if (scene) qs.set("scene", scene);
+      if (title) qs.set("title", title);
+      if (prompt) qs.set("prompt", prompt);
+      navigate(`/tasks/new${qs.toString() ? `?${qs.toString()}` : ""}`);
+    }}
+    onClone={(taskId) => navigate(`/tasks/new?clone=${encodeURIComponent(taskId)}`)}
+    onTask={(taskId) => navigate(`/tasks/${encodeURIComponent(taskId)}/runtime`)}
     onTasks={() => navigate("/tasks")}
     onApprovals={() => navigate("/approvals")}
     onSystem={() => navigate("/system")}

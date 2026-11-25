@@ -47,9 +47,13 @@ export function NewTaskPage({
   onCancel?: () => void;
   cloneFromTaskId?: string | null;
 }) {
-  const [name, setName] = useState("");
-  const [description, setDescription] = useState("");
-  const [sceneId, setSceneId] = useState<TaskMode>("penetration_test");
+  const initialQuery = typeof window !== "undefined" ? new URLSearchParams(window.location.search) : null;
+  const queryScene = initialQuery?.get("scene");
+  const initialScene: TaskMode =
+    queryScene && TASK_MODES.includes(queryScene as TaskMode) ? (queryScene as TaskMode) : "penetration_test";
+  const [name, setName] = useState(() => initialQuery?.get("title") ?? "");
+  const [description, setDescription] = useState(() => initialQuery?.get("prompt") ?? "");
+  const [sceneId, setSceneId] = useState<TaskMode>(initialScene);
   const [aoeMinutes, setAoeMinutes] = useState({ first: "30", second: "15", joint: "20" });
   const [produceReport, setProduceReport] = useState(true);
   const [aoeAutoSubmitFlag, setAoeAutoSubmitFlag] = useState(true);
