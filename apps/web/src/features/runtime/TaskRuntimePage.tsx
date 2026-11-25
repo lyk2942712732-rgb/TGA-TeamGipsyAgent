@@ -3,6 +3,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { tga3RuntimeApi, type RestartTaskPayload } from "../../api/tga3-runtime-control";
 import { deleteTask } from "../../api/tga3-tasks";
 import { ConfirmDialog } from "../../components/ui/ConfirmDialog";
+import { loadTheme } from "../../styles/theme";
 import { AOEFinishConfirmDialog } from "./components/AOEFinishConfirmDialog";
 import { AOEWorkspace } from "./components/AOEWorkspace";
 import { RestartTaskDialog } from "./components/RestartTaskDialog";
@@ -39,6 +40,7 @@ export function TaskRuntimePage({ taskId }: { taskId: string }) {
 
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(params.get("agent"));
   const [inspectorOpen, setInspectorOpen] = useState(true);
+  const [topologyOpen, setTopologyOpen] = useState(() => params.get("view") === "topology" || loadTheme() === "spatial");
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [remove, setRemove] = useState(false);
@@ -47,6 +49,16 @@ export function TaskRuntimePage({ taskId }: { taskId: string }) {
   const [finishMinimizedPromptAt, setFinishMinimizedPromptAt] = useState<number | null>(null);
   const [finishBusy, setFinishBusy] = useState(false);
   const [finishError, setFinishError] = useState<string | null>(null);
+
+  useEffect(() => {
+    function onThemeChanged(event: Event) {
+      const next = (event as CustomEvent<string>).detail;
+      if (next === "spatial") setTopologyOpen(true);
+      else if (next === "tungsten" || next === "swiss" || next === "instrument") setTopologyOpen(false);
+    }
+    window.addEventListener("tga3:theme-changed", onThemeChanged);
+    return () => window.removeEventListener("tga3:theme-changed", onThemeChanged);
+  }, []);
 
   const pendingFinishConfirm =
     snapshot?.aoe?.finish_confirm?.status === "pending" &&
@@ -101,7 +113,11 @@ export function TaskRuntimePage({ taskId }: { taskId: string }) {
       <section className="task-runtime-loading" aria-live="polite">
         <h1>正在加载 TGA3 任务</h1>
         <p>{error ?? "正在读取任务、Agent、共享黑板和执行事件。"}</p>
-        {error ? <button className="ref-secondary-button" onClick={refresh}>重试</button> : null}
+        {error ? (
+          <button className="ref-secondary-button" onClick={refresh}>
+            重试
+          </button>
+        ) : null}
       </section>
     );
   }
@@ -209,6 +225,7 @@ export function TaskRuntimePage({ taskId }: { taskId: string }) {
         connection={connection}
         busy={busy}
         inspectorOpen={inspectorOpen}
+        onBack={() => navigate("/tasks")}
         onToggleInspector={() => setInspectorOpen((value) => !value)}
         onRefresh={refresh}
         onStop={() => void stop()}
@@ -232,52 +249,62 @@ export function TaskRuntimePage({ taskId }: { taskId: string }) {
       {error ? (
         <div className="runtime-sync-error" role="alert">
           实时同步暂时中断：{error}
-          <button type="button" className="ref-secondary-button" onClick={refresh}>重试</button>
+          <button type="button" className="ref-secondary-button" onClick={refresh}>
+            重试
+          </button>
         </div>
       ) : null}
 
       {notice ? (
         <div className="runtime-sync-notice" role="status">
           <span>{notice}</span>
-          <button type="button" className="text-button" onClick={() => setNotice(null)}>关闭</button>
+          <button type="button" className="text-button" onClick={() => setNotice(null)}>
+            关闭
+          </button>
         </div>
       ) : null}
 
+      {/* Row 2: 56px Live Fleet Strip + Full-Height Row 3B Spatial Topology Canvas when topologyOpen */}
       <TGA3RuntimeGraph
         snapshot={snapshot}
         selectedAgentId={selectedAgentId}
+        topologyOpen={topologyOpen}
+        onToggleTopology={setTopologyOpen}
         onSelectAgent={(id) => {
           setSelectedAgentId(id);
           setInspectorOpen(true);
         }}
       />
 
-      <div className={`workbench-runtime-grid cockpit-split${inspectorOpen ? "" : " is-wide"}`}>
-        <main className="cockpit-main-pane">
-          {snapshot.aoe ? (
-            <AOEWorkspace
-              snapshot={snapshot}
-              tab={tab}
-              selectedAgentId={selectedAgentId}
-              onTab={setTab}
-              onChanged={refresh}
-            />
-          ) : (
-            <TGA3Workspace
-              snapshot={snapshot}
-              tab={tab}
-              selectedAgentId={selectedAgentId}
-              onTab={setTab}
-              onChanged={refresh}
-            />
-          )}
-        </main>
-        {inspectorOpen ? (
-          <div className="workbench-inspector">
-            <TGA3AgentInspector snapshot={snapshot} agent={selectedAgent} onChanged={refresh} />
-          </div>
-        ) : null}
-      </div>
+      {/* Row 3A: 100vh Multi-Pane Split Cockpit (default when topologyOpen === false) */}
+      {!topologyOpen ? (
+        <div className={`workbench-runtime-grid cockpit-split${inspectorOpen ? "" : " is-wide"}`}>
+          <main className="cockpit-main-pane">
+            {snapshot.aoe ? (
+              <AOEWorkspace
+                snapshot={snapshot}
+                tab={tab}
+                selectedAgentId={selectedAgentId}
+                onTab={setTab}
+                onChanged={refresh}
+              />
+            ) : (
+              <TGA3Workspace
+                snapshot={snapshot}
+                tab={tab}
+                selectedAgentId={selectedAgentId}
+                onTab={setTab}
+                onChanged={refresh}
+              />
+            )}
+          </main>
+          {inspectorOpen ? (
+            <div className="workbench-inspector">
+              <TGA3AgentInspector snapshot={snapshot} agent={selectedAgent} onChanged={refresh} />
+            </div>
+          ) : null}
+        </div>
+      ) : null}
 
       <RestartTaskDialog
         open={restartOpen}

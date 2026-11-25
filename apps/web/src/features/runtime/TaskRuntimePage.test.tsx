@@ -153,7 +153,7 @@ describe("TaskRuntimePage", () => {
   });
   it("selects an agent and opens its native inspector", () => {
     render(<MemoryRouter initialEntries={["/tasks/task/runtime"]}><TaskRuntimePage taskId="task" /></MemoryRouter>);
-    fireEvent.click(screen.getByRole("button", { name: "查看 OpenAI Worker" }));
+    fireEvent.click(screen.getByRole("button", { name: "聚焦 OpenAI Worker" }));
     expect(screen.getByRole("heading", { name: "OpenAI Worker", level: 2 })).toBeInTheDocument();
     expect(screen.queryByRole("tab", { name: "对话" })).not.toBeInTheDocument();
     expect(screen.queryByPlaceholderText(/添加提示/)).not.toBeInTheDocument();

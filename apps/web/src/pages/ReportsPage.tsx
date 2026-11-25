@@ -122,21 +122,20 @@ export function ReportsPage() {
   }, [visibleReports]);
 
   return (
-    <div className="ref-page vault-page">
-      <header className="ref-page-head">
-        <div>
-          <h1>复盘与经验库</h1>
-          <p>沉浸式阅读 Reporter 生成的 Writeup，并按任务浏览沉淀的经验卡。</p>
-        </div>
-        <div className="button-row">
-          <div className="tga3-segment" role="tablist" aria-label="复盘库视图">
+    <div className="ref-page">
+      <div className="page-frame is-lg">
+        <div className="table-toolbar">
+        <div className="table-toolbar-left">
+          <h1 style={{ margin: 0, fontSize: "15px", fontWeight: 600 }}>复盘与经验库</h1>
+          <div className="proto-seg" role="tablist" aria-label="复盘库视图">
             <button
               type="button"
               role="tab"
               aria-selected={vaultMode === "writeups"}
               onClick={() => setVaultMode("writeups")}
             >
-              <FileText size={13} /> Writeup 报告 ({reports.length})
+              <FileText size={12} style={{ verticalAlign: "-2px", marginRight: 4 }} />
+              Writeup 报告室 ({reports.length})
             </button>
             <button
               type="button"
@@ -144,35 +143,42 @@ export function ReportsPage() {
               aria-selected={vaultMode === "experience"}
               onClick={() => setVaultMode("experience")}
             >
-              <BookOpen size={13} /> 经验卡库
+              <BookOpen size={12} style={{ verticalAlign: "-2px", marginRight: 4 }} />
+              经验卡库 · Experience Cards
             </button>
           </div>
+        </div>
+        <div className="table-toolbar-right">
           {vaultMode === "writeups" && selected ? (
             <a
               className="ref-secondary-button"
               href={`${apiBase}/api/v3/tasks/${encodeURIComponent(selected.taskId)}/writeup/download`}
             >
-              <Download size={13} /> 下载 Markdown
+              <Download size={13} /> 导出 Markdown
             </a>
           ) : null}
         </div>
-      </header>
+      </div>
 
       {query.isLoading ? (
-        <LoadingSkeleton label="正在读取报告与经验库" rows={6} />
+        <div style={{ padding: 20 }}>
+          <LoadingSkeleton label="正在读取报告与经验库" rows={6} />
+        </div>
       ) : query.isError ? (
-        <ErrorState
-          description={query.error instanceof Error ? query.error.message : "无法读取报告"}
-          actionLabel="重试"
-          onAction={() => void query.refetch()}
-        />
+        <div style={{ padding: 20 }}>
+          <ErrorState
+            description={query.error instanceof Error ? query.error.message : "无法读取报告"}
+            actionLabel="重试"
+            onAction={() => void query.refetch()}
+          />
+        </div>
       ) : vaultMode === "writeups" ? (
         reports.length ? (
-          <div className="vault-split-layout ref-fill">
+          <div className="vault-grid-3">
             <aside className="vault-index-pane">
               <div className="vault-index-search">
-                <label className="ref-search">
-                  <Search size={14} />
+                <label className="ref-search" style={{ height: 28, minHeight: 28 }}>
+                  <Search size={13} />
                   <input
                     aria-label="搜索报告"
                     placeholder="搜索报告或任务"
@@ -183,7 +189,7 @@ export function ReportsPage() {
               </div>
               <div className="vault-index-scroll">
                 {grouped.map(([groupName, items]) => (
-                  <div key={groupName} className="vault-group">
+                  <div key={groupName}>
                     <div className="vault-group-label">{groupName}</div>
                     {items.map((row) => (
                       <button
@@ -192,10 +198,11 @@ export function ReportsPage() {
                         className={`vault-index-item${selected?.id === row.id ? " is-active" : ""}`}
                         onClick={() => setSelectedId(row.id)}
                       >
-                        <strong>{row.title}</strong>
-                        <small>
-                          {sceneLabel(row.scene)} · {new Date(row.updatedAt).toLocaleDateString("zh-CN")}
-                        </small>
+                        <div style={{ display: "flex", justifyContent: "space-between", gap: 6 }}>
+                          <strong className="truncate">{row.title}</strong>
+                          <span className="ref-chip">{sceneLabel(row.scene)}</span>
+                        </div>
+                        <small>{new Date(row.updatedAt).toLocaleString("zh-CN")}</small>
                       </button>
                     ))}
                   </div>
@@ -208,8 +215,8 @@ export function ReportsPage() {
               {selected ? (
                 <>
                   <header className="vault-reader-head">
-                    <div>
-                      <h2>{selected.title}</h2>
+                    <div style={{ minWidth: 0 }}>
+                      <h2 className="truncate">{selected.title}</h2>
                       <small>
                         任务：{selected.taskName} · {sceneLabel(selected.scene)} ·{" "}
                         {new Date(selected.updatedAt).toLocaleString("zh-CN")}
@@ -237,12 +244,38 @@ export function ReportsPage() {
                 <EmptyState title="请选择一份报告" description="点击左侧目录阅读对应 Writeup。" />
               )}
             </section>
+
+            <aside className="vault-toc-pane">
+              <div className="caps mono subtle" style={{ marginBottom: 10 }}>
+                ON THIS REPORT
+              </div>
+              <span className="vault-toc-link is-active">01 题目概述与目标</span>
+              <span className="vault-toc-link">02 关键发现与证据链</span>
+              <span className="vault-toc-link">03 验证原理与步骤</span>
+              <span className="vault-toc-link">04 最终结论与回放</span>
+              <div style={{ marginTop: 18, paddingTop: 12, borderTop: "1px solid var(--c-border)" }}>
+                <div className="caps mono subtle" style={{ marginBottom: 6 }}>
+                  关联经验卡
+                </div>
+                <button
+                  type="button"
+                  className="ref-secondary-button"
+                  style={{ width: "100%" }}
+                  onClick={() => {
+                    if (selected) setExpTaskId(selected.parentTaskId ?? selected.taskId);
+                    setVaultMode("experience");
+                  }}
+                >
+                  查看本任务经验卡 →
+                </button>
+              </div>
+            </aside>
           </div>
         ) : (
           <EmptyState title="还没有报告" description="Reporter 完成解题总结后，这里会出现对应的 Writeup。" />
         )
       ) : tasks.length ? (
-        <div className="vault-split-layout ref-fill">
+        <div className="vault-grid-2">
           <aside className="vault-index-pane">
             <div className="vault-group-label">按任务浏览经验卡 ({tasks.length})</div>
             <div className="vault-index-scroll">
@@ -253,7 +286,7 @@ export function ReportsPage() {
                   className={`vault-index-item${expTaskId === task.id ? " is-active" : ""}`}
                   onClick={() => setExpTaskId(task.id)}
                 >
-                  <strong>{task.title}</strong>
+                  <strong className="truncate">{task.title}</strong>
                   <small>
                     {sceneLabel(task.scene_id)} · #{task.id.slice(0, 8)}
                   </small>
@@ -262,14 +295,13 @@ export function ReportsPage() {
             </div>
           </aside>
           <section className="vault-reader-pane">
-            <div className="vault-reader-body">
-              {expTaskId ? <ExperienceCards taskId={expTaskId} /> : null}
-            </div>
+            <div className="vault-reader-body">{expTaskId ? <ExperienceCards taskId={expTaskId} /> : null}</div>
           </section>
         </div>
       ) : (
         <EmptyState title="暂无任务经验卡" description="完成解题后，Reporter 提炼的经验卡会集中沉淀在这里。" />
       )}
+      </div>
     </div>
   );
 }

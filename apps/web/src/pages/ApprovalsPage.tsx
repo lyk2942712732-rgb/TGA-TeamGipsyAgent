@@ -21,16 +21,18 @@ export function ApprovalsPage() {
     finally { setBusy(""); }
   }
 
-  return <div className="ref-page attention-page">
-    <header className="ref-page-head"><div><h1>审批中心</h1><p>集中处理 Agent 暂停与运行失败等事项。</p></div><button className="ref-secondary-button" onClick={() => void load()}><RefreshCw size={16} />刷新</button></header>
+  return <div className="ref-page attention-page"><div className="page-frame is-md">
+    <header className="ref-page-head"><div><h1>审批中心</h1><p>集中处理 Agent 暂停与运行失败等事项。</p></div><button className="ref-secondary-button" onClick={() => void load()}><RefreshCw size={14} />刷新</button></header>
     {error ? <p className="inline-error" role="alert">{error}</p> : null}
+    <div style={{ flex: 1, overflowY: "auto", padding: "14px 18px" }}>
     {!items.length ? <EmptyState title="当前没有待处理事项" description="Agent 暂停或任务失败后会出现在这里。" /> : <div className="attention-list ref-fill">{items.map((item) => <article key={item.id} className={`attention-card ${item.kind}`}>
       <span className="attention-icon">{item.kind === "agent_paused" ? <Bot size={21} /> : <AlertTriangle size={21} />}</span>
       <div className="attention-content"><header><div><h2>{item.title}</h2><p>{item.task_title}</p></div><time>{formatDate(item.created_at)}</time></header><p className="attention-detail">{item.detail}</p><dl><div><dt>任务状态</dt><dd>{item.task_state}</dd></div>{item.agent_id ? <div><dt>来源 Agent</dt><dd>{item.agent_id}</dd></div> : null}</dl>
       </div>
-      <footer>{item.kind === "agent_paused" ? <button className="ref-primary-button" disabled={busy === item.id} onClick={() => void resume(item)}><Play size={15} />恢复 Agent</button> : null}<button className="ref-secondary-button" onClick={() => navigate(`/tasks/${encodeURIComponent(item.task_id)}/runtime`)}><ExternalLink size={15} />进入任务</button></footer>
+      <footer>{item.kind === "agent_paused" ? <button className="ref-primary-button" disabled={busy === item.id} onClick={() => void resume(item)}><Play size={14} />恢复 Agent</button> : null}<button className="ref-secondary-button" onClick={() => navigate(`/tasks/${encodeURIComponent(item.task_id)}/runtime`)}><ExternalLink size={14} />进入任务</button></footer>
     </article>)}</div>}
-  </div>;
+    </div>
+  </div></div>;
 }
 
 function formatDate(value: string) { const date = new Date(value); return Number.isNaN(date.getTime()) ? value : date.toLocaleString("zh-CN"); }

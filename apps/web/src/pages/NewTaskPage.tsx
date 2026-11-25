@@ -356,24 +356,25 @@ export function NewTaskPage({
   const titleItems = fieldHistory["title"] ?? [];
   const descItems = fieldHistory[descHistoryKey] ?? [];
 
-  return <div className="ref-page workbench-new-task">
-    <section className="new-task-modal" aria-labelledby="new-task-title">
-      <header className="new-task-modal-head">
-        <div>
-          <h1 id="new-task-title">创建任务</h1>
-          <p>选择场景并提供初始提示，也可以为本任务覆盖 Solver 默认模型。</p>
+  return <div className="ref-page launch-shell workbench-new-task">
+    <section className="page-frame is-md" aria-labelledby="new-task-title">
+      <header className="proto-section-bar">
+        <div style={{ display: "inline-flex", alignItems: "center", gap: 10 }}>
+          <h1 id="new-task-title" className="proto-section-title" style={{ margin: 0 }}>创建任务</h1>
+          <span className="mono subtle" style={{ fontSize: "11px" }}>NEW OPERATION · 两层聚焦发射台</span>
         </div>
-        <div className="new-task-head-actions">
+        <div className="button-row">
           {lastConfig ? (
-            <button type="button" className="ref-secondary-button" disabled={busy} onClick={fillLastConfig}>
-              <Sparkles size={14} />一键填充上次配置
+            <button type="button" className="ref-secondary-button" style={{ height: 24, fontSize: "11px" }} disabled={busy} onClick={fillLastConfig}>
+              <Sparkles size={12} />一键填充上次配置
             </button>
           ) : null}
-          <button className="icon-button" aria-label="关闭" onClick={onCancel}><X size={20} /></button>
+          <button type="button" className="text-button" aria-label="关闭" onClick={onCancel}><X size={16} /></button>
         </div>
       </header>
-      <div className="new-task-modal-body new-task-launchpad-grid">
-        <div className="new-task-primary-col">
+
+      <div className="launch-grid">
+        <div className="launch-main">
         {cloneMeta ? (
           <div className="new-task-banner is-clone" role="status">
             <Copy size={15} />
@@ -405,56 +406,87 @@ export function NewTaskPage({
           </div>
         ) : null}
 
-        <fieldset className="scene-picker"><legend>题目类型：场景</legend><div className="scene-card-grid">
-          {scenes.filter((scene): scene is SceneConfig & { id: TaskMode } => TASK_MODES.includes(scene.id as TaskMode)).map((scene) => <button type="button" key={scene.id} className={sceneId === scene.id ? "selected" : ""} onClick={() => { markEdited(); setSceneId(scene.id); }}><span className="scene-code">{SCENE_ICONS[scene.id]}</span><strong>{scene.name}</strong><small>{scene.description}</small>{sceneId === scene.id ? <Check size={14} /> : null}</button>)}
-        </div></fieldset>
+        <fieldset className="launch-scene-fieldset">
+          <legend>题目类型：场景</legend>
+          <div className="scene-seg-bar">
+            {scenes.filter((scene): scene is SceneConfig & { id: TaskMode } => TASK_MODES.includes(scene.id as TaskMode)).map((scene) => (
+              <button
+                type="button"
+                key={scene.id}
+                className={`scene-seg-btn${sceneId === scene.id ? " selected" : ""}`}
+                onClick={() => { markEdited(); setSceneId(scene.id); }}
+              >
+                <span className="scene-code">{SCENE_ICONS[scene.id]}</span>
+                <strong>{scene.name}</strong>
+              </button>
+            ))}
+          </div>
+          {selected ? <p className="scene-seg-hint">{selected.description}</p> : null}
+        </fieldset>
 
-        <MemoryField
-          className="wide"
-          label="任务名称"
-          fieldKey="title"
-          currentValue={name}
-          items={titleItems}
-          undoAvailable={undoField?.field === "title"}
-          onUndo={() => { if (undoField?.field === "title") { setName(undoField.previous); setUndoField(null); } }}
-          onSelect={(val) => applyFieldMemory("title", name, val, setName)}
-          onForget={(val) => forgetMemory("title", val)}
-        >
-          <input
-            autoFocus
-            maxLength={100}
-            value={name}
-            onChange={(event) => { markEdited(); setName(event.target.value); }}
-            placeholder="例如：JWT 密钥泄露"
-          />
-        </MemoryField>
+        <div className="unified-editor">
+          <MemoryField
+            className="wide"
+            label="任务名称"
+            fieldKey="title"
+            currentValue={name}
+            items={titleItems}
+            undoAvailable={undoField?.field === "title"}
+            onUndo={() => { if (undoField?.field === "title") { setName(undoField.previous); setUndoField(null); } }}
+            onSelect={(val) => applyFieldMemory("title", name, val, setName)}
+            onForget={(val) => forgetMemory("title", val)}
+          >
+            <input
+              autoFocus
+              maxLength={100}
+              value={name}
+              onChange={(event) => { markEdited(); setName(event.target.value); }}
+              placeholder="输入任务名称（例如：JWT 密钥泄露）"
+            />
+          </MemoryField>
 
-        <MemoryField
-          className="wide task-description-field"
-          label="描述"
-          subLabel="用户初始提示词"
-          fieldKey={descHistoryKey}
-          currentValue={description}
-          items={descItems}
-          multiline
-          undoAvailable={undoField?.field === descHistoryKey}
-          onUndo={() => { if (undoField?.field === descHistoryKey) { setDescription(undoField.previous); setUndoField(null); } }}
-          onSelect={(val) => applyFieldMemory(descHistoryKey, description, val, setDescription)}
-          onForget={(val) => forgetMemory(descHistoryKey, val)}
-        >
-          <textarea
-            rows={7}
-            value={description}
-            onChange={(event) => { markEdited(); setDescription(event.target.value); }}
-            onPaste={onPaste}
-            placeholder="粘贴题目描述、授权目标、已知信息和期望结果；也可以直接粘贴图片。"
-          />
-        </MemoryField>
+          <MemoryField
+            className="wide task-description-field"
+            label="描述"
+            subLabel="用户初始提示词"
+            fieldKey={descHistoryKey}
+            currentValue={description}
+            items={descItems}
+            multiline
+            undoAvailable={undoField?.field === descHistoryKey}
+            onUndo={() => { if (undoField?.field === descHistoryKey) { setDescription(undoField.previous); setUndoField(null); } }}
+            onSelect={(val) => applyFieldMemory(descHistoryKey, description, val, setDescription)}
+            onForget={(val) => forgetMemory(descHistoryKey, val)}
+          >
+            <textarea
+              rows={7}
+              value={description}
+              onChange={(event) => { markEdited(); setDescription(event.target.value); }}
+              onPaste={onPaste}
+              placeholder="粘贴题目描述、授权目标、已知信息和期望结果；也可以直接 Ctrl+V 粘贴图片。"
+            />
+          </MemoryField>
 
-        <div className="task-attachment-zone" onDragOver={(event) => event.preventDefault()} onDrop={onDrop}><input ref={inputRef} type="file" multiple hidden onChange={onFiles} /><button type="button" className="ref-secondary-button" onClick={() => inputRef.current?.click()}><Paperclip size={15} />添加文件或图片</button><span>支持拖放、文件选择以及在描述框粘贴图片</span></div>
-        {assets.length ? <div className="task-attachment-list">{assets.map((asset) => <article key={asset.id}>{asset.previewUrl ? <img src={asset.previewUrl} alt="" /> : asset.mediaKind === "image" ? <Image size={20} /> : <FileText size={20} />}<span><strong>{asset.originalName}</strong><small>{formatBytes(asset.size)}</small></span><button aria-label={`移除 ${asset.originalName}`} onClick={() => void remove(asset)}><X size={14} /></button></article>)}</div> : null}
+          <div className="ue-attach-bar" onDragOver={(event) => event.preventDefault()} onDrop={onDrop}>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+              <input ref={inputRef} type="file" multiple hidden onChange={onFiles} />
+              <button type="button" className="ref-secondary-button" style={{ height: 24, fontSize: "11px" }} onClick={() => inputRef.current?.click()}>
+                <Paperclip size={13} />添加文件或图片
+              </button>
+              {assets.length ? assets.map((asset) => (
+                <span key={asset.id} className="ref-chip">
+                  {asset.mediaKind === "image" ? <Image size={11} /> : <FileText size={11} />}
+                  <span>{asset.originalName} ({formatBytes(asset.size)})</span>
+                  <button type="button" aria-label={`移除 ${asset.originalName}`} onClick={() => void remove(asset)} style={{ border: "none", background: "none", padding: 0, display: "inline-flex" }}>
+                    <X size={11} />
+                  </button>
+                </span>
+              )) : <span className="mono subtle" style={{ fontSize: "11px" }}>支持拖放文件或在描述框粘贴截图</span>}
+            </div>
+          </div>
+        </div>
 
-        {sceneId === "aoe" ? <fieldset className="wide aoe-budget-field"><legend>单题时间预算</legend>
+        {sceneId === "aoe" ? <fieldset className="wide aoe-budget-field aoe-budget-strip"><legend>单题时间预算</legend>
           <div className="aoe-budget-inputs">{([
             ["first", "第一次尝试（分钟）", "aoe_first"],
             ["second", "第二次尝试（分钟）", "aoe_second"],
@@ -487,68 +519,93 @@ export function NewTaskPage({
         {error ? <p className="inline-error" role="alert">{error}</p> : null}
         </div>
 
-        <aside className="new-task-config-col">
-        <div className="wide task-run-options">
-        {sceneId === "aoe" ? <div className="aoe-submission-option">
-          <label>
-            <input type="checkbox" checked={aoeAutoSubmitFlag} aria-describedby="aoe-submission-help"
-              onChange={(event) => { markEdited(); setAoeAutoSubmitFlag(event.target.checked); }} />
-            自动提交 Flag
-          </label>
-          <small id="aoe-submission-help">取消勾选后，取得 Flag 即可发布最终候选，无需平台成功回执。</small>
-        </div> : null}
-          <div className="aoe-submission-option">
-            <label><input type="checkbox" checked={produceReport} aria-describedby="produce-report-help"
-              onChange={(event) => { markEdited(); setProduceReport(event.target.checked); }} />产出报告</label>
-            <small id="produce-report-help">勾选后生成报告并整理经验卡；取消勾选后仅整理经验卡。</small>
+        <aside className="launch-side">
+          <div className="proto-section-bar">
+            <span className="proto-section-title">FLEET & STRATEGY · 舰队与策略</span>
+            <span className="mono subtle" style={{ fontSize: "10px" }}>{sceneId === "aoe" ? "AOE" : "SINGLE"}</span>
           </div>
-        </div>
+          <div className="launch-side-scroll">
+            {agentOptions ? <fieldset className="launch-rack-fieldset task-agent-models"><legend>本任务 Solver 装配与模型</legend><div>{agentOptions.agents.map((agent) => {
+              const current = agentModels[agent.id];
+              const effectiveRuntime = current?.runtime ?? agent.runtime;
+              const compatible = agentOptions.models.filter((model) => modelCompatible(effectiveRuntime, model.protocol));
+              return <div className="rack-item" key={agent.id}>
+                <div className="rack-row" style={{ flexDirection: "column", alignItems: "stretch", gap: 6 }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6 }}>
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                      <strong style={{ fontSize: "12px" }}>{agent.display_name}</strong>
+                      <small className="mono subtle" style={{ fontSize: "10px" }}>{agent.id}</small>
+                    </span>
+                    <div className="task-agent-cli-pills" role="group" aria-label={`${agent.display_name} CLI 引擎`}>
+                      {ALL_RUNTIMES.map((rt) => (
+                        <button
+                          key={rt}
+                          type="button"
+                          className={`task-agent-cli-pill${effectiveRuntime === rt ? " is-selected" : ""}`}
+                          aria-pressed={effectiveRuntime === rt}
+                          disabled={busy}
+                          onClick={() => switchTaskRuntime(agent.id, agent.runtime, rt)}
+                        >
+                          {RUNTIME_SHORT_LABELS[rt]}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <ModelPicker label={`${agent.display_name} 模型`} options={compatible} value={current?.model_id ? current : undefined}
+                    onChange={(model) => {
+                      markEdited();
+                      setAgentModels((value) => ({
+                        ...value,
+                        [agent.id]: effectiveRuntime === agent.runtime ? model : { ...model, runtime: effectiveRuntime },
+                      }));
+                    }} />
+                </div>
+              </div>;
+            })}</div></fieldset> : null}
 
-        <label className="wide knowledge-source-field">Worker 知识库
-          <select aria-label="Worker 知识库" value={knowledgeSource} onChange={(event) => { markEdited(); setKnowledgeSource(event.target.value as KnowledgeSource); }}>
-            <option value="online" disabled={knowledgeSources?.online.available === false}>在线知识库 · ctf42</option>
-            <option value="local" disabled={!knowledgeSources?.local.available}>本地知识库 · CTF Wiki{knowledgeSources && !knowledgeSources.local.available ? "（未就绪）" : ""}</option>
-          </select>
-          <small>{knowledgeError || (!knowledgeSources ? "正在检查知识库…" : knowledgeSource === "local"
-            ? `本地已索引 ${knowledgeSources.local.documents} 篇文档，检索与正文读取无需联网。`
-            : "在线检索技法、历史题目及 Writeup 链接，需要网络连接。")}</small>
-          {knowledgeSources && !knowledgeSources.local.available ? <small>本地 CTF Wiki 尚未就绪，请先运行 tga3 sync-knowledge。</small> : null}
-          {knowledgeSources && !knowledgeSources.online.available && knowledgeSource === "online" ? <small role="alert">在线知识库已禁用，请选择已就绪的本地知识库。</small> : null}
-        </label>
-        {agentOptions ? <fieldset className="task-agent-models"><legend>本任务 Solver 装配与模型</legend><p>默认继承 Solver 配置；这里可以临时为本任务切换 CLI 引擎与模型。</p><div>{agentOptions.agents.map((agent) => {
-          const current = agentModels[agent.id];
-          const effectiveRuntime = current?.runtime ?? agent.runtime;
-          const compatible = agentOptions.models.filter((model) => modelCompatible(effectiveRuntime, model.protocol));
-          return <div className="task-agent-model-row" key={agent.id}><span><strong>{agent.display_name}</strong><small>{agent.id}</small>
-            <div className="task-agent-cli-pills" role="group" aria-label={`${agent.display_name} CLI 引擎`}>
-              {ALL_RUNTIMES.map((rt) => (
-                <button
-                  key={rt}
-                  type="button"
-                  className={`task-agent-cli-pill${effectiveRuntime === rt ? " is-selected" : ""}`}
-                  aria-pressed={effectiveRuntime === rt}
-                  disabled={busy}
-                  onClick={() => switchTaskRuntime(agent.id, agent.runtime, rt)}
-                >
-                  {RUNTIME_SHORT_LABELS[rt]}
-                </button>
-              ))}
+            <div className="launch-side-options">
+              <label className="wide knowledge-source-field" style={{ display: "grid", gap: 4, fontSize: "12px" }}>
+                <span className="caps mono subtle">Worker 知识库</span>
+                <select aria-label="Worker 知识库" value={knowledgeSource} onChange={(event) => { markEdited(); setKnowledgeSource(event.target.value as KnowledgeSource); }} style={{ height: 28, padding: "0 8px", border: "1px solid var(--c-border)", borderRadius: "var(--r-sm)", background: "var(--c-input-bg)" }}>
+                  <option value="online" disabled={knowledgeSources?.online.available === false}>在线知识库 · ctf42</option>
+                  <option value="local" disabled={!knowledgeSources?.local.available}>本地知识库 · CTF Wiki{knowledgeSources && !knowledgeSources.local.available ? "（未就绪）" : ""}</option>
+                </select>
+                <small className="subtle" style={{ fontSize: "11px" }}>{knowledgeError || (!knowledgeSources ? "正在检查知识库…" : knowledgeSource === "local"
+                  ? `本地已索引 ${knowledgeSources.local.documents} 篇文档，检索与正文读取无需联网。`
+                  : "在线检索技法、历史题目及 Writeup 链接，需要网络连接。")}</small>
+                {knowledgeSources && !knowledgeSources.local.available ? <small className="subtle">本地 CTF Wiki 尚未就绪，请先运行 tga3 sync-knowledge。</small> : null}
+                {knowledgeSources && !knowledgeSources.online.available && knowledgeSource === "online" ? <small role="alert">在线知识库已禁用，请选择已就绪的本地知识库。</small> : null}
+              </label>
+
+              <div className="wide task-run-options" style={{ display: "grid", gap: 8 }}>
+                {sceneId === "aoe" ? <div className="aoe-submission-option">
+                  <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "12px" }}>
+                    <input type="checkbox" checked={aoeAutoSubmitFlag} aria-describedby="aoe-submission-help"
+                      onChange={(event) => { markEdited(); setAoeAutoSubmitFlag(event.target.checked); }} />
+                    自动提交 Flag
+                  </label>
+                  <small id="aoe-submission-help" className="subtle" style={{ fontSize: "11px" }}>取消勾选后，取得 Flag 即可发布最终候选，无需平台成功回执。</small>
+                </div> : null}
+                <div className="aoe-submission-option">
+                  <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "12px" }}>
+                    <input type="checkbox" checked={produceReport} aria-describedby="produce-report-help"
+                      onChange={(event) => { markEdited(); setProduceReport(event.target.checked); }} />
+                    产出报告
+                  </label>
+                  <small id="produce-report-help" className="subtle" style={{ fontSize: "11px" }}>勾选后生成报告并整理经验卡；取消勾选后仅整理经验卡。</small>
+                </div>
+              </div>
             </div>
-          </span>
-            <ModelPicker label={`${agent.display_name} 模型`} options={compatible} value={current?.model_id ? current : undefined}
-              onChange={(model) => {
-                markEdited();
-                setAgentModels((value) => ({
-                  ...value,
-                  [agent.id]: effectiveRuntime === agent.runtime ? model : { ...model, runtime: effectiveRuntime },
-                }));
-              }} />
-          </div>;
-        })}</div></fieldset> : null}
-        <aside className="new-task-config-note"><strong>{sceneId === "aoe" ? produceReport ? "收集题目 → 分题解题 → 逐题报告" : "收集题目 → 分题解题 → 经验卡" : "Scout → Workers → Reporter"}</strong><p>{sceneId === "aoe" ? "四个 Worker 优先领取未尝试的简单题，题目各自保留黑板和文件，按所选选项整理产出。" : `${selected?.name ?? "场景"}提示词、题目描述和附件索引将自动进入黑板。`}</p></aside>
+          </div>
+
+          <footer className="launch-side-foot">
+            <button type="button" className="ref-secondary-button" disabled={busy} onClick={onCancel}>取消</button>
+            <button type="button" className="ref-primary-button" disabled={!ready || !knowledgeSources?.[knowledgeSource].available} onClick={() => void submit()}>
+              <Play size={14} />{busy ? "创建中…" : "创建并启动"}
+            </button>
+          </footer>
         </aside>
       </div>
-      <footer className="new-task-modal-actions"><button type="button" className="ref-secondary-button" disabled={busy} onClick={onCancel}>取消</button><button type="button" className="ref-primary-button" disabled={!ready || !knowledgeSources?.[knowledgeSource].available} onClick={() => void submit()}><Play size={16} />{busy ? "创建中…" : "创建并启动"}</button></footer>
     </section>
   </div>;
 }

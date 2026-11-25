@@ -1,9 +1,20 @@
-import { ChevronRight, Copy, Download, PanelRight, RefreshCw, RotateCcw, Square, Trash2 } from "lucide-react";
-import { useState } from "react";
+import {
+  ArrowLeft,
+  ChevronRight,
+  Copy,
+  Download,
+  MoreHorizontal,
+  PanelRight,
+  RefreshCw,
+  RotateCcw,
+  Square,
+  Trash2,
+} from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import { tga3RuntimeApi } from "../../../api/tga3-runtime-control";
 import { MODE_PROFILES } from "../../../modes";
 import type { TGA3RuntimeSnapshot } from "../../../runtime/tga3-runtime";
-import { agentStateLabel, formatTime, stateLabel, stateTone } from "../tga3-view";
+import { agentStateLabel, stateLabel, stateTone } from "../tga3-view";
 import type { TGA3Connection } from "../use-tga3-runtime";
 
 export function TGA3TaskHeader({
@@ -11,6 +22,7 @@ export function TGA3TaskHeader({
   connection,
   busy,
   inspectorOpen,
+  onBack,
   onToggleInspector,
   onRefresh,
   onStop,
@@ -22,6 +34,7 @@ export function TGA3TaskHeader({
   connection: TGA3Connection;
   busy: boolean;
   inspectorOpen?: boolean;
+  onBack?: () => void;
   onToggleInspector?: () => void;
   onRefresh: () => void;
   onStop: () => void;
@@ -31,6 +44,18 @@ export function TGA3TaskHeader({
 }) {
   const { task, agents, blackboard } = snapshot;
   const [usageOpen, setUsageOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    function onDocClick(event: MouseEvent) {
+      if (menuRef.current && !menuRef.current.contains(event.target as Node)) setMenuOpen(false);
+    }
+    window.addEventListener("mousedown", onDocClick);
+    return () => window.removeEventListener("mousedown", onDocClick);
+  }, [menuOpen]);
+
   const reported = agents.filter((agent) => agent.metadata?.token_usage?.reported);
   const totalTokens = reported.reduce((sum, agent) => sum + (agent.metadata?.token_usage?.total_tokens ?? 0), 0);
   const active = agents.filter((agent) => ["starting", "running"].includes(agent.actual_state)).length;
@@ -39,40 +64,45 @@ export function TGA3TaskHeader({
   const finals = blackboard.filter((entry) => entry.kind === "final_candidate").length;
   const terminal = ["completed", "failed", "cancelled", "stopped"].includes(task.state);
   const scoutAgent = task.state === "scouting" ? agents.find((agent) => agent.role === "scout") : null;
+  const aoeSolved = snapshot.aoe ? snapshot.aoe.questions.filter((q) => q.status === "solved").length : 0;
 
   return (
     <header className="tga3-task-header cockpit-telemetry-bar">
-      <div className="cockpit-tele-left">
-        <span className={`tga3-state-pill tone-${stateTone(task.state)}`}>
-          <i />
-          {stateLabel(task.state)}
+      {onBack ? (
+        <>
+          <button type="button" className="text-button" onClick={onBack}>
+            <ArrowLeft size={13} /> 任务库
+          </button>
+          <span className="tele-divider" />
+        </>
+      ) : null}
+
+      <span className={`fleet-dot tone-${stateTone(task.state)}`} title={stateLabel(task.state)} />
+
+      <div className="cockpit-tele-title">
+        <h1>{task.title}</h1>
+        <span className="ref-chip tone-accent">
+          {MODE_PROFILES[task.scene_id as keyof typeof MODE_PROFILES]?.label ?? task.scene_id}
         </span>
-        <div className="cockpit-tele-title">
-          <h1>{task.title}</h1>
-          <span className="tele-scene-tag">
-            {MODE_PROFILES[task.scene_id as keyof typeof MODE_PROFILES]?.label ?? task.scene_id}
-          </span>
-          <small className="tele-created">创建于 {formatTime(task.created_at)}</small>
-        </div>
       </div>
 
+      <span className="tele-divider" />
+
       <div className="tga3-task-facts">
-        <Fact label="Agent" value={`${active}/${agents.length}`} />
         {snapshot.aoe ? (
           <>
-            <Fact label="题目" value={String(snapshot.aoe.questions.length)} />
-            <Fact label="已解出" value={String(snapshot.aoe.questions.filter((q) => q.status === "solved").length)} />
-            <Fact label="已放弃" value={String(snapshot.aoe.questions.filter((q) => q.status === "abandoned").length)} />
+            <Fact label="解出" value={`${aoeSolved}/${snapshot.aoe.questions.length}`} />
+            <Fact label="活动" value={`${active}/${agents.length}`} />
           </>
         ) : (
           <>
-            <Fact label="Intel" value={`${intel}`} />
-            <Fact label="Finding" value={`${findings}`} />
-            <Fact label="最终候选" value={`${finals}`} />
+            <Fact label="Intel" value={String(intel)} />
+            <Fact label="Finding" value={String(findings)} />
+            <Fact label="候选" value={String(finals)} />
           </>
         )}
         <Fact label="同步" value={connectionLabel(connection)} />
-        {scoutAgent ? <Fact label="Scout 阶段" value={agentStateLabel(scoutAgent)} /> : null}
+        {scoutAgent ? <Fact label="Scout" value={agentStateLabel(scoutAgent)} /> : null}
 
         <div className="tga3-token-usage">
           <button
@@ -85,10 +115,10 @@ export function TGA3TaskHeader({
             title="累计输入与输出 Token，包含缓存输入；按 CLI 已上报用量统计"
           >
             <span>
-              <small>Token</small>
+              <small>Token </small>
               <b>{reported.length ? totalTokens.toLocaleString("en-US") : "未上报"}</b>
             </span>
-            <ChevronRight size={13} />
+            <ChevronRight size={12} />
           </button>
           {usageOpen ? (
             <div id="task-token-breakdown" className="tga3-token-breakdown" role="group" aria-label="各智能体累计 Token">
@@ -96,6 +126,7 @@ export function TGA3TaskHeader({
                 <span
                   className="tga3-task-fact"
                   key={agent.agent_id}
+                  style={{ justifyContent: "space-between", width: "100%" }}
                   title={
                     agent.metadata?.token_usage
                       ? `输入 ${agent.metadata.token_usage.input_tokens.toLocaleString("en-US")} / 输出 ${agent.metadata.token_usage.output_tokens.toLocaleString("en-US")}`
@@ -110,7 +141,7 @@ export function TGA3TaskHeader({
                   </b>
                 </span>
               ))}
-              {reported.length < agents.length ? <small className="tga3-token-note">总数仅含已上报用量</small> : null}
+              {reported.length < agents.length ? <small className="subtle">总数仅含已上报用量</small> : null}
             </div>
           ) : null}
         </div>
@@ -124,46 +155,86 @@ export function TGA3TaskHeader({
             aria-expanded={inspectorOpen}
             onClick={onToggleInspector}
           >
-            <PanelRight size={13} />
-            {inspectorOpen ? "收起 Agent 面板" : "展开 Agent 面板"}
+            <PanelRight size={12} />
+            {inspectorOpen ? "收起 Inspector" : "展开 Inspector"}
           </button>
         ) : null}
-        <button type="button" className="ref-secondary-button" onClick={onRefresh}>
-          <RefreshCw size={13} />
-          刷新
-        </button>
-        {snapshot.aoe ? (
-          <a className="ref-secondary-button" href={`/tasks/${encodeURIComponent(task.id)}/runtime?tab=report`}>
-            查看逐题报告
-          </a>
-        ) : task.state === "completed" ? (
-          <a className="ref-secondary-button" href={tga3RuntimeApi.reportUrl(task.id)} target="_blank" rel="noreferrer">
-            <Download size={13} />
-            下载报告
-          </a>
-        ) : null}
+
         {terminal && onRestart ? (
           <button type="button" className="ref-primary-button" disabled={busy} onClick={onRestart}>
-            <RotateCcw size={13} />
+            <RotateCcw size={12} />
             重新启动
           </button>
         ) : null}
-        {onClone ? (
+        {terminal && onClone ? (
           <button type="button" className="ref-secondary-button" disabled={busy} onClick={onClone}>
-            <Copy size={13} />
+            <Copy size={12} />
             基于此任务新建
           </button>
         ) : null}
         {!terminal ? (
           <button type="button" className="tga3-danger-button" disabled={busy} onClick={onStop}>
-            <Square size={12} />
+            <Square size={11} />
             停止任务
           </button>
         ) : null}
-        <button type="button" className="ref-secondary-button tga3-delete-task-button" disabled={busy} onClick={onDelete}>
-          <Trash2 size={13} />
-          删除任务
-        </button>
+
+        <div className="tele-overflow-wrap" ref={menuRef}>
+          <button
+            type="button"
+            className="ref-secondary-button"
+            aria-label="更多任务操作"
+            aria-expanded={menuOpen}
+            onClick={() => setMenuOpen((v) => !v)}
+          >
+            <MoreHorizontal size={14} />
+          </button>
+          {menuOpen ? (
+            <div className="tele-overflow-menu" role="menu">
+              <button
+                type="button"
+                onClick={() => {
+                  setMenuOpen(false);
+                  onRefresh();
+                }}
+              >
+                <RefreshCw size={13} /> 立即刷新快照
+              </button>
+              {snapshot.aoe ? (
+                <a href={`/tasks/${encodeURIComponent(task.id)}/runtime?tab=report`} onClick={() => setMenuOpen(false)}>
+                  <Download size={13} /> 查看逐题报告
+                </a>
+              ) : task.state === "completed" ? (
+                <a href={tga3RuntimeApi.reportUrl(task.id)} target="_blank" rel="noreferrer" onClick={() => setMenuOpen(false)}>
+                  <Download size={13} /> 下载 Markdown 报告
+                </a>
+              ) : null}
+              {!terminal && onClone ? (
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => {
+                    setMenuOpen(false);
+                    onClone();
+                  }}
+                >
+                  <Copy size={13} /> 基于此任务新建
+                </button>
+              ) : null}
+              <button
+                type="button"
+                className="is-danger"
+                disabled={busy}
+                onClick={() => {
+                  setMenuOpen(false);
+                  onDelete();
+                }}
+              >
+                <Trash2 size={13} /> 删除任务
+              </button>
+            </div>
+          ) : null}
+        </div>
       </div>
     </header>
   );

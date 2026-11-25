@@ -1,37 +1,21 @@
 import {
   BookOpen,
-  BrainCircuit,
-  Check,
-  ChevronDown,
-  ChevronUp,
-  Clock3,
   Database,
   FileText,
   Files,
+  GitFork,
   Library,
-  Minus,
-  Play,
   RotateCcw,
   Terminal,
   X,
   ZoomIn,
   ZoomOut,
 } from "lucide-react";
-import { useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useMemo, useState } from "react";
 import type { TGA3Agent, TGA3RuntimeSnapshot } from "../../../runtime/tga3-runtime";
-import {
-  agentNode,
-  compact,
-  currentAgentAction,
-  latestAgentEntry,
-  modelNode,
-  runtimeActivityEvents,
-  type RuntimeActivity,
-} from "../runtime-activity";
-import { activityRoute, labelPlacement, phaseRoute, type GraphBox, type GraphPoint } from "../runtime-geometry";
+import { agentNode, compact, currentAgentAction, latestAgentEntry, runtimeActivityEvents } from "../runtime-activity";
 import { agentStateLabel, formatTime, sdkLabel, stateTone } from "../tga3-view";
 import { useRuntimeActivities } from "../use-runtime-activities";
-import { workerBus } from "../worker-bus";
 import { ExperienceCards } from "./ExperienceCards";
 
 const ORDER = ["scout", "worker-openai", "worker-claude", "worker-opencode", "worker-qwen", "reporter"];
@@ -50,23 +34,30 @@ function shortSdkCode(sdk: string): string {
 export function TGA3RuntimeGraph({
   snapshot,
   selectedAgentId,
+  topologyOpen,
+  onToggleTopology,
   onSelectAgent,
 }: {
   snapshot: TGA3RuntimeSnapshot;
   selectedAgentId?: string | null;
+  topologyOpen?: boolean;
+  onToggleTopology?: (open: boolean) => void;
   onSelectAgent?: (id: string) => void;
 }) {
-  const [collapsed, setCollapsed] = useState(false);
+  const [internalOpen, setInternalOpen] = useState(true);
+  const isOpen = topologyOpen !== undefined ? topologyOpen : internalOpen;
+  const setOpen = (next: boolean) => {
+    if (onToggleTopology) onToggleTopology(next);
+    else setInternalOpen(next);
+  };
+
   const [models, setModels] = useState(false);
   const [zoom, setZoom] = useState(1);
-  const [selected, setSelected] = useState<string | null>(null);
-  const stage = useRef<HTMLDivElement>(null);
-  const marker = useId().replace(/:/g, "");
-  const [boxes, setBoxes] = useState<Record<string, GraphBox>>({});
-  const [size, setSize] = useState({ width: 1, height: 1 });
+  const [selectedNode, setSelectedNode] = useState<string | null>(null);
+
   const activities = useRuntimeActivities(snapshot);
   const events = useMemo(() => runtimeActivityEvents(snapshot), [snapshot]);
-  const active = new Set(activities.flatMap((item) => [item.from, ...(item.to ? [item.to] : [])]));
+  const activeSet = new Set(activities.flatMap((item) => [item.from, ...(item.to ? [item.to] : [])]));
   const terminal = ["completed", "failed", "stopped", "cancelled"].includes(snapshot.task.state);
   const questions = snapshot.aoe?.questions;
   const counts = {
@@ -74,185 +65,72 @@ export function TGA3RuntimeGraph({
     finding: snapshot.blackboard.filter((e) => e.kind === "finding").length,
     final: snapshot.blackboard.filter((e) => e.kind === "final_candidate").length,
   };
+
   const agents = [...snapshot.agents].sort((a, b) => {
     const ai = ORDER.indexOf(a.agent_id);
     const bi = ORDER.indexOf(b.agent_id);
     return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
   });
-  const workers = agents.filter((item) => item.role === "worker");
-  const bus = workerBus(boxes);
-  const wiresVisible = size.width >= 530 && (workers.length <= 2 || !!bus);
-  const detail = selected
-    ? [...events].reverse().find((event) => event.activity && [event.activity.from, event.activity.to].includes(selected))
-        ?.activity
+  const scout = agents.find((a) => a.role === "scout");
+  const reporter = agents.find((a) => a.role === "reporter");
+  const workers = agents.filter((a) => a.role === "worker");
+
+  const detail = selectedNode
+    ? [...events].reverse().find((ev) => ev.activity && [ev.activity.from, ev.activity.to].includes(selectedNode))?.activity
     : null;
-  const selectedAgent = agents.find((agent) => agentNode(agent.agent_id) === selected);
+  const selectedAgent = agents.find((a) => agentNode(a.agent_id) === selectedNode);
 
-  useLayoutEffect(() => {
-    const canvas = stage.current;
-    if (!canvas || collapsed) return;
-    const measure = () => {
-      const root = canvas.getBoundingClientRect();
-      const scale = zoom || 1;
-      const next: Record<string, GraphBox> = {};
-      canvas.querySelectorAll<HTMLElement>("[data-graph-node]").forEach((node) => {
-        const r = node.getBoundingClientRect();
-        next[node.dataset.graphNode!] = {
-          x: (r.left - root.left) / scale,
-          y: (r.top - root.top) / scale,
-          width: r.width / scale,
-          height: r.height / scale,
-        };
-      });
-      setBoxes(next);
-      setSize({ width: canvas.clientWidth, height: canvas.clientHeight });
-    };
-    measure();
-    const observer = new ResizeObserver(measure);
-    observer.observe(canvas);
-    canvas.querySelectorAll<HTMLElement>("[data-graph-node]").forEach((node) => observer.observe(node));
-    return () => observer.disconnect();
-  }, [collapsed, models, snapshot, selectedAgentId, zoom]);
-
-  function selectNode(id: string) {
-    setSelected((current) => (current === id ? null : id));
-    if (id.startsWith("agent:")) onSelectAgent?.(id.slice(6));
-  }
-
-  function resource(id: string, title: string, icon: ReactNode, description: ReactNode) {
-    return (
-      <button
-        type="button"
-        className={`collab-node collab-resource resource-${id}`}
-        data-graph-node={id}
-        data-active={active.has(id)}
-        aria-pressed={selected === id}
-        onClick={() => selectNode(id)}
-      >
-        <span className="collab-node-title">
-          {icon}
-          <strong>{title}</strong>
-        </span>
-        <small>{description}</small>
-      </button>
-    );
-  }
-
-  function agent(id: string) {
-    const value = agents.find((item) => item.agent_id === id);
-    if (!value) {
-      return (
-        <div className="collab-node collab-placeholder">
-          <strong>{id === "scout" ? "Scout" : id === "reporter" ? "Reporter" : id}</strong>
-          <small>尚未建立会话</small>
-        </div>
-      );
+  function handleNodeClick(nodeId: string) {
+    setSelectedNode((curr) => (curr === nodeId ? null : nodeId));
+    if (nodeId.startsWith("agent:")) {
+      onSelectAgent?.(nodeId.slice(6));
     }
-    const currentQuestion = value.metadata?.current_question_id;
+  }
+
+  function agentActionText(agent: TGA3Agent) {
+    const currentQuestion = agent.metadata?.current_question_id;
     const scoped =
       questions && currentQuestion
-        ? { ...snapshot, events: snapshot.events.filter((event) => (event.question_id ?? event.payload.question_id) === currentQuestion) }
+        ? { ...snapshot, events: snapshot.events.filter((ev) => (ev.question_id ?? ev.payload.question_id) === currentQuestion) }
         : snapshot;
-    const node = agentNode(id);
-    const action = currentAgentAction(scoped, value);
-    const entry = latestAgentEntry(snapshot.blackboard, id);
-    return (
-      <button
-        type="button"
-        className="collab-node collab-agent"
-        data-graph-node={node}
-        data-active={active.has(node)}
-        aria-label={`查看 ${value.display_name}`}
-        aria-pressed={selectedAgentId === id}
-        onClick={() => selectNode(node)}
-      >
-        <span className="collab-node-title">
-          <strong>{value.display_name}</strong>
-          <span className={`cli-badge is-${value.sdk}`}>{shortSdkCode(value.sdk)}</span>
-        </span>
-        <span className={`collab-agent-state tone-${stateTone(value.actual_state)}`}>
-          {value.actual_state === "completed" ? (
-            <Check size={11} />
-          ) : ["running", "starting"].includes(value.actual_state) ? (
-            <Play size={11} />
-          ) : (
-            <Minus size={11} />
-          )}
-          {agentStateLabel(value)}
-        </span>
-        {value.metadata?.current_question_title ? (
-          <span className="collab-agent-question" title={value.metadata.current_question_title}>
-            题目：{value.metadata.current_question_title}
-          </span>
-        ) : null}
-        <span className="collab-agent-action" title={action?.detail}>
-          {action ? (
-            <>
-              <Terminal size={11} />
-              <span>
-                {action.pending ? "" : "最近："}
-                {action.text}
-              </span>
-            </>
-          ) : (
-            <>
-              <Clock3 size={11} />
-              <span>{idleAction(value, entry?.seq)}</span>
-            </>
-          )}
-        </span>
-        {models ? (
-          <span className="collab-model" data-graph-node={modelNode(id)}>
-            <BrainCircuit size={11} />
-            <span>
-              {value.model_name ?? value.model_id}
-              <small className={`cli-badge is-${value.sdk}`}>{sdkLabel(value.sdk)}</small>
-            </span>
-          </span>
-        ) : null}
-      </button>
-    );
+    const action = currentAgentAction(scoped, agent);
+    const entry = latestAgentEntry(snapshot.blackboard, agent.agent_id);
+    if (action) return `${action.pending ? "" : "最近："}${action.text}`;
+    if (agent.actual_state === "failed") return "执行失败，查看最近错误";
+    if (["paused", "pause_requested"].includes(agent.actual_state)) return "保留原 CLI 会话";
+    if (entry?.seq) return `最近写入黑板 #${entry.seq}`;
+    if (["completed", "stopped"].includes(agent.actual_state)) return "本阶段执行结束";
+    return agent.role === "reporter" ? "等待最终候选" : "等待新的执行事件";
   }
 
-  const labels: Array<{ key: string; activity: RuntimeActivity; point: GraphPoint }> = [];
-  const sharedLabels = new Set<string>();
-  for (const activity of activities) {
-    const shared = bus && !activity.from.includes(":") ? `${activity.from}:${activity.shortLabel}` : null;
-    if (shared && sharedLabels.has(shared)) continue;
-    const route = activityRoute(activity, boxes);
-    if (!route) continue;
-    const point = labelPlacement(
-      route.label,
-      activity.shortLabel,
-      boxes,
-      size,
-      labels.map((item) => ({ point: item.point, text: item.activity.shortLabel })),
-    );
-    if (point) {
-      labels.push({ key: activity.id, activity, point });
-      if (shared) sharedLabels.add(shared);
-    }
-  }
+  const workerTopPositions =
+    workers.length <= 2 ? [115, 295] : workers.length === 3 ? [45, 195, 345] : [16, 140, 264, 388];
 
   return (
-    <section className={`collab-graph${collapsed ? " is-collapsed" : ""}`} aria-label="实时运行图">
-      {/* Live Fleet Strip (56px) — always visible with real display_name + decoupled CLI badge */}
-      <div className="fleet-strip-bar">
+    <section
+      className={`runtime-fleet-section${isOpen ? " is-canvas-open" : ""}`}
+      aria-label="实时运行图"
+      style={isOpen ? { flex: 1, minHeight: 0, display: "flex", flexDirection: "column" } : undefined}
+    >
+      {/* Row 2: 56px Always-Visible Live Fleet Strip */}
+      <div className="fleet-strip-root">
         <div className="fleet-strip-slots" role="group" aria-label="活体舰队槽位">
           {agents.map((item) => {
-            const currentQuestion = item.metadata?.current_question_id;
-            const scoped =
-              questions && currentQuestion
-                ? { ...snapshot, events: snapshot.events.filter((ev) => (ev.question_id ?? ev.payload.question_id) === currentQuestion) }
-                : snapshot;
-            const action = currentAgentAction(scoped, item);
             const isSel = selectedAgentId === item.agent_id;
             const tone = stateTone(item.actual_state);
+            const pct =
+              item.actual_state === "completed"
+                ? 100
+                : ["running", "starting"].includes(item.actual_state)
+                  ? 65
+                  : item.actual_state === "paused"
+                    ? 40
+                    : 15;
             return (
               <button
                 key={item.agent_id}
                 type="button"
-                className={`fleet-slot tone-${tone}${isSel ? " is-selected" : ""}`}
+                className={`fleet-slot${isSel ? " is-selected" : ""}`}
                 aria-label={`聚焦 ${item.display_name}`}
                 aria-pressed={isSel}
                 onClick={() => onSelectAgent?.(item.agent_id)}
@@ -261,262 +139,373 @@ export function TGA3RuntimeGraph({
                   <span className="fleet-slot-identity">
                     <i className={`fleet-dot tone-${tone}`} aria-hidden="true" />
                     <strong>{item.display_name}</strong>
+                    <span className={`cli-badge is-${item.sdk}`}>{shortSdkCode(item.sdk)}</span>
                   </span>
-                  <span className={`cli-badge is-${item.sdk}`}>{shortSdkCode(item.sdk)}</span>
+                  <span className="mono subtle" style={{ fontSize: "10px" }}>
+                    {agentStateLabel(item)}
+                  </span>
                 </span>
                 <span className="fleet-slot-meta">
                   <span className="fleet-slot-sub">
-                    {item.metadata?.current_question_title ?? (action ? action.text : agentStateLabel(item))}
+                    {item.metadata?.current_question_title ?? agentActionText(item)}
                   </span>
-                  <small>{item.metadata?.token_usage?.reported ? `${(item.metadata.token_usage.total_tokens / 1000).toFixed(1)}k` : agentStateLabel(item)}</small>
+                  <small>
+                    {item.metadata?.token_usage?.reported
+                      ? `${(item.metadata.token_usage.total_tokens / 1000).toFixed(1)}k`
+                      : ""}
+                  </small>
                 </span>
+                <div className="proto-progress">
+                  <div
+                    className={`proto-progress-fill${tone === "success" ? " is-ok" : tone === "waiting" ? " is-warn" : ""}`}
+                    style={{ width: `${pct}%` }}
+                  />
+                </div>
               </button>
             );
           })}
         </div>
 
-        <div className="fleet-strip-controls">
-          <label className="fleet-model-check">
-            <input type="checkbox" checked={models} onChange={(event) => setModels(event.target.checked)} />
-            模型信息
-          </label>
-          {!collapsed ? (
-            <div className="topo-zoom-controls" role="group" aria-label="拓扑缩放">
-              <button type="button" aria-label="缩小画布" onClick={() => setZoom((z) => Math.max(0.75, +(z - 0.1).toFixed(2)))}>
-                <ZoomOut size={13} />
-              </button>
-              <span className="topo-zoom-val">{Math.round(zoom * 100)}%</span>
-              <button type="button" aria-label="放大画布" onClick={() => setZoom((z) => Math.min(1.25, +(z + 0.1).toFixed(2)))}>
-                <ZoomIn size={13} />
-              </button>
-              {zoom !== 1 ? (
-                <button type="button" aria-label="重置缩放" onClick={() => setZoom(1)}>
-                  <RotateCcw size={12} />
-                </button>
-              ) : null}
-            </div>
-          ) : null}
-          <button
-            type="button"
-            className="fleet-topo-btn"
-            aria-expanded={!collapsed}
-            onClick={() => setCollapsed((value) => !value)}
-          >
-            {collapsed ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
-            {collapsed ? "展开运行图" : "收起运行图"}
-          </button>
-        </div>
+        <button
+          type="button"
+          className={`fleet-topo-toggle${isOpen ? " is-active" : ""}`}
+          aria-expanded={isOpen}
+          onClick={() => setOpen(!isOpen)}
+        >
+          <GitFork size={14} />
+          <span>{isOpen ? "收起运行图" : "展开运行图"}</span>
+        </button>
       </div>
 
-      {!collapsed ? (
-        <>
-          <div className="collab-canvas-viewport">
-            <div className="collab-stage" ref={stage} style={zoom !== 1 ? { transform: `scale(${zoom})`, transformOrigin: "top center" } : undefined}>
-              <svg className="collab-wires" viewBox={`0 0 ${size.width} ${size.height}`} aria-hidden="true">
-                <defs>
-                  <marker id={marker} viewBox="0 0 8 8" markerWidth="6" markerHeight="6" refX="7" refY="4" orient="auto">
-                    <path d="M0 0 L8 4 L0 8" fill="none" stroke="currentColor" />
-                  </marker>
-                </defs>
-                {bus ? (
-                  <g data-worker-bus="true" className="collab-passive">
-                    <path d={bus.trunk} />
-                    <path d={bus.branches} />
-                    <path d={bus.phases} />
-                    <path data-knowledge-link="workers" d={bus.knowledgeLink} />
-                  </g>
-                ) : size.width >= 530 && workers.length <= 2 ? (
-                  workers
-                    .flatMap((worker) => [
-                      ["scout", worker.agent_id],
-                      [worker.agent_id, "reporter"],
-                    ])
-                    .map(([a, b]) =>
-                      boxes[agentNode(a)] && boxes[agentNode(b)] ? (
-                        <path key={`${a}-${b}`} className="collab-passive" d={phaseRoute(boxes[agentNode(a)], boxes[agentNode(b)], boxes)} />
-                      ) : null,
-                    )
-                ) : null}
-                {!bus && size.width >= 530 && workers.length <= 2
-                  ? workers.map((worker) => worker.agent_id).map((id) => {
-                      const route = activityRoute(
-                        { id, owner: agentNode(id), from: "knowledge", to: agentNode(id), label: "", shortLabel: "", detail: "", at: 0 },
-                        boxes,
-                      );
-                      return route ? (
-                        <path key={`knowledge-${id}`} data-knowledge-link={id} className="collab-passive" markerEnd={`url(#${marker})`} d={route.d} />
-                      ) : null;
-                    })
-                  : null}
-                {wiresVisible
-                  ? activities.map((activity) => {
-                      const route = activityRoute(activity, boxes);
-                      return route ? (
-                        <path key={activity.id} className="collab-route" markerEnd={`url(#${marker})`} d={route.d} />
-                      ) : null;
-                    })
-                  : null}
+      {/* Row 3B: Full-Height Prototype Spatial Swarm Topology Canvas */}
+      {isOpen ? (
+        <div className="spatial-canvas-wrap">
+          <div className="spatial-toolbar">
+            <span className="proto-section-title">
+              <i className={terminal ? "idle-dot" : "running-dot"} /> SPATIAL SWARM TOPOLOGY
+            </span>
+            <span className="tele-divider" />
+            <label className="mono muted" style={{ fontSize: "11px", display: "inline-flex", alignItems: "center", gap: "5px", cursor: "pointer" }}>
+              <input type="checkbox" checked={models} onChange={(e) => setModels(e.target.checked)} />
+              模型信息
+            </label>
+            <span className="tele-divider" />
+            <button type="button" className="ref-secondary-button" style={{ height: 22, padding: "0 6px" }} aria-label="缩小" onClick={() => setZoom((z) => Math.max(0.7, +(z - 0.1).toFixed(2)))}>
+              <ZoomOut size={12} />
+            </button>
+            <span className="mono" style={{ fontSize: "11px", minWidth: 36, textAlign: "center" }}>
+              {Math.round(zoom * 100)}%
+            </span>
+            <button type="button" className="ref-secondary-button" style={{ height: 22, padding: "0 6px" }} aria-label="放大" onClick={() => setZoom((z) => Math.min(1.35, +(z + 0.1).toFixed(2)))}>
+              <ZoomIn size={12} />
+            </button>
+            <button type="button" className="ref-secondary-button" style={{ height: 22, padding: "0 7px" }} onClick={() => setZoom(1)}>
+              <RotateCcw size={11} /> 重置
+            </button>
+            {onToggleTopology ? (
+              <>
+                <span className="tele-divider" />
+                <button type="button" className="ref-primary-button" style={{ height: 24 }} onClick={() => setOpen(false)}>
+                  返回分屏作战室
+                </button>
+              </>
+            ) : null}
+          </div>
+
+          <div className="spatial-stage-scroll">
+            <div className="spatial-stage" style={{ transform: `scale(${zoom})` }}>
+              <svg className="spatial-svg" viewBox="0 0 1080 520" aria-hidden="true">
+                {/* Input -> Scout & Blackboard */}
+                <path className={`spatial-edge${activeSet.has("input") ? " is-active" : ""}`} d="M 244 76 C 310 76, 330 225, 412 225" />
+                {/* Scout -> Blackboard */}
+                <path
+                  className={`spatial-edge${!terminal && (activeSet.has("agent:scout") || scout?.actual_state === "running") ? " is-active" : ""}`}
+                  d="M 244 198 C 320 198, 340 236, 412 236"
+                />
+                {/* Skills -> Blackboard */}
+                <path className={`spatial-edge${activeSet.has("skills") ? " is-active" : ""}`} d="M 244 328 C 320 328, 340 258, 412 258" />
+                {/* Knowledge -> Blackboard */}
+                <path className={`spatial-edge${activeSet.has("knowledge") ? " is-active" : ""}`} d="M 244 438 C 320 438, 340 272, 412 272" />
+
+                {/* Blackboard -> Each Real Worker */}
+                {workers.map((w, idx) => {
+                  const wy = (workerTopPositions[idx] ?? 16 + idx * 124) + 52;
+                  const active = !terminal && (activeSet.has(agentNode(w.agent_id)) || ["running", "starting"].includes(w.actual_state));
+                  return (
+                    <path
+                      key={w.agent_id}
+                      className={`spatial-edge${active ? " is-active" : ""}`}
+                      d={`M 648 ${232 + idx * 12} C 720 ${232 + idx * 12}, 740 ${wy}, 820 ${wy}`}
+                    />
+                  );
+                })}
+
+                {/* Blackboard -> Experience & Reporter */}
+                <path className={`spatial-edge${activeSet.has("experience") || activeSet.has("agent:reporter") ? " is-active" : ""}`} d="M 530 296 L 530 356" />
+                <path className={`spatial-edge${activeSet.has("output") ? " is-active" : ""}`} d="M 530 432 L 530 456" />
               </svg>
-              <div className="collab-grid" data-workers={workers.length}>
-                {resource(
-                  "input",
-                  "任务输入",
-                  <Files size={14} />,
-                  questions
+
+              {/* Left Column: Input, Scout, Skills, Knowledge */}
+              <button
+                type="button"
+                className={`spatial-node${selectedNode === "input" ? " is-selected" : ""}`}
+                data-active={activeSet.has("input")}
+                style={{ left: 30, top: 24 }}
+                onClick={() => handleNodeClick("input")}
+              >
+                <span className="spatial-node-head">
+                  <strong className="mono" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                    <Files size={13} /> 任务输入
+                  </strong>
+                  <span className="ref-chip">READONLY</span>
+                </span>
+                <span className="spatial-node-sub">
+                  {questions
                     ? `${questions.length} 道题目，各自题面与附件`
-                    : `题目描述与 ${snapshot.blackboard.filter((item) => item.kind === "user_file").length} 个附件`,
-                )}
-                <div className="collab-capabilities">
-                  {resource("skills", "Skills", <Library size={14} />, "按需读取能力包与补充材料")}
-                  {resource(
-                    "knowledge",
-                    "CTF 知识库",
-                    <BookOpen size={14} />,
-                    snapshot.task.metadata?.knowledge_source === "local"
-                      ? "CTF Wiki · 本地章节 / 全文检索"
-                      : "ctf42 · 在线技法 / 历史题目 / WP",
-                  )}
-                  {resource("experience", "经验卡", <BookOpen size={14} />, `${snapshot.experience_count ?? 0} 张 · 问题解决经验`)}
+                    : `题目描述与 ${snapshot.blackboard.filter((i) => i.kind === "user_file").length} 个附件`}
+                </span>
+              </button>
+
+              {scout ? (
+                <button
+                  type="button"
+                  className={`spatial-node${selectedAgentId === scout.agent_id || selectedNode === "agent:scout" ? " is-selected" : ""}`}
+                  data-active={activeSet.has("agent:scout")}
+                  aria-label={`查看 ${scout.display_name}`}
+                  style={{ left: 30, top: 132 }}
+                  onClick={() => handleNodeClick("agent:scout")}
+                >
+                  <span className="spatial-node-head">
+                    <strong>{scout.display_name}</strong>
+                    <span className={`cli-badge is-${scout.sdk}`}>{shortSdkCode(scout.sdk)}</span>
+                  </span>
+                  <span className="spatial-node-sub">{agentStateLabel(scout)}</span>
+                  <div className="spatial-attach">
+                    <span className="truncate">{agentActionText(scout)}</span>
+                    {models ? <span className="mono subtle">{scout.model_name ?? scout.model_id}</span> : null}
+                  </div>
+                </button>
+              ) : null}
+
+              <button
+                type="button"
+                className={`spatial-node is-bus${selectedNode === "skills" ? " is-selected" : ""}`}
+                data-active={activeSet.has("skills")}
+                style={{ left: 30, top: 282, width: 214 }}
+                onClick={() => handleNodeClick("skills")}
+              >
+                <span className="spatial-node-head">
+                  <strong className="mono" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                    <Library size={13} /> Skills
+                  </strong>
+                  <span className="ref-chip">MOUNTED</span>
+                </span>
+                <span className="spatial-node-sub">按需读取能力包与补充材料</span>
+              </button>
+
+              <button
+                type="button"
+                className={`spatial-node is-bus${selectedNode === "knowledge" ? " is-selected" : ""}`}
+                data-active={activeSet.has("knowledge")}
+                style={{ left: 30, top: 392, width: 214 }}
+                onClick={() => handleNodeClick("knowledge")}
+              >
+                <span className="spatial-node-head">
+                  <strong className="mono" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                    <BookOpen size={13} /> CTF 知识库
+                  </strong>
+                  <span className="ref-chip tone-info">
+                    {snapshot.task.metadata?.knowledge_source === "local" ? "LOCAL" : "ctf42"}
+                  </span>
+                </span>
+                <span className="spatial-node-sub">
+                  {snapshot.task.metadata?.knowledge_source === "local"
+                    ? "CTF Wiki · 本地章节 / 全文检索"
+                    : "ctf42 · 在线技法 / 历史题目 / WP"}
+                </span>
+              </button>
+
+              {/* Center Column: Shared Blackboard + Experience Cards + Reporter / Output */}
+              <button
+                type="button"
+                className={`spatial-node is-bus${selectedNode === "blackboard" ? " is-selected" : ""}`}
+                data-active={activeSet.has("blackboard")}
+                style={{ left: 412, top: 186 }}
+                onClick={() => handleNodeClick("blackboard")}
+              >
+                <span className="spatial-node-head">
+                  <strong className="mono" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                    <Database size={13} /> {questions ? "逐题黑板" : "黑板"}
+                  </strong>
+                  <span className="ref-chip tone-accent">SEQ #{snapshot.task.blackboard_seq}</span>
+                </span>
+                <span className="spatial-node-sub">
+                  {questions
+                    ? `${questions.length} 道题 / ${questions.reduce((s, q) => s + q.blackboard_seq, 0)} 条记录`
+                    : `${counts.intel} Intel · ${counts.finding} Findings · ${counts.final} 候选`}
+                </span>
+                <div className="spatial-attach">
+                  <span className="mono subtle">游标广播 · 各 Worker 独立记录已读位置</span>
                 </div>
-                {resource(
-                  "output",
-                  "报告",
-                  <FileText size={14} />,
-                  snapshot.task.metadata?.produce_report === false
+              </button>
+
+              <button
+                type="button"
+                className={`spatial-node is-bus${selectedNode === "experience" ? " is-selected" : ""}`}
+                data-active={activeSet.has("experience")}
+                style={{ left: 412, top: 348 }}
+                onClick={() => handleNodeClick("experience")}
+              >
+                <span className="spatial-node-head">
+                  <strong className="mono" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                    <BookOpen size={13} /> 经验卡
+                  </strong>
+                  <span className="ref-chip tone-ok">{snapshot.experience_count ?? 0} 张</span>
+                </span>
+                <span className="spatial-node-sub">点击展开当前任务沉淀的经验卡</span>
+              </button>
+
+              <button
+                type="button"
+                className={`spatial-node${selectedNode === "output" || selectedNode === "agent:reporter" ? " is-selected" : ""}`}
+                data-active={activeSet.has("output") || activeSet.has("agent:reporter")}
+                aria-label={reporter ? `查看 ${reporter.display_name}` : "查看报告"}
+                style={{ left: 412, top: 432, width: 236 }}
+                onClick={() => handleNodeClick(reporter ? "agent:reporter" : "output")}
+              >
+                <span className="spatial-node-head">
+                  <strong style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                    <FileText size={13} /> {reporter ? <>{reporter.display_name} · <span>报告</span></> : "报告"}
+                  </strong>
+                  {reporter ? <span className={`cli-badge is-${reporter.sdk}`}>{shortSdkCode(reporter.sdk)}</span> : null}
+                </span>
+                <span className="spatial-node-sub">
+                  {snapshot.task.metadata?.produce_report === false
                     ? "未启用报告 · 仅整理经验卡"
                     : questions
                       ? `${questions.filter((q) => q.report_state === "completed").length} / ${questions.length} 份逐题报告`
                       : snapshot.task.state === "completed"
                         ? "Markdown Writeup 已生成"
-                        : snapshot.task.state === "reporting"
-                          ? "正在整理步骤与证据"
-                          : "等待 Reporter 生成",
-                )}
-                <div className="collab-scout">
-                  <span className="collab-phase">{snapshot.aoe?.scout_mode === "collection_only" ? "收集题目" : "侦察"}</span>
-                  {agent("scout")}
-                </div>
-                <div className="collab-workers">
-                  <span className="collab-phase">并行执行</span>
-                  <div className="collab-worker-grid" data-count={workers.length}>
-                    {workers.map((worker) => (
-                      <div className="collab-worker-slot" key={worker.agent_id}>
-                        {agent(worker.agent_id)}
+                        : "等待最终候选生成 Writeup"}
+                </span>
+                {models && reporter ? <span className="spatial-node-sub">{reporter.model_name ?? reporter.model_id}</span> : null}
+              </button>
+
+              {/* Right Column: All Real Workers (REAL display_name as prominent header + decoupled CLI badge!) */}
+              {workers.map((worker, idx) => {
+                const top = workerTopPositions[idx] ?? 16 + idx * 124;
+                const node = agentNode(worker.agent_id);
+                const tone = stateTone(worker.actual_state);
+                const isSel = selectedAgentId === worker.agent_id || selectedNode === node;
+                const tok = worker.metadata?.token_usage?.reported
+                  ? `${(worker.metadata.token_usage.total_tokens / 1000).toFixed(1)}k tok`
+                  : agentStateLabel(worker);
+                return (
+                  <button
+                    key={worker.agent_id}
+                    type="button"
+                    className={`spatial-node${isSel ? " is-selected" : ""}`}
+                    data-active={activeSet.has(node)}
+                    aria-label={`查看 ${worker.display_name}`}
+                    style={{ left: 820, top, width: 232 }}
+                    onClick={() => handleNodeClick(node)}
+                  >
+                    <span className="spatial-node-head">
+                      <span style={{ display: "inline-flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+                        <i className={`fleet-dot tone-${tone}`} />
+                        <strong>{worker.display_name}</strong>
+                      </span>
+                      <span className={`cli-badge is-${worker.sdk}`}>{shortSdkCode(worker.sdk)}</span>
+                    </span>
+                    <span className="spatial-node-sub">
+                      {agentStateLabel(worker)} · {tok}
+                    </span>
+                    {models ? <span className="spatial-node-sub">{worker.model_name ?? worker.model_id}</span> : null}
+                    <div className="spatial-attach">
+                      <div className="spatial-attach-top">
+                        <strong className="truncate" style={{ fontSize: "11px" }}>
+                          {worker.metadata?.current_question_title
+                            ? `题目：${worker.metadata.current_question_title}`
+                            : agentActionText(worker)}
+                        </strong>
                       </div>
-                    ))}
-                  </div>
-                </div>
-                <div className="collab-reporter">
-                  <span className="collab-phase">报告</span>
-                  {agent("reporter")}
-                </div>
-                <small className="collab-input-note">原始材料共享只读</small>
-                <button
-                  type="button"
-                  className="collab-node collab-blackboard"
-                  data-graph-node="blackboard"
-                  data-active={active.has("blackboard")}
-                  aria-pressed={selected === "blackboard"}
-                  onClick={() => selectNode("blackboard")}
-                >
-                  <span className="collab-node-title">
-                    <Database size={14} />
-                    <strong>{questions ? "逐题黑板" : "黑板"}</strong>
-                    {!questions ? <em>#{snapshot.task.blackboard_seq}</em> : null}
-                  </span>
-                  <span className="collab-board-counts">
-                    {questions ? (
-                      `${questions.length} 道题 / ${questions.reduce((sum, q) => sum + q.blackboard_seq, 0)} 条记录`
-                    ) : (
-                      <>
-                        {counts.intel} Intel <i>/</i> {counts.finding} Findings <i>/</i> {counts.final} 最终候选
-                      </>
-                    )}
-                  </span>
-                  <small>{questions ? "按题隔离，各 Worker 独立记录已读位置" : "各 Worker 独立记录已读位置"}</small>
-                </button>
-                <small className="collab-output-note">
-                  {snapshot.task.metadata?.produce_report === false ? "经验卡" : "Markdown Writeup"}
-                </small>
-              </div>
-              <div className="collab-labels" aria-hidden="true">
-                {labels.map(({ key, activity, point }) => (
-                  <span key={key} style={{ left: point.x, top: point.y }}>
-                    {activity.shortLabel}
+                      <div className="proto-progress">
+                        <div
+                          className={`proto-progress-fill${tone === "success" ? " is-ok" : tone === "waiting" ? " is-warn" : ""}`}
+                          style={{ width: worker.actual_state === "completed" ? "100%" : worker.actual_state === "running" ? "64%" : "25%" }}
+                        />
+                      </div>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Live Activity Ticker */}
+          <div className="spatial-bottom-bar collab-now" aria-live="polite">
+            {activities.length ? (
+              <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+                {activities.map((activity) => (
+                  <span key={activity.id} style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                    <Terminal size={12} />
+                    <strong>{activity.label}</strong>
+                    <small className="muted">
+                      {activity.to
+                        ? `${nodeName(activity.from, agents)} → ${nodeName(activity.to, agents)}`
+                        : compact(activity.detail, 80)}
+                    </small>
                   </span>
                 ))}
               </div>
-            </div>
-          </div>
-          <div className="collab-now" aria-live="polite">
-            {activities.length ? (
-              activities.map((activity) => (
-                <div key={activity.id} className={activity.to ? "interaction" : "action"}>
-                  <Terminal size={12} />
-                  <span>
-                    {activity.label}
-                    <small>
-                      {activity.to
-                        ? `${nodeName(activity.from, agents)} → ${nodeName(activity.to, agents)}`
-                        : compact(activity.detail, 90)}
-                    </small>
-                  </span>
-                </div>
-              ))
             ) : (
-              <span className="collab-idle">
-                {terminal ? "本次运行交互已完成" : "等待新的动作与交互；节点保留最近执行状态"}
+              <span className="muted">
+                {terminal ? "本次运行交互已完成" : "等待新的动作与交互；点击任意画布节点查看详情或联动右侧 Inspector"}
               </span>
             )}
           </div>
-          {selected ? (
-            <div className="collab-detail">
-              <div>
-                <h3>{nodeName(selected, agents)}</h3>
-                <small>{detail ? formatTime(new Date(detail.at).toISOString()) : "节点详情"}</small>
+
+          {selectedNode ? (
+            <div className="spatial-detail-drawer">
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <div>
+                  <strong className="mono">{nodeName(selectedNode, agents)}</strong>
+                  <small className="muted" style={{ marginLeft: 8 }}>
+                    {detail ? formatTime(new Date(detail.at).toISOString()) : "节点详情"}
+                  </small>
+                </div>
+                <button type="button" className="text-button" aria-label="关闭节点详情" onClick={() => setSelectedNode(null)}>
+                  <X size={14} />
+                </button>
               </div>
-              <div>
-                {selected === "experience" ? (
-                  <ExperienceCards taskId={snapshot.task.id} />
-                ) : detail ? (
-                  <>
-                    <p>{detail.label}</p>
-                    <pre>{detail.detail}</pre>
-                  </>
-                ) : selectedAgent ? (
-                  <>
-                    <p>
-                      {sdkLabel(selectedAgent.sdk)} / {selectedAgent.model_name ?? selectedAgent.model_id}
-                    </p>
-                    <p>
-                      {agentStateLabel(selectedAgent)}
-                      {selectedAgent.metadata?.blackboard_cursor !== undefined
-                        ? ` · 黑板已读至 #${selectedAgent.metadata.blackboard_cursor}`
-                        : ""}
-                    </p>
-                  </>
-                ) : (
-                  <p>{resourceDetail(selected, snapshot)}</p>
-                )}
-              </div>
-              <button type="button" aria-label="关闭节点详情" onClick={() => setSelected(null)}>
-                <X size={14} />
-              </button>
+              {selectedNode === "experience" ? (
+                <ExperienceCards taskId={snapshot.task.id} />
+              ) : detail ? (
+                <div>
+                  <p style={{ margin: "0 0 6px" }}>{detail.label}</p>
+                  <pre className="bb-code" style={{ margin: 0 }}>{detail.detail}</pre>
+                </div>
+              ) : selectedAgent ? (
+                <div className="mono muted" style={{ fontSize: "12px" }}>
+                  {sdkLabel(selectedAgent.sdk)} / {selectedAgent.model_name ?? selectedAgent.model_id} ·{" "}
+                  {agentStateLabel(selectedAgent)}
+                  {selectedAgent.metadata?.blackboard_cursor !== undefined
+                    ? ` · 黑板已读至 #${selectedAgent.metadata.blackboard_cursor}`
+                    : ""}
+                </div>
+              ) : (
+                <div style={{ fontSize: "12px" }} className="muted">
+                  {resourceDetail(selectedNode, snapshot)}
+                </div>
+              )}
             </div>
           ) : null}
-        </>
+        </div>
       ) : null}
     </section>
   );
 }
 
-function idleAction(agent: TGA3Agent, seq?: number) {
-  if (agent.actual_state === "failed") return "执行失败，查看最近错误";
-  if (["paused", "pause_requested"].includes(agent.actual_state)) return "保留原 CLI 会话";
-  if (seq) return `最近写入黑板 #${seq}`;
-  if (["completed", "stopped"].includes(agent.actual_state)) return "本阶段执行结束";
-  return agent.role === "reporter" ? "等待最终候选" : "等待新的执行事件";
-}
 function nodeName(id: string, agents: TGA3Agent[]) {
   if (id.startsWith("agent:") || id.startsWith("model:")) {
     const a = agents.find((item) => item.agent_id === id.slice(6));
@@ -533,18 +522,19 @@ function nodeName(id: string, agents: TGA3Agent[]) {
     } as Record<string, string>)[id] ?? id
   );
 }
+
 function resourceDetail(id: string, snapshot: TGA3RuntimeSnapshot) {
   return id === "knowledge" && snapshot.task.metadata?.knowledge_source === "local" ? (
     <>
       各 Worker 通过本地 MCP 检索 CTF Wiki 章节并分页读取正文，无需外部检索请求。资料需在当前题目中验证。
-      <a href="https://github.com/ctf-wiki/ctf-wiki" target="_blank" rel="noreferrer">
+      <a href="https://github.com/ctf-wiki/ctf-wiki" target="_blank" rel="noreferrer" style={{ marginLeft: 6 }}>
         查看 CTF Wiki 来源
       </a>
     </>
   ) : id === "knowledge" ? (
     <>
       各 Worker 通过在线 MCP 检索 ctf42 的技法、技术栈和历史题目；按需读取题目详情及 WP 链接，外部参考需在当前题目中验证。
-      <a href="https://ctf42.online/about/" target="_blank" rel="noreferrer">
+      <a href="https://ctf42.online/about/" target="_blank" rel="noreferrer" style={{ marginLeft: 6 }}>
         查看知识库与接入说明
       </a>
     </>

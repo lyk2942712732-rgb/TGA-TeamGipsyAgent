@@ -59,6 +59,9 @@ export function applyTheme(theme: AppTheme): void {
   if (typeof document === "undefined") return;
   document.documentElement.dataset.theme = theme;
   document.documentElement.style.colorScheme = theme === "swiss" ? "light" : "dark";
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent("tga3:theme-changed", { detail: theme }));
+  }
 }
 
 export function saveTheme(theme: AppTheme): void {

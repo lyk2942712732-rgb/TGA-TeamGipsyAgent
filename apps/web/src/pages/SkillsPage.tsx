@@ -1,11 +1,11 @@
-import { Columns2, FileArchive, FileText, FolderOpen, Pencil, Plus, Save, Search, Trash2, Upload } from "lucide-react";
+import { FileArchive, FileText, FolderOpen, Pencil, Plus, Save, Search, Trash2, Upload } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type DragEvent } from "react";
 import { tga3SkillsApi, type SkillMarkdownFile, type SkillSummary } from "../api/tga3-skills";
 import { ConfirmDialog } from "../components/ui/ConfirmDialog";
 import { EmptyState } from "../components/ui/EmptyState";
 import { Markdown } from "../components/ui/Markdown";
 
-type IdeMode = "edit" | "split" | "preview";
+type IdeMode = "split" | "edit" | "preview";
 
 export function SkillsPage() {
   const [skills, setSkills] = useState<SkillSummary[]>([]);
@@ -217,7 +217,7 @@ export function SkillsPage() {
 
   return (
     <div
-      className="ref-page skills-page skills-ide-page"
+      className="ref-page skills-page"
       onDragEnter={pageDragEnter}
       onDragOver={(event) => {
         if (hasFiles(event)) event.preventDefault();
@@ -225,177 +225,208 @@ export function SkillsPage() {
       onDragLeave={pageDragLeave}
       onDrop={pageDrop}
     >
-      <header className="ref-page-head">
-        <div>
-          <h1>武器库 IDE · Skills</h1>
-          <p>管理 config/skills/ 目录能力包；支持左右分屏实时 Markdown 预览与整页拖入 ZIP 导入。</p>
+      <div className="page-frame is-xl">
+      {/* IDE Top Toolbar */}
+      <div className="table-toolbar">
+        <div className="table-toolbar-left">
+          <h1 style={{ margin: 0, fontSize: "15px", fontWeight: 600 }}>武器库 IDE · Skills</h1>
+          {selected && activeFile ? (
+            <span className="mono muted" style={{ fontSize: "11px" }}>
+              {selected} / {fileName(activeFile.path)}
+            </span>
+          ) : null}
         </div>
-        <div className="button-row">
-          <button type="button" className="ref-primary-button" onClick={() => setAddingPackage(true)}>
-            <FolderOpen size={15} />
-            添加 Skill 包
-          </button>
+        <div className="table-toolbar-right">
+          <div className="proto-seg" role="tablist" aria-label="Skill 文件展示">
+            <button type="button" role="tab" aria-selected={mode === "split"} onClick={() => setMode("split")}>
+              左右分屏
+            </button>
+            <button type="button" role="tab" aria-selected={mode === "edit"} onClick={() => setMode("edit")}>
+              仅编辑
+            </button>
+            <button type="button" role="tab" aria-selected={mode === "preview"} onClick={() => setMode("preview")}>
+              仅预览
+            </button>
+          </div>
+          {selected ? (
+            <>
+              <button type="button" className="tga3-danger-button" onClick={() => setRemove(true)}>
+                <Trash2 size={13} /> 删除包
+              </button>
+              <button
+                type="button"
+                className="ref-primary-button"
+                disabled={busy || files.some((item) => !item.content.trim())}
+                onClick={() => void save()}
+              >
+                <Save size={13} /> 保存整个包
+              </button>
+            </>
+          ) : null}
         </div>
-      </header>
+      </div>
+
       {message ? (
-        <p className="settings-message" role="status">
+        <p className="settings-message" style={{ borderRadius: 0, borderLeft: "none", borderRight: "none" }} role="status">
           {message}
         </p>
       ) : null}
 
-      <div className="skills-native-layout ref-fill">
-        <aside className="ref-card skills-native-list">
-          <label className="ref-search">
-            <Search size={14} />
-            <input
-              aria-label="搜索 Skills"
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              placeholder="搜索 Skill 包"
-            />
-          </label>
-          <nav>
-            {visible.map((skill) => (
-              <button
-                key={skill.name}
-                type="button"
-                className={selected === skill.name ? "selected" : ""}
-                onClick={() => setSelected(skill.name)}
-              >
-                <FolderOpen size={15} />
-                <span>
-                  <strong>{skill.name}</strong>
-                  <small>
-                    {skill.description || "无描述"} · {skill.file_count} 个 Markdown
-                  </small>
-                </span>
-              </button>
-            ))}
-          </nav>
-          {!visible.length ? (
-            <EmptyState title="没有 Skill 包" description="点击“添加 Skill 包”创建目录，或直接拖入一个 ZIP。" />
-          ) : null}
-        </aside>
+      {/* Full-Bleed VS Code 2-Pane IDE Grid */}
+      <div className="ide-grid">
+        <aside className="ide-tree">
+          <div className="proto-section-bar">
+            <span className="proto-section-title">EXPLORER · {skills.length} PACKS</span>
+            <button
+              type="button"
+              className="text-button"
+              aria-label="添加 Skill 包"
+              title="添加 Skill 包"
+              onClick={() => setAddingPackage(true)}
+            >
+              <Plus size={14} /> 添加 Skill 包
+            </button>
+          </div>
 
-        <section className="ref-card skills-native-editor">
-          {selected ? (
-            <>
-              <header>
-                <div>
-                  <span className="eyebrow">SKILL PACKAGE · {files.length} MARKDOWN</span>
-                  <h2>{selected}</h2>
-                </div>
-                <div className="button-row">
-                  <button type="button" className="ref-secondary-button" onClick={() => setRemove(true)}>
-                    <Trash2 size={14} />
-                    删除包
-                  </button>
+          <div style={{ padding: "8px 10px", borderBottom: "1px solid var(--c-border)" }}>
+            <label className="ref-search" style={{ height: 26, minHeight: 26 }}>
+              <Search size={13} />
+              <input
+                aria-label="搜索 Skills"
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                placeholder="筛选能力包…"
+              />
+            </label>
+          </div>
+
+          <div className="ide-tree-list" role="tablist" aria-label="Skill 包文件">
+            {visible.map((skill) => {
+              const isSel = selected === skill.name;
+              return (
+                <div key={skill.name}>
                   <button
                     type="button"
-                    className="ref-primary-button"
-                    disabled={busy || files.some((item) => !item.content.trim())}
-                    onClick={() => void save()}
+                    className={`tree-folder${isSel ? " is-selected" : ""}`}
+                    onClick={() => setSelected(skill.name)}
                   >
-                    <Save size={14} />
-                    保存整个包
+                    <span className="truncate">
+                      {isSel ? "▾" : "▸"} {skill.name}/
+                    </span>
+                    <span className="subtle" style={{ fontSize: "10px" }}>
+                      {skill.file_count}
+                    </span>
                   </button>
-                </div>
-              </header>
-
-              <div className="skill-package-files" role="tablist" aria-label="Skill 包文件">
-                {files.map((file) => (
-                  <div key={file.path} className={activePath === file.path ? "active" : ""}>
-                    <button role="tab" aria-selected={activePath === file.path} onClick={() => setActivePath(file.path)}>
-                      <FileText size={13} />
-                      <span>{fileName(file.path)}</span>
-                    </button>
-                  </div>
-                ))}
-                <button type="button" className="skill-file-add" onClick={() => markdownInput.current?.click()}>
-                  <Plus size={13} />
-                  上传 Markdown
-                </button>
-                <input
-                  ref={markdownInput}
-                  className="visually-hidden"
-                  aria-label="上传 Markdown 文件"
-                  type="file"
-                  accept=".md,text/markdown"
-                  multiple
-                  onChange={(event) => void addMarkdown(Array.from(event.target.files ?? []))}
-                />
-              </div>
-
-              {activeFile ? (
-                <>
-                  <div className="skill-file-toolbar">
-                    <label>
-                      文件名
-                      <input
-                        aria-label="文件名"
-                        disabled={entryFile}
-                        value={renameValue}
-                        onChange={(event) => setRenameValue(event.target.value)}
-                        onKeyDown={(event) => {
-                          if (event.key === "Enter") renameActiveFile();
-                        }}
-                      />
-                    </label>
-                    {entryFile ? (
-                      <span>SKILL.md 是固定入口文件</span>
-                    ) : (
-                      <>
+                  {isSel ? (
+                    <div>
+                      {files.map((file) => (
                         <button
+                          key={file.path}
                           type="button"
-                          className="ref-secondary-button"
-                          disabled={renameValue === fileName(activeFile.path)}
-                          onClick={renameActiveFile}
+                          role="tab"
+                          aria-selected={activePath === file.path}
+                          className={`tree-file${activePath === file.path ? " is-active" : ""}`}
+                          onClick={() => setActivePath(file.path)}
                         >
-                          <Pencil size={13} />
-                          应用文件名
+                          <FileText size={12} />
+                          <span className="truncate">{fileName(file.path)}</span>
                         </button>
-                        <button type="button" className="skill-current-delete" onClick={() => removeFile(activeFile.path)}>
-                          <Trash2 size={13} />
-                          删除文件
-                        </button>
-                      </>
-                    )}
-                    <div className="workbench-tabs push-end" role="tablist" aria-label="Skill 文件展示">
-                      <button type="button" role="tab" aria-selected={mode === "edit"} onClick={() => setMode("edit")}>
-                        编辑
-                      </button>
-                      <button type="button" role="tab" aria-selected={mode === "split"} onClick={() => setMode("split")}>
-                        <Columns2 size={12} /> 分屏
-                      </button>
-                      <button type="button" role="tab" aria-selected={mode === "preview"} onClick={() => setMode("preview")}>
-                        阅读预览
+                      ))}
+                      <button
+                        type="button"
+                        className="tree-file"
+                        style={{ color: "var(--c-accent-text)" }}
+                        onClick={() => markdownInput.current?.click()}
+                      >
+                        <Plus size={12} /> 上传 Markdown
                       </button>
                     </div>
-                  </div>
+                  ) : null}
+                </div>
+              );
+            })}
+            {!visible.length ? (
+              <EmptyState title="没有 Skill 包" description="点击右上角创建目录或拖入 ZIP。" />
+            ) : null}
+          </div>
 
-                  <div className={`skill-ide-split mode-${mode}`}>
-                    {mode !== "preview" ? (
-                      <textarea
-                        aria-label="Skill 文件内容"
-                        value={activeFile.content}
-                        onChange={(event) =>
-                          setFiles((current) =>
-                            current.map((item) =>
-                              item.path === activeFile.path ? { ...item, content: event.target.value } : item,
-                            ),
-                          )
-                        }
-                        spellCheck={false}
-                      />
-                    ) : null}
-                    {mode !== "edit" ? (
-                      <div className="skill-ide-preview">
-                        <Markdown content={activeFile.content} />
-                      </div>
-                    ) : null}
+          <input
+            ref={markdownInput}
+            className="visually-hidden"
+            aria-label="上传 Markdown 文件"
+            type="file"
+            accept=".md,text/markdown"
+            multiple
+            onChange={(event) => void addMarkdown(Array.from(event.target.files ?? []))}
+          />
+
+          <div className="ide-dropzone">拖入 `.zip` 技能包导入</div>
+        </aside>
+
+        <section className="ide-editor-wrap">
+          {selected && activeFile ? (
+            <>
+              <div className="ide-file-toolbar">
+                <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: "12px" }}>
+                  <span className="muted">文件名</span>
+                  <input
+                    aria-label="文件名"
+                    disabled={entryFile}
+                    value={renameValue}
+                    onChange={(event) => setRenameValue(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") renameActiveFile();
+                    }}
+                  />
+                </label>
+                {entryFile ? (
+                  <span className="mono subtle" style={{ fontSize: "11px" }}>
+                    SKILL.md 为固定入口文件
+                  </span>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      className="ref-secondary-button"
+                      style={{ height: 24, fontSize: "11px" }}
+                      disabled={renameValue === fileName(activeFile.path)}
+                      onClick={renameActiveFile}
+                    >
+                      <Pencil size={12} /> 应用文件名
+                    </button>
+                    <button
+                      type="button"
+                      className="tga3-danger-button"
+                      style={{ height: 24, fontSize: "11px" }}
+                      onClick={() => removeFile(activeFile.path)}
+                    >
+                      <Trash2 size={12} /> 删除文件
+                    </button>
+                  </>
+                )}
+              </div>
+
+              <div className={`skill-ide-split mode-${mode}`}>
+                {mode !== "preview" ? (
+                  <textarea
+                    aria-label="Skill 文件内容"
+                    value={activeFile.content}
+                    onChange={(event) =>
+                      setFiles((current) =>
+                        current.map((item) =>
+                          item.path === activeFile.path ? { ...item, content: event.target.value } : item,
+                        ),
+                      )
+                    }
+                    spellCheck={false}
+                  />
+                ) : null}
+                {mode !== "edit" ? (
+                  <div className="skill-ide-preview">
+                    <Markdown content={activeFile.content} />
                   </div>
-                </>
-              ) : null}
+                ) : null}
+              </div>
             </>
           ) : (
             <EmptyState title="请选择一个 Skill 包" description="也可以把 ZIP Skill 包直接拖到此页面。" />
@@ -430,6 +461,7 @@ export function SkillsPage() {
           <span>ZIP 将安全解压到 config/skills/</span>
         </div>
       ) : null}
+      </div>
     </div>
   );
 }
@@ -478,8 +510,7 @@ function AddSkillDialog({
             />
           </label>
           <button className="ref-primary-button" disabled={busy || !name.trim()} onClick={onCreate}>
-            <FolderOpen size={15} />
-            创建空包
+            <FolderOpen size={15} /> 创建空包
           </button>
         </div>
         <div className="skill-dialog-divider">

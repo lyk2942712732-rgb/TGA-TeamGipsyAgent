@@ -13,40 +13,97 @@ import { SolversPage } from "../pages/SolversPage";
 import { SystemPage } from "../pages/SystemPage";
 import { TaskListPage } from "../pages/TaskListPage";
 import { AppShell } from "./AppShell";
-import { readRoute, type AppRoute } from "./router";
+import { readRoute, type AppPage, type AppRoute } from "./router";
 
 export function RuntimeApp() {
   const location = useLocation();
   const navigate = useNavigate();
   const route = readRoute(location.pathname);
 
-  return <ToastProvider>
-    <AppShell route={route}>
-      <RoutePage route={route} search={location.search} navigate={navigate} />
-    </AppShell>
-  </ToastProvider>;
+  return (
+    <ToastProvider>
+      <AppShell route={route}>
+        <RoutePage route={route} search={location.search} navigate={navigate} />
+      </AppShell>
+    </ToastProvider>
+  );
+}
+
+function SettingsWorkspace({ activePage, children }: { activePage: AppPage; children: React.ReactNode }) {
+  return (
+    <div className="settings-workspace">
+      <div className="page-frame is-md">
+        <div className="proto-section-bar">
+          <span className="proto-section-title">SETTINGS WORKSPACE · 统一设置中心</span>
+          <span className="mono muted" style={{ fontSize: "11px" }}>
+            /settings/*
+          </span>
+        </div>
+        <div className="settings-grid">
+          <SettingsSubnav activePage={activePage} />
+          <div className="settings-body">{children}</div>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function RoutePage({ route, search, navigate }: { route: AppRoute; search: string; navigate: (path: string) => void }) {
   if (route.page === "dashboard") return <DashboardRoute />;
   if (route.page === "tasks") return <TaskListPage />;
   if (route.page === "approvals") return <ApprovalsPage />;
-  if (route.page === "new") return <NewTaskPage cloneFromTaskId={new URLSearchParams(search).get("clone")} onCancel={() => navigate("/tasks")} onCreated={(id) => navigate(`/tasks/${encodeURIComponent(id)}/runtime`)} />;
+  if (route.page === "new")
+    return (
+      <NewTaskPage
+        cloneFromTaskId={new URLSearchParams(search).get("clone")}
+        onCancel={() => navigate("/tasks")}
+        onCreated={(id) => navigate(`/tasks/${encodeURIComponent(id)}/runtime`)}
+      />
+    );
   if (route.page === "runtime" && route.taskId) return <TaskRuntimePage taskId={route.taskId} />;
   if (route.page === "skills") return <SkillsPage />;
   if (route.page === "reports") return <ReportsPage />;
-  if (route.page === "models") return <div className="settings-workspace"><SettingsSubnav activePage="models" /><ModelsPage /></div>;
-  if (route.page === "solvers") return <div className="settings-workspace"><SettingsSubnav activePage="solvers" /><SolversPage /></div>;
-  if (route.page === "policies") return <div className="settings-workspace"><SettingsSubnav activePage="policies" /><PoliciesPage /></div>;
-  if (route.page === "system") return <div className="settings-workspace"><SettingsSubnav activePage="system" /><SystemPage /></div>;
+  if (route.page === "models")
+    return (
+      <SettingsWorkspace activePage="models">
+        <ModelsPage />
+      </SettingsWorkspace>
+    );
+  if (route.page === "solvers")
+    return (
+      <SettingsWorkspace activePage="solvers">
+        <SolversPage />
+      </SettingsWorkspace>
+    );
+  if (route.page === "policies")
+    return (
+      <SettingsWorkspace activePage="policies">
+        <PoliciesPage />
+      </SettingsWorkspace>
+    );
+  if (route.page === "system")
+    return (
+      <SettingsWorkspace activePage="system">
+        <SystemPage />
+      </SettingsWorkspace>
+    );
   return <NotFoundPage navigate={navigate} />;
 }
 
 function NotFoundPage({ navigate }: { navigate: (path: string) => void }) {
-  return <section className="page-stack route-not-found">
-    <span className="eyebrow">404 / ROUTE REMOVED</span>
-    <h1>此入口不存在</h1>
-    <p>该地址不存在，或对应功能已从当前版本移除。</p>
-    <div className="button-row"><button className="ref-primary-button" onClick={() => navigate("/tasks")}>打开任务列表</button><button className="ref-secondary-button" onClick={() => navigate("/")}>返回首页</button></div>
-  </section>;
+  return (
+    <section className="page-stack route-not-found">
+      <span className="eyebrow">404 / ROUTE REMOVED</span>
+      <h1>此入口不存在</h1>
+      <p>该地址不存在，或对应功能已从当前版本移除。</p>
+      <div className="button-row">
+        <button className="ref-primary-button" onClick={() => navigate("/tasks")}>
+          打开任务列表
+        </button>
+        <button className="ref-secondary-button" onClick={() => navigate("/")}>
+          返回首页
+        </button>
+      </div>
+    </section>
+  );
 }
