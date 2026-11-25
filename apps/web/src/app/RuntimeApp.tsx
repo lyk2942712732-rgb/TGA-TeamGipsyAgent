@@ -1,10 +1,11 @@
 import { useLocation, useNavigate } from "react-router-dom";
+import { SettingsSubnav } from "../components/SettingsSubnav";
 import { ToastProvider } from "../components/ui/Toast";
 import { TaskRuntimePage } from "../features/runtime/TaskRuntimePage";
 import { ApprovalsPage } from "../pages/ApprovalsPage";
 import { DashboardRoute } from "../pages/DashboardRoute";
-import { NewTaskPage } from "../pages/NewTaskPage";
 import { ModelsPage } from "../pages/ModelsPage";
+import { NewTaskPage } from "../pages/NewTaskPage";
 import { PoliciesPage } from "../pages/PoliciesPage";
 import { ReportsPage } from "../pages/ReportsPage";
 import { SkillsPage } from "../pages/SkillsPage";
@@ -32,12 +33,12 @@ function RoutePage({ route, search, navigate }: { route: AppRoute; search: strin
   if (route.page === "approvals") return <ApprovalsPage />;
   if (route.page === "new") return <NewTaskPage cloneFromTaskId={new URLSearchParams(search).get("clone")} onCancel={() => navigate("/tasks")} onCreated={(id) => navigate(`/tasks/${encodeURIComponent(id)}/runtime`)} />;
   if (route.page === "runtime" && route.taskId) return <TaskRuntimePage taskId={route.taskId} />;
-  if (route.page === "models") return <ModelsPage />;
   if (route.page === "skills") return <SkillsPage />;
   if (route.page === "reports") return <ReportsPage />;
-  if (route.page === "solvers") return <SolversPage />;
-  if (route.page === "policies") return <PoliciesPage />;
-  if (route.page === "system") return <SystemPage />;
+  if (route.page === "models") return <div className="settings-workspace"><SettingsSubnav activePage="models" /><ModelsPage /></div>;
+  if (route.page === "solvers") return <div className="settings-workspace"><SettingsSubnav activePage="solvers" /><SolversPage /></div>;
+  if (route.page === "policies") return <div className="settings-workspace"><SettingsSubnav activePage="policies" /><PoliciesPage /></div>;
+  if (route.page === "system") return <div className="settings-workspace"><SettingsSubnav activePage="system" /><SystemPage /></div>;
   return <NotFoundPage navigate={navigate} />;
 }
 
@@ -46,6 +47,6 @@ function NotFoundPage({ navigate }: { navigate: (path: string) => void }) {
     <span className="eyebrow">404 / ROUTE REMOVED</span>
     <h1>此入口不存在</h1>
     <p>该地址不存在，或对应功能已从当前版本移除。</p>
-    <div className="button-row"><button onClick={() => navigate("/tasks")}>打开任务列表</button><button className="secondary-button" onClick={() => navigate("/")}>返回首页</button></div>
+    <div className="button-row"><button className="ref-primary-button" onClick={() => navigate("/tasks")}>打开任务列表</button><button className="ref-secondary-button" onClick={() => navigate("/")}>返回首页</button></div>
   </section>;
 }

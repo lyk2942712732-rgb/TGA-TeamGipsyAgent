@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="zh-CN" data-theme="obsidian">
+<html lang="zh-CN" data-theme="tungsten" data-nav="rail">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -7,10 +7,15 @@
     <script>
       (function () {
         try {
-          var t = localStorage.getItem("tga3.ui.theme.v1");
-          if (t !== "obsidian" && t !== "daylight" && t !== "cyber") t = "obsidian";
+          var raw = localStorage.getItem("tga3.ui.theme.v1");
+          var legacy = { obsidian: "tungsten", daylight: "swiss", cyber: "instrument" };
+          var t = legacy[raw] || raw;
+          if (t !== "tungsten" && t !== "swiss" && t !== "spatial" && t !== "instrument") t = "tungsten";
           document.documentElement.dataset.theme = t;
-          document.documentElement.style.colorScheme = t === "daylight" ? "light" : "dark";
+          document.documentElement.style.colorScheme = t === "swiss" ? "light" : "dark";
+          var nav = localStorage.getItem("tga3.ui.nav.v1");
+          if (nav !== "rail" && nav !== "topbar") nav = "rail";
+          document.documentElement.dataset.nav = nav;
         } catch (e) {}
       })();
     </script>

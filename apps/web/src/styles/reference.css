@@ -44,7 +44,7 @@
 .task-name-cell small { color: var(--c-text-subtle); font-family: ui-monospace, Consolas, monospace; }
 .task-card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); align-content: start; gap: 14px; }
 .task-ref-card { display: grid; gap: 12px; padding: 16px; border: 1px solid var(--c-border); border-radius: var(--r-lg); background: var(--c-surface); box-shadow: var(--shadow-card); transition: border-color 0.15s ease, transform 0.15s ease; }
-.task-ref-card:hover { border-color: var(--c-border-strong); transform: translateY(-1px); }
+.task-ref-card:hover { border-color: var(--c-border-strong); transform: none; }
 .task-ref-card > header { display: flex; align-items: center; gap: 7px; }
 .task-ref-card > header .task-delete-button { margin-left: auto; }
 .task-ref-card-main { display: grid; gap: 4px; padding: 0; text-align: left; background: transparent; color: var(--c-text); }
@@ -190,7 +190,7 @@
 .skill-dialog-divider { display: flex; align-items: center; gap: 10px; color: var(--c-text-muted); font-size: 11px; }
 .skill-dialog-divider::before, .skill-dialog-divider::after { content: ""; flex: 1; height: 1px; background: var(--c-border); }
 .skill-archive-dropzone { display: grid !important; place-items: center; gap: 6px !important; min-height: 150px; padding: 20px; color: var(--c-accent-text); border: 1px dashed var(--c-border-strong); border-radius: var(--r-md); background: var(--c-surface-muted); cursor: pointer; text-align: center; transition: .16s ease; }
-.skill-archive-dropzone[data-dragging="true"], .skill-archive-dropzone:hover { border-color: var(--c-accent); background: var(--c-accent-soft); transform: translateY(-1px); }
+.skill-archive-dropzone[data-dragging="true"], .skill-archive-dropzone:hover { border-color: var(--c-accent); background: var(--c-accent-soft); transform: none; }
 .skill-archive-dropzone span { max-width: 360px; color: var(--c-text-muted); font-size: 11px; }
 .skill-page-drop-overlay { position: absolute; z-index: 80; inset: 0; display: grid; place-content: center; justify-items: center; gap: 7px; color: var(--c-accent-text); border: 2px dashed var(--c-accent); border-radius: var(--r-lg); background: var(--c-overlay); backdrop-filter: blur(6px); pointer-events: none; }
 .skill-page-drop-overlay span { color: var(--c-text-muted); font-size: 12px; }
