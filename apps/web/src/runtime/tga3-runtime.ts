@@ -47,6 +47,10 @@ export type AOEQuestion = {
   attachments: Array<{ id: string; name: string; media_type: string; size_bytes: number; sha256: string }>;
 };
 export type AOEScoutWatch = {
+  status?: "collecting" | "watching" | "stopped";
+  watch_method?: "sentinel" | "llm_poll" | "unavailable";
+  unavailable_reason?: "no_script" | "probe_failed" | null;
+  probing?: boolean;
   mode: "sentinel" | "llm_poll" | "manual";
   enabled: boolean;
   state: "collecting" | "watching" | "probing" | "idle" | "error_paused";

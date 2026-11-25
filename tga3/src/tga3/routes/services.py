@@ -61,7 +61,7 @@ class ExtendQuestionRequest(BaseModel):
 
 class ScoutWatchRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    action: Literal["enable_sentinel", "enable_llm_poll", "disable"]
+    action: Literal["resume_watch", "enable_sentinel", "enable_llm_poll", "disable_llm_poll", "disable"]
     interval_seconds: int | None = Field(default=None, ge=15, le=3600)
 
 

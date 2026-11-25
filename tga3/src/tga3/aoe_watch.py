@@ -1,4 +1,13 @@
-"""AOE Scout unified standby watch engine: zero-token sentinel + explicit manual/periodic LLM fallback."""
+"""AOE Scout unified 3-state standby watch engine.
+
+Scout has 3 explicit human-controllable states:
+- ``collecting``: LLM Scout is actively collecting (initial or incremental).
+- ``watching``: Default post-collection standby with 2 mutually exclusive methods:
+  - ``sentinel`` (default, 0-token ``/workspace/watch_probe.py``)
+  - ``llm_poll`` (explicit human fallback when script is unavailable, costs tokens)
+  - ``unavailable`` (no script or probe circuit-broken; awaits human choice)
+- ``stopped``: Explicitly stopped by user (neither collecting nor watching).
+"""
 
 from __future__ import annotations
 
@@ -23,30 +32,69 @@ MAX_SENTINEL_INTERVAL_SECONDS = 600
 MIN_LLM_INTERVAL_SECONDS = 60
 MAX_LLM_INTERVAL_SECONDS = 3600
 
+ScoutStatus = Literal["collecting", "watching", "stopped"]
+WatchMethod = Literal["sentinel", "llm_poll", "unavailable"]
+UnavailableReason = Literal["no_script", "probe_failed"]
 WatchMode = Literal["sentinel", "llm_poll", "manual"]
 WatchState = Literal["collecting", "watching", "probing", "idle", "error_paused"]
-WatchAction = Literal["enable_sentinel", "enable_llm_poll", "disable"]
+WatchAction = Literal["resume_watch", "enable_sentinel", "enable_llm_poll", "disable_llm_poll", "disable"]
+
+
+def _sync_legacy_fields(watch: dict[str, Any]) -> dict[str, Any]:
+    """Derive backward-compatible mode/enabled/state fields strictly from status + watch_method."""
+    status: str = watch.get("status", "stopped")
+    method: str = watch.get("watch_method", "unavailable")
+    reason: str | None = watch.get("unavailable_reason")
+    probing = bool(watch.get("probing", False))
+
+    if status == "collecting":
+        watch["mode"] = "sentinel" if method == "sentinel" else "llm_poll" if method == "llm_poll" else "manual"
+        watch["enabled"] = False
+        watch["state"] = "collecting"
+    elif status == "watching":
+        if method == "sentinel":
+            watch["mode"] = "sentinel"
+            watch["enabled"] = True
+            watch["state"] = "probing" if probing else "watching"
+        elif method == "llm_poll":
+            watch["mode"] = "llm_poll"
+            watch["enabled"] = True
+            watch["state"] = "watching"
+        else:
+            watch["mode"] = "sentinel" if reason == "probe_failed" else "manual"
+            watch["enabled"] = False
+            watch["state"] = "error_paused" if reason == "probe_failed" else "idle"
+    else:
+        watch["status"] = "stopped"
+        watch["probing"] = False
+        watch["mode"] = "manual"
+        watch["enabled"] = False
+        watch["state"] = "idle"
+    return watch
 
 
 def default_watch_state(*, probe_present: bool = False, scan_round: int = 1) -> dict[str, Any]:
-    return {
-        "mode": "manual",
-        "enabled": False,
-        "state": "idle",
-        "probe_script_present": probe_present,
-        "probe_interval_seconds": DEFAULT_PROBE_INTERVAL_SECONDS,
-        "llm_interval_seconds": None,
-        "next_check_at": None,
-        "last_checked_at": None,
-        "last_check_kind": None,
-        "last_result": None,
-        "last_new_count": 0,
-        "last_solved_sync_count": 0,
-        "last_error": None,
-        "consecutive_failures": 0,
-        "scan_round": scan_round,
-        "sentinel_checks_total": 0,
-    }
+    return _sync_legacy_fields(
+        {
+            "status": "collecting",
+            "watch_method": "sentinel" if probe_present else "unavailable",
+            "unavailable_reason": None if probe_present else "no_script",
+            "probing": False,
+            "probe_script_present": probe_present,
+            "probe_interval_seconds": DEFAULT_PROBE_INTERVAL_SECONDS,
+            "llm_interval_seconds": None,
+            "next_check_at": None,
+            "last_checked_at": None,
+            "last_check_kind": None,
+            "last_result": None,
+            "last_new_count": 0,
+            "last_solved_sync_count": 0,
+            "last_error": None,
+            "consecutive_failures": 0,
+            "scan_round": scan_round,
+            "sentinel_checks_total": 0,
+        }
+    )
 
 
 def parse_probe_output(stdout: str) -> dict[str, Any]:
@@ -94,7 +142,7 @@ def parse_probe_output(stdout: str) -> dict[str, Any]:
 
 
 class AOEScoutWatch:
-    """Manages post-collection zero-token sentinel probing and explicit manual/periodic LLM wakeups."""
+    """Manages post-collection zero-token sentinel probing and explicit fallback LLM polling."""
 
     def __init__(self, aoe: AOERuntime) -> None:
         self.aoe = aoe
@@ -118,18 +166,81 @@ class AOEScoutWatch:
         )
         if isinstance(raw, dict):
             base.update(raw)
+            if "status" not in raw:
+                # Migrate legacy persisted records cleanly on read.
+                legacy_state = raw.get("state")
+                if legacy_state == "collecting":
+                    base["status"] = "collecting"
+                elif legacy_state in {"watching", "probing", "error_paused"}:
+                    base["status"] = "watching"
+                    if legacy_state == "error_paused":
+                        base["watch_method"] = "unavailable"
+                        base["unavailable_reason"] = "probe_failed"
+                    elif raw.get("mode") == "llm_poll":
+                        base["watch_method"] = "llm_poll"
+                        base["unavailable_reason"] = None
+                    else:
+                        base["watch_method"] = "sentinel"
+                        base["unavailable_reason"] = None
+                else:
+                    base["status"] = "watching" if not probe_present else "stopped"
+                    base["watch_method"] = "unavailable" if not probe_present else "sentinel"
+                    base["unavailable_reason"] = "no_script" if not probe_present else None
         base["probe_script_present"] = probe_present
         if parent.metadata.get("scout_collecting") or not parent.metadata.get("collection_complete"):
             if parent.state not in {RunState.COMPLETED, RunState.FAILED, RunState.CANCELLED}:
-                base["state"] = "collecting"
-        return base
+                base["status"] = "collecting"
+                base["probing"] = False
+        return _sync_legacy_fields(base)
 
     async def _save_watch(self, parent_id: UUID, watch: dict[str, Any]) -> dict[str, Any]:
-        await self.aoe.storage.update_task(parent_id, metadata={"scout_watch": watch})
-        return watch
+        normalized = _sync_legacy_fields(watch)
+        await self.aoe.storage.update_task(parent_id, metadata={"scout_watch": normalized})
+        return normalized
+
+    async def _sync_scout_agent_for_watch(
+        self,
+        parent_id: UUID,
+        watch: dict[str, Any],
+        *,
+        last_error: str | None = None,
+    ) -> None:
+        status = watch["status"]
+        method = watch["watch_method"]
+        reason = watch.get("unavailable_reason")
+        if status == "stopped":
+            await self.aoe.storage.update_agent(
+                parent_id,
+                "scout",
+                desired_state=AgentState.STOPPED,
+                actual_state=AgentState.STOPPED,
+                container_id=None,
+                last_error=last_error,
+                metadata={"scout_phase": "completed", "current_question_id": None, "current_question_title": None},
+            )
+        elif status == "watching" and method == "unavailable" and reason == "probe_failed":
+            await self.aoe.storage.update_agent(
+                parent_id,
+                "scout",
+                desired_state=AgentState.PAUSED,
+                actual_state=AgentState.PAUSED,
+                container_id=None,
+                last_error=last_error or watch.get("last_error"),
+                metadata={"scout_phase": "watching", "current_question_id": None, "current_question_title": None},
+            )
+        elif status == "watching":
+            await self.aoe.storage.update_agent(
+                parent_id,
+                "scout",
+                desired_state=AgentState.RUNNING,
+                actual_state=AgentState.IDLE,
+                container_id=None,
+                last_error=last_error,
+                metadata={"scout_phase": "watching", "current_question_id": None, "current_question_title": None},
+            )
 
     async def on_initial_collection_complete(self, parent_id: UUID) -> dict[str, Any]:
-        """After round 1 finishes: auto-enable zero-token sentinel if script exists; otherwise stay idle."""
+        """After round 1 finishes, Scout always enters ``watching`` (default sentinel if script exists)."""
         parent = await self.aoe.storage.get_task(parent_id)
         now = self.aoe.clock()
         probe_present = self.has_probe_script(parent_id)
@@ -140,50 +251,26 @@ class AOEScoutWatch:
         watch["last_check_kind"] = "llm_scan"
         watch["consecutive_failures"] = 0
         watch["last_error"] = None
+        watch["probing"] = False
+        watch["status"] = "watching"
         if probe_present:
             interval = int(watch.get("probe_interval_seconds") or DEFAULT_PROBE_INTERVAL_SECONDS)
             watch.update(
-                mode="sentinel",
-                enabled=True,
-                state="watching",
+                watch_method="sentinel",
+                unavailable_reason=None,
                 probe_interval_seconds=interval,
                 next_check_at=now + interval,
-                last_result=f"首轮收集完成，已默认开启零 Token 哨兵（每 {interval}s 探测新题）",
-            )
-            await self._save_watch(parent_id, watch)
-            await self.aoe.storage.update_agent(
-                parent_id,
-                "scout",
-                desired_state=AgentState.RUNNING,
-                actual_state=AgentState.IDLE,
-                container_id=None,
-                metadata={
-                    "scout_phase": "watching",
-                    "current_question_id": None,
-                    "current_question_title": None,
-                },
+                last_result=f"首轮收集完成，已默认进入零 Token 脚本哨兵站岗（每 {interval}s 探测新题）",
             )
         else:
             watch.update(
-                mode="manual",
-                enabled=False,
-                state="idle",
+                watch_method="unavailable",
+                unavailable_reason="no_script",
                 next_check_at=None,
-                last_result="首轮收集完成；未生成零 Token 探测脚本，需手动唤醒或开启定时巡检",
+                last_result="首轮收集完成，已进入站岗态；未生成探测脚本，可唤醒 Scout 补脚本或开启定时巡检兜底",
             )
-            await self._save_watch(parent_id, watch)
-            await self.aoe.storage.update_agent(
-                parent_id,
-                "scout",
-                desired_state=AgentState.COMPLETED,
-                actual_state=AgentState.COMPLETED,
-                container_id=None,
-                metadata={
-                    "scout_phase": "completed",
-                    "current_question_id": None,
-                    "current_question_title": None,
-                },
-            )
+        watch = await self._save_watch(parent_id, watch)
+        await self._sync_scout_agent_for_watch(parent_id, watch)
         return watch
 
     async def on_incremental_scan_started(
@@ -196,7 +283,8 @@ class AOEScoutWatch:
         parent = await self.aoe.storage.get_task(parent_id)
         watch = self.state_for(parent)
         watch.update(
-            state="collecting",
+            status="collecting",
+            probing=False,
             scan_round=scan_round,
             next_check_at=None,
             last_error=None,
@@ -218,6 +306,7 @@ class AOEScoutWatch:
         probe_present = self.has_probe_script(parent_id)
         watch = self.state_for(parent)
         watch["probe_script_present"] = probe_present
+        watch["probing"] = False
         watch["last_checked_at"] = now
         watch["last_check_kind"] = "llm_scan"
         watch["last_new_count"] = new_count
@@ -230,97 +319,68 @@ class AOEScoutWatch:
 
         if stopped_by_user:
             watch.update(
-                mode="manual",
-                enabled=False,
-                state="idle",
+                status="stopped",
                 next_check_at=None,
                 last_error=None,
-                last_result=f"已手动停止本轮巡检（{summary}）",
+                last_result=f"已手动停止收集（{summary}）",
             )
-            await self._save_watch(parent_id, watch)
-            await self.aoe.storage.update_agent(
-                parent_id,
-                "scout",
-                desired_state=AgentState.STOPPED,
-                actual_state=AgentState.STOPPED,
-                container_id=None,
-                metadata={"scout_phase": "completed"},
-            )
+            watch = await self._save_watch(parent_id, watch)
+            await self._sync_scout_agent_for_watch(parent_id, watch)
             return watch
 
         if error:
             watch["last_error"] = error
-            watch["last_result"] = f"本轮增量巡检异常：{error}"
+            watch["last_result"] = f"第 {watch.get('scan_round', 2)} 轮增量收集异常：{error}"
         else:
             watch["last_error"] = None
             watch["consecutive_failures"] = 0
-            watch["last_result"] = f"第 {watch.get('scan_round', 2)} 轮增量巡检完成（{summary}）"
+            watch["last_result"] = f"第 {watch.get('scan_round', 2)} 轮增量收集完成（{summary}）"
 
-        prev_mode = watch.get("mode", "manual")
-        prev_enabled = bool(watch.get("enabled", False))
-        # If user didn't explicitly turn off watch and a probe script is present, default to zero-token sentinel.
-        auto_resume_sentinel = prev_mode == "sentinel" or (
-            not prev_enabled and error is None and prev_mode != "llm_poll"
-        )
-        if probe_present and auto_resume_sentinel:
+        # Natural collection completion always returns to ``watching``.
+        # Auto-upgrade rule: if a probe script is now present and scan succeeded, always upgrade to zero-token sentinel!
+        watch["status"] = "watching"
+        prev_method = watch.get("watch_method", "unavailable")
+        if probe_present and (error is None or prev_method == "sentinel"):
             interval = int(watch.get("probe_interval_seconds") or DEFAULT_PROBE_INTERVAL_SECONDS)
+            upgraded = prev_method == "llm_poll" and error is None
             watch.update(
-                mode="sentinel",
-                enabled=True,
-                state="watching",
+                watch_method="sentinel",
+                unavailable_reason=None,
                 probe_interval_seconds=interval,
                 next_check_at=now + interval,
+                **(
+                    {"last_result": f"{watch['last_result']} · 已检测到探测脚本，自动升级为零 Token 哨兵"}
+                    if upgraded
+                    else {}
+                ),
             )
-            await self._save_watch(parent_id, watch)
-            await self.aoe.storage.update_agent(
-                parent_id,
-                "scout",
-                desired_state=AgentState.RUNNING,
-                actual_state=AgentState.IDLE,
-                container_id=None,
-                last_error=error,
-                metadata={"scout_phase": "watching"},
-            )
-        elif prev_mode == "llm_poll" and prev_enabled:
+        elif prev_method == "llm_poll":
             interval = int(watch.get("llm_interval_seconds") or DEFAULT_LLM_POLL_INTERVAL_SECONDS)
             watch.update(
-                mode="llm_poll",
-                enabled=True,
-                state="watching",
+                watch_method="llm_poll",
+                unavailable_reason=None,
                 llm_interval_seconds=interval,
                 next_check_at=now + interval,
             )
-            await self._save_watch(parent_id, watch)
-            await self.aoe.storage.update_agent(
-                parent_id,
-                "scout",
-                desired_state=AgentState.RUNNING,
-                actual_state=AgentState.IDLE,
-                container_id=None,
-                last_error=error,
-                metadata={"scout_phase": "watching"},
+        elif probe_present:
+            # Probe script exists but incremental scan itself errored after prior probe_failed.
+            watch.update(
+                watch_method="unavailable",
+                unavailable_reason="probe_failed",
+                next_check_at=None,
             )
         else:
             watch.update(
-                mode="manual",
-                enabled=False,
-                state="idle",
+                watch_method="unavailable",
+                unavailable_reason="no_script",
                 next_check_at=None,
             )
-            await self._save_watch(parent_id, watch)
-            await self.aoe.storage.update_agent(
-                parent_id,
-                "scout",
-                desired_state=AgentState.COMPLETED,
-                actual_state=AgentState.COMPLETED,
-                container_id=None,
-                last_error=error,
-                metadata={"scout_phase": "completed"},
-            )
+        watch = await self._save_watch(parent_id, watch)
+        await self._sync_scout_agent_for_watch(parent_id, watch, last_error=error)
         return watch
 
     async def ensure_standby_watch(self, parent_id: UUID) -> dict[str, Any]:
-        """Keep zero-token sentinel running on standby confirmation; never auto-enable LLM polling."""
+        """On finish-confirm 'continue_standby': keep/enter ``watching`` with zero-token sentinel by default."""
         parent = await self.aoe.storage.get_task(parent_id)
         now = self.aoe.clock()
         probe_present = self.has_probe_script(parent_id)
@@ -330,72 +390,51 @@ class AOEScoutWatch:
         if parent.metadata.get("scout_collecting"):
             return watch
 
-        if probe_present:
+        watch["status"] = "watching"
+        watch["probing"] = False
+        if probe_present and watch.get("unavailable_reason") != "probe_failed":
             interval = int(watch.get("probe_interval_seconds") or DEFAULT_PROBE_INTERVAL_SECONDS)
             next_at = watch.get("next_check_at")
             keep_existing = (
-                watch.get("mode") == "sentinel"
-                and watch.get("enabled")
+                watch.get("watch_method") == "sentinel"
                 and isinstance(next_at, (int, float))
                 and next_at > now
             )
             if not keep_existing:
                 next_at = now + interval
             watch.update(
-                mode="sentinel",
-                enabled=True,
-                state="watching",
+                watch_method="sentinel",
+                unavailable_reason=None,
                 probe_interval_seconds=interval,
                 next_check_at=next_at,
                 consecutive_failures=0,
                 last_error=None,
-                last_result=f"任务保持存活，零 Token 哨兵持续站岗（每 {interval}s 探测新题）",
+                last_result=f"任务保持存活，零 Token 脚本哨兵持续站岗（每 {interval}s 探测新题）",
             )
-            await self._save_watch(parent_id, watch)
-            await self.aoe.storage.update_agent(
-                parent_id,
-                "scout",
-                desired_state=AgentState.RUNNING,
-                actual_state=AgentState.IDLE,
-                container_id=None,
-                metadata={"scout_phase": "watching"},
-            )
-            return watch
-
-        # No probe script: keep user-explicit llm_poll if already active, otherwise stay manual standby.
-        if watch.get("mode") == "llm_poll" and watch.get("enabled"):
+        elif watch.get("watch_method") == "llm_poll" and watch.get("llm_interval_seconds"):
             interval = int(watch.get("llm_interval_seconds") or DEFAULT_LLM_POLL_INTERVAL_SECONDS)
             next_at = watch.get("next_check_at")
             if not (isinstance(next_at, (int, float)) and next_at > now):
                 next_at = now + interval
-            watch.update(state="watching", next_check_at=next_at)
-            await self._save_watch(parent_id, watch)
-            await self.aoe.storage.update_agent(
-                parent_id,
-                "scout",
-                desired_state=AgentState.RUNNING,
-                actual_state=AgentState.IDLE,
-                container_id=None,
-                metadata={"scout_phase": "watching"},
+            watch.update(
+                watch_method="llm_poll",
+                unavailable_reason=None,
+                next_check_at=next_at,
             )
-            return watch
-
-        watch.update(
-            mode="manual",
-            enabled=False,
-            state="idle",
-            next_check_at=None,
-            last_result="任务保持站岗存活；未检测到零 Token 脚本，可随时手动唤醒 Scout 或开启定时巡检",
-        )
-        await self._save_watch(parent_id, watch)
-        await self.aoe.storage.update_agent(
-            parent_id,
-            "scout",
-            desired_state=AgentState.IDLE,
-            actual_state=AgentState.IDLE,
-            container_id=None,
-            metadata={"scout_phase": "completed"},
-        )
+        else:
+            reason: UnavailableReason = "probe_failed" if probe_present else "no_script"
+            watch.update(
+                watch_method="unavailable",
+                unavailable_reason=reason,
+                next_check_at=None,
+                last_result=(
+                    "任务保持站岗存活；探测脚本此前连续失败已熔断，可唤醒 Scout 修复、重试脚本或开启定时巡检兜底"
+                    if reason == "probe_failed"
+                    else "任务保持站岗存活；未检测到探测脚本，可唤醒 Scout 收集/补脚本或手动开启定时巡检兜底"
+                ),
+            )
+        watch = await self._save_watch(parent_id, watch)
+        await self._sync_scout_agent_for_watch(parent_id, watch)
         return watch
 
     async def configure(
@@ -418,40 +457,47 @@ class AOEScoutWatch:
         watch = self.state_for(parent)
         collecting = bool(parent.metadata.get("scout_collecting"))
 
-        if action == "enable_sentinel":
-            if not probe_present:
+        if action in {"resume_watch", "enable_sentinel"}:
+            if action == "enable_sentinel" and not probe_present:
                 raise ConflictError(
-                    "未检测到零 Token 探测脚本（/workspace/watch_probe.py），请先手动唤醒 Scout 或开启定时巡检"
+                    "未检测到零 Token 探测脚本（/workspace/watch_probe.py），请唤醒 Scout 生成脚本或开启定时巡检兜底"
                 )
-            interval = DEFAULT_PROBE_INTERVAL_SECONDS if interval_seconds is None else int(interval_seconds)
-            if not MIN_SENTINEL_INTERVAL_SECONDS <= interval <= MAX_SENTINEL_INTERVAL_SECONDS:
-                raise ContractError(
-                    f"哨兵探测间隔必须在 {MIN_SENTINEL_INTERVAL_SECONDS}~{MAX_SENTINEL_INTERVAL_SECONDS} 秒之间"
+            if probe_present:
+                interval = DEFAULT_PROBE_INTERVAL_SECONDS if interval_seconds is None else int(interval_seconds)
+                if not MIN_SENTINEL_INTERVAL_SECONDS <= interval <= MAX_SENTINEL_INTERVAL_SECONDS:
+                    raise ContractError(
+                        f"哨兵探测间隔必须在 {MIN_SENTINEL_INTERVAL_SECONDS}~{MAX_SENTINEL_INTERVAL_SECONDS} 秒之间"
+                    )
+                watch.update(
+                    status="collecting" if collecting else "watching",
+                    watch_method="sentinel",
+                    unavailable_reason=None,
+                    probing=False,
+                    probe_interval_seconds=interval,
+                    next_check_at=None if collecting else now + interval,
+                    consecutive_failures=0,
+                    last_error=None,
+                    last_result=f"已恢复零 Token 脚本哨兵站岗（每 {interval}s 探测新题）",
                 )
-            watch.update(
-                mode="sentinel",
-                enabled=True,
-                state="collecting" if collecting else "watching",
-                probe_interval_seconds=interval,
-                next_check_at=None if collecting else now + interval,
-                consecutive_failures=0,
-                last_error=None,
-                last_result=f"已开启零 Token 哨兵站岗（每 {interval}s 探测新题）",
-            )
-            await self._save_watch(parent_id, watch)
+                msg = f"Scout 已进入站岗（零 Token 脚本哨兵，每 {interval} 秒探测一次）"
+            else:
+                watch.update(
+                    status="collecting" if collecting else "watching",
+                    watch_method="unavailable",
+                    unavailable_reason="no_script",
+                    probing=False,
+                    next_check_at=None,
+                    last_result="已进入站岗态；未检测到探测脚本，可唤醒 Scout 补脚本或开启定时巡检兜底",
+                )
+                msg = "Scout 已进入站岗态（当前无探测脚本，可唤醒补脚本或开启定时巡检兜底）"
+            watch = await self._save_watch(parent_id, watch)
             if not collecting:
-                await self.aoe.storage.update_agent(
-                    parent_id,
-                    "scout",
-                    desired_state=AgentState.RUNNING,
-                    actual_state=AgentState.IDLE,
-                    metadata={"scout_phase": "watching"},
-                )
+                await self._sync_scout_agent_for_watch(parent_id, watch)
             await self.aoe.events.emit(
                 parent_id,
                 actor=SYSTEM_ACTOR,
                 kind=EventKind.SYSTEM,
-                text=f"已开启 Scout 零 Token 哨兵站岗（每 {interval} 秒探测一次）",
+                text=msg,
                 channel_agent_id="scout",
                 payload={"scout_watch": watch},
             )
@@ -459,33 +505,65 @@ class AOEScoutWatch:
             return watch
 
         if action == "enable_llm_poll":
+            if (
+                probe_present
+                and watch.get("status") == "watching"
+                and watch.get("watch_method") == "sentinel"
+            ):
+                raise ConflictError("当前零 Token 脚本哨兵运行正常，无需切换为耗 Token 定时巡检")
             interval = DEFAULT_LLM_POLL_INTERVAL_SECONDS if interval_seconds is None else int(interval_seconds)
             if not MIN_LLM_INTERVAL_SECONDS <= interval <= MAX_LLM_INTERVAL_SECONDS:
                 raise ContractError(f"定时巡检间隔必须在 {MIN_LLM_INTERVAL_SECONDS}~{MAX_LLM_INTERVAL_SECONDS} 秒之间")
             watch.update(
-                mode="llm_poll",
-                enabled=True,
-                state="collecting" if collecting else "watching",
+                status="collecting" if collecting else "watching",
+                watch_method="llm_poll",
+                unavailable_reason=None,
+                probing=False,
                 llm_interval_seconds=interval,
                 next_check_at=None if collecting else now + interval,
-                consecutive_failures=0,
-                last_error=None,
-                last_result=f"已开启定时 LLM 巡检（每 {max(1, round(interval / 60))} 分钟唤醒一次）",
+                last_result=f"已开启定时 LLM 巡检兜底（每 {max(1, round(interval / 60))} 分钟唤醒一次 · 耗 Token）",
             )
-            await self._save_watch(parent_id, watch)
+            watch = await self._save_watch(parent_id, watch)
             if not collecting:
-                await self.aoe.storage.update_agent(
-                    parent_id,
-                    "scout",
-                    desired_state=AgentState.RUNNING,
-                    actual_state=AgentState.IDLE,
-                    metadata={"scout_phase": "watching"},
-                )
+                await self._sync_scout_agent_for_watch(parent_id, watch)
             await self.aoe.events.emit(
                 parent_id,
                 actor=SYSTEM_ACTOR,
                 kind=EventKind.SYSTEM,
-                text=f"已开启 Scout 定时巡检（每 {max(1, round(interval / 60))} 分钟唤醒一次）",
+                text=f"已开启 Scout 定时 LLM 巡检兜底（每 {max(1, round(interval / 60))} 分钟唤醒一次）",
+                channel_agent_id="scout",
+                payload={"scout_watch": watch},
+            )
+            self.aoe.wake(parent_id)
+            return watch
+
+        if action == "disable_llm_poll":
+            if probe_present and watch.get("consecutive_failures", 0) < MAX_CONSECUTIVE_PROBE_FAILURES:
+                interval = int(watch.get("probe_interval_seconds") or DEFAULT_PROBE_INTERVAL_SECONDS)
+                watch.update(
+                    status="collecting" if collecting else "watching",
+                    watch_method="sentinel",
+                    unavailable_reason=None,
+                    next_check_at=None if collecting else now + interval,
+                    last_result=f"已关闭定时 LLM 巡检，恢复零 Token 脚本哨兵（每 {interval}s 探测新题）",
+                )
+            else:
+                reason: UnavailableReason = "probe_failed" if probe_present else "no_script"
+                watch.update(
+                    status="collecting" if collecting else "watching",
+                    watch_method="unavailable",
+                    unavailable_reason=reason,
+                    next_check_at=None,
+                    last_result="已关闭定时 LLM 巡检兜底（可随时手动唤醒 Scout 收集）",
+                )
+            watch = await self._save_watch(parent_id, watch)
+            if not collecting:
+                await self._sync_scout_agent_for_watch(parent_id, watch)
+            await self.aoe.events.emit(
+                parent_id,
+                actor=SYSTEM_ACTOR,
+                kind=EventKind.SYSTEM,
+                text="已关闭 Scout 定时 LLM 巡检兜底",
                 channel_agent_id="scout",
                 payload={"scout_watch": watch},
             )
@@ -494,26 +572,19 @@ class AOEScoutWatch:
 
         if action == "disable":
             watch.update(
-                mode="manual",
-                enabled=False,
-                state="collecting" if collecting else "idle",
+                status="collecting" if collecting else "stopped",
+                probing=False,
                 next_check_at=None,
-                last_result="已暂停自动站岗（可随时手动唤醒 Scout 巡检）",
+                last_result="已手动停止 Scout（不再自动站岗或收集，可随时唤醒收集或恢复站岗）",
             )
-            await self._save_watch(parent_id, watch)
+            watch = await self._save_watch(parent_id, watch)
             if not collecting:
-                await self.aoe.storage.update_agent(
-                    parent_id,
-                    "scout",
-                    desired_state=AgentState.COMPLETED,
-                    actual_state=AgentState.COMPLETED,
-                    metadata={"scout_phase": "completed"},
-                )
+                await self._sync_scout_agent_for_watch(parent_id, watch)
             await self.aoe.events.emit(
                 parent_id,
                 actor=SYSTEM_ACTOR,
                 kind=EventKind.SYSTEM,
-                text="已暂停 Scout 自动站岗，切换为手动唤醒模式",
+                text="已停止 Scout，进入静止状态",
                 channel_agent_id="scout",
                 payload={"scout_watch": watch},
             )
@@ -530,17 +601,22 @@ class AOEScoutWatch:
         if parent.metadata.get("scout_collecting"):
             return self.state_for(parent)
         watch = self.state_for(parent)
+        if watch["status"] != "watching" or watch["watch_method"] != "sentinel":
+            return watch
         if not self.has_probe_script(parent_id):
             watch.update(
-                mode="manual",
-                enabled=False,
-                state="idle",
+                status="watching",
+                watch_method="unavailable",
+                unavailable_reason="no_script",
+                probing=False,
                 next_check_at=None,
-                last_result="零 Token 探测脚本已不存在，已切换为手动模式",
+                last_result="探测脚本已不存在，请唤醒 Scout 补脚本或开启定时巡检兜底",
             )
-            return await self._save_watch(parent_id, watch)
+            watch = await self._save_watch(parent_id, watch)
+            await self._sync_scout_agent_for_watch(parent_id, watch)
+            return watch
 
-        watch.update(state="probing", next_check_at=None)
+        watch.update(probing=True, next_check_at=None)
         await self._save_watch(parent_id, watch)
 
         try:
@@ -555,33 +631,31 @@ class AOEScoutWatch:
             now = self.aoe.clock()
             failures = int(watch.get("consecutive_failures", 0) or 0) + 1
             err_text = str(exc).strip()[:400] or type(exc).__name__
+            watch["probing"] = False
             watch["last_checked_at"] = now
             watch["last_check_kind"] = "sentinel"
             watch["consecutive_failures"] = failures
             watch["last_error"] = err_text
             if failures >= MAX_CONSECUTIVE_PROBE_FAILURES:
                 watch.update(
-                    enabled=False,
-                    state="error_paused",
+                    status="watching",
+                    watch_method="unavailable",
+                    unavailable_reason="probe_failed",
                     next_check_at=None,
-                    last_result=f"哨兵连续 {failures} 次失败已熔断暂停（不自动耗 Token）：{err_text}",
+                    last_result=(
+                        f"脚本哨兵连续 {failures} 次失败已熔断；"
+                        f"请唤醒 Scout 修复脚本、重试脚本或开启定时巡检兜底：{err_text}"
+                    ),
                 )
-                await self._save_watch(parent_id, watch)
-                await self.aoe.storage.update_agent(
-                    parent_id,
-                    "scout",
-                    desired_state=AgentState.PAUSED,
-                    actual_state=AgentState.PAUSED,
-                    last_error=err_text,
-                    metadata={"scout_phase": "watching"},
-                )
+                watch = await self._save_watch(parent_id, watch)
+                await self._sync_scout_agent_for_watch(parent_id, watch, last_error=err_text)
                 await self.aoe.events.emit(
                     parent_id,
                     actor=SYSTEM_ACTOR,
                     kind=EventKind.ERROR,
                     text=(
-                        f"零 Token 哨兵连续 {failures} 次探测失败，已自动熔断暂停以防误耗 Token；"
-                        f"请点击「唤醒 Scout」修复脚本或检查平台状态：{err_text}"
+                        f"零 Token 脚本哨兵连续 {failures} 次探测失败已熔断（绝不自动耗 Token）；"
+                        f"请唤醒 Scout 修复脚本或手动开启定时巡检兜底：{err_text}"
                     ),
                     channel_agent_id="scout",
                     payload={"consecutive_failures": failures, "error": err_text},
@@ -589,11 +663,12 @@ class AOEScoutWatch:
             else:
                 backoff = 60 if failures == 1 else 120
                 watch.update(
-                    enabled=True,
-                    state="watching",
+                    status="watching",
+                    watch_method="sentinel",
+                    unavailable_reason=None,
                     next_check_at=now + backoff,
                     last_result=(
-                        f"哨兵探测异常（第 {failures}/{MAX_CONSECUTIVE_PROBE_FAILURES} 次，"
+                        f"脚本哨兵探测异常（第 {failures}/{MAX_CONSECUTIVE_PROBE_FAILURES} 次，"
                         f"{backoff}s 后重试）：{err_text}"
                     ),
                 )
@@ -610,6 +685,7 @@ class AOEScoutWatch:
         if parsed["solved_keys"]:
             solved_sync_count = await self.aoe.sync_platform_solved_keys(parent_id, parsed["solved_keys"])
 
+        watch["probing"] = False
         watch["last_checked_at"] = now
         watch["last_check_kind"] = "sentinel"
         watch["consecutive_failures"] = 0
@@ -621,16 +697,18 @@ class AOEScoutWatch:
         if new_keys:
             preview = ", ".join(new_keys[:5]) + (" ..." if len(new_keys) > 5 else "")
             watch.update(
-                state="collecting",
+                status="collecting",
+                watch_method="sentinel",
+                unavailable_reason=None,
                 next_check_at=None,
-                last_result=f"零 Token 哨兵发现 {len(new_keys)} 道新题（{preview}），正在唤醒 Scout 增量收集",
+                last_result=f"零 Token 脚本哨兵发现 {len(new_keys)} 道新题（{preview}），正在唤醒 Scout 收集",
             )
             await self._save_watch(parent_id, watch)
             await self.aoe.events.emit(
                 parent_id,
                 actor=SYSTEM_ACTOR,
                 kind=EventKind.SYSTEM,
-                text=f"零 Token 哨兵发现 {len(new_keys)} 道新题（{preview}），立即唤醒 Scout 增量收集",
+                text=f"零 Token 脚本哨兵发现 {len(new_keys)} 道新题（{preview}），立即唤醒 Scout 增量收集",
                 channel_agent_id="scout",
                 payload={"detected_new_keys": new_keys, "solved_sync_count": solved_sync_count},
             )
@@ -644,13 +722,13 @@ class AOEScoutWatch:
         interval = int(watch.get("probe_interval_seconds") or DEFAULT_PROBE_INTERVAL_SECONDS)
         extra = f" · 同步平台已解出 {solved_sync_count} 题" if solved_sync_count else ""
         watch.update(
-            mode="sentinel",
-            enabled=True,
-            state="watching",
+            status="watching",
+            watch_method="sentinel",
+            unavailable_reason=None,
             next_check_at=now + interval,
-            last_result=f"零 Token 哨兵探测正常 · 暂无新题{extra}",
+            last_result=f"零 Token 脚本哨兵探测正常 · 暂无新题{extra}",
         )
-        await self._save_watch(parent_id, watch)
+        watch = await self._save_watch(parent_id, watch)
         self.aoe.wake(parent_id)
         return watch
 
@@ -658,9 +736,11 @@ class AOEScoutWatch:
         if not parent.metadata.get("collection_complete") or parent.metadata.get("scout_collecting"):
             return None
         watch = parent.metadata.get("scout_watch")
-        if not isinstance(watch, dict) or not watch.get("enabled"):
+        if not isinstance(watch, dict):
             return None
-        if watch.get("state") != "watching":
+        if watch.get("status") != "watching" or watch.get("probing"):
+            return None
+        if watch.get("watch_method") not in {"sentinel", "llm_poll"}:
             return None
         due = watch.get("next_check_at")
         return float(due) if isinstance(due, (int, float)) else None
@@ -672,8 +752,11 @@ __all__ = [
     "DEFAULT_PROBE_INTERVAL_SECONDS",
     "MAX_CONSECUTIVE_PROBE_FAILURES",
     "PROBE_TIMEOUT_SECONDS",
+    "ScoutStatus",
+    "UnavailableReason",
     "WATCH_PROBE_FILENAME",
     "WatchAction",
+    "WatchMethod",
     "WatchMode",
     "WatchState",
     "default_watch_state",

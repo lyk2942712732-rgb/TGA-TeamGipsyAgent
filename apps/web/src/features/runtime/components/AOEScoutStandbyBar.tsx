@@ -3,13 +3,115 @@ import { useEffect, useState } from "react";
 import { tga3RuntimeApi } from "../../../api/tga3-runtime-control";
 import type { AOEOverview, AOEScoutWatch } from "../../../runtime/tga3-runtime";
 
-const LLM_INTERVAL_OPTIONS = [
-  { value: "", label: "定时 LLM 巡检：关闭（手动）" },
-  { value: "180", label: "每 3 分钟 LLM 巡检（耗 Token）" },
-  { value: "300", label: "每 5 分钟 LLM 巡检（耗 Token）" },
-  { value: "600", label: "每 10 分钟 LLM 巡检（耗 Token）" },
-  { value: "900", label: "每 15 分钟 LLM 巡检（耗 Token）" },
+const LLM_FALLBACK_OPTIONS = [
+  { value: "", label: "定时 LLM 巡检兜底：关闭" },
+  { value: "180", label: "兜底：每 3 分钟 LLM 巡检（耗 Token）" },
+  { value: "300", label: "兜底：每 5 分钟 LLM 巡检（耗 Token）" },
+  { value: "600", label: "兜底：每 10 分钟 LLM 巡检（耗 Token）" },
+  { value: "900", label: "兜底：每 15 分钟 LLM 巡检（耗 Token）" },
 ];
+
+export type ResolvedScoutStandby = {
+  status: "collecting" | "watching" | "stopped";
+  method: "sentinel" | "llm_poll" | "unavailable";
+  unavailableReason: "no_script" | "probe_failed" | null;
+  probing: boolean;
+  tone: "active" | "sentinel" | "warn" | "idle";
+  shortLabel: string;
+  watch: AOEScoutWatch | null;
+};
+
+/** Single source of truth mapping AOEOverview to the 3-state Scout lifecycle + 2 watch methods. */
+export function resolveScoutStandby(overview: AOEOverview): ResolvedScoutStandby {
+  const watch = overview.scout_watch ?? null;
+  const collectionComplete = Boolean(overview.collection_complete);
+  const collecting = Boolean(overview.scout_collecting || !collectionComplete || watch?.status === "collecting");
+  if (collecting) {
+    return {
+      status: "collecting",
+      method: watch?.watch_method ?? (watch?.probe_script_present ? "sentinel" : "unavailable"),
+      unavailableReason: null,
+      probing: false,
+      tone: "active",
+      shortLabel: collectionComplete ? "增量收集中" : "首轮收集中",
+      watch,
+    };
+  }
+
+  let status: "watching" | "stopped";
+  let method: "sentinel" | "llm_poll" | "unavailable";
+  let unavailableReason: "no_script" | "probe_failed" | null = watch?.unavailable_reason ?? null;
+  const probing = Boolean(watch?.probing || watch?.state === "probing");
+
+  if (watch?.status === "stopped") {
+    status = "stopped";
+    method = watch.watch_method ?? (watch.probe_script_present ? "sentinel" : "unavailable");
+  } else if (watch?.status === "watching") {
+    status = "watching";
+    method = watch.watch_method ?? (watch.probe_script_present ? "sentinel" : "unavailable");
+  } else if (watch?.state === "error_paused") {
+    status = "watching";
+    method = "unavailable";
+    unavailableReason = "probe_failed";
+  } else if (watch?.enabled) {
+    status = "watching";
+    method = watch.mode === "llm_poll" ? "llm_poll" : "sentinel";
+    unavailableReason = null;
+  } else if (watch && !watch.probe_script_present) {
+    status = "watching";
+    method = "unavailable";
+    unavailableReason = "no_script";
+  } else {
+    status = "stopped";
+    method = watch?.probe_script_present ? "sentinel" : "unavailable";
+  }
+
+  if (status === "stopped") {
+    return { status, method, unavailableReason, probing: false, tone: "idle", shortLabel: "已停止", watch };
+  }
+  if (method === "sentinel") {
+    return {
+      status,
+      method,
+      unavailableReason: null,
+      probing,
+      tone: "sentinel",
+      shortLabel: probing ? "哨兵探测中" : "零 Token 哨兵",
+      watch,
+    };
+  }
+  if (method === "llm_poll") {
+    return {
+      status,
+      method,
+      unavailableReason: null,
+      probing: false,
+      tone: "active",
+      shortLabel: "定时巡检兜底",
+      watch,
+    };
+  }
+  if (unavailableReason === "probe_failed") {
+    return {
+      status,
+      method,
+      unavailableReason,
+      probing: false,
+      tone: "warn",
+      shortLabel: "哨兵已熔断",
+      watch,
+    };
+  }
+  return {
+    status,
+    method,
+    unavailableReason: "no_script",
+    probing: false,
+    tone: "warn",
+    shortLabel: "无脚本·需选兜底",
+    watch,
+  };
+}
 
 function formatCountdown(seconds: number): string {
   const s = Math.max(0, Math.ceil(seconds));
@@ -43,9 +145,9 @@ export function AOEScoutStandbyBar({
   const terminal = ["completed", "failed", "cancelled", "stopped"].includes(taskState);
   if (terminal) return null;
 
-  const watch: AOEScoutWatch | null = overview.scout_watch ?? null;
+  const resolved = resolveScoutStandby(overview);
+  const { status, method, unavailableReason, probing, tone, watch } = resolved;
   const collectionComplete = Boolean(overview.collection_complete);
-  const scoutCollecting = Boolean(overview.scout_collecting || !collectionComplete);
   const canStopInitial = !collectionComplete && overview.questions.length > 0;
 
   async function runAction(action: () => Promise<void>, successMessage: string) {
@@ -65,41 +167,53 @@ export function AOEScoutStandbyBar({
   }
 
   const countdownSeconds =
-    watch?.enabled && typeof watch.next_check_at === "number" ? Math.max(0, watch.next_check_at - now) : null;
+    status === "watching" &&
+    (method === "sentinel" || method === "llm_poll") &&
+    typeof watch?.next_check_at === "number"
+      ? Math.max(0, watch.next_check_at - now)
+      : null;
 
-  let tone: "active" | "sentinel" | "warn" | "idle" = "idle";
-  let headline = "Scout 待命";
-  if (scoutCollecting) {
-    tone = "active";
+  let headline = "Scout 已停止";
+  if (status === "collecting") {
     headline = collectionComplete
-      ? `Scout 正在增量收集（第 ${watch?.scan_round ?? 2} 轮）`
+      ? `Scout 正在收集题目（第 ${watch?.scan_round ?? 2} 轮）`
       : "Scout 正在首轮收集题目";
-  } else if (watch?.state === "probing") {
-    tone = "sentinel";
-    headline = "零 Token 哨兵正在探测新题…";
-  } else if (watch?.state === "error_paused") {
-    tone = "warn";
-    headline = `零 Token 哨兵已熔断暂停（连续失败 ${watch.consecutive_failures} 次）`;
-  } else if (watch?.enabled && watch.mode === "sentinel") {
-    tone = "sentinel";
-    headline = `零 Token 哨兵站岗中${countdownSeconds !== null ? ` · ${formatCountdown(countdownSeconds)} 后探测` : ""}`;
-  } else if (watch?.enabled && watch.mode === "llm_poll") {
-    tone = "active";
-    headline = `定时 LLM 巡检中${countdownSeconds !== null ? ` · ${formatCountdown(countdownSeconds)} 后唤醒` : ""}`;
-  } else if (watch && !watch.probe_script_present) {
-    tone = "idle";
-    headline = "Scout 手动待命（未检测到零 Token 探测脚本）";
-  } else {
-    tone = "idle";
-    headline = "Scout 自动站岗已暂停（手动模式）";
+  } else if (status === "watching") {
+    if (method === "sentinel") {
+      headline = probing
+        ? "站岗中 · 零 Token 脚本哨兵探测中…"
+        : `站岗中 · 零 Token 脚本哨兵${countdownSeconds !== null ? ` · ${formatCountdown(countdownSeconds)} 后探测` : ""}`;
+    } else if (method === "llm_poll") {
+      headline = `站岗中 · 定时 LLM 巡检兜底${countdownSeconds !== null ? ` · ${formatCountdown(countdownSeconds)} 后唤醒` : ""}`;
+    } else if (unavailableReason === "probe_failed") {
+      headline = `站岗中 · 脚本哨兵连续失败 ${watch?.consecutive_failures ?? 3} 次已熔断`;
+    } else {
+      headline = "站岗中 · 未检测到探测脚本（请选择兜底方式）";
+    }
   }
 
-  const sentinelRunning = Boolean(watch?.enabled && watch.mode === "sentinel");
-  const showLlmPollSelect = !sentinelRunning;
-  const sentinelRecoverLabel = watch?.state === "error_paused" ? "重试零 Token 哨兵" : "恢复零 Token 哨兵";
-  const llmSelectValue = watch?.mode === "llm_poll" && watch.enabled && watch.llm_interval_seconds
-    ? String(watch.llm_interval_seconds)
-    : "";
+  const llmSelectValue =
+    status === "watching" && method === "llm_poll" && watch?.llm_interval_seconds
+      ? String(watch.llm_interval_seconds)
+      : "";
+  // Periodic LLM polling is strictly a fallback when the probe script is unavailable (or already active as fallback).
+  const showLlmFallbackSelect =
+    status === "watching" && (method === "unavailable" || method === "llm_poll");
+
+  const defaultHint =
+    status === "collecting"
+      ? collectionComplete
+        ? "增量收集完成后将自动回到站岗态，不影响正在解题的 Worker。"
+        : "首轮收集完成后，有探测脚本将默认进入零 Token 脚本哨兵站岗。"
+      : status === "stopped"
+        ? "已人工停止收集与站岗；需要继续收题或候题时，请点击唤醒收集或恢复站岗。"
+        : method === "sentinel"
+          ? "零 Token 脚本哨兵默认运行中，发现新题将自动唤醒 Scout 收集。"
+          : method === "llm_poll"
+            ? "当前由定时 LLM 巡检兜底；若后续收集补齐了探测脚本，将自动升回零 Token 脚本哨兵。"
+            : unavailableReason === "probe_failed"
+              ? "脚本哨兵已熔断（绝不自动耗 Token）：可重试脚本、唤醒 Scout 修复脚本，或手动开启定时巡检兜底。"
+              : "未生成零 Token 探测脚本：可唤醒 Scout 收集/补脚本，或手动开启定时 LLM 巡检兜底。";
 
   return (
     <section className={`aoe-standby-bar tone-${tone}`} aria-label="Scout 站岗与增量收题控制">
@@ -117,108 +231,23 @@ export function AOEScoutStandbyBar({
           <div className="aoe-standby-copy">
             <div className="aoe-standby-title-row">
               <strong>{headline}</strong>
-              {watch?.mode === "sentinel" && watch.enabled ? (
+              {status === "watching" && method === "sentinel" ? (
                 <span className="aoe-standby-chip is-zero-token">
-                  0 Token · 已探测 {watch.sentinel_checks_total} 次
+                  0 Token · 已探测 {watch?.sentinel_checks_total ?? 0} 次
                 </span>
               ) : null}
               {overview.phase === "standby" ? (
                 <span className="aoe-standby-chip is-standby">全题已收尾 · 候题中</span>
               ) : null}
             </div>
-            <small>
-              {error
-                ? error
-                : feedback
-                  ? feedback
-                  : watch?.last_result
-                    ? watch.last_result
-                    : collectionComplete
-                      ? "随时可手动唤醒 Scout 增量搜集新题，不影响正在解题的 Worker。"
-                      : "首轮收集完成后，若有平台探测脚本将自动切入零 Token 哨兵站岗。"}
-            </small>
+            <small>{error ?? feedback ?? watch?.last_result ?? defaultHint}</small>
           </div>
         </div>
 
         <div className="aoe-standby-actions">
-          {!collectionComplete ? (
-            canStopInitial ? (
-              <button
-                type="button"
-                className="ref-secondary-button"
-                disabled={busy}
-                onClick={() =>
-                  void runAction(
-                    async () => {
-                      await tga3RuntimeApi.stopScout(taskId);
-                    },
-                    "已提前结束首轮收集，Worker 将继续解已登记题目。",
-                  )
-                }
-              >
-                <Square size={13} />
-                结束首轮收集
-              </button>
-            ) : null
-          ) : scoutCollecting ? (
-            <button
-              type="button"
-              className="tga3-danger-button"
-              disabled={busy}
-              onClick={() =>
-                void runAction(
-                  async () => {
-                    await tga3RuntimeApi.stopScout(taskId);
-                  },
-                  "已停止本轮 Scout 增量收集。",
-                )
-              }
-            >
-              <Square size={13} />
-              停止 Scout
-            </button>
-          ) : (
-            <>
-              {!watch?.enabled && watch?.probe_script_present ? (
-                <button
-                  type="button"
-                  className="ref-primary-button"
-                  disabled={busy}
-                  onClick={() =>
-                    void runAction(
-                      async () => {
-                        await tga3RuntimeApi.configureScoutWatch(taskId, "enable_sentinel");
-                      },
-                      watch?.state === "error_paused"
-                        ? "已重新拉起零 Token 哨兵站岗。"
-                        : "已恢复零 Token 哨兵站岗。",
-                    )
-                  }
-                >
-                  <Play size={14} />
-                  {sentinelRecoverLabel}
-                </button>
-              ) : null}
-
-              <button
-                type="button"
-                className="ref-secondary-button"
-                disabled={busy}
-                title="立即运行一轮 LLM Scout 增量收题（消耗 Token）"
-                onClick={() =>
-                  void runAction(
-                    async () => {
-                      await tga3RuntimeApi.wakeScout(taskId);
-                    },
-                    "已唤醒 Scout 开始新一轮增量收题。",
-                  )
-                }
-              >
-                <RefreshCw size={14} />
-                唤醒 Scout 巡检
-              </button>
-
-              {watch?.enabled ? (
+          {status === "collecting" ? (
+            !collectionComplete ? (
+              canStopInitial ? (
                 <button
                   type="button"
                   className="ref-secondary-button"
@@ -228,18 +257,120 @@ export function AOEScoutStandbyBar({
                       async () => {
                         await tga3RuntimeApi.stopScout(taskId);
                       },
-                      "已暂停自动站岗，切换为手动模式。",
+                      "已停止首轮收集，Worker 将继续解已登记题目。",
                     )
                   }
                 >
-                  <Pause size={14} />
-                  停止站岗
+                  <Square size={13} />
+                  停止收集
+                </button>
+              ) : null
+            ) : (
+              <button
+                type="button"
+                className="tga3-danger-button"
+                disabled={busy}
+                onClick={() =>
+                  void runAction(
+                    async () => {
+                      await tga3RuntimeApi.stopScout(taskId);
+                    },
+                    "已停止本轮 Scout 收集。",
+                  )
+                }
+              >
+                <Square size={13} />
+                停止收集
+              </button>
+            )
+          ) : status === "stopped" ? (
+            <>
+              <button
+                type="button"
+                className="ref-primary-button"
+                disabled={busy}
+                title="立即运行一轮 Scout 收集（消耗 Token）"
+                onClick={() =>
+                  void runAction(
+                    async () => {
+                      await tga3RuntimeApi.wakeScout(taskId);
+                    },
+                    "已唤醒 Scout 开始增量收集。",
+                  )
+                }
+              >
+                <RefreshCw size={14} />
+                唤醒收集
+              </button>
+              <button
+                type="button"
+                className="ref-secondary-button"
+                disabled={busy}
+                onClick={() =>
+                  void runAction(
+                    async () => {
+                      await tga3RuntimeApi.configureScoutWatch(taskId, "resume_watch");
+                    },
+                    watch?.probe_script_present
+                      ? "已恢复站岗（零 Token 脚本哨兵）。"
+                      : "已恢复站岗态（当前无探测脚本，可选择兜底方式）。",
+                  )
+                }
+              >
+                <Play size={14} />
+                恢复站岗
+              </button>
+            </>
+          ) : (
+            <>
+              {method === "unavailable" && unavailableReason === "probe_failed" ? (
+                <button
+                  type="button"
+                  className="ref-primary-button"
+                  disabled={busy}
+                  onClick={() =>
+                    void runAction(
+                      async () => {
+                        await tga3RuntimeApi.configureScoutWatch(taskId, "enable_sentinel");
+                      },
+                      "已重新拉起零 Token 脚本哨兵。",
+                    )
+                  }
+                >
+                  <Play size={14} />
+                  重试脚本哨兵
                 </button>
               ) : null}
 
-              {showLlmPollSelect ? (
+              <button
+                type="button"
+                className={
+                  method === "unavailable" && unavailableReason === "no_script"
+                    ? "ref-primary-button"
+                    : "ref-secondary-button"
+                }
+                disabled={busy}
+                title="立即唤醒 Scout 执行一轮收集或修复探测脚本（消耗 Token）"
+                onClick={() =>
+                  void runAction(
+                    async () => {
+                      await tga3RuntimeApi.wakeScout(taskId);
+                    },
+                    "已唤醒 Scout 开始增量收集。",
+                  )
+                }
+              >
+                <RefreshCw size={14} />
+                {method === "unavailable" && unavailableReason === "probe_failed"
+                  ? "唤醒 Scout 修复脚本"
+                  : method === "unavailable"
+                    ? "唤醒 Scout 收集/补脚本"
+                    : "唤醒收集"}
+              </button>
+
+              {showLlmFallbackSelect ? (
                 <select
-                  aria-label="Scout 定时 LLM 巡检间隔"
+                  aria-label="Scout 定时 LLM 巡检兜底间隔"
                   className="aoe-standby-select"
                   disabled={busy}
                   value={llmSelectValue}
@@ -248,14 +379,9 @@ export function AOEScoutStandbyBar({
                     if (!val) {
                       void runAction(
                         async () => {
-                          await tga3RuntimeApi.configureScoutWatch(
-                            taskId,
-                            watch?.probe_script_present ? "enable_sentinel" : "disable",
-                          );
+                          await tga3RuntimeApi.configureScoutWatch(taskId, "disable_llm_poll");
                         },
-                        watch?.probe_script_present
-                          ? "已切回零 Token 哨兵站岗。"
-                          : "已关闭定时 LLM 巡检。",
+                        "已关闭定时 LLM 巡检兜底。",
                       );
                     } else {
                       const sec = Number(val);
@@ -263,18 +389,35 @@ export function AOEScoutStandbyBar({
                         async () => {
                           await tga3RuntimeApi.configureScoutWatch(taskId, "enable_llm_poll", sec);
                         },
-                        `已开启每 ${Math.round(sec / 60)} 分钟定时 LLM 巡检（耗 Token）。`,
+                        `已开启定时 LLM 巡检兜底（每 ${Math.round(sec / 60)} 分钟 · 耗 Token）。`,
                       );
                     }
                   }}
                 >
-                  {LLM_INTERVAL_OPTIONS.map((opt) => (
+                  {LLM_FALLBACK_OPTIONS.map((opt) => (
                     <option key={opt.value} value={opt.value}>
                       {opt.label}
                     </option>
                   ))}
                 </select>
               ) : null}
+
+              <button
+                type="button"
+                className="ref-secondary-button"
+                disabled={busy}
+                onClick={() =>
+                  void runAction(
+                    async () => {
+                      await tga3RuntimeApi.stopScout(taskId);
+                    },
+                    "已停止 Scout 站岗，进入静止态。",
+                  )
+                }
+              >
+                <Pause size={14} />
+                停止站岗
+              </button>
             </>
           )}
         </div>

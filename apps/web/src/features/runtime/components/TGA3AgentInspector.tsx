@@ -20,6 +20,7 @@ import {
   stateTone,
 } from "../tga3-view";
 import { EventCard } from "./TGA3Workspace";
+import { resolveScoutStandby } from "./AOEScoutStandbyBar";
 
 type InspectorTab = "overview" | "activity" | "control" | "record";
 const TABS: Array<[InspectorTab, string]> = [
@@ -436,8 +437,7 @@ function Controls({ snapshot, agent, onChanged }: { snapshot: TGA3RuntimeSnapsho
   const paused = ["paused", "pause_requested"].includes(agent.actual_state);
   const aoeScout = Boolean(snapshot.aoe && agent.role === "scout");
   const parentTerminal = ["completed", "failed", "cancelled", "stopped"].includes(snapshot.task.state);
-  const scoutWatch = snapshot.aoe?.scout_watch ?? null;
-  const scoutCollecting = Boolean(snapshot.aoe?.scout_collecting || (snapshot.aoe && !snapshot.aoe.collection_complete));
+  const scoutStandby = snapshot.aoe ? resolveScoutStandby(snapshot.aoe) : null;
 
   async function scoutAction(fn: () => Promise<unknown>, okText: string) {
     setBusy(true);
@@ -481,39 +481,46 @@ function Controls({ snapshot, agent, onChanged }: { snapshot: TGA3RuntimeSnapsho
             {paused ? <CirclePlay size={14} /> : <CirclePause size={14} />}
             {paused ? "恢复 Worker" : "暂停 Worker"}
           </button>
-        ) : aoeScout && !parentTerminal ? (
+        ) : aoeScout && !parentTerminal && scoutStandby ? (
           <div style={{ display: "grid", gap: 6 }}>
-            {scoutCollecting ? (
+            {scoutStandby.status === "collecting" ? (
               <button
                 type="button"
                 className="ref-secondary-button"
                 disabled={busy}
                 onClick={() => void scoutAction(() => tga3RuntimeApi.stopScout(snapshot.task.id), "已停止本轮 Scout 收集。")}
               >
-                <Square size={13} /> 停止 Scout 收集
+                <Square size={13} /> 停止收集
               </button>
-            ) : (
+            ) : scoutStandby.status === "stopped" ? (
               <>
+                <button
+                  type="button"
+                  className="ref-primary-button"
+                  disabled={busy}
+                  onClick={() =>
+                    void scoutAction(() => tga3RuntimeApi.wakeScout(snapshot.task.id), "已唤醒 Scout 开始增量收集。")
+                  }
+                >
+                  <RefreshCw size={13} /> 唤醒收集
+                </button>
                 <button
                   type="button"
                   className="ref-secondary-button"
                   disabled={busy}
                   onClick={() =>
-                    void scoutAction(() => tga3RuntimeApi.wakeScout(snapshot.task.id), "已唤醒 Scout 开始增量收题。")
+                    void scoutAction(
+                      () => tga3RuntimeApi.configureScoutWatch(snapshot.task.id, "resume_watch"),
+                      "已恢复 Scout 站岗。",
+                    )
                   }
                 >
-                  <RefreshCw size={13} /> 唤醒 Scout 增量巡检
+                  <ShieldCheck size={13} /> 恢复站岗
                 </button>
-                {scoutWatch?.enabled ? (
-                  <button
-                    type="button"
-                    className="ref-secondary-button"
-                    disabled={busy}
-                    onClick={() => void scoutAction(() => tga3RuntimeApi.stopScout(snapshot.task.id), "已暂停自动站岗。")}
-                  >
-                    <CirclePause size={13} /> 停止自动站岗
-                  </button>
-                ) : scoutWatch?.probe_script_present ? (
+              </>
+            ) : (
+              <>
+                {scoutStandby.method === "unavailable" && scoutStandby.unavailableReason === "probe_failed" ? (
                   <button
                     type="button"
                     className="ref-primary-button"
@@ -521,16 +528,31 @@ function Controls({ snapshot, agent, onChanged }: { snapshot: TGA3RuntimeSnapsho
                     onClick={() =>
                       void scoutAction(
                         () => tga3RuntimeApi.configureScoutWatch(snapshot.task.id, "enable_sentinel"),
-                        scoutWatch?.state === "error_paused"
-                          ? "已重新拉起零 Token 哨兵站岗。"
-                          : "已恢复零 Token 哨兵站岗。",
+                        "已重新拉起零 Token 脚本哨兵。",
                       )
                     }
                   >
-                    <ShieldCheck size={13} />{" "}
-                    {scoutWatch?.state === "error_paused" ? "重试零 Token 哨兵" : "恢复零 Token 哨兵"}
+                    <ShieldCheck size={13} /> 重试脚本哨兵
                   </button>
                 ) : null}
+                <button
+                  type="button"
+                  className="ref-secondary-button"
+                  disabled={busy}
+                  onClick={() =>
+                    void scoutAction(() => tga3RuntimeApi.wakeScout(snapshot.task.id), "已唤醒 Scout 开始增量收集。")
+                  }
+                >
+                  <RefreshCw size={13} /> 唤醒收集
+                </button>
+                <button
+                  type="button"
+                  className="ref-secondary-button"
+                  disabled={busy}
+                  onClick={() => void scoutAction(() => tga3RuntimeApi.stopScout(snapshot.task.id), "已停止 Scout 站岗。")}
+                >
+                  <CirclePause size={13} /> 停止站岗
+                </button>
               </>
             )}
           </div>

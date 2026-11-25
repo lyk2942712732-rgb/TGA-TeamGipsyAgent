@@ -151,9 +151,9 @@ class AOEScoutRunner:
                 else "全部题目信息已收集"
             )
             watch_note = (
-                f"已默认开启零 Token 哨兵站岗（每 {watch['probe_interval_seconds']}s 探测新题）"
-                if watch.get("mode") == "sentinel" and watch.get("enabled")
-                else "未检测到零 Token 探测脚本，Scout 已待命（可随时手动唤醒巡检）"
+                f"已默认进入零 Token 脚本哨兵站岗（每 {watch['probe_interval_seconds']}s 探测新题）"
+                if watch.get("status") == "watching" and watch.get("watch_method") == "sentinel"
+                else "已进入站岗态；未检测到探测脚本，可唤醒 Scout 补脚本或手动开启定时巡检兜底"
             )
             await aoe.events.emit(
                 parent_id,
@@ -162,7 +162,7 @@ class AOEScoutRunner:
                 text=f"{status_label}（共 {len(questions)} 题），{watch_note}；Worker 继续解题",
                 channel_agent_id="scout",
                 payload={
-                    "scout_phase": "watching" if watch.get("enabled") else "completed",
+                    "scout_phase": "watching",
                     "collection_status": parent.metadata.get("collection_status", "complete"),
                     "question_count": len(questions),
                     "scout_watch": watch,

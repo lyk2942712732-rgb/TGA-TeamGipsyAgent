@@ -16,6 +16,7 @@ import { MODE_PROFILES } from "../../../modes";
 import type { TGA3RuntimeSnapshot } from "../../../runtime/tga3-runtime";
 import { agentStateLabel, stateLabel, stateTone } from "../tga3-view";
 import type { TGA3Connection } from "../use-tga3-runtime";
+import { resolveScoutStandby } from "./AOEScoutStandbyBar";
 
 export function TGA3TaskHeader({
   snapshot,
@@ -67,19 +68,7 @@ export function TGA3TaskHeader({
   const aoeSolved = snapshot.aoe ? snapshot.aoe.questions.filter((q) => q.status === "solved").length : 0;
   const aoeStandbyLabel =
     snapshot.aoe && !terminal && snapshot.aoe.collection_complete
-      ? snapshot.aoe.scout_collecting
-        ? "增量收集中"
-        : snapshot.aoe.scout_watch?.state === "error_paused"
-          ? "哨兵已熔断"
-          : snapshot.aoe.scout_watch?.state === "probing"
-            ? "哨兵探测中"
-            : snapshot.aoe.scout_watch?.enabled
-              ? snapshot.aoe.scout_watch.mode === "sentinel"
-                ? "零 Token 哨兵"
-                : "定时 LLM 巡检"
-              : snapshot.aoe.scout_watch && !snapshot.aoe.scout_watch.probe_script_present
-                ? "无脚本·手动"
-                : "已暂停"
+      ? resolveScoutStandby(snapshot.aoe).shortLabel
       : null;
 
   return (

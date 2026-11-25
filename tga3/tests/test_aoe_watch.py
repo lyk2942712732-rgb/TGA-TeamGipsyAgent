@@ -467,3 +467,48 @@ async def test_platform_solved_frees_worker_without_crediting_win_and_reassigns_
     q3 = next(q for q in await storage.list_questions(parent.id) if q.metadata["source_key"] == "q3")
     assert [a["agent_id"] for a in active_attempts(q3)] == [q1_worker]
     await coordinator.close()
+
+
+async def test_three_state_lifecycle_auto_upgrade_from_llm_poll_and_sentinel_guard(tmp_path):
+    cfg, storage, containers, coordinator, parent, clock = await _setup_batch(tmp_path)
+    aoe = coordinator.aoe
+    await aoe.register_questions(
+        parent.id, [AOEQuestionInput(source_key="q1", title="Q1", description="one")]
+    )
+    await aoe.finish_collection(parent.id, 1)
+    await storage.update_task(
+        parent.id, state=RunState.RUNNING, metadata={"scout_complete": True, "aoe_phase": "solo"}
+    )
+
+    # Without script -> enters watching / unavailable(no_script), 0 tokens.
+    watch = await aoe.watch.on_initial_collection_complete(parent.id)
+    assert watch["status"] == "watching"
+    assert watch["watch_method"] == "unavailable"
+    assert watch["unavailable_reason"] == "no_script"
+    assert watch["next_check_at"] is None
+
+    # User explicitly turns on fallback llm_poll.
+    res = await aoe.configure_scout_watch(parent.id, action="enable_llm_poll", interval_seconds=180)
+    assert res["scout_watch"]["status"] == "watching"
+    assert res["scout_watch"]["watch_method"] == "llm_poll"
+
+    # During an incremental scan, Scout creates watch_probe.py -> finishing auto-upgrades back to 0-token sentinel!
+    _write_probe_script(cfg, parent.id)
+    watch_after = await aoe.watch.on_incremental_scan_finished(parent.id, new_count=0)
+    assert watch_after["status"] == "watching"
+    assert watch_after["watch_method"] == "sentinel"
+    assert watch_after["unavailable_reason"] is None
+
+    # Refuses switching to token-burning llm_poll while healthy sentinel is active!
+    with pytest.raises(ConflictError):
+        await aoe.configure_scout_watch(parent.id, action="enable_llm_poll", interval_seconds=180)
+
+    # Stop Scout -> enters stopped; resume_watch -> restores watching(sentinel).
+    stopped = await aoe.stop_scout(parent.id)
+    assert stopped["scout_watch"]["status"] == "stopped"
+    assert stopped["scout_watch"]["next_check_at"] is None
+
+    resumed = await aoe.configure_scout_watch(parent.id, action="resume_watch")
+    assert resumed["scout_watch"]["status"] == "watching"
+    assert resumed["scout_watch"]["watch_method"] == "sentinel"
+    await coordinator.close()

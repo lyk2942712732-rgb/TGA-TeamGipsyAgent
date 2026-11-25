@@ -58,7 +58,7 @@ export const tga3RuntimeApi = {
     ),
   configureScoutWatch: (
     taskId: string,
-    action: "enable_sentinel" | "enable_llm_poll" | "disable",
+    action: "resume_watch" | "enable_sentinel" | "enable_llm_poll" | "disable_llm_poll" | "disable",
     intervalSeconds?: number,
   ) =>
     requestJson<{ scout_watch: AOEScoutWatch }>(

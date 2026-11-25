@@ -4,10 +4,14 @@ import { tga3RuntimeApi } from "../../../api/tga3-runtime-control";
 import type { AOEOverview, AOEQuestion, AOEScoutWatch } from "../../../runtime/tga3-runtime";
 import { workerRecords } from "../aoe-view";
 import { AOEFinishConfirmDialog } from "./AOEFinishConfirmDialog";
-import { AOEScoutStandbyBar } from "./AOEScoutStandbyBar";
+import { AOEScoutStandbyBar, resolveScoutStandby } from "./AOEScoutStandbyBar";
 
 function makeWatch(overrides: Partial<AOEScoutWatch> = {}): AOEScoutWatch {
   return {
+    status: "watching",
+    watch_method: "sentinel",
+    unavailable_reason: null,
+    probing: false,
     mode: "sentinel",
     enabled: true,
     state: "watching",
@@ -17,7 +21,7 @@ function makeWatch(overrides: Partial<AOEScoutWatch> = {}): AOEScoutWatch {
     next_check_at: Date.now() / 1000 + 30,
     last_checked_at: Date.now() / 1000 - 15,
     last_check_kind: "sentinel",
-    last_result: "零 Token 哨兵探测正常 · 暂无新题",
+    last_result: "零 Token 脚本哨兵探测正常 · 暂无新题",
     last_new_count: 0,
     last_solved_sync_count: 0,
     last_error: null,
@@ -41,28 +45,29 @@ function makeOverview(watchOverrides: Partial<AOEScoutWatch> = {}, extra: Partia
   };
 }
 
-describe("AOEScoutStandbyBar", () => {
-  it("renders zero-token sentinel status and supports manual wake and stop", async () => {
+describe("AOEScoutStandbyBar (3-state + 2-method model)", () => {
+  it("runs zero-token sentinel by default with no LLM fallback select, and supports wake & stop", async () => {
     const wakeSpy = vi.spyOn(tga3RuntimeApi, "wakeScout").mockResolvedValue({
       started: true,
       reason: "manual",
-      scout_watch: makeWatch({ state: "collecting" }),
+      scout_watch: makeWatch({ status: "collecting", state: "collecting", enabled: false }),
     });
     const stopSpy = vi.spyOn(tga3RuntimeApi, "stopScout").mockResolvedValue({
       stopped: true,
       mode: "watch_disabled",
-      scout_watch: makeWatch({ enabled: false, mode: "manual", state: "idle" }),
+      scout_watch: makeWatch({ status: "stopped", enabled: false, mode: "manual", state: "idle" }),
     });
     const onChanged = vi.fn();
 
     render(<AOEScoutStandbyBar taskId="task-1" taskState="running" overview={makeOverview()} onChanged={onChanged} />);
 
-    expect(screen.getByText(/零 Token 哨兵站岗中/)).toBeInTheDocument();
+    expect(screen.getByText(/站岗中 · 零 Token 脚本哨兵/)).toBeInTheDocument();
     expect(screen.getByText(/0 Token · 已探测 4 次/)).toBeInTheDocument();
-    // When zero-token sentinel is active, hide periodic LLM select to avoid accidentally switching to token-burning polling.
-    expect(screen.queryByLabelText("Scout 定时 LLM 巡检间隔")).not.toBeInTheDocument();
+    // Sentinel healthy -> no LLM fallback dropdown and no redundant sentinel toggle.
+    expect(screen.queryByLabelText("Scout 定时 LLM 巡检兜底间隔")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /哨兵/ })).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: /唤醒 Scout 巡检/ }));
+    fireEvent.click(screen.getByRole("button", { name: /唤醒收集/ }));
     await waitFor(() => expect(wakeSpy).toHaveBeenCalledWith("task-1"));
     expect(onChanged).toHaveBeenCalled();
 
@@ -73,63 +78,71 @@ describe("AOEScoutStandbyBar", () => {
     stopSpy.mockRestore();
   });
 
-  it("shows manual standby message and explicit token-cost LLM poll option when no probe script exists", () => {
-    render(
-      <AOEScoutStandbyBar
-        taskId="task-1"
-        taskState="running"
-        overview={makeOverview({
-          mode: "manual",
-          enabled: false,
-          state: "idle",
-          probe_script_present: false,
-          next_check_at: null,
-        })}
-        onChanged={vi.fn()}
-      />,
-    );
+  it("exposes fallback LLM polling and wake-to-generate when no probe script exists", () => {
+    const overview = makeOverview({
+      status: "watching",
+      watch_method: "unavailable",
+      unavailable_reason: "no_script",
+      mode: "manual",
+      enabled: false,
+      state: "idle",
+      probe_script_present: false,
+      next_check_at: null,
+    });
+    expect(resolveScoutStandby(overview).shortLabel).toBe("无脚本·需选兜底");
 
-    expect(screen.getByText(/未检测到零 Token 探测脚本/)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /唤醒 Scout 巡检/ })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /零 Token 哨兵/ })).not.toBeInTheDocument();
-    const select = screen.getByLabelText("Scout 定时 LLM 巡检间隔");
-    expect(select).toBeInTheDocument();
+    render(<AOEScoutStandbyBar taskId="task-1" taskState="running" overview={overview} onChanged={vi.fn()} />);
+
+    expect(screen.getByText(/未检测到探测脚本/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /唤醒 Scout 收集\/补脚本/ })).toBeInTheDocument();
+    expect(screen.getByLabelText("Scout 定时 LLM 巡检兜底间隔")).toBeInTheDocument();
     expect(screen.getAllByText(/耗 Token/)).toHaveLength(4);
   });
 
-  it("uses clear recover/retry labels when sentinel was paused or circuit-broken", () => {
-    const { rerender } = render(
-      <AOEScoutStandbyBar
-        taskId="task-1"
-        taskState="running"
-        overview={makeOverview({
-          mode: "manual",
-          enabled: false,
-          state: "idle",
-          probe_script_present: true,
-          next_check_at: null,
-        })}
-        onChanged={vi.fn()}
-      />,
-    );
-    expect(screen.getByRole("button", { name: /恢复零 Token 哨兵/ })).toBeInTheDocument();
+  it("shows retry, repair, and fallback choices when probe script is circuit-broken", () => {
+    const overview = makeOverview({
+      status: "watching",
+      watch_method: "unavailable",
+      unavailable_reason: "probe_failed",
+      mode: "sentinel",
+      enabled: false,
+      state: "error_paused",
+      consecutive_failures: 3,
+      probe_script_present: true,
+      next_check_at: null,
+    });
+    expect(resolveScoutStandby(overview).shortLabel).toBe("哨兵已熔断");
 
-    rerender(
-      <AOEScoutStandbyBar
-        taskId="task-1"
-        taskState="running"
-        overview={makeOverview({
-          mode: "sentinel",
-          enabled: false,
-          state: "error_paused",
-          consecutive_failures: 3,
-          probe_script_present: true,
-          next_check_at: null,
-        })}
-        onChanged={vi.fn()}
-      />,
-    );
-    expect(screen.getByRole("button", { name: /重试零 Token 哨兵/ })).toBeInTheDocument();
+    render(<AOEScoutStandbyBar taskId="task-1" taskState="running" overview={overview} onChanged={vi.fn()} />);
+
+    expect(screen.getByRole("button", { name: /重试脚本哨兵/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /唤醒 Scout 修复脚本/ })).toBeInTheDocument();
+    expect(screen.getByLabelText("Scout 定时 LLM 巡检兜底间隔")).toBeInTheDocument();
+  });
+
+  it("shows clean wake & resume_watch controls in stopped state without exposing LLM fallback select", async () => {
+    const cfgSpy = vi.spyOn(tga3RuntimeApi, "configureScoutWatch").mockResolvedValue({
+      scout_watch: makeWatch(),
+    });
+    const overview = makeOverview({
+      status: "stopped",
+      watch_method: "sentinel",
+      mode: "manual",
+      enabled: false,
+      state: "idle",
+      probe_script_present: true,
+      next_check_at: null,
+    });
+    expect(resolveScoutStandby(overview).shortLabel).toBe("已停止");
+
+    render(<AOEScoutStandbyBar taskId="task-1" taskState="running" overview={overview} onChanged={vi.fn()} />);
+
+    expect(screen.getByText("Scout 已停止")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Scout 定时 LLM 巡检兜底间隔")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /恢复站岗/ }));
+    await waitFor(() => expect(cfgSpy).toHaveBeenCalledWith("task-1", "resume_watch"));
+
+    cfgSpy.mockRestore();
   });
 });
 
@@ -166,7 +179,15 @@ describe("AOEFinishConfirmDialog", () => {
         open
         taskTitle="手动巡检赛"
         confirm={{ status: "pending", wave_question_count: 2, solved_count: 2, abandoned_count: 0, pending_reports: 0 }}
-        watch={makeWatch({ probe_script_present: false, mode: "manual", enabled: false, state: "idle" })}
+        watch={makeWatch({
+          status: "watching",
+          watch_method: "unavailable",
+          unavailable_reason: "no_script",
+          probe_script_present: false,
+          mode: "manual",
+          enabled: false,
+          state: "idle",
+        })}
         busy={false}
         error={null}
         onContinueStandby={vi.fn()}

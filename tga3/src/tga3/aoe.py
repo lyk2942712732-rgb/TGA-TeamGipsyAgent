@@ -651,12 +651,13 @@ class AOERuntime:
                     and parent_id not in self._probe_jobs
                     and current_parent.state not in TERMINAL
                 ):
-                    watch_mode = (current_parent.metadata.get("scout_watch") or {}).get("mode")
-                    if watch_mode == "sentinel":
+                    watch_meta = current_parent.metadata.get("scout_watch") or {}
+                    watch_method = watch_meta.get("watch_method") or watch_meta.get("mode")
+                    if watch_method == "sentinel":
                         pjob = asyncio.create_task(self.watch.run_sentinel_probe(parent_id))
                         pjob.add_done_callback(lambda _job: self.wake(parent_id))
                         self._probe_jobs[parent_id] = pjob
-                    elif watch_mode == "llm_poll":
+                    elif watch_method == "llm_poll":
                         try:
                             await self.wake_scout(parent_id, reason="llm_poll")
                         except ConflictError:
@@ -874,7 +875,14 @@ class AOERuntime:
             await self._cancel_scout_and_probe(parent_id)
             await self.containers.stop(parent_id, "scout")
             watch = self.watch.state_for(parent)
-            watch.update(enabled=False, state="idle", next_check_at=None)
+            watch.update(
+                status="stopped",
+                probing=False,
+                enabled=False,
+                state="idle",
+                mode="manual",
+                next_check_at=None,
+            )
             confirm = {
                 "status": "finishing",
                 "wait_for_reports": decision == "finish_after_reports",
