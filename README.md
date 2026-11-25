@@ -138,5 +138,3 @@ npm run build
 [运行时说明](tga3/README.md) · [AOE 数据流](tga3/docs/aoe-data-flow.md) · [四 Worker 调度](tga3/docs/four-workers.md) · [文件发布](tga3/FILE-PUBLICATIONS.md) · [经验卡](tga3/EXPERIENCE.md)。
 
 本项目用于获得授权的 CTF、靶场与安全评测。许可证见 [LICENSE](LICENSE)。
-
-待用户决定的旧文件与临时产物见 [文件整理清单](tga3/docs/file-cleanup-review.md)，清单所列候选尚未删除。
